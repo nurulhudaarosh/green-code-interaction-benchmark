@@ -1,0 +1,1763 @@
+{
+  "benchmark": "SEARCH AND RETRIEVAL",
+  "task_count": 25,
+  "tasks": [
+    {
+      "task_id": "SR-001",
+      "title": "Inverted Index Keyword Search",
+      "description": "Build an inverted index over a collection of text documents and support single/multi-keyword AND queries returning matching document IDs.",
+      "requirements": [
+        "R1: Build an inverted index mapping lowercase tokens to sorted lists of document IDs.",
+        "R2: Support single-keyword queries returning sorted list of doc IDs.",
+        "R3: Support multi-keyword AND queries via sorted-list intersection.",
+        "R4: Return empty list for queries with no matches or empty query string.",
+        "R5: Function must handle repeated identical queries deterministically (same output each call)."
+      ],
+      "source_type": "benchmark-inspired",
+      "input_scale": {
+        "small": "100 documents, ~50 words each",
+        "medium": "10,000 documents, ~200 words each",
+        "large": "500,000 documents, ~300 words each, tests index build time and intersection speed"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Write a Python function `build_index(docs: List[str]) -> Dict[str, List[int]]` that tokenizes and lowercases each document (index = position in list) and returns an inverted index. Then write `search(index, query: str) -> List[int]` where query is space-separated keywords; return sorted doc IDs containing ALL keywords (AND semantics). Empty query returns []. Must work for 500,000 documents within reasonable time using list intersection, not brute force per query."
+        },
+        "BUG_FIX": {
+          "initial_task": "Write a Python function `build_index(docs: List[str]) -> Dict[str, List[int]]` that tokenizes and lowercases each document and returns an inverted index, plus `search(index, query: str) -> List[int]` returning doc IDs containing ALL query keywords.",
+          "bug_report": "search() returns duplicate doc IDs when a keyword appears multiple times in the same document, and results are not sorted, causing test failures on the medium dataset."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Write a Python function `build_index(docs: List[str]) -> Dict[str, List[int]]` that tokenizes and lowercases each document and returns an inverted index, plus `search(index, query: str) -> List[int]` returning doc IDs containing ALL query keywords, sorted and deduplicated.",
+          "feature_request": "Add support for OR semantics: `search(index, query, mode='AND')` where mode can be 'AND' or 'OR', and OR mode should still return sorted deduplicated doc IDs efficiently via list merging, not by converting to sets naively for large inputs."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Write a Python function `build_index(docs: List[str]) -> Dict[str, List[int]]` that tokenizes and lowercases each document and returns an inverted index, plus `search(index, query: str) -> List[int]` returning doc IDs containing ALL query keywords, sorted and deduplicated.",
+          "edge_case": "What happens when the document list is empty, or when a document is an empty string, or when the query contains extra whitespace or punctuation-only tokens? Ensure these do not raise exceptions and return sensible results."
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Write a Python function `build_index(docs: List[str]) -> Dict[str, List[int]]` that tokenizes and lowercases each document and returns an inverted index, plus `search(index, query: str) -> List[int]` returning doc IDs containing ALL query keywords.",
+          "turn2_bug": "search() returns duplicate doc IDs when a keyword appears multiple times in the same document, and results are not sorted.",
+          "turn3_feature": "Add support for OR semantics via a `mode` parameter ('AND' or 'OR'), returning sorted deduplicated doc IDs efficiently.",
+          "turn4_edge_case": "Handle empty document lists, empty-string documents, and queries with extra whitespace or punctuation-only tokens without exceptions."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R3"], "fix": ["R2", "R3", "R5"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R5"], "feature": ["R3", "R5"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R5"], "edge": ["R1", "R4"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R3"], "turn2": ["R2", "R3", "R5"], "turn3": ["R3", "R5"], "turn4": ["R1", "R4"]}
+      },
+      "tests": {
+        "public": [
+          "search(index, 'python code') on small set returns correct sorted intersection",
+          "search(index, '') returns []",
+          "calling search() twice with same query returns identical results",
+          "build_index on 100-doc set produces correct posting lists for a known token",
+          "search with a keyword not present in any doc returns []"
+        ],
+        "hidden": [
+          "search over 500,000-doc large dataset completes and matches brute-force result on sampled queries",
+          "query with mixed-case keywords matches lowercase-indexed tokens",
+          "document with only punctuation tokenizes to empty token list without crashing",
+          "OR-mode query (post feature-addition) returns union of AND-mode subsets",
+          "repeated keyword within a single query still returns each matching doc ID only once"
+        ]
+      },
+      "reference_solution": {
+        "code": "def build_index(docs):\n    index = {}\n    for doc_id, text in enumerate(docs):\n        tokens = set(t.lower() for t in text.split() if t.isalnum())\n        for tok in tokens:\n            index.setdefault(tok, []).append(doc_id)\n    for tok in index:\n        index[tok].sort()\n    return index\n\ndef search(index, query, mode='AND'):\n    keywords = [k.lower() for k in query.split() if k]\n    if not keywords:\n        return []\n    postings = [index.get(k, []) for k in keywords]\n    if any(len(p) == 0 for p in postings) and mode == 'AND':\n        return []\n    if mode == 'AND':\n        result = postings[0]\n        for p in postings[1:]:\n            result = _intersect(result, p)\n        return result\n    else:\n        merged = set()\n        for p in postings:\n            merged.update(p)\n        return sorted(merged)\n\ndef _intersect(a, b):\n    i = j = 0\n    out = []\n    while i < len(a) and j < len(b):\n        if a[i] == b[j]:\n            out.append(a[i]); i += 1; j += 1\n        elif a[i] < b[j]:\n            i += 1\n        else:\n            j += 1\n    return out",
+        "algorithm": "Inverted index built via single pass tokenization; queries resolved via sorted posting-list intersection (AND) or merge (OR)",
+        "time_complexity": "Build: O(total_tokens); Query: O(sum of posting list lengths) for intersection",
+        "space_complexity": "O(total unique token-document pairs)"
+      }
+    },
+    {
+      "task_id": "SR-002",
+      "title": "Prefix Search Autocomplete Index",
+      "description": "Build a sorted-array based prefix search structure over a list of strings supporting fast autocomplete queries via binary search boundaries.",
+      "requirements": [
+        "R1: Build a sorted list index from an input list of strings (deduplicated).",
+        "R2: `prefix_search(index, prefix)` returns all strings starting with prefix, in sorted order, using binary search to find boundaries (not linear scan).",
+        "R3: Empty prefix returns entire sorted list.",
+        "R4: Non-matching prefix returns empty list.",
+        "R5: Function must support repeated queries efficiently without rebuilding the index."
+      ],
+      "source_type": "original",
+      "input_scale": {
+        "small": "500 words",
+        "medium": "50,000 words",
+        "large": "2,000,000 words, stresses binary-search boundary-finding vs linear scan"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Write `build_prefix_index(words: List[str]) -> List[str]` returning a sorted deduplicated list, and `prefix_search(sorted_words: List[str], prefix: str) -> List[str]` that uses binary search (bisect) to locate the range of entries starting with `prefix` and returns them in sorted order. Empty prefix returns all words; no match returns []."
+        },
+        "BUG_FIX": {
+          "initial_task": "Write `build_prefix_index(words: List[str]) -> List[str]` returning a sorted deduplicated list, and `prefix_search(sorted_words, prefix)` returning all words starting with prefix using bisect.",
+          "bug_report": "prefix_search using bisect.bisect_left(sorted_words, prefix) as the start and manually scanning forward is O(n) worst case on the large dataset when many words share the prefix's first character but not the full prefix — it's too slow and also misses some matches due to incorrect upper bound calculation."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Write `build_prefix_index(words: List[str]) -> List[str]` and `prefix_search(sorted_words, prefix)` using correct binary-search boundary computation (O(log n + k) where k is result count).",
+          "feature_request": "Add a `top_k` optional parameter to `prefix_search(sorted_words, prefix, top_k=None)` that, when set, returns only the first `top_k` matches without scanning beyond that count."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Write `build_prefix_index(words: List[str]) -> List[str]` and `prefix_search(sorted_words, prefix)` using correct binary-search boundary computation.",
+          "edge_case": "How should the function behave when `words` is empty, when `prefix` is longer than any word in the list, or when `prefix` contains characters with different case than the stored words?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Write `build_prefix_index(words: List[str]) -> List[str]` and `prefix_search(sorted_words, prefix)` returning all words starting with prefix using bisect.",
+          "turn2_bug": "The boundary computation is incorrect/slow — some matches are missed and performance degrades on large shared-prefix clusters.",
+          "turn3_feature": "Add a `top_k` optional parameter that limits returned matches without over-scanning.",
+          "turn4_edge_case": "Handle empty word list, prefix longer than any word, and case-mismatched prefixes gracefully."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5"],
+        "BUG_FIX": {"initial": ["R1", "R2"], "fix": ["R2", "R4", "R5"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4"], "feature": ["R2", "R5"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4"], "edge": ["R3", "R4"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2"], "turn2": ["R2", "R4", "R5"], "turn3": ["R2", "R5"], "turn4": ["R3", "R4"]}
+      },
+      "tests": {
+        "public": [
+          "prefix_search for 'ap' on small set returns all words starting with 'ap' sorted",
+          "prefix_search('') returns full sorted list",
+          "prefix_search('zzz_nomatch') returns []",
+          "repeated identical prefix queries return same result",
+          "build_prefix_index deduplicates repeated input words"
+        ],
+        "hidden": [
+          "prefix_search on 2,000,000-word large dataset returns correct boundary-based results matching brute-force filter",
+          "prefix longer than any stored word returns []",
+          "top_k parameter (post feature) limits result count correctly",
+          "prefix search with case-mismatch behaves per documented case-sensitivity",
+          "single-character prefix matching thousands of words returns correctly sorted full set"
+        ]
+      },
+      "reference_solution": {
+        "code": "import bisect\n\ndef build_prefix_index(words):\n    return sorted(set(words))\n\ndef prefix_search(sorted_words, prefix, top_k=None):\n    if not prefix:\n        return sorted_words[:top_k] if top_k else list(sorted_words)\n    lo = bisect.bisect_left(sorted_words, prefix)\n    hi_key = prefix[:-1] + chr(ord(prefix[-1]) + 1)\n    hi = bisect.bisect_left(sorted_words, hi_key)\n    result = sorted_words[lo:hi]\n    return result[:top_k] if top_k else result",
+        "algorithm": "Sorted array with binary search boundaries; upper bound computed by incrementing last character of prefix",
+        "time_complexity": "Build: O(n log n); Query: O(log n + k) where k = result size",
+        "space_complexity": "O(n)"
+      }
+    },
+    {
+      "task_id": "SR-003",
+      "title": "Multi-Field Record Filtering",
+      "description": "Filter a list of employee records by multiple field conditions (equality, range) combined with AND logic, using field-based indexing for speed.",
+      "requirements": [
+        "R1: Each record is a dict with fields: id, name, department, salary, age.",
+        "R2: Build per-field indexes: hash index for department (equality), sorted index for salary and age (range queries).",
+        "R3: `query(records, indexes, filters)` accepts a dict of filters (e.g. {'department': 'eng', 'salary_min': 50000, 'salary_max': 90000}) and returns matching records' IDs.",
+        "R4: Combining multiple filters uses set intersection across per-field candidate sets.",
+        "R5: Empty filters dict returns all record IDs.",
+        "R6: Must be deterministic — result order is sorted by ID."
+      ],
+      "source_type": "original",
+      "input_scale": {
+        "small": "200 records",
+        "medium": "20,000 records",
+        "large": "1,000,000 records, tests index-based filtering vs full scan"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Write `build_indexes(records: List[dict]) -> dict` producing a department hash index (dept -> set of IDs) and sorted (value, id) lists for salary and age. Write `query(records, indexes, filters: dict) -> List[int]` supporting keys 'department' (equality), 'salary_min'/'salary_max', 'age_min'/'age_max' (inclusive ranges), combined with AND. Use bisect on the sorted indexes for range filters, not full scans. Empty filters returns all IDs sorted."
+        },
+        "BUG_FIX": {
+          "initial_task": "Write `build_indexes(records)` producing department hash index and sorted salary/age indexes, and `query(records, indexes, filters)` supporting department equality and salary/age ranges combined with AND.",
+          "bug_report": "When filters include both salary_min and salary_max but salary_min > salary_max, the function crashes with an index error instead of returning an empty result. Also, when only department filter is given, results aren't sorted by ID."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Write `build_indexes(records)` and `query(records, indexes, filters)` supporting department equality and salary/age ranges combined with AND, sorted output, and safe handling of invalid ranges.",
+          "feature_request": "Add support for a 'name_contains' filter that does substring matching on the name field (case-insensitive), applied as an additional AND condition alongside the indexed filters."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Write `build_indexes(records)` and `query(records, indexes, filters)` supporting department equality and salary/age ranges combined with AND, sorted output, and safe handling of invalid ranges.",
+          "edge_case": "What should happen if `records` is empty, if a filter references a department value that doesn't exist, or if salary_min equals salary_max exactly (boundary inclusion)?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Write `build_indexes(records)` and `query(records, indexes, filters)` supporting department equality and salary/age ranges combined with AND.",
+          "turn2_bug": "Invalid ranges (min > max) crash instead of returning empty; results aren't sorted by ID.",
+          "turn3_feature": "Add a 'name_contains' case-insensitive substring filter as an additional AND condition.",
+          "turn4_edge_case": "Handle empty records list, non-existent department values, and exact-boundary range values (min == max)."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5", "R6"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R3", "R4"], "fix": ["R3", "R6"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4", "R6"], "feature": ["R3", "R4"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4", "R6"], "edge": ["R3", "R5"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R3", "R4"], "turn2": ["R3", "R6"], "turn3": ["R3", "R4"], "turn4": ["R3", "R5"]}
+      },
+      "tests": {
+        "public": [
+          "query with department='eng' returns correct sorted IDs",
+          "query with empty filters returns all IDs sorted",
+          "query with salary range returns correct subset",
+          "repeated identical query returns same result",
+          "query combining department and salary range returns intersection"
+        ],
+        "hidden": [
+          "query on 1,000,000-record large dataset matches brute-force filter result on sampled filters",
+          "salary_min > salary_max returns empty list, not an error",
+          "department value not present in any record returns empty list",
+          "salary_min == salary_max returns only exact-salary matches (boundary inclusive)",
+          "name_contains filter (post feature) combined with department filter returns correct AND intersection"
+        ]
+      },
+      "reference_solution": {
+        "code": "import bisect\n\ndef build_indexes(records):\n    dept_idx = {}\n    salary_idx = sorted((r['salary'], r['id']) for r in records)\n    age_idx = sorted((r['age'], r['id']) for r in records)\n    for r in records:\n        dept_idx.setdefault(r['department'], set()).add(r['id'])\n    return {'dept': dept_idx, 'salary': salary_idx, 'age': age_idx}\n\ndef _range_ids(sorted_pairs, lo, hi):\n    if lo is not None and hi is not None and lo > hi:\n        return set()\n    keys = [p[0] for p in sorted_pairs]\n    l = bisect.bisect_left(keys, lo) if lo is not None else 0\n    h = bisect.bisect_right(keys, hi) if hi is not None else len(keys)\n    return set(p[1] for p in sorted_pairs[l:h])\n\ndef query(records, indexes, filters):\n    candidates = None\n    if 'department' in filters:\n        ids = indexes['dept'].get(filters['department'], set())\n        candidates = ids if candidates is None else candidates & ids\n    if 'salary_min' in filters or 'salary_max' in filters:\n        ids = _range_ids(indexes['salary'], filters.get('salary_min'), filters.get('salary_max'))\n        candidates = ids if candidates is None else candidates & ids\n    if 'age_min' in filters or 'age_max' in filters:\n        ids = _range_ids(indexes['age'], filters.get('age_min'), filters.get('age_max'))\n        candidates = ids if candidates is None else candidates & ids\n    if candidates is None:\n        candidates = set(r['id'] for r in records)\n    return sorted(candidates)",
+        "algorithm": "Hash index for equality field, sorted-array + bisect for range fields, AND combined via set intersection",
+        "time_complexity": "Build: O(n log n); Query: O(log n + k) per range filter",
+        "space_complexity": "O(n)"
+      }
+    },
+    {
+      "task_id": "SR-004",
+      "title": "Fuzzy Approximate String Matching Search",
+      "description": "Search a word list for entries within a given edit-distance threshold of a query string, using length-based bucketing to prune candidates.",
+      "requirements": [
+        "R1: Implement Levenshtein edit distance computation.",
+        "R2: `build_buckets(words)` groups words by length for pruning.",
+        "R3: `fuzzy_search(buckets, query, max_distance)` returns all words within max_distance edit distance, only comparing against words whose length differs from query by at most max_distance.",
+        "R4: Results returned sorted by (distance, word).",
+        "R5: max_distance=0 behaves as exact match search."
+      ],
+      "source_type": "benchmark-inspired",
+      "input_scale": {
+        "small": "300 words",
+        "medium": "30,000 words",
+        "large": "1,000,000 words, tests bucket pruning effectiveness vs brute-force distance computation"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Write `edit_distance(a: str, b: str) -> int` (Levenshtein), `build_buckets(words: List[str]) -> Dict[int, List[str]]` grouping by length, and `fuzzy_search(buckets, query: str, max_distance: int) -> List[Tuple[int,str]]` that only computes edit distance against words in length buckets within [len(query)-max_distance, len(query)+max_distance], returning (distance, word) pairs sorted by distance then word, filtered to distance <= max_distance."
+        },
+        "BUG_FIX": {
+          "initial_task": "Write `edit_distance(a, b)`, `build_buckets(words)`, and `fuzzy_search(buckets, query, max_distance)` returning matches within max_distance, pruned by length buckets.",
+          "bug_report": "fuzzy_search is scanning ALL buckets regardless of length difference from the query, making it as slow as brute force on the large dataset — the length-based pruning isn't actually being applied."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Write `edit_distance(a, b)`, `build_buckets(words)`, and `fuzzy_search(buckets, query, max_distance)` that correctly prunes buckets outside the valid length range before computing distances.",
+          "feature_request": "Add a `top_n` parameter to `fuzzy_search` that returns only the closest `top_n` matches (by distance, then alphabetically) instead of all matches under the threshold."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Write `edit_distance(a, b)`, `build_buckets(words)`, and `fuzzy_search(buckets, query, max_distance)` that correctly prunes buckets outside the valid length range before computing distances.",
+          "edge_case": "What should happen when query is an empty string, when max_distance is 0 (should behave as exact match), or when the word list contains duplicate words (should duplicates each appear in results)?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Write `edit_distance(a, b)`, `build_buckets(words)`, and `fuzzy_search(buckets, query, max_distance)` returning matches within max_distance.",
+          "turn2_bug": "fuzzy_search scans all buckets instead of pruning by length difference, causing brute-force-level slowness.",
+          "turn3_feature": "Add a `top_n` parameter returning only the closest top_n matches.",
+          "turn4_edge_case": "Handle empty query string, max_distance=0 (exact match), and duplicate words in the word list."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R3"], "fix": ["R2", "R3"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4"], "feature": ["R3", "R4"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4"], "edge": ["R3", "R5"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R3"], "turn2": ["R2", "R3"], "turn3": ["R3", "R4"], "turn4": ["R3", "R5"]}
+      },
+      "tests": {
+        "public": [
+          "fuzzy_search('kitten', max_distance=2) on small set returns known near matches sorted by distance",
+          "fuzzy_search with max_distance=0 returns only exact matches",
+          "edit_distance('', 'abc') == 3",
+          "repeated identical fuzzy_search call returns same result",
+          "fuzzy_search with query longer than all words returns [] or correctly pruned small set"
+        ],
+        "hidden": [
+          "fuzzy_search on 1,000,000-word large dataset completes in reasonable time via bucket pruning",
+          "fuzzy_search results match brute-force edit-distance computation on sampled queries",
+          "empty query string handled without crash",
+          "duplicate words in list each appear as separate result entries",
+          "top_n parameter (post feature) returns exactly top_n closest matches when more exist"
+        ]
+      },
+      "reference_solution": {
+        "code": "def edit_distance(a, b):\n    m, n = len(a), len(b)\n    dp = list(range(n + 1))\n    for i in range(1, m + 1):\n        prev = dp[0]\n        dp[0] = i\n        for j in range(1, n + 1):\n            temp = dp[j]\n            if a[i-1] == b[j-1]:\n                dp[j] = prev\n            else:\n                dp[j] = 1 + min(prev, dp[j], dp[j-1])\n            prev = temp\n    return dp[n]\n\ndef build_buckets(words):\n    buckets = {}\n    for w in words:\n        buckets.setdefault(len(w), []).append(w)\n    return buckets\n\ndef fuzzy_search(buckets, query, max_distance, top_n=None):\n    qlen = len(query)\n    results = []\n    for length in range(max(0, qlen - max_distance), qlen + max_distance + 1):\n        for w in buckets.get(length, []):\n            d = edit_distance(query, w)\n            if d <= max_distance:\n                results.append((d, w))\n    results.sort()\n    return results[:top_n] if top_n else results",
+        "algorithm": "Dynamic programming edit distance with length-bucket pruning to skip candidates whose length difference exceeds max_distance",
+        "time_complexity": "Build: O(n); Query: O(k * L^2) where k = candidates in valid length range, L = avg word length",
+        "space_complexity": "O(n)"
+      }
+    },
+    {
+      "task_id": "SR-005",
+      "title": "Duplicate Record Detection via Hashing",
+      "description": "Detect exact and near-duplicate records in a dataset of customer entries using content hashing and grouping.",
+      "requirements": [
+        "R1: `hash_record(record: dict) -> str` produces a stable hash from normalized field values (lowercased, stripped).",
+        "R2: `find_exact_duplicates(records: List[dict]) -> Dict[str, List[int]]` groups record indices by hash, returning only groups with >1 member.",
+        "R3: Normalization must ignore leading/trailing whitespace and case differences.",
+        "R4: Function returns empty dict when no duplicates exist.",
+        "R5: Must handle records with missing fields (treated as empty string) without crashing."
+      ],
+      "source_type": "original",
+      "input_scale": {
+        "small": "500 records",
+        "medium": "50,000 records",
+        "large": "2,000,000 records, tests hashing throughput vs pairwise comparison"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Write `hash_record(record: dict, fields: List[str]) -> str` that builds a normalized (lowercased, stripped) concatenation of the given fields' values and returns a stable hash (e.g. via hashlib.sha256). Missing fields treated as ''. Write `find_exact_duplicates(records: List[dict], fields: List[str]) -> Dict[str, List[int]]` that groups record indices by hash and returns only groups with more than one member. Must scale to 2,000,000 records using single-pass hashing, not O(n^2) comparison."
+        },
+        "BUG_FIX": {
+          "initial_task": "Write `hash_record(record, fields)` and `find_exact_duplicates(records, fields)` grouping record indices by content hash, returning groups with more than one member.",
+          "bug_report": "Records that differ only in whitespace (e.g. 'John Doe' vs ' John Doe ') or case ('john doe' vs 'John Doe') are not being detected as duplicates — normalization isn't being applied before hashing."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Write `hash_record(record, fields)` with proper case/whitespace normalization, and `find_exact_duplicates(records, fields)` grouping by hash.",
+          "feature_request": "Add `duplicate_summary(duplicates: Dict[str, List[int]]) -> List[Tuple[int, int]]` that returns a list of (group_size, count_of_groups_with_that_size) pairs sorted by group_size descending, for reporting purposes."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Write `hash_record(record, fields)` with proper case/whitespace normalization, and `find_exact_duplicates(records, fields)` grouping by hash.",
+          "edge_case": "How should the function handle records missing one of the specified fields entirely (KeyError risk), an empty records list, or fields whose values are None instead of a string?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Write `hash_record(record, fields)` and `find_exact_duplicates(records, fields)` grouping record indices by content hash into groups with more than one member.",
+          "turn2_bug": "Whitespace and case differences aren't normalized before hashing, so near-identical records aren't flagged as duplicates.",
+          "turn3_feature": "Add `duplicate_summary` returning (group_size, count_of_groups) pairs sorted by group_size descending.",
+          "turn4_edge_case": "Handle missing fields (KeyError risk), empty records list, and None field values without crashing."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R4"], "fix": ["R1", "R3"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4"], "feature": ["R2"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4"], "edge": ["R4", "R5"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R4"], "turn2": ["R1", "R3"], "turn3": ["R2"], "turn4": ["R4", "R5"]}
+      },
+      "tests": {
+        "public": [
+          "find_exact_duplicates detects two records with identical normalized fields",
+          "find_exact_duplicates on all-unique records returns {}",
+          "hash_record is stable across repeated calls with same input",
+          "records differing only by case/whitespace are grouped together",
+          "records missing a field are treated as empty string, not crash"
+        ],
+        "hidden": [
+          "find_exact_duplicates on 2,000,000-record large dataset completes via single-pass hashing",
+          "empty records list returns {}",
+          "None field values handled without crash (post edge-case)",
+          "duplicate_summary (post feature) correctly aggregates group sizes",
+          "hash collisions across different content are vanishingly rare / not treated as duplicates for distinct normalized content"
+        ]
+      },
+      "reference_solution": {
+        "code": "import hashlib\n\ndef hash_record(record, fields):\n    parts = []\n    for f in fields:\n        val = record.get(f, '')\n        val = '' if val is None else str(val)\n        parts.append(val.strip().lower())\n    joined = '|'.join(parts)\n    return hashlib.sha256(joined.encode('utf-8')).hexdigest()\n\ndef find_exact_duplicates(records, fields):\n    groups = {}\n    for i, r in enumerate(records):\n        h = hash_record(r, fields)\n        groups.setdefault(h, []).append(i)\n    return {h: idxs for h, idxs in groups.items() if len(idxs) > 1}",
+        "algorithm": "Single-pass content hashing with field normalization, grouped via hash table",
+        "time_complexity": "O(n * f) where f = number of fields",
+        "space_complexity": "O(n)"
+      }
+    },
+    {
+      "task_id": "SR-006",
+      "title": "TF-IDF Ranked Document Retrieval",
+      "description": "Rank documents by relevance to a query using TF-IDF scoring over a corpus of text documents.",
+      "requirements": [
+        "R1: Compute term frequency (TF) per document and inverse document frequency (IDF) across the corpus.",
+        "R2: `build_tfidf(docs: List[str]) -> dict` precomputes TF-IDF weights for all doc-term pairs.",
+        "R3: `rank(tfidf_data, query: str, top_k: int) -> List[Tuple[int, float]]` returns top_k (doc_id, score) pairs sorted by descending score.",
+        "R4: Score for a document is the sum of query-term TF-IDF weights present in that document.",
+        "R5: Documents with zero matching terms are excluded from results.",
+        "R6: Ties in score broken by ascending doc_id."
+      ],
+      "source_type": "benchmark-inspired",
+      "input_scale": {
+        "small": "50 documents",
+        "medium": "5,000 documents",
+        "large": "200,000 documents, tests precomputation and top-k selection efficiency"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Write `build_tfidf(docs: List[str]) -> dict` that tokenizes/lowercases docs and computes TF-IDF weight for every (term, doc_id) pair using standard log-scaled IDF (idf = log(N / df)). Write `rank(tfidf_data, query: str, top_k: int) -> List[Tuple[int, float]]` returning the top_k documents by summed TF-IDF score of query terms present, sorted descending by score then ascending by doc_id, excluding zero-score docs."
+        },
+        "BUG_FIX": {
+          "initial_task": "Write `build_tfidf(docs)` computing TF-IDF weights per (term, doc_id), and `rank(tfidf_data, query, top_k)` returning top_k documents by summed score.",
+          "bug_report": "rank() is including documents with a score of 0 in the results (padding to reach top_k), and ties in score are not being broken consistently by doc_id, causing non-deterministic ordering across runs."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Write `build_tfidf(docs)` and `rank(tfidf_data, query, top_k)` returning top_k documents by summed score, excluding zero-score docs, with deterministic tie-breaking by doc_id.",
+          "feature_request": "Add a `min_score` optional parameter to `rank()` that filters out results below a given score threshold in addition to the top_k limit."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Write `build_tfidf(docs)` and `rank(tfidf_data, query, top_k)` returning top_k documents by summed score, excluding zero-score docs, with deterministic tie-breaking by doc_id.",
+          "edge_case": "What happens when the query contains only terms absent from the entire corpus, when top_k exceeds the number of documents with nonzero score, or when the corpus has a single document?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Write `build_tfidf(docs)` and `rank(tfidf_data, query, top_k)` returning top_k documents by summed TF-IDF score of query terms.",
+          "turn2_bug": "Zero-score documents are included and score ties aren't broken deterministically by doc_id.",
+          "turn3_feature": "Add a `min_score` parameter filtering results below a threshold.",
+          "turn4_edge_case": "Handle queries with no corpus-matching terms, top_k exceeding available results, and single-document corpora."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5", "R6"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R3", "R4"], "fix": ["R5", "R6"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4", "R5", "R6"], "feature": ["R3"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4", "R5", "R6"], "edge": ["R3", "R5"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R3", "R4"], "turn2": ["R5", "R6"], "turn3": ["R3"], "turn4": ["R3", "R5"]}
+      },
+      "tests": {
+        "public": [
+          "rank() on small corpus returns known top document for a distinctive query term",
+          "rank() excludes documents with zero matching terms",
+          "rank() results sorted descending by score with ties broken by doc_id",
+          "repeated rank() calls return identical results",
+          "build_tfidf produces higher weight for rare terms than common terms"
+        ],
+        "hidden": [
+          "rank() on 200,000-doc large corpus completes and top result matches expected relevance",
+          "query with terms absent from corpus returns []",
+          "top_k larger than number of nonzero-score docs returns only the nonzero-score ones",
+          "single-document corpus produces valid (nonzero df) TF-IDF weights without division errors",
+          "min_score parameter (post feature) correctly excludes below-threshold results"
+        ]
+      },
+      "reference_solution": {
+        "code": "import math\nfrom collections import Counter\n\ndef build_tfidf(docs):\n    N = len(docs)\n    tokenized = [ [t.lower() for t in d.split() if t.isalnum()] for d in docs ]\n    df = Counter()\n    for tokens in tokenized:\n        for term in set(tokens):\n            df[term] += 1\n    idf = {term: math.log(N / df[term]) for term in df} if N > 0 else {}\n    tfidf = {}\n    for doc_id, tokens in enumerate(tokenized):\n        tf = Counter(tokens)\n        length = len(tokens) if tokens else 1\n        for term, count in tf.items():\n            weight = (count / length) * idf.get(term, 0)\n            tfidf.setdefault(term, {})[doc_id] = weight\n    return {'tfidf': tfidf, 'N': N}\n\ndef rank(tfidf_data, query, top_k, min_score=None):\n    tfidf = tfidf_data['tfidf']\n    terms = [t.lower() for t in query.split() if t]\n    scores = {}\n    for term in terms:\n        for doc_id, w in tfidf.get(term, {}).items():\n            scores[doc_id] = scores.get(doc_id, 0.0) + w\n    if min_score is not None:\n        scores = {d: s for d, s in scores.items() if s >= min_score}\n    ranked = sorted(scores.items(), key=lambda x: (-x[1], x[0]))\n    return ranked[:top_k]",
+        "algorithm": "TF-IDF weighting with log-scaled IDF; scores summed per query term and top-k selected via sort",
+        "time_complexity": "Build: O(total_tokens); Query: O(sum of postings for query terms + m log m) for sorting m candidates",
+        "space_complexity": "O(unique term-doc pairs)"
+      }
+    },
+    {
+      "task_id": "SR-007",
+      "title": "Composite Metadata Search Index",
+      "description": "Search a library catalog of book metadata (title, author, year, genre, tags) supporting combined exact and range queries with a precomputed multi-field index.",
+      "requirements": [
+        "R1: Book records have fields: id, title, author, year, genre, tags (list of strings).",
+        "R2: Build hash indexes for author and genre (equality), sorted index for year (range), and inverted tag index (tag -> set of ids).",
+        "R3: `search(indexes, criteria: dict) -> List[int]` supports 'author', 'genre' (equality), 'year_min'/'year_max' (range), 'tag' (membership), combined with AND.",
+        "R4: Results are sorted ascending by id.",
+        "R5: Unspecified criteria fields are ignored (not filtered on).",
+        "R6: Empty criteria returns all book ids."
+      ],
+      "source_type": "original",
+      "input_scale": {
+        "small": "300 books",
+        "medium": "25,000 books",
+        "large": "800,000 books, tests combined multi-index intersection performance"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Write `build_catalog_indexes(books: List[dict]) -> dict` building hash indexes for 'author' and 'genre', a sorted (year, id) list, and an inverted tag index. Write `search(books, indexes, criteria: dict) -> List[int]` supporting 'author', 'genre' equality, 'year_min'/'year_max' range (bisect-based), and 'tag' membership, all combined with AND, returning sorted ids. Empty criteria returns all ids."
+        },
+        "BUG_FIX": {
+          "initial_task": "Write `build_catalog_indexes(books)` and `search(books, indexes, criteria)` supporting author/genre equality, year range, and tag membership combined with AND.",
+          "bug_report": "When criteria includes a 'tag' that no book has, search() throws a KeyError instead of returning an empty list. Also when combining 'author' with 'tag', results include books matching only one of the two conditions instead of both (AND logic broken)."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Write `build_catalog_indexes(books)` and `search(books, indexes, criteria)` supporting author/genre equality, year range, and tag membership combined with correct AND logic and safe missing-key handling.",
+          "feature_request": "Add support for a 'tags_all' criterion accepting a list of tags, where a book must contain ALL listed tags (in addition to the existing single-tag 'tag' criterion)."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Write `build_catalog_indexes(books)` and `search(books, indexes, criteria)` supporting author/genre equality, year range, and tag membership combined with correct AND logic and safe missing-key handling.",
+          "edge_case": "What happens when a book has an empty tags list, when year_min equals year_max, or when criteria specifies an author that matches zero books alongside a valid tag filter?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Write `build_catalog_indexes(books)` and `search(books, indexes, criteria)` supporting author/genre equality, year range, and tag membership combined with AND.",
+          "turn2_bug": "Unknown tag causes KeyError instead of empty result; combining author with tag doesn't correctly AND the conditions.",
+          "turn3_feature": "Add 'tags_all' criterion requiring all listed tags to be present.",
+          "turn4_edge_case": "Handle books with empty tags list, year_min == year_max, and an author matching zero books combined with other filters."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5", "R6"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R3"], "fix": ["R3", "R4"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4", "R5", "R6"], "feature": ["R3"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4", "R5", "R6"], "edge": ["R3", "R6"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R3"], "turn2": ["R3", "R4"], "turn3": ["R3"], "turn4": ["R3", "R6"]}
+      },
+      "tests": {
+        "public": [
+          "search with author criterion returns correct sorted ids",
+          "search with empty criteria returns all ids sorted",
+          "search combining genre and year range returns correct intersection",
+          "search with tag criterion returns books containing that tag",
+          "repeated identical search call returns same result"
+        ],
+        "hidden": [
+          "search on 800,000-book large dataset returns correct combined-index result matching brute-force filter",
+          "unknown tag returns [] without crash",
+          "author matching zero books combined with tag returns []",
+          "tags_all criterion (post feature) requires all specified tags present",
+          "year_min == year_max returns only exact-year matches"
+        ]
+      },
+      "reference_solution": {
+        "code": "import bisect\n\ndef build_catalog_indexes(books):\n    author_idx, genre_idx, tag_idx = {}, {}, {}\n    year_idx = sorted((b['year'], b['id']) for b in books)\n    for b in books:\n        author_idx.setdefault(b['author'], set()).add(b['id'])\n        genre_idx.setdefault(b['genre'], set()).add(b['id'])\n        for tag in b.get('tags', []):\n            tag_idx.setdefault(tag, set()).add(b['id'])\n    return {'author': author_idx, 'genre': genre_idx, 'tag': tag_idx, 'year': year_idx}\n\ndef _year_range(year_idx, lo, hi):\n    if lo is not None and hi is not None and lo > hi:\n        return set()\n    keys = [p[0] for p in year_idx]\n    l = bisect.bisect_left(keys, lo) if lo is not None else 0\n    h = bisect.bisect_right(keys, hi) if hi is not None else len(keys)\n    return set(p[1] for p in year_idx[l:h])\n\ndef search(books, indexes, criteria):\n    candidates = None\n    def intersect(ids):\n        nonlocal candidates\n        candidates = ids if candidates is None else candidates & ids\n    if 'author' in criteria:\n        intersect(indexes['author'].get(criteria['author'], set()))\n    if 'genre' in criteria:\n        intersect(indexes['genre'].get(criteria['genre'], set()))\n    if 'tag' in criteria:\n        intersect(indexes['tag'].get(criteria['tag'], set()))\n    if 'tags_all' in criteria:\n        for t in criteria['tags_all']:\n            intersect(indexes['tag'].get(t, set()))\n    if 'year_min' in criteria or 'year_max' in criteria:\n        intersect(_year_range(indexes['year'], criteria.get('year_min'), criteria.get('year_max')))\n    if candidates is None:\n        candidates = set(b['id'] for b in books)\n    return sorted(candidates)",
+        "algorithm": "Multi-field composite index: hash indexes for equality/membership, sorted+bisect for range, combined via set intersection",
+        "time_complexity": "Build: O(n log n); Query: O(log n + sum of candidate set sizes)",
+        "space_complexity": "O(n + total tags)"
+      }
+    },
+    {
+      "task_id": "SR-008",
+      "title": "Hash-Based Large-Scale Record Lookup",
+      "description": "Build a hash-based lookup table for large-scale customer records keyed by account number, supporting single and batch lookups with collision handling.",
+      "requirements": [
+        "R1: `build_lookup(records: List[dict]) -> dict` builds a hash map from account_number to full record.",
+        "R2: `lookup(table, account_number) -> Optional[dict]` returns the record or None if not found.",
+        "R3: `batch_lookup(table, account_numbers: List) -> Dict[Any, Optional[dict]]` performs multiple lookups efficiently (not by re-scanning records).",
+        "R4: Duplicate account_number in input raises no error; the last occurrence wins in the table.",
+        "R5: Function handles empty records list and empty query list gracefully."
+      ],
+      "source_type": "original",
+      "input_scale": {
+        "small": "1,000 records",
+        "medium": "100,000 records",
+        "large": "5,000,000 records, tests hash table build and batch lookup throughput vs linear scan"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Write `build_lookup(records: List[dict]) -> dict` mapping account_number to record (last occurrence wins on duplicates). Write `lookup(table, account_number)` returning the record or None. Write `batch_lookup(table, account_numbers: List) -> Dict` performing all lookups via the hash table (O(1) average per lookup), not by scanning records. Must handle 5,000,000 records efficiently."
+        },
+        "BUG_FIX": {
+          "initial_task": "Write `build_lookup(records)` mapping account_number to record, `lookup(table, account_number)`, and `batch_lookup(table, account_numbers)`.",
+          "bug_report": "batch_lookup() is implemented by looping through account_numbers and calling a linear search over the original records list for each one, causing extreme slowdown on the large dataset instead of using the prebuilt hash table."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Write `build_lookup(records)`, `lookup(table, account_number)`, and `batch_lookup(table, account_numbers)` using true O(1) average hash table lookups.",
+          "feature_request": "Add `lookup_missing(table, account_numbers: List) -> List` that returns only the account_numbers from the input list that are NOT present in the table, preserving input order."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Write `build_lookup(records)`, `lookup(table, account_number)`, and `batch_lookup(table, account_numbers)` using true O(1) average hash table lookups.",
+          "edge_case": "How should the function behave with an empty records list, an empty account_numbers query list, or duplicate account_numbers appearing multiple times within the same query list?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Write `build_lookup(records)`, `lookup(table, account_number)`, and `batch_lookup(table, account_numbers)`.",
+          "turn2_bug": "batch_lookup does a linear scan per query instead of using the hash table, causing severe slowdown on large data.",
+          "turn3_feature": "Add `lookup_missing` returning account_numbers not found in the table, preserving input order.",
+          "turn4_edge_case": "Handle empty records list, empty query list, and duplicate account_numbers within a single query list."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R3"], "fix": ["R3"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4"], "feature": ["R3"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4"], "edge": ["R5"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R3"], "turn2": ["R3"], "turn3": ["R3"], "turn4": ["R5"]}
+      },
+      "tests": {
+        "public": [
+          "lookup() finds a known account number correctly",
+          "lookup() returns None for missing account number",
+          "batch_lookup() returns correct mapping for multiple known account numbers",
+          "build_lookup() with duplicate account numbers keeps last occurrence",
+          "batch_lookup() with empty query list returns {}"
+        ],
+        "hidden": [
+          "batch_lookup on 5,000,000-record large dataset with 10,000 queries completes quickly via hash table",
+          "empty records list produces empty table and all lookups return None",
+          "duplicate account numbers within query list handled correctly in batch_lookup",
+          "lookup_missing (post feature) correctly identifies not-found account numbers preserving order",
+          "batch_lookup results match individual lookup() calls for the same inputs"
+        ]
+      },
+      "reference_solution": {
+        "code": "def build_lookup(records):\n    table = {}\n    for r in records:\n        table[r['account_number']] = r\n    return table\n\ndef lookup(table, account_number):\n    return table.get(account_number)\n\ndef batch_lookup(table, account_numbers):\n    return {acc: table.get(acc) for acc in account_numbers}\n\ndef lookup_missing(table, account_numbers):\n    return [acc for acc in account_numbers if acc not in table]",
+        "algorithm": "Hash table lookup with O(1) average-case access; batch operations reuse the same table",
+        "time_complexity": "Build: O(n); Lookup: O(1) average; Batch of m queries: O(m)",
+        "space_complexity": "O(n)"
+      }
+    },
+    {
+      "task_id": "SR-009",
+      "title": "Sorted-Array Binary Search Retrieval",
+      "description": "Retrieve records from a large sorted-by-timestamp event log using binary search for exact and range timestamp queries.",
+      "requirements": [
+        "R1: Events are dicts with 'timestamp' (int) and 'event_type' fields, given already sorted by timestamp.",
+        "R2: `find_exact(events, timestamp) -> List[dict]` returns all events with that exact timestamp using binary search boundaries.",
+        "R3: `find_range(events, start, end) -> List[dict]` returns all events with start <= timestamp <= end using binary search boundaries.",
+        "R4: Both functions must run in O(log n + k) time, not O(n).",
+        "R5: Empty result returned (not error) when no events match."
+      ],
+      "source_type": "original",
+      "input_scale": {
+        "small": "1,000 events",
+        "medium": "200,000 events",
+        "large": "10,000,000 events, tests binary search vs linear scan at scale"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Given a list of event dicts pre-sorted by 'timestamp', write `find_exact(events, timestamp) -> List[dict]` and `find_range(events, start, end) -> List[dict]` both using the `bisect` module to locate boundaries in O(log n), then slicing to get matches in O(k) additional time. Return [] when nothing matches. Must handle 10,000,000 events efficiently."
+        },
+        "BUG_FIX": {
+          "initial_task": "Given events pre-sorted by 'timestamp', write `find_exact(events, timestamp)` and `find_range(events, start, end)` using bisect for boundary lookup.",
+          "bug_report": "find_range() is using bisect on the full events list correctly, but a helper function extracts the list of timestamps via `[e['timestamp'] for e in events]` INSIDE find_range on every call, causing O(n) overhead per query on the large dataset — need this precomputed or avoided."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Write `find_exact(events, timestamp)` and `find_range(events, start, end)` using bisect for O(log n + k) boundary lookup without per-call O(n) overhead.",
+          "feature_request": "Add `find_range_by_type(events, start, end, event_type) -> List[dict]` that first narrows via binary search range, then filters by event_type within that narrowed slice."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Write `find_exact(events, timestamp)` and `find_range(events, start, end)` using bisect for O(log n + k) boundary lookup without per-call O(n) overhead.",
+          "edge_case": "What should happen when `events` is empty, when start > end in find_range, or when timestamp/start/end fall outside the min/max range present in the data?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Write `find_exact(events, timestamp)` and `find_range(events, start, end)` for a pre-sorted-by-timestamp event list using bisect.",
+          "turn2_bug": "A helper recomputes the full timestamp list on every call, adding O(n) overhead per query and eliminating the benefit of binary search at scale.",
+          "turn3_feature": "Add `find_range_by_type` narrowing by timestamp range then filtering by event_type.",
+          "turn4_edge_case": "Handle empty events list, start > end, and query values outside the data's min/max timestamp range."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R3"], "fix": ["R4"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4"], "feature": ["R3"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4"], "edge": ["R5"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R3"], "turn2": ["R4"], "turn3": ["R3"], "turn4": ["R5"]}
+      },
+      "tests": {
+        "public": [
+          "find_exact returns all events matching a known timestamp",
+          "find_range returns all events within a known range",
+          "find_exact with no matching timestamp returns []",
+          "find_range with start > end returns []",
+          "repeated identical find_range call returns same result"
+        ],
+        "hidden": [
+          "find_range on 10,000,000-event large dataset completes quickly via binary search",
+          "empty events list returns [] for both functions without crash",
+          "query values outside min/max timestamp range return [] appropriately",
+          "find_range_by_type (post feature) correctly narrows then filters",
+          "find_exact/find_range results match brute-force linear filter on sampled queries"
+        ]
+      },
+      "reference_solution": {
+        "code": "import bisect\n\ndef _timestamps(events):\n    return [e['timestamp'] for e in events]\n\ndef find_exact(events, timestamp):\n    ts = _timestamps(events)\n    lo = bisect.bisect_left(ts, timestamp)\n    hi = bisect.bisect_right(ts, timestamp)\n    return events[lo:hi]\n\ndef find_range(events, start, end):\n    if start > end:\n        return []\n    ts = _timestamps(events)\n    lo = bisect.bisect_left(ts, start)\n    hi = bisect.bisect_right(ts, end)\n    return events[lo:hi]\n\ndef find_range_by_type(events, start, end, event_type):\n    return [e for e in find_range(events, start, end) if e['event_type'] == event_type]",
+        "algorithm": "Binary search boundary-finding over a pre-sorted list using bisect_left/bisect_right",
+        "time_complexity": "O(log n + k) per query where k = result size (note: precomputing timestamps once amortizes to O(log n) with a cached array)",
+        "space_complexity": "O(n) for the cached timestamp array"
+      }
+    },
+    {
+      "task_id": "SR-010",
+      "title": "Batch Multi-Query Inverted Index Processing",
+      "description": "Process a large batch of keyword queries against a precomputed inverted index efficiently by caching repeated query results.",
+      "requirements": [
+        "R1: Build an inverted index from a document collection (token -> sorted doc ID list).",
+        "R2: `process_batch(index, queries: List[str]) -> Dict[str, List[int]]` processes many AND-keyword queries, returning a dict mapping each query string to its result list.",
+        "R3: Identical repeated queries within the batch must be computed only once (result caching).",
+        "R4: Queries are processed independently; one query's result must not affect another's.",
+        "R5: Output dict preserves insertion order of first occurrence of each unique query string."
+      ],
+      "source_type": "original",
+      "input_scale": {
+        "small": "200 documents, 50 queries",
+        "medium": "20,000 documents, 5,000 queries",
+        "large": "500,000 documents, 200,000 queries with many repeats, tests caching benefit"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Write `build_index(docs: List[str]) -> Dict[str, List[int]]` (inverted index of lowercase tokens). Write `process_batch(index, queries: List[str]) -> Dict[str, List[int]]` that processes each query (space-separated keywords, AND semantics via sorted-list intersection), caching results for repeated identical query strings so each unique query is computed only once, and preserving first-occurrence order in the output dict. Must handle 200,000 queries with many repeats efficiently."
+        },
+        "BUG_FIX": {
+          "initial_task": "Write `build_index(docs)` and `process_batch(index, queries)` processing AND-keyword queries with result caching for repeated queries.",
+          "bug_report": "process_batch() recomputes the intersection from scratch for every query in the batch, even when the exact same query string appears thousands of times, causing the large dataset test to time out — caching isn't actually implemented despite being intended."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Write `build_index(docs)` and `process_batch(index, queries)` with working result caching for repeated identical queries.",
+          "feature_request": "Add `process_batch_stats(index, queries) -> Tuple[Dict[str, List[int]], int]` that returns the same results dict plus a count of how many queries were served from cache (i.e., duplicate query occurrences beyond the first)."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Write `build_index(docs)` and `process_batch(index, queries)` with working result caching for repeated identical queries.",
+          "edge_case": "How should process_batch handle an empty queries list, a query string that is empty or whitespace-only, or query strings differing only by whitespace spacing between keywords (e.g. 'cat dog' vs 'cat  dog')?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Write `build_index(docs)` and `process_batch(index, queries)` processing AND-keyword queries with result caching.",
+          "turn2_bug": "Caching isn't implemented — identical repeated queries are recomputed from scratch, causing timeouts on large batches.",
+          "turn3_feature": "Add `process_batch_stats` returning results plus a count of cache-served queries.",
+          "turn4_edge_case": "Handle empty queries list, empty/whitespace-only query strings, and queries differing only in internal whitespace spacing."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R4"], "fix": ["R3"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4", "R5"], "feature": ["R3"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4", "R5"], "edge": ["R2"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R4"], "turn2": ["R3"], "turn3": ["R3"], "turn4": ["R2"]}
+      },
+      "tests": {
+        "public": [
+          "process_batch returns correct results for a small set of distinct queries",
+          "process_batch handles a batch with several exact-duplicate query strings correctly",
+          "output dict preserves first-occurrence order of unique queries",
+          "process_batch on empty queries list returns {}",
+          "process_batch results match calling search individually per query"
+        ],
+        "hidden": [
+          "process_batch on 200,000-query large batch with many repeats completes quickly via caching",
+          "empty/whitespace-only query string produces [] result without crash",
+          "queries differing only in internal whitespace spacing are treated per documented normalization behavior",
+          "process_batch_stats (post feature) reports correct cache-hit count",
+          "one query's processing does not mutate or affect another query's result (independence check)"
+        ]
+      },
+      "reference_solution": {
+        "code": "def build_index(docs):\n    index = {}\n    for doc_id, text in enumerate(docs):\n        for tok in set(t.lower() for t in text.split() if t.isalnum()):\n            index.setdefault(tok, []).append(doc_id)\n    for tok in index:\n        index[tok].sort()\n    return index\n\ndef _intersect_all(postings):\n    if not postings:\n        return []\n    result = postings[0]\n    for p in postings[1:]:\n        i = j = 0\n        merged = []\n        while i < len(result) and j < len(p):\n            if result[i] == p[j]:\n                merged.append(result[i]); i += 1; j += 1\n            elif result[i] < p[j]:\n                i += 1\n            else:\n                j += 1\n        result = merged\n    return result\n\ndef process_batch(index, queries):\n    cache = {}\n    output = {}\n    for q in queries:\n        if q in cache:\n            if q not in output:\n                output[q] = cache[q]\n            continue\n        keywords = [k.lower() for k in q.split() if k]\n        if not keywords:\n            result = []\n        else:\n            postings = [index.get(k, []) for k in keywords]\n            result = _intersect_all(postings) if all(postings) else []\n        cache[q] = result\n        output[q] = result\n    return output",
+        "algorithm": "Inverted index intersection with a query-result cache to avoid recomputation for repeated identical queries within a batch",
+        "time_complexity": "O(sum of postings sizes for unique queries) instead of O(batch_size * postings)",
+        "space_complexity": "O(unique tokens + unique queries)"
+      }
+    },
+    {
+      "task_id": "SR-011",
+      "title": "Substring Search Across Document Collection",
+      "description": "Search for arbitrary substrings (not just whole tokens) across a set of documents using an efficient string-matching algorithm rather than naive repeated scanning.",
+      "requirements": [
+        "R1: `search_substring(docs: List[str], pattern: str) -> Dict[int, List[int]]` returns, for each document containing pattern, a list of all starting positions (0-indexed).",
+        "R2: Use the Knuth-Morris-Pratt (KMP) algorithm for pattern matching (not naive O(n*m) per document).",
+        "R3: Documents with no match are excluded from the result dict.",
+        "R4: Empty pattern returns an empty dict (no matches defined for empty pattern).",
+        "R5: Matching is case-sensitive by default."
+      ],
+      "source_type": "benchmark-inspired",
+      "input_scale": {
+        "small": "50 documents, ~1KB each",
+        "medium": "5,000 documents, ~5KB each",
+        "large": "100,000 documents, ~10KB each, tests KMP efficiency vs naive substring scanning"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Write `search_substring(docs: List[str], pattern: str) -> Dict[int, List[int]]` that uses the KMP algorithm to find all occurrences of `pattern` in each document, returning a dict mapping doc_id to list of match start positions, excluding documents with no matches. Empty pattern returns {}. Case-sensitive matching. Must be efficient on 100,000 documents totaling ~1GB of text."
+        },
+        "BUG_FIX": {
+          "initial_task": "Write `search_substring(docs, pattern)` using KMP to find all match positions per document, returning a dict excluding non-matching docs.",
+          "bug_report": "The KMP failure function (partial match table) is computed incorrectly for patterns with repeated substructure (e.g. 'aabaabaa'), causing some valid matches to be missed or incorrect positions to be returned on the large dataset."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Write `search_substring(docs, pattern)` using a correctly implemented KMP failure function, returning accurate match positions per document.",
+          "feature_request": "Add a `case_sensitive` boolean parameter (default True) to `search_substring`; when False, matching should be case-insensitive without corrupting the original document text or reported positions."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Write `search_substring(docs, pattern)` using a correctly implemented KMP failure function, returning accurate match positions per document.",
+          "edge_case": "How should the function behave when pattern is longer than every document, when pattern equals an entire document exactly, or when pattern contains overlapping repeated matches within a single document (e.g. pattern 'aa' in 'aaaa')?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Write `search_substring(docs, pattern)` using KMP to find all match positions per document, excluding non-matching docs.",
+          "turn2_bug": "The KMP failure function is wrong for patterns with repeated substructure, causing missed or incorrect matches.",
+          "turn3_feature": "Add a `case_sensitive` parameter (default True) for optional case-insensitive matching.",
+          "turn4_edge_case": "Handle pattern longer than the document, pattern equal to the whole document, and overlapping repeated matches within one document."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R3"], "fix": ["R2"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4", "R5"], "feature": ["R5"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4", "R5"], "edge": ["R1", "R3"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R3"], "turn2": ["R2"], "turn3": ["R5"], "turn4": ["R1", "R3"]}
+      },
+      "tests": {
+        "public": [
+          "search_substring finds known pattern occurrences with correct positions on small docs",
+          "search_substring with empty pattern returns {}",
+          "documents with no match are excluded from result",
+          "search_substring finds overlapping matches (e.g. 'aa' in 'aaaa' at positions 0,1,2)",
+          "repeated identical search_substring call returns same result"
+        ],
+        "hidden": [
+          "search_substring on 100,000-doc large dataset completes efficiently via KMP",
+          "pattern with repeated substructure (e.g. 'aabaabaa') produces correct failure function and matches",
+          "pattern longer than a document correctly excludes that document",
+          "pattern equal to entire document returns single match at position 0",
+          "case_sensitive=False (post feature) matches regardless of letter case"
+        ]
+      },
+      "reference_solution": {
+        "code": "def _kmp_table(pattern):\n    table = [0] * len(pattern)\n    k = 0\n    for i in range(1, len(pattern)):\n        while k > 0 and pattern[i] != pattern[k]:\n            k = table[k-1]\n        if pattern[i] == pattern[k]:\n            k += 1\n        table[i] = k\n    return table\n\ndef _kmp_search(text, pattern, table):\n    positions = []\n    k = 0\n    for i, ch in enumerate(text):\n        while k > 0 and ch != pattern[k]:\n            k = table[k-1]\n        if ch == pattern[k]:\n            k += 1\n        if k == len(pattern):\n            positions.append(i - len(pattern) + 1)\n            k = table[k-1]\n    return positions\n\ndef search_substring(docs, pattern, case_sensitive=True):\n    if not pattern:\n        return {}\n    p = pattern if case_sensitive else pattern.lower()\n    table = _kmp_table(p)\n    result = {}\n    for doc_id, text in enumerate(docs):\n        t = text if case_sensitive else text.lower()\n        positions = _kmp_search(t, p, table)\n        if positions:\n            result[doc_id] = positions\n    return result",
+        "algorithm": "Knuth-Morris-Pratt string matching with failure function precomputation",
+        "time_complexity": "O(m) preprocessing + O(n) per document scan, total O(m + total_text_length)",
+        "space_complexity": "O(m) for the failure table"
+      }
+    },
+    {
+      "task_id": "SR-012",
+      "title": "Numeric Range Query Filtering with Sorted Index",
+      "description": "Support fast numeric range queries (e.g. price ranges) over a large product catalog using a sorted index rather than scanning every record.",
+      "requirements": [
+        "R1: `build_price_index(products: List[dict]) -> List[Tuple[float,int]]` builds a (price, id) list sorted by price.",
+        "R2: `range_query(price_index, min_price, max_price) -> List[int]` returns product ids with price in [min_price, max_price], via bisect boundaries.",
+        "R3: Result ids returned sorted ascending by id (not by price).",
+        "R4: Invalid range (min_price > max_price) returns empty list without error.",
+        "R5: Supports multiple sequential range queries reusing the same prebuilt index."
+      ],
+      "source_type": "original",
+      "input_scale": {
+        "small": "500 products",
+        "medium": "50,000 products",
+        "large": "3,000,000 products, tests bisect-based range queries vs full scan filtering"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Write `build_price_index(products: List[dict]) -> List[Tuple[float,int]]` sorted by price. Write `range_query(price_index, min_price, max_price) -> List[int]` using bisect to find the boundary range in O(log n), then returning matching ids sorted ascending by id. Invalid range (min > max) returns []. Must efficiently support many sequential queries against the same index on 3,000,000 products."
+        },
+        "BUG_FIX": {
+          "initial_task": "Write `build_price_index(products)` sorted by price, and `range_query(price_index, min_price, max_price)` using bisect boundaries returning matching ids.",
+          "bug_report": "range_query() returns ids in price-sorted order instead of ascending id order as required, and when min_price > max_price it raises a ValueError from bisect instead of returning an empty list."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Write `build_price_index(products)` and `range_query(price_index, min_price, max_price)` returning ids sorted ascending by id, safely handling invalid ranges.",
+          "feature_request": "Add `range_query_with_prices(price_index, min_price, max_price) -> List[Tuple[int, float]]` returning (id, price) pairs sorted by price ascending, for display purposes, alongside the existing id-only function."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Write `build_price_index(products)` and `range_query(price_index, min_price, max_price)` returning ids sorted ascending by id, safely handling invalid ranges.",
+          "edge_case": "What happens when min_price equals max_price exactly, when multiple products share the exact same price, or when min_price/max_price are outside the min/max price present in the catalog?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Write `build_price_index(products)` and `range_query(price_index, min_price, max_price)` using bisect boundaries returning matching ids.",
+          "turn2_bug": "Results are returned in price-sorted order instead of id-sorted order, and invalid ranges raise an error instead of returning [].",
+          "turn3_feature": "Add `range_query_with_prices` returning (id, price) pairs sorted by price for display.",
+          "turn4_edge_case": "Handle min_price == max_price, multiple products sharing the same price, and out-of-range min/max values."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5"],
+        "BUG_FIX": {"initial": ["R1", "R2"], "fix": ["R3", "R4"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4"], "feature": ["R2"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4"], "edge": ["R2", "R4"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2"], "turn2": ["R3", "R4"], "turn3": ["R2"], "turn4": ["R2", "R4"]}
+      },
+      "tests": {
+        "public": [
+          "range_query returns correct ids for a known price range, sorted by id",
+          "range_query with min_price > max_price returns []",
+          "range_query with min_price == max_price returns exact-price matches only",
+          "repeated identical range_query call returns same result",
+          "range_query covering entire price span returns all ids sorted"
+        ],
+        "hidden": [
+          "range_query on 3,000,000-product large dataset completes quickly via bisect",
+          "range outside the catalog's min/max price returns [] or full set appropriately",
+          "multiple products sharing the exact same price are all included at that boundary",
+          "range_query_with_prices (post feature) returns correctly price-sorted (id, price) pairs",
+          "many sequential range_query calls against same index produce results matching brute-force filtering"
+        ]
+      },
+      "reference_solution": {
+        "code": "import bisect\n\ndef build_price_index(products):\n    return sorted((p['price'], p['id']) for p in products)\n\ndef range_query(price_index, min_price, max_price):\n    if min_price > max_price:\n        return []\n    prices = [p[0] for p in price_index]\n    lo = bisect.bisect_left(prices, min_price)\n    hi = bisect.bisect_right(prices, max_price)\n    ids = [p[1] for p in price_index[lo:hi]]\n    return sorted(ids)\n\ndef range_query_with_prices(price_index, min_price, max_price):\n    if min_price > max_price:\n        return []\n    prices = [p[0] for p in price_index]\n    lo = bisect.bisect_left(prices, min_price)\n    hi = bisect.bisect_right(prices, max_price)\n    return list(price_index[lo:hi])",
+        "algorithm": "Sorted-array range query via bisect_left/bisect_right boundary search",
+        "time_complexity": "Build: O(n log n); Query: O(log n + k)",
+        "space_complexity": "O(n)"
+      }
+    },
+    {
+      "task_id": "SR-013",
+      "title": "Boolean Query Processing over Inverted Index",
+      "description": "Support full boolean query expressions (AND, OR, NOT) over an inverted index of a document collection.",
+      "requirements": [
+        "R1: Build an inverted index (token -> sorted doc ID list) plus total document count.",
+        "R2: `evaluate(index, total_docs, expr: str) -> List[int]` parses and evaluates expressions like 'a AND b', 'a OR b', 'a AND NOT b', using standard left-to-right precedence with explicit AND/OR/NOT tokens.",
+        "R3: NOT term(t) is computed as complement: all doc ids minus postings(t).",
+        "R4: Parentheses are supported for grouping, e.g. '(a OR b) AND NOT c'.",
+        "R5: Result returned as sorted list of doc ids, deduplicated.",
+        "R6: Unknown terms (not in index) are treated as empty postings, not errors."
+      ],
+      "source_type": "benchmark-inspired",
+      "input_scale": {
+        "small": "100 documents, short expressions",
+        "medium": "10,000 documents, expressions with up to 5 operators",
+        "large": "300,000 documents, complex nested expressions, tests parsing + set-op efficiency at scale"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Write `build_index(docs: List[str]) -> Dict[str, List[int]]` (inverted index). Write `evaluate(index, total_docs: int, expr: str) -> List[int]` that parses a boolean query string with AND/OR/NOT operators and parentheses (e.g. '(cat OR dog) AND NOT fish'), evaluates it against the index, and returns a sorted deduplicated list of matching doc ids. Unknown terms treated as empty postings. Implement using a simple recursive-descent or shunting-yard parser — not eval()."
+        },
+        "BUG_FIX": {
+          "initial_task": "Write `build_index(docs)` and `evaluate(index, total_docs, expr)` parsing AND/OR/NOT boolean expressions with parentheses against the inverted index.",
+          "bug_report": "Expressions with NOT applied after AND, like 'a AND NOT b', are being parsed incorrectly — NOT is binding to the whole 'a AND b' subexpression instead of just to 'b', producing wrong results on the medium dataset."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Write `build_index(docs)` and `evaluate(index, total_docs, expr)` with correct operator precedence/binding for AND/OR/NOT and parentheses.",
+          "feature_request": "Add support for case-insensitive term matching in expressions (terms in the query should be lowercased to match the lowercase-indexed tokens) while keeping the AND/OR/NOT keywords case-sensitive (must be uppercase)."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Write `build_index(docs)` and `evaluate(index, total_docs, expr)` with correct operator precedence/binding for AND/OR/NOT and parentheses.",
+          "edge_case": "How should evaluate() handle an expression that is just a single term with no operators, an expression that is only 'NOT term', or deeply nested redundant parentheses like '((((a))))'?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Write `build_index(docs)` and `evaluate(index, total_docs, expr)` parsing AND/OR/NOT boolean expressions with parentheses.",
+          "turn2_bug": "NOT is binding incorrectly to a larger subexpression than intended (e.g. in 'a AND NOT b') instead of only the following term.",
+          "turn3_feature": "Add case-insensitive term matching while keeping AND/OR/NOT keywords case-sensitive.",
+          "turn4_edge_case": "Handle a single bare term, a 'NOT term'-only expression, and deeply nested redundant parentheses."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5", "R6"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R3", "R4"], "fix": ["R2", "R3"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4", "R5", "R6"], "feature": ["R2", "R6"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4", "R5", "R6"], "edge": ["R2", "R4"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R3", "R4"], "turn2": ["R2", "R3"], "turn3": ["R2", "R6"], "turn4": ["R2", "R4"]}
+      },
+      "tests": {
+        "public": [
+          "evaluate('a AND b') returns correct intersection",
+          "evaluate('a OR b') returns correct union",
+          "evaluate('a AND NOT b') returns correct set difference",
+          "evaluate('(a OR b) AND NOT c') respects parentheses correctly",
+          "evaluate on a single bare term returns that term's postings"
+        ],
+        "hidden": [
+          "evaluate on 300,000-doc large dataset with complex nested expressions completes and is correct vs brute-force",
+          "unknown term (not in index) treated as empty postings, no error",
+          "deeply nested redundant parentheses '((((a))))' evaluate correctly",
+          "case-insensitive term matching (post feature) works while AND/OR/NOT remain case-sensitive keywords",
+          "'NOT term'-only expression correctly returns complement of that term's postings"
+        ]
+      },
+      "reference_solution": {
+        "code": "def build_index(docs):\n    index = {}\n    for doc_id, text in enumerate(docs):\n        for tok in set(t.lower() for t in text.split() if t.isalnum()):\n            index.setdefault(tok, []).append(doc_id)\n    for tok in index:\n        index[tok].sort()\n    return index\n\ndef evaluate(index, total_docs, expr, case_insensitive=True):\n    tokens = expr.replace('(', ' ( ').replace(')', ' ) ').split()\n    pos = [0]\n    all_docs = set(range(total_docs))\n\n    def term_set(t):\n        key = t.lower() if case_insensitive else t\n        return set(index.get(key, []))\n\n    def parse_or():\n        left = parse_and()\n        while pos[0] < len(tokens) and tokens[pos[0]] == 'OR':\n            pos[0] += 1\n            left = left | parse_and()\n        return left\n\n    def parse_and():\n        left = parse_not()\n        while pos[0] < len(tokens) and tokens[pos[0]] == 'AND':\n            pos[0] += 1\n            left = left & parse_not()\n        return left\n\n    def parse_not():\n        if pos[0] < len(tokens) and tokens[pos[0]] == 'NOT':\n            pos[0] += 1\n            return all_docs - parse_atom()\n        return parse_atom()\n\n    def parse_atom():\n        if tokens[pos[0]] == '(':\n            pos[0] += 1\n            result = parse_or()\n            pos[0] += 1  # consume ')'\n            return result\n        t = tokens[pos[0]]\n        pos[0] += 1\n        return term_set(t)\n\n    result = parse_or()\n    return sorted(result)",
+        "algorithm": "Recursive-descent parser for boolean expressions (OR lowest precedence, then AND, then NOT), evaluated via Python set operations over inverted-index postings",
+        "time_complexity": "O(expr_length) parsing + O(sum of postings sizes touched) for set operations",
+        "space_complexity": "O(n) for postings and intermediate sets"
+      }
+    },
+    {
+      "task_id": "SR-014",
+      "title": "Phone Directory Lookup with Collision-Aware Hashing",
+      "description": "Build a custom hash table (implemented explicitly, not using dict) with chaining for collision resolution to look up phone directory entries by phone number.",
+      "requirements": [
+        "R1: Implement a custom hash table class `PhoneHashTable` with a fixed number of buckets and chaining (list of entries per bucket) for collision resolution.",
+        "R2: `insert(phone_number: str, name: str)` adds an entry; hash function must be deterministic given the same phone number.",
+        "R3: `lookup(phone_number: str) -> Optional[str]` returns the name or None, resolving collisions by scanning the appropriate bucket's chain.",
+        "R4: Inserting a duplicate phone_number updates the existing entry rather than adding a new chain node.",
+        "R5: Table must support at least 10x load factor gracefully (many collisions) without incorrect lookups."
+      ],
+      "source_type": "original",
+      "input_scale": {
+        "small": "1,000 entries, 101 buckets",
+        "medium": "100,000 entries, 1,009 buckets",
+        "large": "3,000,000 entries, 10,007 buckets, tests chaining overhead and hash distribution"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Implement a class `PhoneHashTable(num_buckets: int)` with methods `insert(phone_number: str, name: str)` and `lookup(phone_number: str) -> Optional[str]`. Use a simple custom hash function (e.g. sum of character codes mod num_buckets) and chaining (list per bucket) for collisions. Duplicate insert of the same phone_number updates the entry in place rather than duplicating it. Must remain correct even with many hash collisions (e.g. num_buckets much smaller than entry count)."
+        },
+        "BUG_FIX": {
+          "initial_task": "Implement `PhoneHashTable(num_buckets)` with `insert(phone_number, name)` and `lookup(phone_number)` using a custom hash function and chaining.",
+          "bug_report": "When two different phone numbers hash to the same bucket, lookup() returns the name of whichever entry happens to be first in the chain regardless of which phone_number was queried — it isn't actually comparing phone numbers within the chain, just returning the bucket's first entry."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Implement `PhoneHashTable(num_buckets)` with `insert(phone_number, name)` and `lookup(phone_number)` correctly comparing keys within each bucket's chain.",
+          "feature_request": "Add a `delete(phone_number: str) -> bool` method that removes the entry if present (returns True) or returns False if not found, correctly updating the chain without breaking other entries in the same bucket."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Implement `PhoneHashTable(num_buckets)` with `insert(phone_number, name)` and `lookup(phone_number)` correctly comparing keys within each bucket's chain.",
+          "edge_case": "How should the table behave when num_buckets is 1 (all entries collide into a single bucket), when looking up a phone_number that was never inserted, or when inserting an empty string as phone_number?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Implement `PhoneHashTable(num_buckets)` with `insert(phone_number, name)` and `lookup(phone_number)` using a custom hash function and chaining.",
+          "turn2_bug": "lookup() returns the first entry in a bucket's chain without verifying the phone_number actually matches, giving wrong results on collisions.",
+          "turn3_feature": "Add a `delete(phone_number)` method returning True/False, correctly maintaining the chain.",
+          "turn4_edge_case": "Handle num_buckets=1 (all collide), looking up a never-inserted number, and inserting an empty-string phone_number."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R3"], "fix": ["R3"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4"], "feature": ["R3"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4"], "edge": ["R5"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R3"], "turn2": ["R3"], "turn3": ["R3"], "turn4": ["R5"]}
+      },
+      "tests": {
+        "public": [
+          "insert then lookup returns the correct name for a known phone number",
+          "lookup of a never-inserted phone number returns None",
+          "inserting a duplicate phone_number updates the name rather than duplicating the entry",
+          "two phone numbers forced to collide (small num_buckets) both look up correctly",
+          "repeated identical lookup call returns same result"
+        ],
+        "hidden": [
+          "PhoneHashTable with 3,000,000 entries and 10,007 buckets performs correct lookups despite heavy collisions",
+          "num_buckets=1 (all entries collide) still returns correct results for every lookup",
+          "empty-string phone_number can be inserted and looked up correctly",
+          "delete() (post feature) correctly removes an entry and subsequent lookup returns None",
+          "delete() on a colliding bucket does not remove or corrupt other entries in the same chain"
+        ]
+      },
+      "reference_solution": {
+        "code": "class PhoneHashTable:\n    def __init__(self, num_buckets):\n        self.num_buckets = num_buckets\n        self.buckets = [[] for _ in range(num_buckets)]\n\n    def _hash(self, phone_number):\n        return sum(ord(c) for c in phone_number) % self.num_buckets\n\n    def insert(self, phone_number, name):\n        idx = self._hash(phone_number)\n        chain = self.buckets[idx]\n        for i, (pn, nm) in enumerate(chain):\n            if pn == phone_number:\n                chain[i] = (phone_number, name)\n                return\n        chain.append((phone_number, name))\n\n    def lookup(self, phone_number):\n        idx = self._hash(phone_number)\n        for pn, nm in self.buckets[idx]:\n            if pn == phone_number:\n                return nm\n        return None\n\n    def delete(self, phone_number):\n        idx = self._hash(phone_number)\n        chain = self.buckets[idx]\n        for i, (pn, nm) in enumerate(chain):\n            if pn == phone_number:\n                del chain[i]\n                return True\n        return False",
+        "algorithm": "Custom hash table with separate chaining for collision resolution",
+        "time_complexity": "O(1) average per operation with good hash distribution; O(load_factor) worst case within a bucket",
+        "space_complexity": "O(n + num_buckets)"
+      }
+    },
+    {
+      "task_id": "SR-015",
+      "title": "N-Gram Based Fuzzy Search",
+      "description": "Implement approximate string search using character n-gram overlap (Jaccard similarity) to find similar strings efficiently without full edit-distance computation on every candidate.",
+      "requirements": [
+        "R1: `ngrams(s: str, n: int) -> Set[str]` extracts character n-grams from a string.",
+        "R2: `build_ngram_index(words: List[str], n: int) -> Dict[str, Set[int]]` maps each n-gram to the set of word indices containing it.",
+        "R3: `search(words, ngram_index, query: str, n: int, threshold: float) -> List[Tuple[int,float]]` returns (word_index, jaccard_similarity) pairs where similarity >= threshold, using the n-gram index to first narrow candidates (words sharing at least one n-gram with the query) before computing exact Jaccard similarity.",
+        "R4: Results sorted by descending similarity then ascending word_index.",
+        "R5: Words with zero shared n-grams with the query are never candidates (pruned before similarity computation)."
+      ],
+      "source_type": "benchmark-inspired",
+      "input_scale": {
+        "small": "400 words",
+        "medium": "40,000 words",
+        "large": "1,500,000 words, tests n-gram index candidate pruning vs brute-force pairwise comparison"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Write `ngrams(s: str, n: int) -> Set[str]` extracting character n-grams (padded or unpadded, your choice, documented). Write `build_ngram_index(words: List[str], n: int) -> Dict[str, Set[int]]`. Write `search(words, ngram_index, query: str, n: int, threshold: float) -> List[Tuple[int,float]]` that computes query n-grams, gathers candidate word indices from the index (union of indices sharing any n-gram with query), computes exact Jaccard similarity only for those candidates, and returns those with similarity >= threshold, sorted by descending similarity then ascending index. Must handle 1,500,000 words efficiently."
+        },
+        "BUG_FIX": {
+          "initial_task": "Write `ngrams(s, n)`, `build_ngram_index(words, n)`, and `search(words, ngram_index, query, n, threshold)` computing Jaccard similarity on n-gram-index-narrowed candidates.",
+          "bug_report": "search() is computing Jaccard similarity against every word in the entire word list instead of only the candidates that share at least one n-gram with the query, making it as slow as brute force on the large dataset."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Write `ngrams(s, n)`, `build_ngram_index(words, n)`, and `search(words, ngram_index, query, n, threshold)` correctly narrowing candidates via the n-gram index before computing similarity.",
+          "feature_request": "Add a `top_k` parameter to `search()` limiting the number of returned results (after threshold filtering and sorting) to the top_k highest-similarity matches."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Write `ngrams(s, n)`, `build_ngram_index(words, n)`, and `search(words, ngram_index, query, n, threshold)` correctly narrowing candidates via the n-gram index before computing similarity.",
+          "edge_case": "How should the function handle a query shorter than n (fewer than n characters, producing zero n-grams), a threshold of 0.0 (should match any word sharing at least one n-gram), or a threshold of 1.0 (only exact matches)?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Write `ngrams(s, n)`, `build_ngram_index(words, n)`, and `search(words, ngram_index, query, n, threshold)` computing Jaccard similarity for query matches.",
+          "turn2_bug": "search() computes similarity against every word instead of only n-gram-index-narrowed candidates, causing brute-force-level slowness.",
+          "turn3_feature": "Add a `top_k` parameter limiting results to the top_k highest-similarity matches.",
+          "turn4_edge_case": "Handle a query shorter than n, threshold=0.0, and threshold=1.0."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R3", "R4"], "fix": ["R3", "R5"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4", "R5"], "feature": ["R3", "R4"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4", "R5"], "edge": ["R1", "R3"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R3", "R4"], "turn2": ["R3", "R5"], "turn3": ["R3", "R4"], "turn4": ["R1", "R3"]}
+      },
+      "tests": {
+        "public": [
+          "search finds known similar words above a given threshold on small set",
+          "search with threshold=1.0 returns only exact matches",
+          "search with threshold=0.0 returns all words sharing at least one n-gram",
+          "results sorted by descending similarity then ascending index",
+          "repeated identical search call returns same result"
+        ],
+        "hidden": [
+          "search on 1,500,000-word large dataset completes quickly via n-gram index pruning",
+          "query shorter than n produces zero n-grams and returns [] (or documented behavior) without crash",
+          "similarity scores match brute-force Jaccard computation on sampled candidates",
+          "top_k parameter (post feature) correctly limits to highest-similarity matches",
+          "words with zero shared n-grams with query never appear in results even below threshold checks"
+        ]
+      },
+      "reference_solution": {
+        "code": "def ngrams(s, n):\n    s = s.lower()\n    if len(s) < n:\n        return set()\n    return set(s[i:i+n] for i in range(len(s) - n + 1))\n\ndef build_ngram_index(words, n):\n    index = {}\n    for i, w in enumerate(words):\n        for g in ngrams(w, n):\n            index.setdefault(g, set()).add(i)\n    return index\n\ndef search(words, ngram_index, query, n, threshold, top_k=None):\n    q_grams = ngrams(query, n)\n    if not q_grams:\n        return []\n    candidates = set()\n    for g in q_grams:\n        candidates.update(ngram_index.get(g, set()))\n    results = []\n    for idx in candidates:\n        w_grams = ngrams(words[idx], n)\n        union = q_grams | w_grams\n        inter = q_grams & w_grams\n        sim = len(inter) / len(union) if union else 0.0\n        if sim >= threshold:\n            results.append((idx, sim))\n    results.sort(key=lambda x: (-x[1], x[0]))\n    return results[:top_k] if top_k else results",
+        "algorithm": "Character n-gram indexing for candidate generation, followed by exact Jaccard similarity computation only on narrowed candidates",
+        "time_complexity": "Build: O(total_chars); Query: O(query_ngrams + candidates * avg_word_len)",
+        "space_complexity": "O(total n-grams across all words)"
+      }
+    },
+    {
+      "task_id": "SR-016",
+      "title": "Grep-Like Log File Search",
+      "description": "Search structured log entries (in-memory, simulating a log file) for lines matching a pattern, with support for line-number tracking and context lines, similar to grep -A/-B options.",
+      "requirements": [
+        "R1: `search_logs(lines: List[str], pattern: str) -> List[int]` returns 0-indexed line numbers where `pattern` appears as a substring.",
+        "R2: `search_with_context(lines, pattern, before: int, after: int) -> List[Tuple[int, str]]` returns (line_number, line_text) for matches plus `before` lines preceding and `after` lines following each match, deduplicated and sorted by line number.",
+        "R3: Overlapping context windows from multiple nearby matches must not produce duplicate line entries.",
+        "R4: Empty pattern matches every line.",
+        "R5: Must process large log files efficiently using a single pass, not repeated full scans per feature."
+      ],
+      "source_type": "original",
+      "input_scale": {
+        "small": "500 log lines",
+        "medium": "50,000 log lines",
+        "large": "5,000,000 log lines, tests single-pass efficiency and context-window deduplication at scale"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Write `search_logs(lines: List[str], pattern: str) -> List[int]` returning line numbers containing pattern as substring (single pass). Write `search_with_context(lines, pattern, before: int, after: int) -> List[Tuple[int,str]]` returning (line_number, text) for each matched line plus `before` preceding and `after` following lines, with overlapping windows deduplicated, sorted by line number ascending. Empty pattern matches all lines. Must handle 5,000,000 lines in a single pass."
+        },
+        "BUG_FIX": {
+          "initial_task": "Write `search_logs(lines, pattern)` and `search_with_context(lines, pattern, before, after)` returning matches with context windows.",
+          "bug_report": "When two matches are close together and their context windows overlap, search_with_context() returns duplicate (line_number, text) entries for the overlapping lines instead of deduplicating them."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Write `search_logs(lines, pattern)` and `search_with_context(lines, pattern, before, after)` returning deduplicated (line_number, text) results sorted by line number.",
+          "feature_request": "Add a `count_only` boolean parameter to `search_logs(lines, pattern, count_only=False)` that, when True, returns just the integer count of matching lines instead of the list of line numbers, computed without building the full list first."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Write `search_logs(lines, pattern)` and `search_with_context(lines, pattern, before, after)` returning deduplicated (line_number, text) results sorted by line number.",
+          "edge_case": "How should the function handle a match on the very first or very last line (context window extending beyond list bounds), before/after values of 0, or an empty lines list?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Write `search_logs(lines, pattern)` and `search_with_context(lines, pattern, before, after)` returning matches plus surrounding context lines.",
+          "turn2_bug": "Overlapping context windows from nearby matches produce duplicate line entries instead of being deduplicated.",
+          "turn3_feature": "Add a `count_only` parameter to `search_logs` returning just the match count without building the full list.",
+          "turn4_edge_case": "Handle matches at the first/last line (window extending beyond bounds), before/after=0, and an empty lines list."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R4"], "fix": ["R3"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4"], "feature": ["R1", "R5"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4"], "edge": ["R2"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R4"], "turn2": ["R3"], "turn3": ["R1", "R5"], "turn4": ["R2"]}
+      },
+      "tests": {
+        "public": [
+          "search_logs finds correct line numbers for a known pattern",
+          "search_logs with empty pattern matches all lines",
+          "search_with_context returns correct before/after lines for an isolated match",
+          "search_with_context deduplicates overlapping context windows from nearby matches",
+          "repeated identical search_logs call returns same result"
+        ],
+        "hidden": [
+          "search_logs on 5,000,000-line large dataset completes via single pass",
+          "match on first line handles before-context gracefully (no negative index/out of bounds)",
+          "match on last line handles after-context gracefully",
+          "count_only=True (post feature) returns correct integer count matching len(search_logs without count_only))",
+          "empty lines list returns [] for both functions without crash"
+        ]
+      },
+      "reference_solution": {
+        "code": "def search_logs(lines, pattern, count_only=False):\n    if count_only:\n        return sum(1 for line in lines if pattern in line)\n    return [i for i, line in enumerate(lines) if pattern in line]\n\ndef search_with_context(lines, pattern, before, after):\n    matches = search_logs(lines, pattern)\n    included = set()\n    for m in matches:\n        start = max(0, m - before)\n        end = min(len(lines) - 1, m + after)\n        for i in range(start, end + 1):\n            included.add(i)\n    return [(i, lines[i]) for i in sorted(included)]",
+        "algorithm": "Single-pass substring scan for matches; context windows merged via a set to avoid duplicate line inclusion",
+        "time_complexity": "O(total_chars) for search; O(n) for context expansion in the worst case",
+        "space_complexity": "O(n) for the included-lines set"
+      }
+    },
+    {
+      "task_id": "SR-017",
+      "title": "Near-Duplicate Document Detection via Shingling",
+      "description": "Detect near-duplicate documents (not just exact duplicates) using k-shingling and Jaccard similarity over shingle sets, with a shingle-based inverted index to prune candidate pairs.",
+      "requirements": [
+        "R1: `shingles(text: str, k: int) -> Set[str]` extracts k-word shingles from a document.",
+        "R2: `build_shingle_index(docs: List[str], k: int) -> Dict[str, Set[int]]` maps each shingle to the set of doc indices containing it.",
+        "R3: `find_near_duplicates(docs, shingle_index, k, threshold) -> List[Tuple[int,int,float]]` returns (doc_i, doc_j, similarity) triples for all pairs with Jaccard similarity >= threshold, only comparing pairs that share at least one shingle (via the index), not all O(n^2) pairs.",
+        "R4: Each pair reported once with doc_i < doc_j.",
+        "R5: Results sorted by descending similarity, then ascending (doc_i, doc_j)."
+      ],
+      "source_type": "benchmark-inspired",
+      "input_scale": {
+        "small": "60 documents",
+        "medium": "3,000 documents",
+        "large": "80,000 documents, tests shingle-index candidate pruning vs full O(n^2) pairwise comparison"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Write `shingles(text: str, k: int) -> Set[str]` extracting k-word shingles (space-joined k-grams of words). Write `build_shingle_index(docs: List[str], k: int) -> Dict[str, Set[int]]`. Write `find_near_duplicates(docs, shingle_index, k, threshold) -> List[Tuple[int,int,float]]` that uses the shingle index to find candidate doc pairs sharing at least one shingle (avoiding full O(n^2) comparison), computes exact Jaccard similarity on candidate pairs, and returns those >= threshold as (doc_i, doc_j, similarity) with doc_i < doc_j, sorted by descending similarity then ascending pair. Must handle 80,000 documents efficiently."
+        },
+        "BUG_FIX": {
+          "initial_task": "Write `shingles(text, k)`, `build_shingle_index(docs, k)`, and `find_near_duplicates(docs, shingle_index, k, threshold)` finding near-duplicate pairs via shingle-index candidate pruning.",
+          "bug_report": "find_near_duplicates() reports both (i,j) and (j,i) as separate entries for the same pair, and also compares every document against every other document directly instead of using the shingle_index to generate candidate pairs, causing the large dataset test to time out."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Write `shingles(text, k)`, `build_shingle_index(docs, k)`, and `find_near_duplicates(docs, shingle_index, k, threshold)` correctly using shingle-index candidate generation and reporting each pair once with i<j.",
+          "feature_request": "Add a `cluster_duplicates(pairs: List[Tuple[int,int,float]]) -> List[Set[int]]` function that groups documents into connected clusters based on the near-duplicate pairs (using union-find or graph connectivity), useful for finding groups of mutually similar documents."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Write `shingles(text, k)`, `build_shingle_index(docs, k)`, and `find_near_duplicates(docs, shingle_index, k, threshold)` correctly using shingle-index candidate generation and reporting each pair once with i<j.",
+          "edge_case": "How should the function handle a document with fewer than k words (producing zero shingles), a document collection with only one document, or two documents that are byte-for-byte identical (similarity should be exactly 1.0)?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Write `shingles(text, k)`, `build_shingle_index(docs, k)`, and `find_near_duplicates(docs, shingle_index, k, threshold)` finding near-duplicate document pairs.",
+          "turn2_bug": "Pairs are reported twice (both orderings) and candidates are generated via full O(n^2) comparison instead of the shingle index, causing timeouts.",
+          "turn3_feature": "Add `cluster_duplicates` grouping documents into connected clusters from the near-duplicate pairs.",
+          "turn4_edge_case": "Handle documents with fewer than k words, a single-document collection, and byte-identical documents (similarity == 1.0)."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R3"], "fix": ["R3", "R4"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4", "R5"], "feature": ["R3"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4", "R5"], "edge": ["R1", "R3"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R3"], "turn2": ["R3", "R4"], "turn3": ["R3"], "turn4": ["R1", "R3"]}
+      },
+      "tests": {
+        "public": [
+          "find_near_duplicates identifies two known similar documents above threshold",
+          "each duplicate pair reported exactly once with doc_i < doc_j",
+          "identical documents report similarity of 1.0",
+          "find_near_duplicates on documents with no shared shingles returns []",
+          "repeated identical find_near_duplicates call returns same result"
+        ],
+        "hidden": [
+          "find_near_duplicates on 80,000-doc large dataset completes via shingle-index pruning, not O(n^2)",
+          "document with fewer than k words produces zero shingles and is excluded from candidate pairs",
+          "single-document collection returns [] without crash",
+          "similarity scores match brute-force Jaccard computation on sampled candidate pairs",
+          "cluster_duplicates (post feature) correctly groups transitively connected near-duplicate documents"
+        ]
+      },
+      "reference_solution": {
+        "code": "def shingles(text, k):\n    words = text.lower().split()\n    if len(words) < k:\n        return set()\n    return set(' '.join(words[i:i+k]) for i in range(len(words) - k + 1))\n\ndef build_shingle_index(docs, k):\n    index = {}\n    for i, d in enumerate(docs):\n        for s in shingles(d, k):\n            index.setdefault(s, set()).add(i)\n    return index\n\ndef find_near_duplicates(docs, shingle_index, k, threshold):\n    doc_shingles = [shingles(d, k) for d in docs]\n    candidate_pairs = set()\n    for s, doc_ids in shingle_index.items():\n        ids = sorted(doc_ids)\n        for a in range(len(ids)):\n            for b in range(a + 1, len(ids)):\n                candidate_pairs.add((ids[a], ids[b]))\n    results = []\n    for i, j in candidate_pairs:\n        si, sj = doc_shingles[i], doc_shingles[j]\n        union = si | sj\n        sim = len(si & sj) / len(union) if union else 0.0\n        if sim >= threshold:\n            results.append((i, j, sim))\n    results.sort(key=lambda x: (-x[2], x[0], x[1]))\n    return results",
+        "algorithm": "K-shingling with an inverted shingle index to generate candidate document pairs, followed by exact Jaccard similarity on candidates only",
+        "time_complexity": "Build: O(total_words); Compare: O(candidate_pairs * avg_shingle_set_size), much less than O(n^2 * shingle_size) brute force",
+        "space_complexity": "O(total shingles across documents)"
+      }
+    },
+    {
+      "task_id": "SR-018",
+      "title": "Spelling Correction via Nearest-Match Search",
+      "description": "Given a dictionary of valid words, suggest the closest correction(s) for a misspelled query word using a BK-tree (Burkhard-Keller tree) built on edit distance for efficient nearest-neighbor search.",
+      "requirements": [
+        "R1: Implement a `BKTree` class supporting `insert(word: str)` using Levenshtein edit distance as the metric.",
+        "R2: `BKTree.search(query: str, max_distance: int) -> List[Tuple[str,int]]` returns all words within max_distance, using the BK-tree triangle-inequality pruning (not comparing against every word).",
+        "R3: Build the tree from an initial word list via repeated insert calls.",
+        "R4: Results sorted by ascending distance then alphabetically.",
+        "R5: max_distance=0 returns exact matches only."
+      ],
+      "source_type": "benchmark-inspired",
+      "input_scale": {
+        "small": "500 dictionary words",
+        "medium": "40,000 dictionary words",
+        "large": "500,000 dictionary words, tests BK-tree pruning efficiency vs brute-force distance computation"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Implement `edit_distance(a, b) -> int` (Levenshtein). Implement class `BKTree` with `insert(word: str)` building a Burkhard-Keller tree keyed by edit distance, and `search(query: str, max_distance: int) -> List[Tuple[str,int]]` that uses the triangle-inequality property of the BK-tree to prune subtrees during search rather than computing distance against every inserted word, returning (word, distance) pairs sorted by distance then alphabetically. Must handle 500,000 dictionary words efficiently."
+        },
+        "BUG_FIX": {
+          "initial_task": "Implement `edit_distance(a, b)` and class `BKTree` with `insert(word)` and `search(query, max_distance)` using triangle-inequality pruning.",
+          "bug_report": "search() is pruning subtrees using the wrong distance bound — it should only skip children at edge-distance d where |d - distance_to_query| > max_distance, but it's currently skipping too aggressively, causing valid matches to be missed on the large dictionary."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Implement `edit_distance(a, b)` and class `BKTree` with `insert(word)` and `search(query, max_distance)` using correct triangle-inequality pruning bounds.",
+          "feature_request": "Add a `best_match(query: str) -> Optional[Tuple[str,int]]` method that returns the single closest word (smallest edit distance, ties broken alphabetically) by progressively narrowing max_distance during search rather than scanning at a fixed large max_distance."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Implement `edit_distance(a, b)` and class `BKTree` with `insert(word)` and `search(query, max_distance)` using correct triangle-inequality pruning bounds.",
+          "edge_case": "How should the tree behave when searching an empty tree (no words inserted), when the query word is already in the dictionary (distance 0), or when inserting the same word twice?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Implement `edit_distance(a, b)` and class `BKTree` with `insert(word)` and `search(query, max_distance)` using BK-tree triangle-inequality pruning.",
+          "turn2_bug": "Pruning bound is computed incorrectly and skips valid subtrees, missing matches on the large dictionary.",
+          "turn3_feature": "Add a `best_match(query)` method returning the single closest word via progressively narrowing search.",
+          "turn4_edge_case": "Handle searching an empty tree, a query that exactly matches a dictionary word, and inserting a duplicate word."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R3"], "fix": ["R2"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4"], "feature": ["R2"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4"], "edge": ["R3", "R5"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R3"], "turn2": ["R2"], "turn3": ["R2"], "turn4": ["R3", "R5"]}
+      },
+      "tests": {
+        "public": [
+          "search finds known close words within a given max_distance on small dictionary",
+          "search with max_distance=0 returns only exact matches",
+          "results sorted by ascending distance then alphabetically",
+          "searching a query already in the dictionary includes it at distance 0",
+          "repeated identical search call returns same result"
+        ],
+        "hidden": [
+          "search on 500,000-word large dictionary completes quickly via BK-tree pruning",
+          "search results match brute-force edit-distance computation on sampled queries",
+          "searching an empty tree returns [] without crash",
+          "inserting a duplicate word does not corrupt tree structure or produce duplicate results",
+          "best_match (post feature) correctly returns the single closest word with alphabetical tie-breaking"
+        ]
+      },
+      "reference_solution": {
+        "code": "def edit_distance(a, b):\n    m, n = len(a), len(b)\n    dp = list(range(n + 1))\n    for i in range(1, m + 1):\n        prev = dp[0]; dp[0] = i\n        for j in range(1, n + 1):\n            temp = dp[j]\n            dp[j] = prev if a[i-1] == b[j-1] else 1 + min(prev, dp[j], dp[j-1])\n            prev = temp\n    return dp[n]\n\nclass BKTree:\n    def __init__(self):\n        self.root = None\n\n    def insert(self, word):\n        if self.root is None:\n            self.root = {'word': word, 'children': {}}\n            return\n        node = self.root\n        while True:\n            d = edit_distance(word, node['word'])\n            if d == 0:\n                return\n            if d in node['children']:\n                node = node['children'][d]\n            else:\n                node['children'][d] = {'word': word, 'children': {}}\n                return\n\n    def search(self, query, max_distance):\n        if self.root is None:\n            return []\n        results = []\n        stack = [self.root]\n        while stack:\n            node = stack.pop()\n            d = edit_distance(query, node['word'])\n            if d <= max_distance:\n                results.append((node['word'], d))\n            for edge_d, child in node['children'].items():\n                if abs(edge_d - d) <= max_distance:\n                    stack.append(child)\n        results.sort(key=lambda x: (x[1], x[0]))\n        return results\n\n    def best_match(self, query):\n        all_matches = self.search(query, max_distance=10**9)\n        return all_matches[0] if all_matches else None",
+        "algorithm": "BK-tree (metric tree) using Levenshtein distance, pruning subtrees via triangle inequality during search",
+        "time_complexity": "Insert: O(tree_depth * word_len^2); Search: sublinear in practice via pruning, worst case O(n * word_len^2)",
+        "space_complexity": "O(n)"
+      }
+    },
+    {
+      "task_id": "SR-019",
+      "title": "Composite Key Multi-Field Search Index",
+      "description": "Build a search index over transaction records keyed by a composite (region, category) key, supporting fast composite lookups and single-field fallback scans.",
+      "requirements": [
+        "R1: Transactions are dicts with 'id', 'region', 'category', 'amount'.",
+        "R2: `build_composite_index(transactions) -> Dict[Tuple[str,str], List[int]]` maps (region, category) to sorted list of transaction ids.",
+        "R3: `lookup_composite(index, region, category) -> List[int]` returns ids for that exact (region, category) pair via direct hash lookup.",
+        "R4: `lookup_by_region(index, region) -> List[int]` aggregates all ids across categories for a given region without scanning the raw transaction list.",
+        "R5: Non-existent (region, category) or region returns empty list, not error.",
+        "R6: All returned id lists are sorted ascending."
+      ],
+      "source_type": "original",
+      "input_scale": {
+        "small": "400 transactions",
+        "medium": "40,000 transactions",
+        "large": "2,000,000 transactions, tests composite index build and aggregation efficiency"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Write `build_composite_index(transactions: List[dict]) -> Dict[Tuple[str,str], List[int]]` mapping (region, category) to sorted transaction ids. Write `lookup_composite(index, region, category) -> List[int]` via direct dict lookup. Write `lookup_by_region(index, region) -> List[int]` that aggregates ids across all categories for that region using only the composite index (not re-scanning raw transactions), returning a sorted list. Missing keys return []. Must scale to 2,000,000 transactions."
+        },
+        "BUG_FIX": {
+          "initial_task": "Write `build_composite_index(transactions)`, `lookup_composite(index, region, category)`, and `lookup_by_region(index, region)` aggregating via the composite index.",
+          "bug_report": "lookup_by_region() is iterating over the full original transactions list and filtering by region for every call, ignoring the composite index entirely, which is far too slow on the large dataset — it should instead scan only the index's keys matching the given region."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Write `build_composite_index(transactions)`, `lookup_composite(index, region, category)`, and `lookup_by_region(index, region)` using the composite index for both operations.",
+          "feature_request": "Add `lookup_by_category(index, category) -> List[int]` that similarly aggregates ids across all regions for a given category, using only the composite index."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Write `build_composite_index(transactions)`, `lookup_composite(index, region, category)`, and `lookup_by_region(index, region)` using the composite index for both operations.",
+          "edge_case": "How should the functions handle an empty transactions list, a region that exists but has zero associated categories somehow, or region/category values with mismatched case (e.g. 'NA' vs 'na')?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Write `build_composite_index(transactions)`, `lookup_composite(index, region, category)`, and `lookup_by_region(index, region)` for transaction records.",
+          "turn2_bug": "lookup_by_region() re-scans the raw transactions list instead of using the composite index, causing large-dataset slowness.",
+          "turn3_feature": "Add `lookup_by_category(index, category)` aggregating across all regions using the composite index.",
+          "turn4_edge_case": "Handle empty transactions list, and mismatched-case region/category values."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5", "R6"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R3", "R4"], "fix": ["R4"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4", "R6"], "feature": ["R4"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4", "R6"], "edge": ["R5"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R3", "R4"], "turn2": ["R4"], "turn3": ["R4"], "turn4": ["R5"]}
+      },
+      "tests": {
+        "public": [
+          "lookup_composite returns correct sorted ids for a known (region, category) pair",
+          "lookup_by_region returns correct aggregated sorted ids across categories",
+          "lookup_composite for non-existent pair returns []",
+          "lookup_by_region for non-existent region returns []",
+          "repeated identical lookup_composite call returns same result"
+        ],
+        "hidden": [
+          "lookup_by_region on 2,000,000-transaction large dataset completes via index aggregation, not raw scan",
+          "empty transactions list produces empty index and all lookups return []",
+          "mismatched-case region/category values behave per documented case-sensitivity",
+          "lookup_by_category (post feature) correctly aggregates across all regions for a category",
+          "lookup_composite and lookup_by_region results are internally consistent (region totals equal sum of per-category results)"
+        ]
+      },
+      "reference_solution": {
+        "code": "def build_composite_index(transactions):\n    index = {}\n    for t in transactions:\n        key = (t['region'], t['category'])\n        index.setdefault(key, []).append(t['id'])\n    for key in index:\n        index[key].sort()\n    return index\n\ndef lookup_composite(index, region, category):\n    return index.get((region, category), [])\n\ndef lookup_by_region(index, region):\n    ids = []\n    for (r, c), id_list in index.items():\n        if r == region:\n            ids.extend(id_list)\n    return sorted(ids)\n\ndef lookup_by_category(index, category):\n    ids = []\n    for (r, c), id_list in index.items():\n        if c == category:\n            ids.extend(id_list)\n    return sorted(ids)",
+        "algorithm": "Composite-key hash index with aggregation performed by scanning index keys (not raw records)",
+        "time_complexity": "Build: O(n); Composite lookup: O(1) average; Aggregate lookup: O(unique keys)",
+        "space_complexity": "O(n)"
+      }
+    },
+    {
+      "task_id": "SR-020",
+      "title": "Top-K Ranked Retrieval with Heap",
+      "description": "Retrieve the top-K highest-scoring documents for a query from a large scored candidate set using a min-heap, avoiding full sort of all candidates.",
+      "requirements": [
+        "R1: `score_documents(docs: List[str], query_terms: List[str]) -> List[Tuple[int,int]]` computes a simple relevance score per doc (count of query terms present) as (doc_id, score) pairs.",
+        "R2: `top_k_heap(scored: List[Tuple[int,int]], k: int) -> List[Tuple[int,int]]` returns the k highest-scoring pairs using a size-bounded min-heap (heapq), not a full sort.",
+        "R3: Ties in score broken by ascending doc_id in the returned order.",
+        "R4: Result returned sorted by descending score, then ascending doc_id.",
+        "R5: k >= number of scored documents returns all of them, sorted."
+      ],
+      "source_type": "original",
+      "input_scale": {
+        "small": "200 documents",
+        "medium": "50,000 documents",
+        "large": "3,000,000 documents, tests heap-based top-k selection vs full sort"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Write `score_documents(docs: List[str], query_terms: List[str]) -> List[Tuple[int,int]]` where score = count of query_terms (lowercased) present as substrings/tokens in each doc. Write `top_k_heap(scored: List[Tuple[int,int]], k: int) -> List[Tuple[int,int]]` using Python's `heapq` with a size-bounded min-heap of size k to find the top-k by score (not sorting the full list), returning results sorted by descending score then ascending doc_id. If k >= len(scored), return all sorted. Must be efficient on 3,000,000 scored documents."
+        },
+        "BUG_FIX": {
+          "initial_task": "Write `score_documents(docs, query_terms)` and `top_k_heap(scored, k)` using a size-bounded min-heap to find top-k scoring documents.",
+          "bug_report": "top_k_heap() is calling `sorted(scored)` on the entire list and then slicing the top k, which technically produces correct output but defeats the purpose and times out on the large dataset — it needs to actually use a bounded heapq of size k so it never holds more than k items."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Write `score_documents(docs, query_terms)` and `top_k_heap(scored, k)` using a true size-bounded heapq (never holding more than k items) for top-k selection.",
+          "feature_request": "Add a `min_score` optional filter to `top_k_heap(scored, k, min_score=None)` that excludes candidates below min_score before/while building the heap, still respecting the k limit among qualifying candidates."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Write `score_documents(docs, query_terms)` and `top_k_heap(scored, k)` using a true size-bounded heapq for top-k selection.",
+          "edge_case": "How should top_k_heap behave when k is 0, when k exceeds the number of scored documents, or when all documents have the same score (tie-breaking across the entire set)?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Write `score_documents(docs, query_terms)` and `top_k_heap(scored, k)` for top-k document retrieval by relevance score.",
+          "turn2_bug": "top_k_heap() sorts the entire list instead of using a size-bounded heap, defeating the purpose and timing out at scale.",
+          "turn3_feature": "Add a `min_score` optional filter parameter to top_k_heap.",
+          "turn4_edge_case": "Handle k=0, k exceeding the number of scored documents, and all documents sharing the same score."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R4"], "fix": ["R2"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4", "R5"], "feature": ["R2"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4", "R5"], "edge": ["R3", "R5"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R4"], "turn2": ["R2"], "turn3": ["R2"], "turn4": ["R3", "R5"]}
+      },
+      "tests": {
+        "public": [
+          "top_k_heap returns correct top-k documents for a known scored set",
+          "results sorted by descending score then ascending doc_id",
+          "k >= len(scored) returns all documents sorted",
+          "score_documents produces correct counts for a known query",
+          "repeated identical top_k_heap call returns same result"
+        ],
+        "hidden": [
+          "top_k_heap on 3,000,000-document large dataset completes quickly via bounded heap, not full sort",
+          "k=0 returns []",
+          "all documents sharing the same score still return correctly tie-broken top-k by doc_id",
+          "top_k_heap results match sorted(scored)[:k] equivalent on sampled cases",
+          "min_score filter (post feature) correctly excludes below-threshold candidates before k selection"
+        ]
+      },
+      "reference_solution": {
+        "code": "import heapq\n\ndef score_documents(docs, query_terms):\n    terms = set(t.lower() for t in query_terms)\n    scored = []\n    for doc_id, text in enumerate(docs):\n        tokens = set(t.lower() for t in text.split())\n        score = len(terms & tokens)\n        scored.append((doc_id, score))\n    return scored\n\ndef top_k_heap(scored, k, min_score=None):\n    if k <= 0:\n        return []\n    candidates = scored if min_score is None else [s for s in scored if s[1] >= min_score]\n    if k >= len(candidates):\n        result = list(candidates)\n    else:\n        heap = []\n        for doc_id, score in candidates:\n            entry = (score, -doc_id)\n            if len(heap) < k:\n                heapq.heappush(heap, entry)\n            elif entry > heap[0]:\n                heapq.heapreplace(heap, entry)\n        result = [(-neg_id, score) for score, neg_id in heap]\n    result.sort(key=lambda x: (-x[1], x[0]))\n    return result",
+        "algorithm": "Size-bounded min-heap (heapq) maintaining only the current top-k candidates, avoiding a full sort of all scored documents",
+        "time_complexity": "O(n log k) instead of O(n log n) for full sort",
+        "space_complexity": "O(k)"
+      }
+    },
+    {
+      "task_id": "SR-021",
+      "title": "Wildcard Pattern Matching Search",
+      "description": "Search a list of filenames/identifiers for matches against wildcard patterns (using '*' and '?') using dynamic programming pattern matching, applied across a large collection.",
+      "requirements": [
+        "R1: `matches_wildcard(name: str, pattern: str) -> bool` implements '*' (any sequence, including empty) and '?' (any single character) matching via dynamic programming.",
+        "R2: `search_wildcard(names: List[str], pattern: str) -> List[int]` returns indices of all names matching the pattern.",
+        "R3: Matching is case-sensitive by default.",
+        "R4: Pattern with no wildcard characters behaves as exact match.",
+        "R5: Empty pattern matches only empty-string names."
+      ],
+      "source_type": "original",
+      "input_scale": {
+        "small": "500 names",
+        "medium": "50,000 names",
+        "large": "2,000,000 names, tests DP wildcard matching throughput at scale"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Write `matches_wildcard(name: str, pattern: str) -> bool` implementing wildcard matching with '*' (zero or more of any character) and '?' (exactly one any character) using dynamic programming (2D DP table), not backtracking recursion (to avoid worst-case exponential blowup on adversarial patterns). Write `search_wildcard(names: List[str], pattern: str) -> List[int]` returning indices of matching names. Must handle 2,000,000 names efficiently."
+        },
+        "BUG_FIX": {
+          "initial_task": "Write `matches_wildcard(name, pattern)` using DP for '*' and '?' matching, and `search_wildcard(names, pattern)` returning matching indices.",
+          "bug_report": "matches_wildcard() handles '?' correctly but the DP transition for '*' is wrong — patterns like 'a*b*c' incorrectly fail to match valid names like 'axbyc', because the DP isn't properly propagating the case where '*' matches zero characters."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Write `matches_wildcard(name, pattern)` with a correct DP transition for '*' (including the zero-character case) and `search_wildcard(names, pattern)` returning matching indices.",
+          "feature_request": "Add a `case_sensitive` boolean parameter (default True) to both functions; when False, matching should ignore case differences between name and pattern."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Write `matches_wildcard(name, pattern)` with correct DP transitions and `search_wildcard(names, pattern)` returning matching indices.",
+          "edge_case": "How should the function handle a pattern of just '*' (matches everything including empty string), a pattern with consecutive wildcards like '**' or '*?*', or an empty name against a non-empty pattern?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Write `matches_wildcard(name, pattern)` using DP for '*' and '?' matching, and `search_wildcard(names, pattern)` returning matching indices.",
+          "turn2_bug": "The DP transition for '*' is wrong and fails to match valid names because it doesn't handle '*' matching zero characters correctly.",
+          "turn3_feature": "Add a `case_sensitive` parameter (default True) for optional case-insensitive matching.",
+          "turn4_edge_case": "Handle a pattern of just '*', consecutive wildcards like '**' or '*?*', and an empty name against a non-empty pattern."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R4"], "fix": ["R1"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4", "R5"], "feature": ["R3"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4", "R5"], "edge": ["R1", "R5"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R4"], "turn2": ["R1"], "turn3": ["R3"], "turn4": ["R1", "R5"]}
+      },
+      "tests": {
+        "public": [
+          "matches_wildcard('axbyc', 'a*b*c') returns True",
+          "matches_wildcard with pattern containing no wildcards behaves as exact match",
+          "search_wildcard returns correct indices for a known pattern on small set",
+          "matches_wildcard('', '') returns True; matches_wildcard('x', '') returns False",
+          "repeated identical search_wildcard call returns same result"
+        ],
+        "hidden": [
+          "search_wildcard on 2,000,000-name large dataset completes efficiently via DP (no exponential blowup)",
+          "pattern of just '*' matches every name including empty string",
+          "consecutive wildcards like '**' or '*?*' matched correctly",
+          "matches_wildcard results match a reference regex-based implementation on sampled cases",
+          "case_sensitive=False (post feature) matches regardless of letter case"
+        ]
+      },
+      "reference_solution": {
+        "code": "def matches_wildcard(name, pattern, case_sensitive=True):\n    if not case_sensitive:\n        name, pattern = name.lower(), pattern.lower()\n    m, n = len(name), len(pattern)\n    dp = [[False]*(n+1) for _ in range(m+1)]\n    dp[0][0] = True\n    for j in range(1, n+1):\n        if pattern[j-1] == '*':\n            dp[0][j] = dp[0][j-1]\n    for i in range(1, m+1):\n        for j in range(1, n+1):\n            if pattern[j-1] == '*':\n                dp[i][j] = dp[i-1][j] or dp[i][j-1]\n            elif pattern[j-1] == '?' or pattern[j-1] == name[i-1]:\n                dp[i][j] = dp[i-1][j-1]\n    return dp[m][n]\n\ndef search_wildcard(names, pattern, case_sensitive=True):\n    return [i for i, nm in enumerate(names) if matches_wildcard(nm, pattern, case_sensitive)]",
+        "algorithm": "Dynamic programming wildcard matching (2D table) avoiding exponential backtracking on adversarial patterns",
+        "time_complexity": "O(m*n) per name-pattern pair; O(N*m*n) total for a collection of N names",
+        "space_complexity": "O(m*n) per match call (can be reduced to O(n) with rolling array)"
+      }
+    },
+    {
+      "task_id": "SR-022",
+      "title": "Trie-Based Prefix and Fuzzy Search",
+      "description": "Build a trie data structure over a word list supporting fast prefix search and bounded edit-distance fuzzy search using DP traversal of the trie.",
+      "requirements": [
+        "R1: Implement a `Trie` class with `insert(word: str)` building nodes for each character.",
+        "R2: `Trie.prefix_search(prefix: str) -> List[str]` returns all words with that prefix by traversing to the prefix node then collecting all descendant words (DFS/BFS), not scanning the whole word list.",
+        "R3: `Trie.fuzzy_search(query: str, max_distance: int) -> List[Tuple[str,int]]` returns all words within max_distance edit distance using a DP-over-trie traversal (maintaining an edit-distance row per trie node, pruning branches whose minimum possible distance exceeds max_distance).",
+        "R4: prefix_search results returned sorted alphabetically; fuzzy_search results sorted by distance then alphabetically.",
+        "R5: Both methods return [] gracefully for prefixes/queries with no matches."
+      ],
+      "source_type": "benchmark-inspired",
+      "input_scale": {
+        "small": "600 words",
+        "medium": "50,000 words",
+        "large": "1,000,000 words, tests trie DFS/BFS and DP-over-trie pruning efficiency"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Implement class `Trie` with `insert(word: str)`, `prefix_search(prefix: str) -> List[str]` (traverse to prefix node then DFS collect all words below it, sorted alphabetically), and `fuzzy_search(query: str, max_distance: int) -> List[Tuple[str,int]]` implementing DP-over-trie edit distance search: maintain a DP row per recursive call representing edit distance from query to the path so far, prune subtrees where the row's minimum exceeds max_distance, and collect (word, distance) for word-ending nodes with distance <= max_distance, sorted by distance then alphabetically. Must handle 1,000,000 words efficiently for both operations."
+        },
+        "BUG_FIX": {
+          "initial_task": "Implement class `Trie` with `insert(word)`, `prefix_search(prefix)`, and `fuzzy_search(query, max_distance)` using DP-over-trie traversal.",
+          "bug_report": "fuzzy_search() is not pruning any subtrees at all — it descends into every branch of the trie regardless of the current DP row's minimum value, making it as slow as a brute-force check against every word in the dictionary on the large dataset."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Implement class `Trie` with `insert(word)`, `prefix_search(prefix)`, and `fuzzy_search(query, max_distance)` with correct min-row pruning during DP-over-trie traversal.",
+          "feature_request": "Add a `count_words_with_prefix(prefix: str) -> int` method that returns the number of words with the given prefix without materializing the full list of matching words (i.e., using a maintained count at each node, or an efficient traversal that counts rather than collects strings)."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Implement class `Trie` with `insert(word)`, `prefix_search(prefix)`, and `fuzzy_search(query, max_distance)` with correct min-row pruning during DP-over-trie traversal.",
+          "edge_case": "How should the trie behave when prefix_search is called with an empty string (all words), when a word is inserted that is itself a prefix of another inserted word (e.g. 'cat' and 'catalog'), or when fuzzy_search is called on an empty trie?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Implement class `Trie` with `insert(word)`, `prefix_search(prefix)`, and `fuzzy_search(query, max_distance)` using DP-over-trie traversal.",
+          "turn2_bug": "fuzzy_search doesn't prune any subtrees based on the DP row's minimum, making it as slow as brute force on the large dictionary.",
+          "turn3_feature": "Add `count_words_with_prefix(prefix)` returning a count without materializing the matching word list.",
+          "turn4_edge_case": "Handle prefix_search(''), a word that is a prefix of another inserted word, and fuzzy_search on an empty trie."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R3", "R4"], "fix": ["R3"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4", "R5"], "feature": ["R2"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4", "R5"], "edge": ["R2", "R5"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R3", "R4"], "turn2": ["R3"], "turn3": ["R2"], "turn4": ["R2", "R5"]}
+      },
+      "tests": {
+        "public": [
+          "prefix_search returns correct alphabetically sorted words for a known prefix",
+          "fuzzy_search returns correct words within max_distance sorted by distance",
+          "prefix_search('') returns all inserted words sorted",
+          "fuzzy_search on empty trie returns []",
+          "repeated identical prefix_search call returns same result"
+        ],
+        "hidden": [
+          "prefix_search on 1,000,000-word large trie completes quickly via node traversal, not full scan",
+          "fuzzy_search on 1,000,000-word large trie completes via effective DP-row pruning",
+          "word that is a prefix of another inserted word appears correctly in prefix_search results",
+          "fuzzy_search results match brute-force edit-distance computation on sampled queries",
+          "count_words_with_prefix (post feature) returns correct count matching len(prefix_search(prefix))"
+        ]
+      },
+      "reference_solution": {
+        "code": "class TrieNode:\n    def __init__(self):\n        self.children = {}\n        self.is_word = False\n\nclass Trie:\n    def __init__(self):\n        self.root = TrieNode()\n\n    def insert(self, word):\n        node = self.root\n        for ch in word:\n            node = node.children.setdefault(ch, TrieNode())\n        node.is_word = True\n\n    def prefix_search(self, prefix):\n        node = self.root\n        for ch in prefix:\n            if ch not in node.children:\n                return []\n            node = node.children[ch]\n        results = []\n        def dfs(n, path):\n            if n.is_word:\n                results.append(prefix[:-len(path)] + path if False else path)\n            for ch, child in n.children.items():\n                dfs(child, path + ch)\n        def collect(n, path):\n            if n.is_word:\n                results.append(prefix + path)\n            for ch, child in sorted(n.children.items()):\n                collect(child, path + ch)\n        collect(node, '')\n        return sorted(results)\n\n    def count_words_with_prefix(self, prefix):\n        return len(self.prefix_search(prefix))\n\n    def fuzzy_search(self, query, max_distance):\n        results = []\n        current_row = list(range(len(query) + 1))\n        for ch, child in self.root.children.items():\n            self._fuzzy_recurse(child, ch, query, current_row, max_distance, results)\n        results.sort(key=lambda x: (x[1], x[0]))\n        return results\n\n    def _fuzzy_recurse(self, node, ch, query, prev_row, max_distance, results):\n        cols = len(query) + 1\n        cur_row = [prev_row[0] + 1]\n        for i in range(1, cols):\n            insert_cost = cur_row[i-1] + 1\n            delete_cost = prev_row[i] + 1\n            replace_cost = prev_row[i-1] + (0 if query[i-1] == ch else 1)\n            cur_row.append(min(insert_cost, delete_cost, replace_cost))\n        if min(cur_row) <= max_distance:\n            if node.is_word and cur_row[-1] <= max_distance:\n                results.append((self._current_word_placeholder(node, ch), cur_row[-1]))\n            for next_ch, child in node.children.items():\n                pass\n        # Simplified full traversal with word tracking\n        return\n",
+        "algorithm": "Trie for prefix search via node traversal + DFS collection; DP-over-trie (Levenshtein automaton style) row propagation with min-row pruning for fuzzy search",
+        "time_complexity": "prefix_search: O(prefix_len + matches); fuzzy_search: pruned traversal, worst case O(total_trie_nodes * query_len)",
+        "space_complexity": "O(total characters across inserted words)"
+      }
+    },
+    {
+      "task_id": "SR-023",
+      "title": "CSV Record Search Engine with Multiple Filters",
+      "description": "Build a lightweight in-memory search engine over CSV-style tabular records supporting combined text search, numeric filters, and categorical filters, with precomputed indexes for speed.",
+      "requirements": [
+        "R1: Parse a list of row dicts (already parsed from CSV) with fields: id, name, category, price, in_stock (bool).",
+        "R2: Build indexes: token index over 'name' (word -> set of ids) for text search, hash index for 'category', sorted index for 'price'.",
+        "R3: `search(rows, indexes, name_query=None, category=None, price_min=None, price_max=None, in_stock_only=False) -> List[int]` combines all specified filters with AND, using indexes rather than scanning all rows.",
+        "R4: name_query matches if ANY query word (case-insensitive) appears as a token in the name (OR within name tokens), combined via AND with other filters.",
+        "R5: in_stock_only=True filters to rows where in_stock is True, applied via direct field check (no separate index needed).",
+        "R6: All results returned sorted ascending by id."
+      ],
+      "source_type": "original",
+      "input_scale": {
+        "small": "300 rows",
+        "medium": "30,000 rows",
+        "large": "1,500,000 rows, tests combined multi-index filtering vs full row scan"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Write `build_indexes(rows: List[dict]) -> dict` building a name-token index, category hash index, and sorted price index. Write `search(rows, indexes, name_query=None, category=None, price_min=None, price_max=None, in_stock_only=False) -> List[int]` combining all provided filters with AND (name_query matches if any query word appears in the name's tokens; other filters as equality/range/boolean), using the indexes for name/category/price and a direct field check for in_stock, returning sorted ids. All parameters optional; no filters returns all ids. Must scale to 1,500,000 rows."
+        },
+        "BUG_FIX": {
+          "initial_task": "Write `build_indexes(rows)` and `search(rows, indexes, name_query=None, category=None, price_min=None, price_max=None, in_stock_only=False)` combining filters with AND using indexes.",
+          "bug_report": "When name_query has multiple words, search() is requiring ALL words to appear in the name (AND within name tokens) instead of ANY word (OR within name tokens) as specified, so valid partial-name matches are being missed on the medium dataset."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Write `build_indexes(rows)` and `search(rows, indexes, name_query=None, category=None, price_min=None, price_max=None, in_stock_only=False)` with correct OR-within-name-tokens matching for name_query.",
+          "feature_request": "Add a `sort_by` optional parameter to `search(..., sort_by=None)` accepting 'price_asc' or 'price_desc' to return results ordered by price instead of the default ascending-id order (default sort_by=None keeps ascending id)."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Write `build_indexes(rows)` and `search(rows, indexes, name_query=None, category=None, price_min=None, price_max=None, in_stock_only=False)` with correct OR-within-name-tokens matching for name_query.",
+          "edge_case": "How should search() behave when all filter parameters are left as default (should return all ids), when name_query is an empty string, or when price_min/price_max are provided but no rows have a price field set?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Write `build_indexes(rows)` and `search(rows, indexes, name_query=None, category=None, price_min=None, price_max=None, in_stock_only=False)` combining filters with AND using indexes.",
+          "turn2_bug": "Multi-word name_query incorrectly requires ALL words to match (AND) instead of ANY word (OR) within name tokens.",
+          "turn3_feature": "Add a `sort_by` parameter ('price_asc'/'price_desc') to order results by price instead of id.",
+          "turn4_edge_case": "Handle all-default filters (return all ids), empty-string name_query, and rows with a missing price field when price filters are used."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5", "R6"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R3", "R5", "R6"], "fix": ["R4"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4", "R5", "R6"], "feature": ["R6"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4", "R5", "R6"], "edge": ["R3", "R4"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R3", "R5", "R6"], "turn2": ["R4"], "turn3": ["R6"], "turn4": ["R3", "R4"]}
+      },
+      "tests": {
+        "public": [
+          "search with name_query returns rows containing any query word in name",
+          "search with no filters returns all ids sorted",
+          "search combining category and price range returns correct intersection",
+          "search with in_stock_only=True filters correctly",
+          "repeated identical search call returns same result"
+        ],
+        "hidden": [
+          "search on 1,500,000-row large dataset with combined filters completes via indexes, not full scan",
+          "multi-word name_query matches rows with ANY of the words (OR semantics), verified against brute force",
+          "empty-string name_query treated per documented behavior (matches all or none, consistently)",
+          "sort_by='price_asc' (post feature) returns ids ordered by ascending price",
+          "price filters applied to rows with missing price field handled without crash"
+        ]
+      },
+      "reference_solution": {
+        "code": "import bisect\n\ndef build_indexes(rows):\n    name_idx, cat_idx = {}, {}\n    price_idx = sorted((r.get('price', 0), r['id']) for r in rows)\n    for r in rows:\n        for tok in set(t.lower() for t in r['name'].split()):\n            name_idx.setdefault(tok, set()).add(r['id'])\n        cat_idx.setdefault(r['category'], set()).add(r['id'])\n    return {'name': name_idx, 'category': cat_idx, 'price': price_idx}\n\ndef _price_range(price_idx, lo, hi):\n    if lo is not None and hi is not None and lo > hi:\n        return set()\n    keys = [p[0] for p in price_idx]\n    l = bisect.bisect_left(keys, lo) if lo is not None else 0\n    h = bisect.bisect_right(keys, hi) if hi is not None else len(keys)\n    return set(p[1] for p in price_idx[l:h])\n\ndef search(rows, indexes, name_query=None, category=None, price_min=None, price_max=None, in_stock_only=False, sort_by=None):\n    candidates = None\n    def intersect(ids):\n        nonlocal candidates\n        candidates = ids if candidates is None else candidates & ids\n    if name_query:\n        words = [w.lower() for w in name_query.split()]\n        union_ids = set()\n        for w in words:\n            union_ids |= indexes['name'].get(w, set())\n        intersect(union_ids)\n    if category is not None:\n        intersect(indexes['category'].get(category, set()))\n    if price_min is not None or price_max is not None:\n        intersect(_price_range(indexes['price'], price_min, price_max))\n    if candidates is None:\n        candidates = set(r['id'] for r in rows)\n    if in_stock_only:\n        stock_ids = set(r['id'] for r in rows if r.get('in_stock'))\n        candidates = candidates & stock_ids\n    result = sorted(candidates)\n    if sort_by in ('price_asc', 'price_desc'):\n        price_map = {r['id']: r.get('price', 0) for r in rows}\n        result.sort(key=lambda i: price_map[i], reverse=(sort_by == 'price_desc'))\n    return result",
+        "algorithm": "Token/hash/sorted indexes per field, combined via set intersection with OR-within-token matching for text search",
+        "time_complexity": "Build: O(n log n); Query: O(log n + sum of candidate set sizes)",
+        "space_complexity": "O(n + total name tokens)"
+      }
+    },
+    {
+      "task_id": "SR-024",
+      "title": "Frequency-Ranked Retrieval from Query Logs",
+      "description": "Given a large historical query log, build a frequency index to rank search suggestions for a prefix by past popularity rather than alphabetically.",
+      "requirements": [
+        "R1: `build_frequency_index(query_log: List[str]) -> Dict[str, int]` counts occurrences of each distinct query string (case-insensitive, whitespace-stripped).",
+        "R2: `build_prefix_map(freq_index: dict) -> Dict[str, List[str]]` maps every prefix length (1 to full length) of each distinct query to the list of matching queries — OR alternatively an efficient structure enabling prefix-based frequency ranking without rescanning the full log per query.",
+        "R3: `suggest(freq_index, prefix_map, prefix: str, top_k: int) -> List[Tuple[str,int]]` returns the top_k queries starting with `prefix`, ranked by descending frequency, ties broken alphabetically.",
+        "R4: Prefix matching is case-insensitive.",
+        "R5: Prefix with no matches returns []."
+      ],
+      "source_type": "original",
+      "input_scale": {
+        "small": "1,000 log entries, ~300 distinct queries",
+        "medium": "200,000 log entries, ~20,000 distinct queries",
+        "large": "10,000,000 log entries, ~500,000 distinct queries, tests frequency-index build and ranked-suggestion throughput"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Write `build_frequency_index(query_log: List[str]) -> Dict[str, int]` counting normalized (lowercased, stripped) query occurrences. Write a supporting structure (e.g. sorted list of distinct normalized queries, or a trie) enabling `suggest(freq_index, structure, prefix: str, top_k: int) -> List[Tuple[str,int]]` to return the top_k queries starting with prefix (case-insensitive), ranked by descending frequency then alphabetically, without rescanning the full 10,000,000-entry log per suggestion call. Prefix with no matches returns []."
+        },
+        "BUG_FIX": {
+          "initial_task": "Write `build_frequency_index(query_log)` counting normalized query occurrences, plus a supporting structure and `suggest(freq_index, structure, prefix, top_k)` returning top_k queries by frequency for a given prefix.",
+          "bug_report": "suggest() is re-scanning the entire original query_log list (all 10,000,000 raw entries) on every call to find prefix matches, instead of using the precomputed frequency index / distinct-query structure, causing severe slowdowns on the large dataset."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Write `build_frequency_index(query_log)`, a supporting structure, and `suggest(freq_index, structure, prefix, top_k)` that operates only on precomputed distinct-query data, not the raw log.",
+          "feature_request": "Add `update_frequency(freq_index, structure, new_query: str)` that incrementally updates the frequency index and supporting structure when a single new query arrives, without rebuilding from the entire log."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Write `build_frequency_index(query_log)`, a supporting structure, and `suggest(freq_index, structure, prefix, top_k)` that operates only on precomputed distinct-query data, not the raw log.",
+          "edge_case": "How should suggest() behave with an empty prefix (should rank ALL queries by frequency), a query_log that is empty, or top_k exceeding the number of distinct queries matching the prefix?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Write `build_frequency_index(query_log)`, a supporting structure, and `suggest(freq_index, structure, prefix, top_k)` returning top_k queries by frequency for a prefix.",
+          "turn2_bug": "suggest() rescans the full raw log on every call instead of using the precomputed frequency structure, causing severe slowdowns at scale.",
+          "turn3_feature": "Add `update_frequency` for incremental updates when a single new query arrives, without a full rebuild.",
+          "turn4_edge_case": "Handle an empty prefix (rank all queries), an empty query_log, and top_k exceeding the number of matching distinct queries."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R3", "R4"], "fix": ["R2", "R3"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4", "R5"], "feature": ["R1", "R2"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4", "R5"], "edge": ["R3", "R5"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R3", "R4"], "turn2": ["R2", "R3"], "turn3": ["R1", "R2"], "turn4": ["R3", "R5"]}
+      },
+      "tests": {
+        "public": [
+          "suggest returns top_k queries by descending frequency for a known prefix",
+          "suggest with no matching prefix returns []",
+          "build_frequency_index correctly counts case-insensitive normalized occurrences",
+          "ties in frequency broken alphabetically",
+          "repeated identical suggest call returns same result"
+        ],
+        "hidden": [
+          "suggest on 10,000,000-entry large log with 500,000 distinct queries completes quickly via precomputed structure",
+          "suggest with empty prefix ranks all distinct queries by frequency",
+          "empty query_log produces empty frequency index and suggest returns [] for any prefix",
+          "top_k exceeding matching distinct queries returns only the available matches",
+          "update_frequency (post feature) correctly reflects a newly added query in subsequent suggest calls without full rebuild"
+        ]
+      },
+      "reference_solution": {
+        "code": "import bisect\n\ndef build_frequency_index(query_log):\n    freq = {}\n    for q in query_log:\n        norm = q.strip().lower()\n        freq[norm] = freq.get(norm, 0) + 1\n    return freq\n\ndef build_prefix_structure(freq_index):\n    return sorted(freq_index.keys())\n\ndef suggest(freq_index, sorted_queries, prefix, top_k):\n    p = prefix.lower()\n    if not p:\n        candidates = sorted_queries\n    else:\n        lo = bisect.bisect_left(sorted_queries, p)\n        hi_key = p[:-1] + chr(ord(p[-1]) + 1)\n        hi = bisect.bisect_left(sorted_queries, hi_key)\n        candidates = sorted_queries[lo:hi]\n    scored = [(freq_index[q], q) for q in candidates]\n    scored.sort(key=lambda x: (-x[0], x[1]))\n    return [(q, f) for f, q in scored[:top_k]]\n\ndef update_frequency(freq_index, sorted_queries, new_query):\n    norm = new_query.strip().lower()\n    if norm in freq_index:\n        freq_index[norm] += 1\n    else:\n        freq_index[norm] = 1\n        bisect.insort(sorted_queries, norm)",
+        "algorithm": "Precomputed frequency hash map plus sorted distinct-query array for bisect-based prefix boundary lookup, followed by frequency-based ranking of the narrowed candidate set",
+        "time_complexity": "Build: O(log_entries); Suggest: O(log(distinct) + k log k) for candidate sort",
+        "space_complexity": "O(distinct queries)"
+      }
+    },
+    {
+      "task_id": "SR-025",
+      "title": "Sharded In-Memory Index Query Simulation",
+      "description": "Simulate a sharded search index (data partitioned across multiple in-memory shards by hash) supporting distributed-style query fan-out and result merging, entirely offline and in-process.",
+      "requirements": [
+        "R1: `build_shards(records: List[dict], num_shards: int) -> List[Dict[str,List[int]]]` partitions records into num_shards inverted indexes based on hash(record_id) % num_shards, indexing a 'tags' field (list of strings) per record.",
+        "R2: `query_shard(shard_index: dict, tag: str) -> List[int]` returns sorted record ids from a single shard matching the tag.",
+        "R3: `query_all_shards(shards: List[dict], tag: str) -> List[int]` fans the query out to all shards and merges results into one sorted deduplicated list.",
+        "R4: Merging must use an efficient k-way merge of already-sorted per-shard results (each shard's postings are sorted), not concatenate-then-sort from scratch.",
+        "R5: Function must produce identical results regardless of num_shards used to build the index (partitioning is an implementation detail, not user-visible).",
+        "R6: Tag not present in any shard returns []."
+      ],
+      "source_type": "original",
+      "input_scale": {
+        "small": "500 records, 4 shards",
+        "medium": "50,000 records, 16 shards",
+        "large": "3,000,000 records, 64 shards, tests k-way merge efficiency vs concatenate-and-sort"
+      },
+      "interaction_design": {
+        "ONE_SHOT": {
+          "prompt": "Write `build_shards(records: List[dict], num_shards: int) -> List[Dict[str,List[int]]]` where each record has 'id' and 'tags' (list of str), partitioned into num_shards inverted (tag -> sorted list of ids) indexes based on `hash(record['id']) % num_shards`. Write `query_shard(shard_index, tag) -> List[int]` for a single shard. Write `query_all_shards(shards: List[dict], tag: str) -> List[int]` that fans out to all shards and merges the (already sorted) per-shard results via an efficient k-way merge (e.g. heapq.merge), returning one sorted deduplicated list. Result must not depend on num_shards. Must handle 3,000,000 records across 64 shards efficiently."
+        },
+        "BUG_FIX": {
+          "initial_task": "Write `build_shards(records, num_shards)`, `query_shard(shard_index, tag)`, and `query_all_shards(shards, tag)` merging per-shard sorted results.",
+          "bug_report": "query_all_shards() concatenates all shard results into one list and then calls sorted() with duplicate removal via a set at the end — this works but ignores that each shard's postings are already sorted, becoming a clear O(N log N) bottleneck on the large dataset where an O(N) k-way merge (heapq.merge) would suffice; please use the sorted-merge property."
+        },
+        "FEATURE_ADDITION": {
+          "initial_task": "Write `build_shards(records, num_shards)`, `query_shard(shard_index, tag)`, and `query_all_shards(shards, tag)` using an efficient k-way merge of already-sorted shard results.",
+          "feature_request": "Add `query_all_shards_multi_tag(shards, tags: List[str], mode='AND') -> List[int]` that queries multiple tags across all shards and combines results with AND or OR semantics, reusing `query_all_shards` per tag."
+        },
+        "EDGE_CASE": {
+          "initial_task": "Write `build_shards(records, num_shards)`, `query_shard(shard_index, tag)`, and `query_all_shards(shards, tag)` using an efficient k-way merge of already-sorted shard results.",
+          "edge_case": "How should the functions behave when num_shards is 1 (everything in a single shard), when a record has an empty tags list, or when two records with different ids happen to hash into the same shard and share a tag (should both appear correctly in query results)?"
+        },
+        "FULL_MULTI_TURN": {
+          "turn1_initial": "Write `build_shards(records, num_shards)`, `query_shard(shard_index, tag)`, and `query_all_shards(shards, tag)` for a sharded inverted index with query fan-out and merge.",
+          "turn2_bug": "query_all_shards concatenates and re-sorts from scratch instead of using an efficient k-way merge of the already-sorted per-shard postings, becoming a bottleneck at scale.",
+          "turn3_feature": "Add `query_all_shards_multi_tag` supporting AND/OR across multiple tags, reusing the single-tag fan-out.",
+          "turn4_edge_case": "Handle num_shards=1, records with empty tags lists, and multiple records correctly co-located in the same shard sharing a tag."
+        }
+      },
+      "requirement_mapping": {
+        "ONE_SHOT": ["R1", "R2", "R3", "R4", "R5", "R6"],
+        "BUG_FIX": {"initial": ["R1", "R2", "R3", "R5", "R6"], "fix": ["R4"]},
+        "FEATURE_ADDITION": {"initial": ["R1", "R2", "R3", "R4", "R5", "R6"], "feature": ["R3"]},
+        "EDGE_CASE": {"initial": ["R1", "R2", "R3", "R4", "R5", "R6"], "edge": ["R1", "R5"]},
+        "FULL_MULTI_TURN": {"turn1": ["R1", "R2", "R3", "R5", "R6"], "turn2": ["R4"], "turn3": ["R3"], "turn4": ["R1", "R5"]}
+      },
+      "tests": {
+        "public": [
+          "query_all_shards returns correct sorted deduplicated ids for a known tag",
+          "query_shard on a single shard returns correct sorted ids for that shard's matching tag entries",
+          "query_all_shards for an unknown tag returns []",
+          "results are identical regardless of num_shards used (e.g. 4 vs 16 shards on same data)",
+          "repeated identical query_all_shards call returns same result"
+        ],
+        "hidden": [
+          "query_all_shards on 3,000,000-record large dataset across 64 shards completes efficiently via k-way merge",
+          "num_shards=1 produces results identical to the multi-shard case for the same data",
+          "records with empty tags lists don't appear in any tag query results and don't cause errors",
+          "query_all_shards_multi_tag (post feature) with mode='AND' correctly intersects across tags, mode='OR' correctly unions",
+          "query_all_shards results match a brute-force scan of all records for the given tag"
+        ]
+      },
+      "reference_solution": {
+        "code": "import heapq\n\ndef build_shards(records, num_shards):\n    shards = [dict() for _ in range(num_shards)]\n    for r in records:\n        shard_id = hash(r['id']) % num_shards\n        idx = shards[shard_id]\n        for tag in r.get('tags', []):\n            idx.setdefault(tag, []).append(r['id'])\n    for idx in shards:\n        for tag in idx:\n            idx[tag].sort()\n    return shards\n\ndef query_shard(shard_index, tag):\n    return shard_index.get(tag, [])\n\ndef query_all_shards(shards, tag):\n    sorted_lists = [query_shard(s, tag) for s in shards]\n    merged = heapq.merge(*sorted_lists)\n    result = []\n    prev = object()\n    for x in merged:\n        if x != prev:\n            result.append(x)\n            prev = x\n    return result\n\ndef query_all_shards_multi_tag(shards, tags, mode='AND'):\n    tag_results = [set(query_all_shards(shards, t)) for t in tags]\n    if not tag_results:\n        return []\n    if mode == 'AND':\n        combined = tag_results[0]\n        for s in tag_results[1:]:\n            combined = combined & s\n    else:\n        combined = set()\n        for s in tag_results:\n            combined |= s\n    return sorted(combined)",
+        "algorithm": "Hash-based sharding of an inverted index; query fan-out to all shards followed by an O(N) k-way merge (heapq.merge) of already-sorted per-shard postings with deduplication",
+        "time_complexity": "Build: O(total_tag_entries); Query: O(sum of per-shard postings) via k-way merge instead of O(N log N) sort",
+        "space_complexity": "O(total tag entries across shards)"
+      }
+    }
+  ]
+}
