@@ -32,6 +32,27 @@ CONFIG = REPO / "config" / "drive_sources.json"
 INBOX = REPO / "inbox"
 
 
+def structure_complete(dest: Path) -> tuple[bool, str]:
+    """A synced member folder needs .collection/ AND a non-empty
+    dataset/dataset.json somewhere in its tree (kit layout)."""
+    if not dest.is_dir():
+        return False, "not synced yet"
+    roots = [dest] + [p for p in dest.iterdir() if p.is_dir()]
+    for r in roots:
+        if (r / ".collection").is_dir():
+            ds = list(r.glob("dataset/dataset.json")) + list(r.glob("*/dataset/dataset.json"))
+            if ds:
+                for f in ds:
+                    try:
+                        if json.loads(f.read_text(encoding="utf-8")).get("tasks"):
+                            return True, "ok"
+                    except (OSError, json.JSONDecodeError):
+                        continue
+                return False, f"dataset.json found but empty/invalid: {ds[0]}"
+            return False, "dataset/dataset.json missing (sync incomplete?)"
+    return False, ".collection/ missing (sync incomplete or wrong link)"
+
+
 def load_state():
     state = INBOX / ".sync_state.json"
     if state.is_file():
@@ -57,8 +78,9 @@ def sync_folder(gdown, url: str, dest: Path, attempts: int = 2) -> bool:
                                   use_cookies=False, resume=True)
             return True
         except Exception as e:  # noqa: BLE001 - gdown raises DownloadError
-            msg = str(e).splitlines()[0] if str(e) else type(e).__name__
-            print(f"  attempt {i}/{attempts} failed: {msg}")
+            msg = str(e).strip() or type(e).__name__
+            print(f"  attempt {i}/{attempts} failed: "
+                  + msg.replace("\n", "\n  "))
             if i < attempts:
                 time.sleep(10 * i)
     # Even on failure, partial files stay on disk and are reused next time.
@@ -83,7 +105,7 @@ def main():
     sources = json.loads(CONFIG.read_text(encoding="utf-8")).get("sources", [])
     state = load_state()
     INBOX.mkdir(parents=True, exist_ok=True)
-    ok_count = fail_count = 0
+    ok_count = fail_count = incomplete = 0
 
     for src in sources:
         key = f"{src.get('category')}|{src.get('member')}"
@@ -103,21 +125,29 @@ def main():
             print(f"  ERROR: {type(e).__name__}: {str(e).splitlines()[0]}")
             ok = False
         after = sum(1 for p in dest.rglob("*") if p.is_file()) if dest.is_dir() else 0
+        complete, why = structure_complete(dest)
         if ok:
             ok_count += 1
-            state[key] = {
-                "files": after,
-                "new_files": after - before,
-                "synced_at": datetime.now(timezone.utc).isoformat(),
-            }
-            print(f"  files on disk: {after} (+{after - before} new)")
         else:
             fail_count += 1
-            print(f"  FAILED (files on disk: {after})")
+        state[key] = {
+            "files": after,
+            "new_files": after - before,
+            "complete": complete,
+            "note": why,
+            "synced_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if complete:
+            print(f"  COMPLETE  files on disk: {after} (+{after - before} new)")
+        else:
+            incomplete += 1
+            print(f"  INCOMPLETE ({why}) files: {after}"
+                  " — resume-safe, next pass continues")
 
     save_state(state)
-    print(f"\nsync done: {ok_count} ok, {fail_count} failed")
-    return 0
+    print(f"\nsync done: {ok_count} ok, {fail_count} download-failed, "
+          f"{incomplete} incomplete (will resume next pass)")
+    return 0 if not fail_count else 1
 
 
 if __name__ == "__main__":

@@ -87,7 +87,7 @@ def step(name, argv, allow_fail=False, resilient=None, timeout=None):
 def pipeline(args):
     if not args.no_sync:
         step("1/5 SYNC", [PY, "scripts/sync_drive.py"], allow_fail=True,
-             timeout=1500)
+             timeout=3600)
     else:
         print("[1/5 SYNC] skipped (--no-sync)")
 
