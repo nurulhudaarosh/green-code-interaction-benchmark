@@ -1,0 +1,34 @@
+{
+  "version": "1.0",
+  "categories": [
+    "file_data_processing",
+    "text_log_processing",
+    "search_retrieval",
+    "algorithms_computation",
+    "image_media_processing",
+    "realistic_applications_utilities"
+  ],
+  "tasks_per_category": 20,
+  "interaction_conditions": [
+    "ONE_SHOT",
+    "BUG_FIX",
+    "FEATURE_ADDITION",
+    "EDGE_CASE",
+    "FULL_MULTI_TURN"
+  ],
+  "models": ["gpt", "claude", "gemini", "deepseek"],
+  "expected_programs": 2400,
+  "execution": {
+    "language": "python",
+    "warmup_runs": 1,
+    "measured_runs": 5,
+    "timeout_seconds": 300,
+    "input_scales": ["small", "medium", "large"]
+  },
+  "pilot": {
+    "tasks": 8,
+    "models": 2,
+    "conditions": 5,
+    "expected_programs": 80
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "models": [
+    {
+      "id": "gpt",
+      "display_name": "OpenAI GPT",
+      "collection_method": "manual_chat_ui"
+    },
+    {
+      "id": "claude",
+      "display_name": "Anthropic Claude",
+      "collection_method": "manual_chat_ui"
+    },
+    {
+      "id": "gemini",
+      "display_name": "Google Gemini",
+      "collection_method": "manual_chat_ui"
+    },
+    {
+      "id": "deepseek",
+      "display_name": "DeepSeek",
+      "collection_method": "manual_chat_ui"
+    }
+  ]
+}

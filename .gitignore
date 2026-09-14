@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Environment
+.env
+
+# Generated submissions
+submissions/
+*.zip
+
+# Member kit builds / incoming submissions
+kits/
+inbox/*
+!inbox/.gitkeep
+
+# Auto-materialized run inputs (regenerated per task/scale)
+inputs/
+
+# Generated experiment results
+results/raw/*
+results/processed/*
+results/final/*
+results/measurement_queue.jsonl
+
+!results/raw/.gitkeep
+!results/processed/.gitkeep
+!results/final/.gitkeep
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

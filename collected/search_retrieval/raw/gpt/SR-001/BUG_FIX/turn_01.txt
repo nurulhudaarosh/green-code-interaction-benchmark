@@ -1,0 +1,79 @@
+Here’s a simple initial Python implementation. It builds the inverted index once, then answers both single-keyword and multi-keyword AND queries. Results are returned in deterministic document-ID order
+```python
+from collections import defaultdict
+
+class InvertedIndex:
+    def __init__(self, documents):
+        """
+        documents: mapping of document_id -> text
+                   e.g. {1: "the quick brown fox", 2: "quick red fox"}
+        """
+        self.documents = documents
+        self.index = defaultdict(set)
+
+        # Build the inverted index.
+        for doc_id, text in documents.items():
+            for keyword in self._tokenize(text):
+                self.index[keyword].add(doc_id)
+
+    @staticmethod
+    def _tokenize(text):
+        """Normalize text into keywords."""
+        return text.lower().split()
+
+    def query(self, query_text):
+        """
+        Return document IDs containing ALL keywords in query_text.
+
+        Results are deterministic and sorted by document ID.
+        """
+        keywords = self._tokenize(query_text)
+
+        if not keywords:
+            return []
+
+        # Start with the postings list for the first keyword,
+        # then intersect with the remaining keywords.
+        result = self.index.get(keywords[0], set()).copy()
+
+        for keyword in keywords[1:]:
+            result.intersection_update(self.index.get(keyword, set()))
+
+            if not result:
+                break
+
+        return sorted(result)
+
+
+# Example usage
+documents = {
+    1: "the quick brown fox",
+    2: "the quick red fox",
+    3: "lazy brown dog",
+    4: "quick brown dog",
+}
+
+index = InvertedIndex(documents)
+
+print(index.query("quick"))
+# [1, 2, 4]
+
+print(index.query("quick fox"))
+# [1, 2]
+
+print(index.query("brown dog"))
+# [3, 4]
+
+print(index.query("quick brown"))
+# [1, 4]
+
+print(index.query("quick blue"))
+# []
+```
+Complexity
+If P(k) is the postings list for keyword k:
+Index construction: proportional to the total number of tokens in the collection.
+Single-keyword query: O(|P(k)|) plus sorting.
+AND query: repeatedly intersects postings sets, which is efficient when the lists are small.
+Deterministic output: sorted(result) ensures the same ordering regardless of Python set iteration order.
+For a more robust version, the next improvement would be to sort the query keywords by postings-list size before intersection, starting with the rarest keyword.

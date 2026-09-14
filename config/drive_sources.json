@@ -1,0 +1,41 @@
+{
+  "_comment": "One entry per member/category. 'link' = shared Drive file link (the collection_submission.zip or its folder) or a folder link. Run: python3 scripts/sync_drive.py",
+  "sources": [
+    {
+      "member": "member-SR",
+      "category": "search_retrieval",
+      "link": "https://drive.google.com/drive/folders/1M8G_p4ONhK5h7mVfQew2aZpTDKfTBR9N",
+      "type": "file"
+    },
+    {
+      "member": "member-FD",
+      "category": "file_data_processing",
+      "link": "https://drive.google.com/drive/folders/11KQHSI38G6E_GcpveiVTipIT2lfed4ox",
+      "type": "file"
+    },
+    {
+      "member": "member-TL",
+      "category": "text_log_processing",
+      "link": "https://drive.google.com/drive/folders/1fdzIrsg9iNIv0q7Wk3HjEuMbsQWXrXn9",
+      "type": "file"
+    },
+    {
+      "member": "member-AC",
+      "category": "algorithms_computation",
+      "link": "https://drive.google.com/drive/folders/1gzVfJjZRzw4AOI-RFdQiy5V3XYtBmDFN",
+      "type": "file"
+    },
+    {
+      "member": "member-IM",
+      "category": "image_media_processing",
+      "link": "https://drive.google.com/drive/folders/1k5aoxbBzFkIpfteQwOLRGzvFWbUlMXV_",
+      "type": "file"
+    },
+    {
+      "member": "member-RA",
+      "category": "realistic_applications_utilities",
+      "link": "https://drive.google.com/drive/folders/180pck797QJoWZQRgc_g43oQ7WZY4bITo",
+      "type": "file"
+    }
+  ]
+}

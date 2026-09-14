@@ -1,0 +1,11 @@
+{
+  "energy_backend": "intel_rapl",
+  "rapl_domain": "package",
+  "rapl_paths": [
+    "/sys/class/powercap/intel-rapl:0",
+    "/sys/class/powercap/intel-rapl:0/intel-rapl:0:0"
+  ],
+  "requires_linux": true,
+  "measurement_environment": "controlled_local_machine",
+  "notes": "Final energy measurement must run on a controlled Linux machine with Intel RAPL. Colab/shared environments are only for dataset validation and development."
+}
