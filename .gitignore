@@ -38,6 +38,7 @@ results/.file_ledger.lock
 
 # Keep the presentation report, tables and plots in the repo
 !results/final/presentation.md
+!results/final/presentation.pdf
 !results/final/energy_report.csv
 !results/final/energy_report.json
 !results/final/carbon_report.csv
