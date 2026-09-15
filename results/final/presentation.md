@@ -297,7 +297,7 @@ lesson for reproducing this benchmark:
     remain unmeasurable because of genuine defects in the generated programs,
     not harness gaps: 8 are truncated LLM responses (SyntaxError — model
     prose, not code), 39 fail their own embedded self-tests
-    (`AssertionError` / wrong output), 17 crash with a runtime error
+    (`AssertionError` / wrong output), 18 crash with a runtime error
     (undefined name, schema `KeyError`/`ValueError`), 11 exit silently on a
     schema mismatch, 1 needs `pytest`, and 2 print a usage line only.
 11. **Heavy-tailed distributions.** Mean energy is inflated by outliers
