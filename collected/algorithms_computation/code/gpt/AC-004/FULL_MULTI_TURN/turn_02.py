@@ -1,0 +1,448 @@
+"""
+Weighted Job Scheduler
+======================
+
+Problem
+-------
+Given jobs with:
+    (start, finish, profit)
+
+select a non-overlapping subset of jobs with maximum total profit.
+
+Compatibility rule:
+    A job ending at time t is compatible with a job starting at time t.
+
+Therefore:
+    previous_finish <= next_start
+
+Tie-breaking rule:
+    If multiple schedules have the same maximum profit, return the schedule
+    whose sequence of original job indices is lexicographically smallest.
+
+Expected output
+---------------
+weighted_job_scheduler(jobs) returns:
+
+    {
+        "max_profit": <maximum total profit>,
+        "selected_jobs": [<original indices in scheduling order>]
+    }
+
+Important:
+    selected_jobs is the actual scheduling-order sequence of original indices.
+    It must NOT be sorted independently by original index.
+
+Algorithm
+---------
+1. Attach each job's original input index.
+2. Sort jobs by finish time.
+3. For each job, use binary search to find the latest compatible predecessor:
+       finish <= current_start
+4. Use dynamic programming to compare:
+       - skipping the current job
+       - taking the current job plus the best compatible solution
+5. For equal profits, compare the actual original-index sequences
+   lexicographically and keep the smaller one.
+
+Complexity
+----------
+Sorting:
+    O(n log n)
+
+Binary-search predecessor computation:
+    O(n log n)
+
+Dynamic programming:
+    O(n) DP states.
+
+The scheduling structure is O(n log n). Tuple comparisons used for exact
+lexicographic tie-breaking can take O(n) in the worst case.
+
+Only the Python standard library is used.
+No network access, APIs, external services, randomness, or human interaction.
+"""
+
+from bisect import bisect_right
+from typing import Dict, List, Sequence, Tuple
+
+
+Job = Tuple[int, int, int]
+
+
+def weighted_job_scheduler(jobs: Sequence[Job]) -> Dict[str, object]:
+    """
+    Return the maximum-profit non-overlapping job schedule.
+
+    Parameters
+    ----------
+    jobs:
+        Sequence of (start, finish, profit).
+
+    Returns
+    -------
+    dict
+        {
+            "max_profit": int,
+            "selected_jobs": List[int]
+        }
+
+    Tie-breaking:
+        For equal maximum profit, the lexicographically smallest sequence
+        of original job indices in scheduling order is returned.
+    """
+
+    n = len(jobs)
+
+    if n == 0:
+        return {
+            "max_profit": 0,
+            "selected_jobs": [],
+        }
+
+    # ---------------------------------------------------------------
+    # Validate input and attach each job's original index.
+    # ---------------------------------------------------------------
+    indexed_jobs = []
+
+    for original_index, job in enumerate(jobs):
+        if not isinstance(job, (tuple, list)) or len(job) != 3:
+            raise ValueError(
+                f"Job at index {original_index} must be "
+                f"(start, finish, profit)."
+            )
+
+        start, finish, profit = job
+
+        if not isinstance(start, int):
+            raise TypeError(
+                f"Start time of job {original_index} must be an integer."
+            )
+
+        if not isinstance(finish, int):
+            raise TypeError(
+                f"Finish time of job {original_index} must be an integer."
+            )
+
+        if not isinstance(profit, int):
+            raise TypeError(
+                f"Profit of job {original_index} must be an integer."
+            )
+
+        if start > finish:
+            raise ValueError(
+                f"Job at index {original_index} has start time greater "
+                f"than finish time."
+            )
+
+        indexed_jobs.append(
+            (start, finish, profit, original_index)
+        )
+
+    # ---------------------------------------------------------------
+    # Sort by finish time.
+    #
+    # The additional keys make ordering deterministic when finish
+    # times are equal.
+    # ---------------------------------------------------------------
+    indexed_jobs.sort(
+        key=lambda job: (job[1], job[0], job[2], job[3])
+    )
+
+    finish_times = [job[1] for job in indexed_jobs]
+
+    # ---------------------------------------------------------------
+    # Find the latest compatible predecessor for every job.
+    #
+    # bisect_right(..., start, 0, i) - 1 gives the largest j < i
+    # for which:
+    #
+    #     finish_times[j] <= start
+    #
+    # This correctly allows jobs that touch at endpoints.
+    # ---------------------------------------------------------------
+    predecessor: List[int] = []
+
+    for i, (start, _, _, _) in enumerate(indexed_jobs):
+        j = bisect_right(finish_times, start, 0, i) - 1
+        predecessor.append(j)
+
+    # ---------------------------------------------------------------
+    # Dynamic programming.
+    #
+    # dp_profit[i]:
+    #     maximum profit using the first i jobs in finish-time order.
+    #
+    # dp_sequence[i]:
+    #     lexicographically smallest original-index sequence achieving
+    #     dp_profit[i].
+    #
+    # IMPORTANT BUG FIX:
+    # Do NOT sort original indices.
+    #
+    # The tuple must preserve the actual scheduling order:
+    #
+    #     earlier scheduled job -> later scheduled job
+    #
+    # Otherwise tie-breaking can be incorrect.
+    # ---------------------------------------------------------------
+    dp_profit: List[int] = [0] * (n + 1)
+    dp_sequence: List[Tuple[int, ...]] = [()] * (n + 1)
+
+    for i in range(1, n + 1):
+        start, finish, profit, original_index = indexed_jobs[i - 1]
+
+        # -----------------------------------------------------------
+        # Option 1: Skip this job.
+        # -----------------------------------------------------------
+        skip_profit = dp_profit[i - 1]
+        skip_sequence = dp_sequence[i - 1]
+
+        # -----------------------------------------------------------
+        # Option 2: Take this job.
+        #
+        # predecessor[i - 1] is the last compatible job in the
+        # sorted list.
+        # -----------------------------------------------------------
+        p = predecessor[i - 1]
+
+        take_profit = dp_profit[p + 1] + profit
+
+        # Preserve scheduling order.
+        #
+        # DO NOT use:
+        #     sorted(...)
+        #
+        # because the required tie-breaking is based on the actual
+        # sequence of selected jobs, not a separately sorted list.
+        take_sequence = dp_sequence[p + 1] + (original_index,)
+
+        # -----------------------------------------------------------
+        # Select the better solution.
+        # -----------------------------------------------------------
+        if take_profit > skip_profit:
+            dp_profit[i] = take_profit
+            dp_sequence[i] = take_sequence
+
+        elif take_profit < skip_profit:
+            dp_profit[i] = skip_profit
+            dp_sequence[i] = skip_sequence
+
+        else:
+            # Equal profit:
+            # choose lexicographically smaller original-index sequence.
+            if take_sequence < skip_sequence:
+                dp_profit[i] = take_profit
+                dp_sequence[i] = take_sequence
+            else:
+                dp_profit[i] = skip_profit
+                dp_sequence[i] = skip_sequence
+
+    return {
+        "max_profit": dp_profit[n],
+        "selected_jobs": list(dp_sequence[n]),
+    }
+
+
+# =====================================================================
+# Tests / Demonstration
+# =====================================================================
+
+def _run_tests() -> None:
+    """
+    Deterministic tests covering:
+        - empty input
+        - one job
+        - endpoint compatibility
+        - overlapping jobs
+        - positive profits
+        - negative profits
+        - deterministic tie-breaking
+        - the tie-breaking bug fixed above
+    """
+
+    # ---------------------------------------------------------------
+    # 1. Empty input.
+    # ---------------------------------------------------------------
+    assert weighted_job_scheduler([]) == {
+        "max_profit": 0,
+        "selected_jobs": [],
+    }
+
+    # ---------------------------------------------------------------
+    # 2. Single job.
+    # ---------------------------------------------------------------
+    assert weighted_job_scheduler([
+        (1, 3, 10),
+    ]) == {
+        "max_profit": 10,
+        "selected_jobs": [0],
+    }
+
+    # ---------------------------------------------------------------
+    # 3. Endpoint touching is allowed.
+    #
+    # Job 0: [1, 3] -> 10
+    # Job 1: [3, 5] -> 20
+    #
+    # Both can be selected.
+    # ---------------------------------------------------------------
+    assert weighted_job_scheduler([
+        (1, 3, 10),
+        (3, 5, 20),
+    ]) == {
+        "max_profit": 30,
+        "selected_jobs": [0, 1],
+    }
+
+    # ---------------------------------------------------------------
+    # 4. Standard weighted scheduling example.
+    # ---------------------------------------------------------------
+    jobs = [
+        (1, 3, 50),   # 0
+        (2, 5, 20),   # 1
+        (3, 6, 70),   # 2
+        (6, 8, 60),   # 3
+        (5, 7, 30),   # 4
+    ]
+
+    result = weighted_job_scheduler(jobs)
+
+    assert result == {
+        "max_profit": 130,
+        "selected_jobs": [0, 2],
+    }
+
+    # ---------------------------------------------------------------
+    # 5. Overlapping jobs: choose the more profitable job.
+    # ---------------------------------------------------------------
+    assert weighted_job_scheduler([
+        (1, 5, 10),   # 0
+        (2, 4, 20),   # 1
+    ]) == {
+        "max_profit": 20,
+        "selected_jobs": [1],
+    }
+
+    # ---------------------------------------------------------------
+    # 6. Negative-profit jobs should not be selected when unnecessary.
+    # ---------------------------------------------------------------
+    assert weighted_job_scheduler([
+        (1, 3, -10),
+        (3, 5, -20),
+    ]) == {
+        "max_profit": 0,
+        "selected_jobs": [],
+    }
+
+    # ---------------------------------------------------------------
+    # 7. Equal-profit tie.
+    #
+    # Either job produces profit 10.
+    # Original-index sequence [0] is smaller than [1].
+    # ---------------------------------------------------------------
+    assert weighted_job_scheduler([
+        (1, 3, 10),   # 0
+        (1, 3, 10),   # 1
+    ]) == {
+        "max_profit": 10,
+        "selected_jobs": [0],
+    }
+
+    # ---------------------------------------------------------------
+    # 8. Concrete demonstration of the important tie-breaking rule.
+    #
+    # Input order:
+    #
+    #   job 0: [3, 4], profit 5
+    #   job 1: [1, 2], profit 5
+    #
+    # Both schedules have profit 5.
+    #
+    # Their actual original-index sequences are:
+    #     [0]
+    #     [1]
+    #
+    # Therefore [0] must win.
+    # ---------------------------------------------------------------
+    assert weighted_job_scheduler([
+        (3, 4, 5),    # 0
+        (1, 2, 5),    # 1
+    ]) == {
+        "max_profit": 5,
+        "selected_jobs": [0],
+    }
+
+    # ---------------------------------------------------------------
+    # 9. Tie between two multi-job schedules.
+    #
+    # Schedule A:
+    #     job 2 -> job 3
+    #     sequence [2, 3]
+    #
+    # Schedule B:
+    #     job 0 -> job 1
+    #     sequence [0, 1]
+    #
+    # Same profit, so [0, 1] must win.
+    # ---------------------------------------------------------------
+    assert weighted_job_scheduler([
+        (1, 2, 5),    # 0
+        (2, 3, 5),    # 1
+        (1, 2, 5),    # 2
+        (2, 3, 5),    # 3
+    ]) == {
+        "max_profit": 10,
+        "selected_jobs": [0, 1],
+    }
+
+    # ---------------------------------------------------------------
+    # 10. Zero-profit jobs do not need to be selected because the
+    # empty schedule is lexicographically smaller than a non-empty
+    # schedule when both have profit 0.
+    # ---------------------------------------------------------------
+    assert weighted_job_scheduler([
+        (1, 2, 0),
+        (2, 3, 0),
+    ]) == {
+        "max_profit": 0,
+        "selected_jobs": [],
+    }
+
+    # ---------------------------------------------------------------
+    # 11. Invalid interval.
+    # ---------------------------------------------------------------
+    try:
+        weighted_job_scheduler([
+            (5, 2, 10),
+        ])
+        raise AssertionError("Expected ValueError for invalid interval.")
+    except ValueError:
+        pass
+
+    # ---------------------------------------------------------------
+    # 12. Invalid job shape.
+    # ---------------------------------------------------------------
+    try:
+        weighted_job_scheduler([
+            (1, 2),
+        ])
+        raise AssertionError("Expected ValueError for invalid job shape.")
+    except ValueError:
+        pass
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    _run_tests()
+
+    # Example execution.
+    example_jobs = [
+        (1, 3, 50),
+        (2, 5, 20),
+        (3, 6, 70),
+        (6, 8, 60),
+        (5, 7, 30),
+    ]
+
+    print(weighted_job_scheduler(example_jobs))

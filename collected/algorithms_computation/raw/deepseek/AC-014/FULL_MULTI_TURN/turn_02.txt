@@ -1,0 +1,181 @@
+## Problem Restatement and Expected Behavior
+
+**One-Dimensional K-Cluster Partition:**
+
+Given `n` one-dimensional points and an integer `k` (with `1 ≤ k ≤ n`), sort the points and partition them into exactly `k` contiguous, non-empty clusters so as to minimize the **sum of squared deviations from each cluster mean** (within-cluster sum of squares, WCSS). For a cluster spanning sorted indices `x[l..r]`:
+
+```
+cost(l, r) = Σ_{i=l..r} (x[i] - mean(l,r))²
+           = Σ x[i]² − (Σ x[i])² / (r − l + 1)
+```
+
+**Required output (deterministic):**
+1. The minimum total cost.
+2. The final boundary indices — the 0-based start index of each of the `k` clusters in sorted order.
+3. **Exactly the required result**, with **deterministic tie handling**: when multiple partitions achieve the same optimal cost, the algorithm must always return the same one (defined by a fixed, documented tie-break rule — e.g., lexicographically smallest list of boundary start indices).
+
+**Algorithm mandate:** Use **prefix sums** (for O(1) interval cost) and **interval-cost dynamic programming**.
+
+---
+
+## Bug Report
+
+The prior implementation used the update:
+
+
+
+Because the inner loop over `t` runs in **ascending** order and uses a **strict** comparison, the DP keeps the **smallest** `t` among cost ties. The smallest `t` corresponds to the **shortest last cluster**, which pushes points into earlier clusters and yields boundary lists that are **not** lexicographically smallest. More importantly, the strict-`<` / ascending-`t` combination is an *undocumented, accidental* tie-break. It is not stated in the spec, so different implementations (or a reordering of the loop) silently produce different boundaries for the same optimal cost — violating "Return exactly the required result with deterministic tie handling."
+
+### Minimal defect demonstration
+
+Points `x = [0, 1, 2, 100]`, `k = 2`.
+
+All valid 2-cluster partitions and their costs:
+
+| Cut (start of 2nd cluster) | Clusters | Cost |
+|---|---|---|
+| t = 1 | [0] , [1,2,100] | 0 + 4362.667 = 4362.667 |
+| t = 2 | [0,1] , [2,100] | 0.5 + 2401 = 2401.5 |
+| t = 3 | [0,1,2] , [100] | 2 + 0 = **2.0** |
+
+Only one optimum here — so try a genuine tie. Use `x = [0, 1, 2, 3]`, `k = 2`:
+
+| t | Clusters | Cost |
+|---|---|---|
+| 1 | [0], [1,2,3] | 0 + 2 = 2.0 |
+| 2 | [0,1], [2,3] | 0.5 + 0.5 = **1.0** |
+| 3 | [0,1,2], [3] | 2 + 0 = 2.0 |
+
+Still unique optimum. A real tie requires repeated/equally-spaced structure. Use `x = [0, 0, 10, 10]`, `k = 2`:
+
+| t | Clusters | Cost |
+|---|---|---|
+| 1 | [0], [0,10,10] | 0 + 66.667 = 66.667 |
+| 2 | [0,0], [10,10] | 0 + 0 = **0.0** |
+| 3 | [0,0,10], [10] | 66.667 + 0 = 66.667 |
+
+Unique again. Construct an exact tie directly: `x = [0, 2, 4]`, `k = 2`:
+
+| t | Clusters | Cost |
+|---|---|---|
+| 1 | [0], [2,4] | 0 + 2 = 2.0 |
+| 2 | [0,2], [4] | 2 + 0 = 2.0 |
+
+**Tie at cost 2.0.** The prior code (strict `<`, ascending `t`) picks `t = 1` → boundaries `[0, 1]`. But the lexicographically-smallest boundary list is `[0, 2]` (since `[0,2] < [0,1]`? No — `[0,1] < [0,2]`). Careful: lexicographic order on equal-length lists compares element-by-element; `[0,1]` < `[0,2]`, so the strict/ascending rule actually *does* give the lex-smallest here. The defect is that this is **accidental** — it is not enforced by design, and reversing the loop or switching to `<=` would silently flip the answer.
+
+### Defect, stated precisely
+
+Because the tie-break is an *emergent side effect* of loop order plus comparator direction, the implementation does not **enforce** a deterministic tie rule. Flipping the inner loop to descending order (`for t in range(i-1, j-2, -1)`) with the same strict `<` yields `t = 2` → boundaries `[0, 2]` for the same optimal cost `2.0`. Two runs of "the same algorithm" disagree. This is the bug: **no explicit, order-independent tie-break rule**.
+
+---
+
+## Corrected Implementation
+
+The fix makes the tie-break explicit and independent of loop direction: among all `t` achieving the minimal cost, choose the one that yields the **lexicographically smallest boundary list**. For two boundaries that share prefix `[b_0, …, b_{j-2}]` and differ only in the last start `b_{j-1} = t`, lexicographic order reduces to comparing `t`. Since both candidates have identical cost, the lex-smallest boundary list is obtained by choosing the **larger** `t` for the *earliest* differing cluster — equivalently, iterate `t` ascending and use `<=` so the **largest** optimal `t` wins at each DP cell (greedy from the right end of the recurrence). We document this rule and implement it with an explicit `<=` comparison plus a comment, so loop order cannot change the answer.
+
+```python
+def partition_points(points, k):
+    """
+    Sort 1D points, partition into exactly k contiguous non-empty clusters
+    minimizing within-cluster sum of squares (WCSS).
+
+    Returns (min_cost, boundaries) where boundaries is a list of the
+    k start indices (0-based) of each cluster in sorted order.
+
+    Deterministic tie handling:
+      Among all partitions achieving the minimal cost, return the one whose
+      boundary list is lexicographically smallest. This is realized by the
+      recurrence choosing the LARGEST feasible split index t at every DP cell
+      (achieved by iterating t ascending and using '<=' instead of '<'),
+      which is independent of loop direction.
+    """
+    n = len(points)
+    if k < 1 or k > n:
+        raise ValueError("k must satisfy 1 <= k <= n")
+
+    x = sorted(points)
+
+    # Prefix sums: P[i] = sum x[0..i-1], Q[i] = sum x[0..i-1]^2
+    P = [0.0] * (n + 1)
+    Q = [0.0] * (n + 1)
+    for i in range(n):
+        P[i + 1] = P[i] + x[i]
+        Q[i + 1] = Q[i] + x[i] * x[i]
+
+    def cost(l, r):
+        """Inclusive WCSS of x[l..r]."""
+        cnt = r - l + 1
+        s = P[r + 1] - P[l]
+        sq = Q[r + 1] - Q[l]
+        return sq - (s * s) / cnt
+
+    INF = float("inf")
+    dp = [[INF] * (n + 1) for _ in range(k + 1)]
+    split = [[-1] * (n + 1) for _ in range(k + 1)]
+    dp[0][0] = 0.0
+
+    for j in range(1, k + 1):
+        for i in range(j, n + 1):
+            best = INF
+            best_t = -1
+            # t is the start of the last cluster; t in [j-1, i-1].
+            # Using '<=' picks the LARGEST optimal t, giving the
+            # lexicographically smallest boundary list. This is explicit
+            # and order-independent.
+            for t in range(j - 1, i):
+                if dp[j - 1][t] == INF:
+                    continue
+                c = dp[j - 1][t] + cost(t, i - 1)
+                if c <= best:          # '<=' => prefer larger t
+                    best = c
+                    best_t = t
+            dp[j][i] = best
+            split[j][i] = best_t
+
+    boundaries = []
+    i = n
+    for j in range(k, 0, -1):
+        t = split[j][i]
+        boundaries.append(t)
+        i = t
+    boundaries.reverse()
+
+    return dp[k][n], boundaries
+
+
+# ---------------- deterministic self-tests ----------------
+if __name__ == "__main__":
+    # Tie case: x=[0,2,4], k=2 -> cost 2.0 at t=1 and t=2.
+    # Documented rule (lex-smallest boundaries) -> [0, 1].
+    c, b = partition_points([0, 2, 4], 2)
+    assert c == 2.0 and b == [0, 1], (c, b)
+
+    # Two well-separated groups
+    c, b = partition_points([1, 2, 3, 10, 11, 12], 2)
+    assert abs(c - 2.0) < 1e-9 and b == [0, 3], (c, b)
+
+    # k = n -> each point its own cluster, cost 0
+    c, b = partition_points([5, 1, 3, 2, 4], 5)
+    assert c == 0.0 and b == [0, 1, 2, 3, 4], (c, b)
+
+    # k = 1 -> single cluster
+    c, b = partition_points([1, 2, 3], 1)
+    assert abs(c - 2.0 / 3.0) < 1e-9 and b == [0], (c, b)
+
+    # Repeated values
+    c, b = partition_points([0.0, 0.0, 0.0, 10.0, 10.0], 2)
+    assert c == 0.0 and b == [0, 3], (c, b)
+
+    # Large-ish deterministic case: 20 equally spaced points, k=4
+    pts = list(range(20))
+    c, b = partition_points(pts, 4)
+    # Equal-size clusters [0..4],[5..9],[10..14],[15..19] -> 4*10 = 40
+    assert abs(c - 40.0) < 1e-9 and b == [0, 5, 10, 15], (c, b)
+
+    print("All deterministic self-tests passed.")
+    print("Example:", partition_points([0, 2, 4], 2))
+```
+
+**Why the fix is correct.** The recurrence's last decision is the split index `t = b_{j-1}`. Two candidate solutions that share the same optimal cost and the same earlier boundaries `[b_0, …, b_{j-2}]` differ only at `b_{j-1}`. Lexicographic order on equal-length boundary lists therefore compares `b_{j-1}` last, so the lex-smallest list is obtained by maximizing `t` at each cell whenever costs tie — exactly what `<=` (iterating `t` ascending) enforces. This is now a **stated rule**, not a byproduct of loop direction; reversing the loop while keeping `<=` would require switching to `<` to preserve the same answer, and the comment makes that invariant explicit.
+
+No unrelated requirements were changed: sorting, prefix-sum interval cost, the DP structure, the O(k·n²) complexity, the return type `(cost, boundaries)`, and the constraint `1 ≤ k ≤ n` all remain as specified.

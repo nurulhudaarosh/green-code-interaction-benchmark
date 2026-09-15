@@ -1,0 +1,67 @@
+import csv
+import sys
+from collections import defaultdict
+
+
+def aggregate_sales(input_file, output_file):
+    totals = defaultdict(lambda: {
+        "total_units": 0,
+        "total_revenue": 0.0
+    })
+
+    with open(input_file, "r", newline="", encoding="utf-8") as infile:
+        reader = csv.DictReader(infile)
+
+        for row in reader:
+            try:
+                region = row["region"].strip()
+                category = row["category"].strip()
+                units = int(row["units"])
+                unit_price = float(row["unit_price"])
+
+                if not region or not category:
+                    continue
+
+                if units <= 0 or unit_price < 0:
+                    continue
+
+                key = (region, category)
+                totals[key]["total_units"] += units
+                totals[key]["total_revenue"] += units * unit_price
+
+            except (KeyError, TypeError, ValueError):
+                continue
+
+    with open(output_file, "w", newline="", encoding="utf-8") as outfile:
+        fieldnames = [
+            "region",
+            "category",
+            "total_units",
+            "total_revenue",
+            "weighted_avg_unit_price"
+        ]
+
+        writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for region, category in sorted(totals):
+            total_units = totals[(region, category)]["total_units"]
+            total_revenue = totals[(region, category)]["total_revenue"]
+
+            weighted_avg_unit_price = total_revenue / total_units
+
+            writer.writerow({
+                "region": region,
+                "category": category,
+                "total_units": total_units,
+                "total_revenue": f"{total_revenue:.2f}",
+                "weighted_avg_unit_price": f"{weighted_avg_unit_price:.2f}"
+            })
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: python sales_aggregator.py input.csv output.csv")
+        sys.exit(1)
+
+    aggregate_sales(sys.argv[1], sys.argv[2])

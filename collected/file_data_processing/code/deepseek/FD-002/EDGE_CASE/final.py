@@ -1,0 +1,230 @@
+#!/usr/bin/env python3
+"""
+Offline NDJSON Analyzer
+Extracts nested user and request fields from NDJSON logs.
+Handles malformed JSON gracefully with counting.
+Produces deterministic JSON output sorted by user ID.
+Handles endpoint ties with lexical tie-breaking.
+"""
+
+import json
+import sys
+from collections import defaultdict
+from typing import Dict, List, Optional, Any
+import argparse
+
+
+class NDJSONAnalyzer:
+    def __init__(self):
+        self.users: Dict[str, Dict] = defaultdict(lambda: {
+            'request_count': 0,
+            'error_count': 0,
+            'total_latency': 0,
+            'latency_count': 0,
+            'endpoints': defaultdict(int),
+            'valid_entries': 0
+        })
+        self.malformed_count = 0
+        self.total_lines = 0
+        self.errors = []
+        self.malformed_lines = []
+    
+    def extract_field(self, obj: Dict, path: List[str]) -> Optional[Any]:
+        current = obj
+        for key in path:
+            if isinstance(current, dict) and key in current:
+                current = current[key]
+            else:
+                return None
+        return current
+    
+    def process_line(self, line: str, line_num: int) -> bool:
+        line = line.strip()
+        
+        if not line:
+            self.malformed_count += 1
+            self.errors.append(f"Line {line_num}: Empty line")
+            self.malformed_lines.append(line_num)
+            return False
+        
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError as e:
+            self.malformed_count += 1
+            self.errors.append(f"Line {line_num}: {str(e)}")
+            self.malformed_lines.append(line_num)
+            return False
+        
+        user = self.extract_field(data, ['user', 'id'])
+        if user is None:
+            user = self.extract_field(data, ['user'])
+        
+        if user is None:
+            self.malformed_count += 1
+            self.errors.append(f"Line {line_num}: Missing user field")
+            self.malformed_lines.append(line_num)
+            return False
+        
+        if isinstance(user, dict) and 'id' in user:
+            user = user['id']
+        user = str(user)
+        
+        endpoint = self.extract_field(data, ['request', 'endpoint'])
+        if endpoint is None:
+            endpoint = self.extract_field(data, ['endpoint'])
+        
+        latency = self.extract_field(data, ['request', 'latency'])
+        if latency is None:
+            latency = self.extract_field(data, ['latency'])
+        
+        is_error = False
+        error_field = self.extract_field(data, ['error'])
+        if error_field is not None:
+            is_error = True
+        
+        status = self.extract_field(data, ['response', 'status'])
+        if status is None:
+            status = self.extract_field(data, ['status'])
+        
+        if status is not None and isinstance(status, (int, str)):
+            try:
+                status_int = int(status)
+                if status_int >= 400:
+                    is_error = True
+            except (ValueError, TypeError):
+                pass
+        
+        user_data = self.users[user]
+        user_data['valid_entries'] += 1
+        user_data['request_count'] += 1
+        
+        if is_error:
+            user_data['error_count'] += 1
+        
+        if latency is not None:
+            try:
+                latency_float = float(latency)
+                user_data['total_latency'] += latency_float
+                user_data['latency_count'] += 1
+            except (ValueError, TypeError):
+                pass
+        
+        if endpoint is not None:
+            user_data['endpoints'][str(endpoint)] += 1
+        
+        return True
+    
+    def process_file(self, file_path: str) -> None:
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                for line_num, line in enumerate(f, 1):
+                    self.total_lines = line_num
+                    self.process_line(line, line_num)
+        except FileNotFoundError:
+            print(f"Error: File '{file_path}' not found.", file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            print(f"Error reading file: {e}", file=sys.stderr)
+            sys.exit(1)
+    
+    def process_stdin(self) -> None:
+        for line_num, line in enumerate(sys.stdin, 1):
+            self.total_lines = line_num
+            self.process_line(line, line_num)
+    
+    def calculate_average_latency(self, user_data: Dict) -> Optional[float]:
+        if user_data['latency_count'] == 0:
+            return None
+        avg = user_data['total_latency'] / user_data['latency_count']
+        return round(avg, 2)
+    
+    def get_most_requested_endpoint(self, endpoints: Dict[str, int]) -> Optional[str]:
+        if not endpoints:
+            return None
+        max_count = max(endpoints.values())
+        candidates = [ep for ep, count in endpoints.items() if count == max_count]
+        return sorted(candidates)[0]
+    
+    def generate_summary(self) -> Dict:
+        summary = {}
+        
+        for user_id in sorted(self.users.keys()):
+            user_data = self.users[user_id]
+            endpoints_dict = dict(user_data['endpoints'])
+            
+            user_summary = {
+                'user_id': user_id,
+                'request_count': user_data['request_count'],
+                'error_count': user_data['error_count'],
+                'average_latency': self.calculate_average_latency(user_data),
+                'most_requested_endpoint': self.get_most_requested_endpoint(endpoints_dict)
+            }
+            
+            summary[user_id] = user_summary
+        
+        return {
+            'summary': summary,
+            'metadata': {
+                'total_lines_processed': self.total_lines,
+                'malformed_lines': self.malformed_count,
+                'unique_users': len(self.users),
+                'total_requests': sum(u['request_count'] for u in self.users.values())
+            }
+        }
+    
+    def print_summary(self, pretty: bool = True) -> None:
+        summary = self.generate_summary()
+        
+        if pretty:
+            print(json.dumps(summary, indent=2, sort_keys=True))
+        else:
+            print(json.dumps(summary, sort_keys=True))
+        
+        if self.errors:
+            print("\nErrors encountered:", file=sys.stderr)
+            sorted_errors = sorted(self.errors, key=lambda x: int(x.split(':')[0].split()[1]) if ':' in x and x.split(':')[0].split()[1].isdigit() else 0)
+            if len(sorted_errors) <= 10:
+                for error in sorted_errors:
+                    print(f"  {error}", file=sys.stderr)
+            else:
+                for error in sorted_errors[:10]:
+                    print(f"  {error}", file=sys.stderr)
+                print(f"  ... and {len(sorted_errors) - 10} more errors", file=sys.stderr)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Analyze NDJSON logs and extract user and request statistics.'
+    )
+    parser.add_argument(
+        'file',
+        nargs='?',
+        help='NDJSON file to analyze (if not provided, reads from stdin)'
+    )
+    parser.add_argument(
+        '--pretty',
+        action='store_true',
+        default=True,
+        help='Pretty print JSON output'
+    )
+    parser.add_argument(
+        '--compact',
+        action='store_true',
+        help='Compact JSON output (no pretty printing)'
+    )
+    
+    args = parser.parse_args()
+    
+    analyzer = NDJSONAnalyzer()
+    
+    if args.file:
+        analyzer.process_file(args.file)
+    else:
+        analyzer.process_stdin()
+    
+    pretty = not args.compact
+    analyzer.print_summary(pretty=pretty)
+
+
+if __name__ == '__main__':
+    main()

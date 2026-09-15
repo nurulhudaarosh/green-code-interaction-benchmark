@@ -1,0 +1,318 @@
+```python
+"""
+Weighted Job Scheduling (Job Sequencing with Profit Maximization)
+===================================================================
+
+ORIGINAL PROBLEM (restated)
+----------------------------
+Given n jobs, each with a start time, finish time, and profit, select a
+subset of mutually non-overlapping jobs so that the total profit is
+maximized.
+
+Two jobs are considered compatible (non-overlapping) if one finishes at
+or before the other starts (i.e., jobs that merely touch at an endpoint,
+start_j == finish_i, are allowed together — they are NOT considered
+overlapping).
+
+Among multiple optimal solutions with the same maximum profit, ties are
+broken deterministically by preferring the solution whose selected job
+indices (original input indices), read in increasing order of finish
+time, form the lexicographically smallest sequence.
+
+KEY CONSTRAINTS (unchanged)
+----------------------------
+1. Jobs are given as (start, finish, profit) tuples; start < finish.
+2. Selected jobs must be pairwise non-overlapping (touching allowed).
+3. We must maximize total profit.
+4. If multiple subsets achieve the same maximum profit, resolve the tie
+   deterministically using original input index ordering (smallest
+   index sequence wins) — not hash order, randomness, or arbitrary scan
+   order.
+5. No network access, no external packages, no randomness — pure
+   standard library, fully deterministic.
+
+ORIGINAL REQUIRED OUTPUTS (unchanged, always produced)
+--------------------------------------------------------
+- The maximum achievable total profit (int).
+- The list of selected jobs (as original indices), in order of finish
+  time, representing one deterministic optimal solution.
+
+By default (feature disabled), `schedule_jobs(...)` returns EXACTLY:
+    (max_profit: int, selected_indices: List[int])
+identical in shape and value to the original implementation. No new
+field is added unless explicitly requested.
+
+NEW OPTIONAL FEATURE
+---------------------
+When the caller explicitly opts in via `include_summary=True`, the
+function additionally returns a third element: `operation_summary`, a
+dict giving a deterministic count of the major computational
+decisions/operations the algorithm performed while solving the
+instance. This is purely additive:
+  - Original two fields (`max_profit`, `selected_indices`) are returned
+    unchanged, in the same order, with the same values.
+  - The summary is appended as a third tuple element ONLY when
+    requested. Nothing about the core algorithm's logic, sort order,
+    tie-breaking, or results is altered by requesting the summary.
+
+`operation_summary` fields (all deterministic, derived directly from
+the run):
+  - "jobs_processed": number of jobs considered (n).
+  - "binary_searches_performed": number of bisect calls used to find
+    latest compatible predecessors (one per job).
+  - "dp_states_computed": number of DP table entries computed
+    (excludes the base dp[0] state).
+  - "take_decisions": number of DP states where "take this job" was
+    chosen (profit strictly better, or tie broken in its favor).
+  - "skip_decisions": number of DP states where "skip this job" was
+    chosen.
+  - "ties_broken_by_index_sequence": number of DP states where take
+    and skip profits were exactly equal and the lexicographic index
+    tie-break rule had to decide the outcome.
+  - "total_major_operations": sum of binary_searches_performed and
+    dp_states_computed — the total count of major computational
+    decision points in the algorithm's execution.
+
+ALGORITHM (unchanged)
+-----------------------
+1. Sort jobs by finish time (ascending). Ties in finish time are broken
+   by original index to keep the sort itself deterministic.
+2. For each job i (in sorted order), binary search (bisect) among the
+   already-sorted finish times to find the rightmost job that finishes
+   at or before the current job's start time — the latest compatible
+   predecessor.
+3. Dynamic programming over the sorted jobs:
+       dp[i] = max(dp[i-1], dp[p(i)] + profit[i])
+   with ties broken by comparing the resulting index sequences and
+   preferring the lexicographically smaller one.
+4. Reconstruct the chosen subset by walking back through the DP choices.
+
+Complexity: O(n log n) for sorting and binary search, O(n) for DP.
+"""
+
+from bisect import bisect_right
+from dataclasses import dataclass
+from typing import Dict, List, Tuple, Union
+
+
+@dataclass(frozen=True)
+class Job:
+    index: int      # original input index
+    start: int
+    finish: int
+    profit: int
+
+
+def _latest_non_conflicting(jobs_sorted: List[Job], i: int) -> int:
+    """
+    Return the index (into jobs_sorted) of the latest job that finishes
+    at or before jobs_sorted[i].start, using binary search.
+    Returns -1 if no such job exists.
+    Jobs that finish exactly at jobs_sorted[i].start are compatible
+    (touching endpoints allowed).
+    """
+    finishes = [j.finish for j in jobs_sorted]
+    pos = bisect_right(finishes, jobs_sorted[i].start, 0, i)
+    return pos - 1
+
+
+def schedule_jobs(
+    raw_jobs: List[Tuple[int, int, int]],
+    include_summary: bool = False,
+) -> Union[Tuple[int, List[int]], Tuple[int, List[int], Dict[str, int]]]:
+    """
+    raw_jobs: list of (start, finish, profit) tuples.
+    include_summary: if False (default), behavior and return shape are
+        IDENTICAL to the original implementation:
+            (max_profit, selected_indices)
+        If True, an additional operation_summary dict is appended:
+            (max_profit, selected_indices, operation_summary)
+
+    Returns:
+        (max_profit, selected_original_indices_in_finish_order)
+        or
+        (max_profit, selected_original_indices_in_finish_order,
+         operation_summary)
+    """
+    n = len(raw_jobs)
+    if n == 0:
+        if include_summary:
+            empty_summary = {
+                "jobs_processed": 0,
+                "binary_searches_performed": 0,
+                "dp_states_computed": 0,
+                "take_decisions": 0,
+                "skip_decisions": 0,
+                "ties_broken_by_index_sequence": 0,
+                "total_major_operations": 0,
+            }
+            return 0, [], empty_summary
+        return 0, []
+
+    jobs_sorted = sorted(
+        (Job(idx, s, f, p) for idx, (s, f, p) in enumerate(raw_jobs)),
+        key=lambda j: (j.finish, j.index),
+    )
+
+    pred = []
+    binary_searches_performed = 0
+    for i in range(n):
+        pred.append(_latest_non_conflicting(jobs_sorted, i))
+        binary_searches_performed += 1
+
+    dp = [0] * (n + 1)
+    choice = [False] * (n + 1)
+    seq: List[Tuple[int, ...]] = [tuple()] * (n + 1)
+
+    dp_states_computed = 0
+    take_decisions = 0
+    skip_decisions = 0
+    ties_broken_by_index_sequence = 0
+
+    for i in range(1, n + 1):
+        job = jobs_sorted[i - 1]
+        skip_profit = dp[i - 1]
+        skip_seq = seq[i - 1]
+
+        take_base = dp[pred[i - 1] + 1]
+        take_profit = take_base + job.profit
+        take_seq = seq[pred[i - 1] + 1] + (job.index,)
+
+        dp_states_computed += 1
+
+        if take_profit > skip_profit:
+            dp[i] = take_profit
+            choice[i] = True
+            seq[i] = take_seq
+            take_decisions += 1
+        elif take_profit < skip_profit:
+            dp[i] = skip_profit
+            choice[i] = False
+            seq[i] = skip_seq
+            skip_decisions += 1
+        else:
+            ties_broken_by_index_sequence += 1
+            if take_seq < skip_seq:
+                dp[i] = take_profit
+                choice[i] = True
+                seq[i] = take_seq
+                take_decisions += 1
+            else:
+                dp[i] = skip_profit
+                choice[i] = False
+                seq[i] = skip_seq
+                skip_decisions += 1
+
+    max_profit = dp[n]
+    selected = list(seq[n])
+
+    if not include_summary:
+        return max_profit, selected
+
+    operation_summary = {
+        "jobs_processed": n,
+        "binary_searches_performed": binary_searches_performed,
+        "dp_states_computed": dp_states_computed,
+        "take_decisions": take_decisions,
+        "skip_decisions": skip_decisions,
+        "ties_broken_by_index_sequence": ties_broken_by_index_sequence,
+        "total_major_operations": binary_searches_performed + dp_states_computed,
+    }
+    return max_profit, selected, operation_summary
+
+
+def _self_test() -> None:
+    """Small deterministic sanity checks (no external test framework)."""
+    jobs = [
+        (1, 3, 50),
+        (3, 5, 20),
+        (6, 19, 100),
+        (2, 100, 200),
+    ]
+
+    # --- Original behavior must be unchanged (default call) ---
+    result = schedule_jobs(jobs)
+    assert len(result) == 2, "Default call must return exactly 2 fields"
+    profit, sel = result
+    assert profit == 250, f"Expected 250, got {profit}"
+    assert sel == [0, 2], f"Expected [0, 2], got {sel}"
+
+    # --- Explicit include_summary=False must match default exactly ---
+    result_explicit_false = schedule_jobs(jobs, include_summary=False)
+    assert result_explicit_false == result
+
+    # --- New feature: include_summary=True ---
+    result_with_summary = schedule_jobs(jobs, include_summary=True)
+    assert len(result_with_summary) == 3
+    profit2, sel2, summary = result_with_summary
+    assert profit2 == profit and sel2 == sel, "Core results must be unaffected"
+    assert summary["jobs_processed"] == 4
+    assert summary["binary_searches_performed"] == 4
+    assert summary["dp_states_computed"] == 4
+    assert summary["total_major_operations"] == 8
+    assert summary["take_decisions"] + summary["skip_decisions"] == 4
+
+    # Touching endpoints compatibility, unaffected by the flag
+    jobs2 = [(0, 3, 10), (3, 6, 10)]
+    assert schedule_jobs(jobs2) == (20, [0, 1])
+    p2, s2, sm2 = schedule_jobs(jobs2, include_summary=True)
+    assert (p2, s2) == (20, [0, 1])
+    assert sm2["jobs_processed"] == 2
+
+    # Empty input, both modes
+    assert schedule_jobs([]) == (0, [])
+    p3, s3, sm3 = schedule_jobs([], include_summary=True)
+    assert (p3, s3) == (0, [])
+    assert sm3["total_major_operations"] == 0
+
+    # Tie-breaking scenario: verify summary counts a tie
+    jobs3 = [
+        (0, 2, 10),   # idx0
+        (2, 4, 10),   # idx1 (combined with idx0 -> profit 20)
+        (0, 4, 20),   # idx2 (profit 20, conflicts with idx0/idx1)
+    ]
+    p4, s4 = schedule_jobs(jobs3)
+    assert p4 == 20 and s4 == [0, 1]
+    p4b, s4b, sm4 = schedule_jobs(jobs3, include_summary=True)
+    assert (p4b, s4b) == (p4, s4)
+    assert sm4["ties_broken_by_index_sequence"] >= 1
+
+    print("All self-tests passed.")
+
+
+def main() -> None:
+    _self_test()
+
+    sample_jobs = [
+        (1, 3, 50),
+        (3, 5, 20),
+        (6, 19, 100),
+        (2, 100, 200),
+        (0, 1, 5),
+    ]
+
+    print("\nInput jobs (index: start, finish, profit):")
+    for idx, (s, f, p) in enumerate(sample_jobs):
+        print(f"  {idx}: start={s}, finish={f}, profit={p}")
+
+    # Original behavior (feature disabled / not requested)
+    max_profit, selected_indices = schedule_jobs(sample_jobs)
+    print(f"\n[Original outputs]")
+    print(f"Maximum profit: {max_profit}")
+    print(f"Selected job indices (in finish-time order): {selected_indices}")
+
+    # New behavior (feature explicitly requested)
+    max_profit2, selected_indices2, operation_summary = schedule_jobs(
+        sample_jobs, include_summary=True
+    )
+    print(f"\n[With operation_summary requested]")
+    print(f"Maximum profit: {max_profit2}")
+    print(f"Selected job indices (in finish-time order): {selected_indices2}")
+    print("Operation summary:")
+    for key, value in operation_summary.items():
+        print(f"  {key}: {value}")
+
+
+if __name__ == "__main__":
+    main()
+```

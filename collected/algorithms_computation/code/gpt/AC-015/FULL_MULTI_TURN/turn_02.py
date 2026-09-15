@@ -1,0 +1,517 @@
+"""
+Maximum Flow Planner — Bug Fix
+==============================
+
+1. Problem restatement
+----------------------
+Given a directed capacitated network, a source s, and a sink t, compute:
+
+    - the maximum possible flow from s to t
+    - the flow carried by every ORIGINAL edge
+
+The output must preserve the exact input order of the original edges.
+
+Expected behavior
+-----------------
+- Use Dinic's blocking-flow algorithm.
+- Handle directed edges and parallel edges.
+- Never exceed an edge's capacity.
+- Return edge flows in exactly the same order as the input.
+- Produce deterministic results: when several valid choices are
+  available, process vertices/edges according to their original
+  adjacency/input order.
+- Return exactly the required result fields:
+      {
+          "max_flow": ...,
+          "edge_flows": [...]
+      }
+- No unrelated output fields are added.
+
+2. Bug demonstration
+--------------------
+A common defect is to return flows by iterating through the residual
+graph after Dinic finishes:
+
+    for u in range(n):
+        for edge in graph[u]:
+            ...
+
+This is WRONG because the residual graph contains:
+- forward edges for original edges
+- reverse residual edges
+- adjacency entries grouped by their source vertex
+
+Therefore, that traversal does NOT necessarily correspond to the
+original input-edge order.
+
+Small valid example:
+
+    edges = [
+        (0, 1, 5),   # original edge 0
+        (0, 2, 7),   # original edge 1
+        (1, 3, 5),   # original edge 2
+        (2, 3, 7),   # original edge 3
+    ]
+
+source = 0
+sink   = 3
+
+The maximum flow is 12 and the correct edge-flow list is:
+
+    [5, 7, 5, 7]
+
+A residual-graph traversal grouped by vertices can instead produce
+the forward flows as:
+
+    [5, 7, 5, 7]
+
+for this particular graph, but this is accidental. For example, if
+original edges are supplied in a different order while preserving
+the same network, the residual adjacency order follows source
+vertices rather than the original list order.
+
+The implementation must therefore explicitly remember every original
+edge's location in the residual graph.
+
+A second important deterministic defect can occur when an
+implementation stores only (u, v) and later looks up an edge by that
+pair. Parallel edges then become ambiguous.
+
+Example:
+
+    edges = [
+        (0, 1, 3),   # original edge 0
+        (0, 1, 7),   # original edge 1
+    ]
+
+Both edges have the same (u, v), but their flows must be reported
+separately as:
+
+    [3, 7]
+
+Therefore, every original edge needs its own stable edge ID/reference.
+
+3. Corrected implementation
+----------------------------
+The fix is:
+- Assign every original edge a unique ID.
+- Store its exact forward residual-edge index.
+- Reconstruct flows by iterating over original_edges, NOT by traversing
+  the residual graph.
+- Preserve adjacency insertion order so Dinic's choices are
+  deterministic.
+- Do not add operation_summary or any other unrelated field.
+"""
+
+from collections import deque
+
+
+class Dinic:
+    def __init__(self, n):
+        self.n = n
+        self.graph = [[] for _ in range(n)]
+
+        # Each item:
+        # (u, v, original_capacity, forward_edge_index)
+        #
+        # The list itself is kept in ORIGINAL INPUT ORDER.
+        self.original_edges = []
+
+    def add_edge(self, u, v, capacity):
+        if capacity < 0:
+            raise ValueError("Capacity must be non-negative.")
+
+        forward_index = len(self.graph[u])
+        reverse_index = len(self.graph[v])
+
+        # Residual edge:
+        # [to, residual_capacity, reverse_index]
+        forward = [v, capacity, reverse_index]
+        reverse = [u, 0, forward_index]
+
+        self.graph[u].append(forward)
+        self.graph[v].append(reverse)
+
+        # Store a stable reference to this exact forward edge.
+        self.original_edges.append(
+            (u, v, capacity, forward_index)
+        )
+
+    def _build_level_graph(self, source, sink):
+        self.level = [-1] * self.n
+        self.level[source] = 0
+
+        queue = deque([source])
+
+        while queue:
+            u = queue.popleft()
+
+            for edge in self.graph[u]:
+                v, capacity, _ = edge
+
+                if capacity > 0 and self.level[v] == -1:
+                    self.level[v] = self.level[u] + 1
+                    queue.append(v)
+
+        return self.level[sink] != -1
+
+    def _send_blocking_flow(self, u, sink, pushed):
+        if u == sink:
+            return pushed
+
+        while self.pointer[u] < len(self.graph[u]):
+            edge_index = self.pointer[u]
+            edge = self.graph[u][edge_index]
+
+            v, capacity, reverse_index = edge
+
+            # Only follow edges belonging to the current level graph.
+            if (
+                capacity > 0
+                and self.level[v] == self.level[u] + 1
+            ):
+                flow = self._send_blocking_flow(
+                    v,
+                    sink,
+                    min(pushed, capacity)
+                )
+
+                if flow > 0:
+                    edge[1] -= flow
+                    self.graph[v][reverse_index][1] += flow
+                    return flow
+
+            # This residual edge cannot contribute more flow in this
+            # blocking-flow phase.
+            self.pointer[u] += 1
+
+        return 0
+
+    def max_flow(self, source, sink):
+        if not (0 <= source < self.n):
+            raise ValueError("Invalid source vertex.")
+
+        if not (0 <= sink < self.n):
+            raise ValueError("Invalid sink vertex.")
+
+        if source == sink:
+            return 0
+
+        total_flow = 0
+        infinity = 10**30
+
+        while self._build_level_graph(source, sink):
+            self.pointer = [0] * self.n
+
+            while True:
+                pushed = self._send_blocking_flow(
+                    source,
+                    sink,
+                    infinity
+                )
+
+                if pushed == 0:
+                    break
+
+                total_flow += pushed
+
+        return total_flow
+
+    def get_original_edge_flows(self):
+        """
+        Recover flows strictly in ORIGINAL INPUT ORDER.
+
+        For an original edge:
+
+            flow = original_capacity - remaining_forward_capacity
+        """
+        result = []
+
+        for u, v, original_capacity, forward_index in self.original_edges:
+            remaining_capacity = self.graph[u][forward_index][1]
+            flow = original_capacity - remaining_capacity
+            result.append(flow)
+
+        return result
+
+
+def maximum_flow_planner(n, edges, source, sink):
+    """
+    Parameters
+    ----------
+    n:
+        Number of vertices, numbered 0 through n-1.
+
+    edges:
+        List of (u, v, capacity) tuples in ORIGINAL input order.
+
+    source:
+        Source vertex.
+
+    sink:
+        Sink vertex.
+
+    Returns
+    -------
+    {
+        "max_flow": int,
+        "edge_flows": list[int]
+    }
+
+    edge_flows always corresponds exactly to the order of `edges`.
+    """
+
+    if n < 0:
+        raise ValueError("Number of vertices cannot be negative.")
+
+    if not (0 <= source < n):
+        raise ValueError("Invalid source vertex.")
+
+    if not (0 <= sink < n):
+        raise ValueError("Invalid sink vertex.")
+
+    dinic = Dinic(n)
+
+    for u, v, capacity in edges:
+        if not (0 <= u < n):
+            raise ValueError("Invalid edge source vertex.")
+
+        if not (0 <= v < n):
+            raise ValueError("Invalid edge destination vertex.")
+
+        if capacity < 0:
+            raise ValueError("Capacity must be non-negative.")
+
+        dinic.add_edge(u, v, capacity)
+
+    maximum = dinic.max_flow(source, sink)
+
+    return {
+        "max_flow": maximum,
+        "edge_flows": dinic.get_original_edge_flows(),
+    }
+
+
+# ---------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------
+
+def run_tests():
+    # Test 1:
+    # Original edge order is deliberately NOT grouped by source.
+    #
+    # Input order:
+    #   edge 0: 2 -> 3
+    #   edge 1: 0 -> 2
+    #   edge 2: 0 -> 1
+    #   edge 3: 1 -> 3
+    #
+    # Correct result must remain [7, 7, 5, 5].
+    edges = [
+        (2, 3, 7),
+        (0, 2, 7),
+        (0, 1, 5),
+        (1, 3, 5),
+    ]
+
+    result = maximum_flow_planner(
+        4,
+        edges,
+        source=0,
+        sink=3
+    )
+
+    assert result == {
+        "max_flow": 12,
+        "edge_flows": [7, 7, 5, 5],
+    }
+
+    # Test 2:
+    # Parallel edges must remain separate.
+    edges = [
+        (0, 1, 3),
+        (0, 1, 7),
+    ]
+
+    result = maximum_flow_planner(
+        2,
+        edges,
+        source=0,
+        sink=1
+    )
+
+    assert result == {
+        "max_flow": 10,
+        "edge_flows": [3, 7],
+    }
+
+    # Test 3:
+    # Same endpoints, deliberately reversed capacities.
+    # The two original edge IDs must not be merged.
+    edges = [
+        (0, 1, 8),
+        (0, 1, 2),
+    ]
+
+    result = maximum_flow_planner(
+        2,
+        edges,
+        source=0,
+        sink=1
+    )
+
+    assert result == {
+        "max_flow": 10,
+        "edge_flows": [8, 2],
+    }
+
+    # Test 4:
+    # No s-t path.
+    edges = [
+        (0, 1, 10),
+        (2, 3, 20),
+    ]
+
+    result = maximum_flow_planner(
+        4,
+        edges,
+        source=0,
+        sink=3
+    )
+
+    assert result == {
+        "max_flow": 0,
+        "edge_flows": [0, 0],
+    }
+
+    # Test 5:
+    # Zero-capacity edge.
+    edges = [
+        (0, 1, 0),
+        (1, 2, 10),
+    ]
+
+    result = maximum_flow_planner(
+        3,
+        edges,
+        source=0,
+        sink=2
+    )
+
+    assert result == {
+        "max_flow": 0,
+        "edge_flows": [0, 0],
+    }
+
+    # Test 6:
+    # Multiple paths.
+    edges = [
+        (0, 1, 10),
+        (0, 2, 10),
+        (1, 3, 4),
+        (2, 3, 6),
+    ]
+
+    result = maximum_flow_planner(
+        4,
+        edges,
+        source=0,
+        sink=3
+    )
+
+    assert result == {
+        "max_flow": 10,
+        "edge_flows": [4, 6, 4, 6],
+    }
+
+    # Test 7:
+    # A case requiring residual rerouting.
+    edges = [
+        (0, 1, 10),
+        (0, 2, 10),
+        (1, 2, 10),
+        (1, 3, 10),
+        (2, 3, 10),
+    ]
+
+    result = maximum_flow_planner(
+        4,
+        edges,
+        source=0,
+        sink=3
+    )
+
+    assert result["max_flow"] == 20
+
+    # Every edge must respect its capacity.
+    for edge, flow in zip(edges, result["edge_flows"]):
+        assert 0 <= flow <= edge[2]
+
+    # Flow conservation at internal vertices.
+    for vertex in range(4):
+        if vertex in (0, 3):
+            continue
+
+        incoming = 0
+        outgoing = 0
+
+        for (u, v, _), flow in zip(edges, result["edge_flows"]):
+            if v == vertex:
+                incoming += flow
+            if u == vertex:
+                outgoing += flow
+
+        assert incoming == outgoing
+
+    # Test 8:
+    # Source equals sink.
+    edges = [
+        (0, 1, 5),
+        (1, 2, 5),
+    ]
+
+    result = maximum_flow_planner(
+        3,
+        edges,
+        source=1,
+        sink=1
+    )
+
+    assert result == {
+        "max_flow": 0,
+        "edge_flows": [0, 0],
+    }
+
+    # Test 9:
+    # Empty edge list.
+    result = maximum_flow_planner(
+        3,
+        [],
+        source=0,
+        sink=2
+    )
+
+    assert result == {
+        "max_flow": 0,
+        "edge_flows": [],
+    }
+
+    # Test 10:
+    # Verify exact output fields.
+    result = maximum_flow_planner(
+        2,
+        [(0, 1, 5)],
+        source=0,
+        sink=1
+    )
+
+    assert list(result.keys()) == [
+        "max_flow",
+        "edge_flows",
+    ]
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()

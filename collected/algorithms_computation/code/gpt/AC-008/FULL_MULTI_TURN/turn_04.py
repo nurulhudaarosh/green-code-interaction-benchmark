@@ -1,0 +1,478 @@
+"""
+Mutable Range Sum Engine
+
+Original problem:
+Maintain an integer array under two types of operations:
+
+1. Point replacement:
+       ("update", index, new_value)
+
+   Replace array[index] with new_value.
+
+2. Inclusive range-sum query:
+       ("query", left, right)
+
+   Return the sum of array[left:right + 1].
+
+Expected behavior:
+- Return every query result in the same order as the queries.
+- Updates replace the current value rather than adding to it.
+- Range endpoints are inclusive.
+- Processing is deterministic and follows the input operation order.
+- Equal situations do not require arbitrary choices; there is no
+  sorting/tie-breaking decision in the range-sum problem.
+- By default, return exactly the original list of query results.
+- When include_summary=True, preserve the original results and also
+  return the optional operation_summary field.
+
+Algorithm:
+Use a Fenwick Tree (Binary Indexed Tree).
+
+- Build the tree in O(n).
+- Point replacement:
+      delta = new_value - old_value
+      Fenwick update(index, delta)
+  takes O(log n).
+- Prefix sum takes O(log n).
+- Inclusive range sum:
+      prefix_sum(right) - prefix_sum(left - 1)
+  takes O(log n).
+
+Difficult valid case:
+A worst-case-like operation sequence can contain many updates and
+queries over a large array. The implementation must NOT scan the
+array for every query or update.
+
+Even when every operation touches positions/ranges that cause the
+Fenwick tree to traverse many tree nodes, each operation remains
+O(log n).
+
+Optional operation summary:
+When include_summary=True:
+    {
+        "results": [...],
+        "operation_summary": number_of_processed_operations
+    }
+
+When include_summary=False, the original output remains:
+    [...]
+
+No randomness, network access, APIs, external services, or
+human interaction are used.
+"""
+
+
+class FenwickTree:
+    """Fenwick Tree supporting point additions and prefix sums."""
+
+    def __init__(self, values):
+        self.n = len(values)
+        self.tree = [0] * (self.n + 1)
+
+        # O(n) construction.
+        for i, value in enumerate(values, start=1):
+            self.tree[i] += value
+
+            parent = i + (i & -i)
+            if parent <= self.n:
+                self.tree[parent] += self.tree[i]
+
+    def update(self, index, delta):
+        """
+        Add delta to the value at the 0-based index.
+
+        Time: O(log n)
+        """
+        i = index + 1
+
+        while i <= self.n:
+            self.tree[i] += delta
+            i += i & -i
+
+    def prefix_sum(self, index):
+        """
+        Return the sum from index 0 through index.
+
+        Time: O(log n)
+        """
+        if index < 0:
+            return 0
+
+        total = 0
+        i = index + 1
+
+        while i > 0:
+            total += self.tree[i]
+            i -= i & -i
+
+        return total
+
+    def range_sum(self, left, right):
+        """
+        Return the inclusive sum from left through right.
+
+        Time: O(log n)
+        """
+        return (
+            self.prefix_sum(right)
+            - self.prefix_sum(left - 1)
+        )
+
+
+def mutable_range_sum_engine(
+    array,
+    operations,
+    include_summary=False
+):
+    """
+    Maintain an integer array using a Fenwick tree.
+
+    Parameters:
+        array:
+            Initial integer array.
+
+        operations:
+            A sequence of:
+                ("update", index, new_value)
+                ("query", left, right)
+
+        include_summary:
+            If False, preserve the original output format:
+                [query_result_1, query_result_2, ...]
+
+            If True:
+                {
+                    "results": [...],
+                    "operation_summary": <number of operations>
+                }
+
+    Returns:
+        Query results, optionally with operation_summary.
+    """
+
+    values = list(array)
+    fenwick = FenwickTree(values)
+
+    results = []
+    operation_count = 0
+
+    # Operations are processed strictly in their original order.
+    for operation in operations:
+        operation_type = operation[0]
+
+        if operation_type == "update":
+            _, index, new_value = operation
+
+            old_value = values[index]
+            delta = new_value - old_value
+
+            values[index] = new_value
+            fenwick.update(index, delta)
+
+            operation_count += 1
+
+        elif operation_type == "query":
+            _, left, right = operation
+
+            results.append(
+                fenwick.range_sum(left, right)
+            )
+
+            operation_count += 1
+
+        else:
+            raise ValueError(
+                f"Unknown operation type: {operation_type}"
+            )
+
+    # Preserve the original output when the optional feature
+    # is disabled.
+    if not include_summary:
+        return results
+
+    return {
+        "results": results,
+        "operation_summary": operation_count
+    }
+
+
+# =========================================================
+# Tests
+# =========================================================
+
+def run_tests():
+    # -----------------------------------------------------
+    # Test 1: Original basic behavior
+    # -----------------------------------------------------
+
+    array = [1, 2, 3]
+    operations = [
+        ("query", 0, 2),       # 6
+        ("update", 1, 5),
+        ("query", 0, 2),       # 9
+    ]
+
+    assert mutable_range_sum_engine(
+        array,
+        operations
+    ) == [6, 9]
+
+    # -----------------------------------------------------
+    # Test 2: Optional operation_summary
+    # -----------------------------------------------------
+
+    assert mutable_range_sum_engine(
+        array,
+        operations,
+        include_summary=True
+    ) == {
+        "results": [6, 9],
+        "operation_summary": 3
+    }
+
+    # -----------------------------------------------------
+    # Test 3: Single-element ranges
+    # -----------------------------------------------------
+
+    array = [10, 20, 30, 40]
+    operations = [
+        ("query", 0, 0),       # 10
+        ("query", 3, 3),       # 40
+        ("update", 0, 99),
+        ("query", 0, 0),       # 99
+    ]
+
+    assert mutable_range_sum_engine(
+        array,
+        operations
+    ) == [10, 40, 99]
+
+    # -----------------------------------------------------
+    # Test 4: Full-array queries
+    # -----------------------------------------------------
+
+    array = [1, 2, 3, 4, 5]
+    operations = [
+        ("query", 0, 4),       # 15
+        ("update", 2, 100),
+        ("query", 0, 4),       # 112
+    ]
+
+    assert mutable_range_sum_engine(
+        array,
+        operations
+    ) == [15, 112]
+
+    # -----------------------------------------------------
+    # Test 5: Negative and zero values
+    # -----------------------------------------------------
+
+    array = [-10, 0, 10, -20, 20]
+    operations = [
+        ("query", 0, 4),       # 0
+        ("update", 3, 30),
+        ("query", 1, 3),       # 40
+        ("update", 0, 5),
+        ("query", 0, 1),       # 5
+    ]
+
+    assert mutable_range_sum_engine(
+        array,
+        operations
+    ) == [0, 40, 5]
+
+    # -----------------------------------------------------
+    # Test 6: Replacing with the same value
+    # -----------------------------------------------------
+
+    array = [7, 8, 9]
+    operations = [
+        ("update", 1, 8),
+        ("query", 0, 2),
+    ]
+
+    assert mutable_range_sum_engine(
+        array,
+        operations
+    ) == [24]
+
+    # -----------------------------------------------------
+    # Test 7: Repeated updates to the same position
+    # -----------------------------------------------------
+
+    array = [1, 2, 3]
+    operations = [
+        ("update", 0, 10),
+        ("update", 0, -5),
+        ("update", 0, 100),
+        ("query", 0, 0),        # 100
+        ("query", 0, 2),        # 105
+    ]
+
+    assert mutable_range_sum_engine(
+        array,
+        operations
+    ) == [100, 105]
+
+    # -----------------------------------------------------
+    # Test 8: Deterministic operation ordering
+    # -----------------------------------------------------
+
+    array = [5, 5]
+    operations = [
+        ("query", 0, 0),        # 5
+        ("update", 0, 10),
+        ("query", 0, 0),        # 10
+        ("update", 1, 20),
+        ("query", 0, 1),        # 30
+    ]
+
+    assert mutable_range_sum_engine(
+        array,
+        operations
+    ) == [5, 10, 30]
+
+    # -----------------------------------------------------
+    # Test 9: Empty operations
+    # -----------------------------------------------------
+
+    assert mutable_range_sum_engine(
+        [1, 2, 3],
+        []
+    ) == []
+
+    assert mutable_range_sum_engine(
+        [1, 2, 3],
+        [],
+        include_summary=True
+    ) == {
+        "results": [],
+        "operation_summary": 0
+    }
+
+    # -----------------------------------------------------
+    # Test 10: Worst-case-like large operation structure
+    #
+    # Large array + many alternating updates and queries.
+    # This is designed to expose an O(n) implementation because
+    # such an implementation would repeatedly scan the array.
+    #
+    # The Fenwick implementation remains O(log n) per operation.
+    # -----------------------------------------------------
+
+    n = 100_000
+
+    # Use a deterministic initial array.
+    array = [1] * n
+
+    operations = []
+
+    expected_results = []
+
+    # Perform many updates and queries across the array.
+    # The pattern deliberately uses positions near the end and
+    # large ranges, which are valid and require substantial
+    # Fenwick traversal.
+    for i in range(2_000):
+        index = n - 1 - (i % 1024)
+        new_value = (i % 17) - 8
+
+        operations.append(
+            ("update", index, new_value)
+        )
+
+        # Query a large range after every update.
+        operations.append(
+            ("query", 0, n - 1)
+        )
+
+        # Maintain the expected answer independently.
+        # We only need this for the test; the engine itself
+        # must use the Fenwick tree.
+        array_value_change = new_value - (
+            1 if i < 1024 else 0
+        )
+
+        # The selected positions repeat after 1024 iterations,
+        # so calculate the expected result directly below instead
+        # of relying on the shortcut above.
+
+    # Rebuild a reference array deterministically.
+    reference = [1] * n
+    expected_results = []
+
+    for operation in operations:
+        if operation[0] == "update":
+            _, index, new_value = operation
+            reference[index] = new_value
+        else:
+            _, left, right = operation
+            expected_results.append(
+                sum(reference[left:right + 1])
+            )
+
+    # Recreate the original large input because the previous
+    # reference computation intentionally modified only its copy.
+    large_array = [1] * n
+
+    actual_results = mutable_range_sum_engine(
+        large_array,
+        operations
+    )
+
+    assert actual_results == expected_results
+
+    # There are 2,000 updates + 2,000 queries.
+    assert len(actual_results) == 2_000
+
+    # -----------------------------------------------------
+    # Test 11: Worst-case-like structure with summary
+    # -----------------------------------------------------
+
+    summary_result = mutable_range_sum_engine(
+        large_array,
+        operations,
+        include_summary=True
+    )
+
+    assert summary_result["results"] == expected_results
+    assert summary_result["operation_summary"] == 4_000
+
+    # -----------------------------------------------------
+    # Test 12: Boundary-style values and large sums
+    # -----------------------------------------------------
+
+    large_value = 10**18
+
+    array = [
+        large_value,
+        -large_value,
+        large_value,
+        -large_value,
+    ]
+
+    operations = [
+        ("query", 0, 3),        # 0
+        ("update", 1, large_value),
+        ("query", 0, 3),        # 2 * 10^18
+        ("query", 1, 2),        # 2 * 10^18
+    ]
+
+    assert mutable_range_sum_engine(
+        array,
+        operations
+    ) == [
+        0,
+        2 * large_value,
+        2 * large_value,
+    ]
+
+    # -----------------------------------------------------
+    # All tests passed.
+    # -----------------------------------------------------
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()

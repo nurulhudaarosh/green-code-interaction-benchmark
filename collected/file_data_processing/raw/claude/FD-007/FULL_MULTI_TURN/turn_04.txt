@@ -1,0 +1,128 @@
+```python
+from collections import defaultdict
+from datetime import datetime
+from typing import List, Dict, Tuple
+
+
+def parse_events(events: List[Tuple[str, str, str]]) -> Dict[str, List[Tuple[datetime, str]]]:
+    """Group raw (user, event_type, timestamp_str) events by user (order not assumed)."""
+    users = defaultdict(list)
+    for user, event_type, ts_str in events:
+        ts = datetime.fromisoformat(ts_str)
+        users[user].append((ts, event_type.lower()))
+    return users
+
+
+def pair_sessions(user_events: List[Tuple[datetime, str]]) -> List[Tuple[datetime, datetime]]:
+    """
+    Sort a single user's events chronologically, then pair each login with the
+    next valid logout. Unmatched events are ignored:
+      - A logout with no open login (or one that precedes it) is discarded.
+      - A login with no following logout (including a trailing/final open
+        login at the end of the event stream) is discarded.
+      - If two logins occur back-to-back with no logout between them, the
+        earlier login is discarded and the later one becomes the pending login.
+    """
+    user_events = sorted(user_events, key=lambda e: e[0])  # sort per user
+
+    sessions = []
+    pending_login = None
+
+    for ts, event_type in user_events:
+        if event_type == "login":
+            pending_login = ts  # discard any prior unmatched login
+        elif event_type == "logout":
+            if pending_login is not None and ts >= pending_login:
+                sessions.append((pending_login, ts))
+                pending_login = None
+            # else: unmatched logout -> ignored
+        # any other event_type is ignored entirely
+
+    # any leftover pending_login here is an unmatched trailing login -> ignored
+
+    return sessions
+
+
+def merge_sessions(sessions: List[Tuple[datetime, datetime]]) -> List[Tuple[datetime, datetime]]:
+    """Merge overlapping or touching (start <= previous end) intervals."""
+    if not sessions:
+        return []
+
+    ordered = sorted(sessions, key=lambda s: s[0])
+    merged = [ordered[0]]
+
+    for start, end in ordered[1:]:
+        last_start, last_end = merged[-1]
+        if start <= last_end:  # overlap or touch -> combine into one interval
+            merged[-1] = (last_start, max(last_end, end))
+        else:
+            merged.append((start, end))
+
+    return merged
+
+
+def calculate_active_seconds(sessions: List[Tuple[datetime, datetime]]) -> float:
+    """Sum durations of non-overlapping intervals. Re-merges defensively."""
+    safe_sessions = merge_sessions(sessions)
+    return sum((end - start).total_seconds() for start, end in safe_sessions)
+
+
+def analyze_login_logout(events: List[Tuple[str, str, str]]) -> Dict[str, Dict]:
+    """
+    Full pipeline per user: sort -> pair (ignoring unmatched) -> merge -> summarize.
+    Input events may arrive in any order and may contain unmatched logouts
+    or logins; both are dropped during pairing.
+    Returns summaries sorted alphabetically by user.
+    """
+    grouped = parse_events(events)
+    summaries = {}
+
+    for user, user_events in grouped.items():
+        raw_sessions = pair_sessions(user_events)   # sorts internally, drops unmatched
+        merged = merge_sessions(raw_sessions)
+        active_seconds = calculate_active_seconds(merged)
+
+        summaries[user] = {
+            "sessions": [
+                (start.isoformat(), end.isoformat()) for start, end in merged
+            ],
+            "merged_interval_count": len(merged),
+            "total_active_seconds": active_seconds,
+        }
+
+    return dict(sorted(summaries.items(), key=lambda kv: kv[0]))
+
+
+def print_summary(summaries: Dict[str, Dict]) -> None:
+    for user, data in summaries.items():
+        print(f"User: {user}")
+        print(f"  Merged interval count: {data['merged_interval_count']}")
+        print(f"  Total active seconds:  {data['total_active_seconds']:.2f}")
+        print(f"  Sessions:")
+        for start, end in data["sessions"]:
+            print(f"    {start} -> {end}")
+        print()
+
+
+if __name__ == "__main__":
+    # Deliberately out-of-order, with unmatched logouts/logins mixed in.
+    sample_events = [
+        ("alice", "logout", "2024-01-01T07:00:00"),   # unmatched -> ignored
+        ("alice", "login", "2024-01-01T09:30:00"),    # overlaps later session (out of order)
+        ("alice", "login", "2024-01-01T09:00:00"),    # earlier, out of order
+        ("alice", "logout", "2024-01-01T10:00:00"),
+        ("alice", "logout", "2024-01-01T11:30:00"),
+        ("alice", "login", "2024-01-01T11:30:00"),    # touches previous logout -> merge
+        ("alice", "logout", "2024-01-01T12:00:00"),
+        ("alice", "login", "2024-01-01T13:00:00"),
+        ("alice", "logout", "2024-01-01T13:45:00"),
+        ("alice", "login", "2024-01-01T20:00:00"),    # trailing unmatched login -> ignored
+        ("bob", "logout", "2024-01-01T09:30:00"),     # unmatched -> ignored
+        ("bob", "login", "2024-01-01T08:30:00"),
+        ("bob", "login", "2024-01-01T08:00:00"),      # out of order, earlier
+        ("bob", "logout", "2024-01-01T09:00:00"),
+    ]
+
+    result = analyze_login_logout(sample_events)
+    print_summary(result)
+```

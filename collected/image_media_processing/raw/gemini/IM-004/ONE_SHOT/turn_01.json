@@ -1,0 +1,11 @@
+{
+  "task_id": "IM-004",
+  "model": "gemini",
+  "interaction": "ONE_SHOT",
+  "turn": 1,
+  "saved_at": "2026-09-13T17:09:05.960939+00:00",
+  "response_sha256": "004657a2c781a7afdbd8911afd6d96982b9d5e8e298e2d345deeaf1d57320434",
+  "code_sha256": "b3b072d3f93cdcce2549a440ff8ffff1234551ea59061b0d53aa1975896a68b0",
+  "raw_file": ".collection/raw/gemini/IM-004/ONE_SHOT/turn_01.txt",
+  "code_file": ".collection/code/gemini/IM-004/ONE_SHOT/code.py"
+}

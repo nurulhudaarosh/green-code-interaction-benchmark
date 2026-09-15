@@ -1,0 +1,141 @@
+"""
+Fenwick Tree (Binary Indexed Tree) for point updates and inclusive
+range-sum queries.
+
+Problem:
+    Maintain an integer array under:
+      1. Update  - point replacement: set a[i] = v
+      2. Query   - inclusive range sum: sum(a[l..r])
+    Return the result of each query, in the order the queries occur.
+
+Key constraints:
+    - n (array size) and q (number of operations) may be large, so each
+      operation must run faster than O(n).
+    - Updates replace a value (not increment it) - must be converted to
+      a delta for the Fenwick tree.
+    - Queries are inclusive on both ends (l and r included).
+
+Required output:
+    A list of integers, one per query, in input order.
+
+Algorithm:
+    A Fenwick tree (Binary Indexed Tree) supports point updates and
+    prefix-sum queries in O(log n) each, by walking indices via their
+    lowest set bit (i & -i). A range sum [l, r] is prefix(r) - prefix(l-1).
+    Total complexity: O((n + q) log n).
+
+Deterministic: no randomness, no I/O, no network access, no external
+dependencies (standard library only).
+"""
+
+from typing import List, Sequence, Tuple
+
+
+class FenwickTree:
+    """1-indexed Fenwick tree storing point values, supporting prefix sums."""
+
+    def __init__(self, values: Sequence[int]):
+        self.n = len(values)
+        self.tree = [0] * (self.n + 1)      # tree[1..n], tree[0] unused
+        self.current = [0] * self.n         # current value at each 0-indexed pos
+
+        for idx, val in enumerate(values):
+            self.current[idx] = val
+
+        # O(n) build: each position pushes its value to its immediate parent.
+        for i in range(1, self.n + 1):
+            self.tree[i] += self.current[i - 1]
+            parent = i + (i & -i)
+            if parent <= self.n:
+                self.tree[parent] += self.tree[i]
+
+    def _add(self, i: int, delta: int) -> None:
+        """Add delta to 1-indexed position i."""
+        while i <= self.n:
+            self.tree[i] += delta
+            i += i & -i
+
+    def _prefix_sum(self, i: int) -> int:
+        """Sum of the first i elements (1-indexed i), i.e. a[0..i-1]."""
+        total = 0
+        while i > 0:
+            total += self.tree[i]
+            i -= i & -i
+        return total
+
+    def update(self, index: int, value: int) -> None:
+        """Set a[index] = value (0-indexed)."""
+        if not (0 <= index < self.n):
+            raise IndexError(f"index {index} out of range [0, {self.n - 1}]")
+        delta = value - self.current[index]
+        if delta != 0:
+            self.current[index] = value
+            self._add(index + 1, delta)
+
+    def range_sum(self, left: int, right: int) -> int:
+        """Return sum(a[left..right]) inclusive, 0-indexed."""
+        if not (0 <= left <= right < self.n):
+            raise IndexError(f"invalid range [{left}, {right}] for size {self.n}")
+        return self._prefix_sum(right + 1) - self._prefix_sum(left)
+
+
+def process_operations(
+    initial: Sequence[int],
+    operations: Sequence[Tuple],
+) -> List[int]:
+    """
+    Apply a sequence of operations to `initial` and return query results in order.
+
+    Each operation is one of:
+        ("update", index, value)
+        ("query", left, right)
+
+    Returns:
+        List of integers: the result of each "query" operation, in order.
+    """
+    fenwick = FenwickTree(initial)
+    results: List[int] = []
+
+    for op in operations:
+        kind = op[0]
+        if kind == "update":
+            _, index, value = op
+            fenwick.update(index, value)
+        elif kind == "query":
+            _, left, right = op
+            results.append(fenwick.range_sum(left, right))
+        else:
+            raise ValueError(f"Unknown operation: {op!r}")
+
+    return results
+
+
+if __name__ == "__main__":
+    # Deterministic self-contained demonstration.
+    initial_array = [1, 3, 5, 7, 9, 11]
+
+    ops = [
+        ("query", 0, 5),      # sum of whole array
+        ("update", 2, 100),   # a[2] = 100 (was 5)
+        ("query", 0, 5),      # sum reflects the update
+        ("query", 1, 3),      # sub-range sum
+        ("update", 0, 0),     # a[0] = 0 (was 1)
+        ("query", 0, 0),      # single-element query
+    ]
+
+    output = process_operations(initial_array, ops)
+    print("Query results:", output)
+
+    # Sanity check against a naive O(n) approach.
+    naive = list(initial_array)
+    naive_results = []
+    for op in ops:
+        if op[0] == "update":
+            _, idx, val = op
+            naive[idx] = val
+        else:
+            _, l, r = op
+            naive_results.append(sum(naive[l : r + 1]))
+
+    assert output == naive_results, "Mismatch between Fenwick and naive results!"
+    print("Verification against naive approach: OK")

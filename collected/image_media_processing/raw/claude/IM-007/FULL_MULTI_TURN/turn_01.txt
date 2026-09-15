@@ -1,0 +1,60 @@
+```python
+from PIL import Image
+
+def compute_ahash(image_path, hash_size=8):
+    """
+    Compute the average hash (aHash) of an image.
+
+    Steps:
+    1. Open image, convert to grayscale.
+    2. Resize to (hash_size x hash_size) pixels.
+    3. Compute the mean pixel value.
+    4. Build a bit for each pixel: 1 if pixel >= mean else 0.
+    5. Pack bits into an integer.
+
+    Returns:
+        int: an integer with hash_size*hash_size bits representing the hash.
+    """
+    img = Image.open(image_path).convert("L")  # grayscale
+    img = img.resize((hash_size, hash_size), Image.LANCZOS)
+
+    pixels = list(img.getdata())
+    avg = sum(pixels) / len(pixels)
+
+    bits = 0
+    for pixel in pixels:
+        bits <<= 1
+        if pixel >= avg:
+            bits |= 1
+
+    return bits
+
+
+def hamming_distance(hash_a, hash_b):
+    """
+    Compute the Hamming distance between two integer hashes,
+    i.e. the number of differing bits.
+    """
+    return bin(hash_a ^ hash_b).count("1")
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) >= 3:
+        h1 = compute_ahash(sys.argv[1])
+        h2 = compute_ahash(sys.argv[2])
+        print(f"Hash 1: {h1:016x}")
+        print(f"Hash 2: {h2:016x}")
+        print(f"Hamming distance: {hamming_distance(h1, h2)}")
+```
+
+Notes on the implementation:
+
+- **Grayscale + resize order matters**: converting to `"L"` before resizing avoids resizing three color channels unnecessarily and matches the classic aHash description.
+- **`Image.LANCZOS`** is used for downscaling quality; you can swap to `Image.BILINEAR` for speed with negligible difference on an 8×8 target.
+- The hash is returned as a plain Python `int` (arbitrary precision), so it works for any `hash_size` without overflow — for `hash_size=8` you get a 64-bit value, for `hash_size=16` a 256-bit value, etc.
+- `hamming_distance` just XORs the two integers and counts set bits — this only makes sense if both hashes were computed with the same `hash_size`.
+- Typical usage: hash a reference image and a candidate, then treat `hamming_distance(...) <= threshold` (commonly ~5 for 64-bit hashes) as "similar."
+
+Want me to add a version that also returns the hash as a hex string or a bit-array for debugging/visualization?

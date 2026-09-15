@@ -68,7 +68,7 @@ def build_inverted_index(documents):
     """
     return InvertedIndexSearchEngine(documents)
 
-Example
+
 
 documents = [
     "machine learning is useful",

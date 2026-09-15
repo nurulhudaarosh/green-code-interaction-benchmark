@@ -1,0 +1,46 @@
+Here's the extended version with an `aspect_ratio` field added:
+
+```python
+import os
+from PIL import Image
+
+
+def extract_metadata(input_dir):
+    """
+    Extract metadata for every image file in input_dir.
+
+    Returns a list of dicts sorted by filename, each containing:
+        filename, format, mode, width, height, file_size_bytes, aspect_ratio
+    """
+    results = []
+
+    for entry in os.listdir(input_dir):
+        full_path = os.path.join(input_dir, entry)
+
+        if not os.path.isfile(full_path):
+            continue
+
+        try:
+            with Image.open(full_path) as img:
+                width, height = img.width, img.height
+                aspect_ratio = round(width / height, 3) if height else None
+
+                results.append({
+                    "filename": entry,
+                    "format": img.format,
+                    "mode": img.mode,
+                    "width": width,
+                    "height": height,
+                    "file_size_bytes": os.path.getsize(full_path),
+                    "aspect_ratio": aspect_ratio,
+                })
+        except (IOError, SyntaxError):
+            continue
+
+    results.sort(key=lambda d: d["filename"])
+    return results
+```
+
+Notes:
+- `aspect_ratio` is `width / height` rounded to 3 decimal places using Python's built-in `round`.
+- I added a guard (`if height else None`) for the edge case of a zero-height image, which would otherwise raise a `ZeroDivisionError`. This should be rare in practice, but it's there so a single malformed image doesn't crash the whole batch. Let me know if you'd rather it skip such entries entirely or raise an error instead.

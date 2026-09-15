@@ -1,0 +1,208 @@
+"""
+Single-Source Route Analyzer
+=============================
+
+PROBLEM
+-------
+Given a directed graph with non-negative edge weights and a source
+vertex, compute the shortest distance from the source to every vertex.
+Unreachable vertices are reported as -1.
+
+KEY CONSTRAINTS
+----------------
+1. Graph is directed; edges are (u, v, w) meaning u -> v with cost w.
+2. All edge weights are non-negative (required for Dijkstra's
+   correctness).
+3. Parallel edges and self-loops are allowed.
+4. Unreachable vertices must be reported as -1, not infinity/error.
+5. The algorithm must be fully deterministic, including how ties
+   between equal-distance heap entries are broken -- tie-breaking
+   must not depend on incidental properties of vertex labels (such
+   as whether they happen to support '<'), and must never crash on
+   a legal input.
+
+REQUIRED OUTPUT
+----------------
+dict[vertex -> shortest distance from source], source maps to 0,
+unreachable vertices map to -1.
+
+ALGORITHM
+---------
+Adjacency lists + Dijkstra's algorithm with a binary min-heap
+(heapq). See BUG REPORT below for the specific defect this file
+fixes in the tie-breaking behavior.
+
+BUG REPORT
+----------
+Defect: a naive implementation pushes plain (distance, vertex) tuples
+onto the heap. heapq compares tuples lexicographically, so whenever
+two entries tie on distance, it falls back to comparing the vertices
+themselves with '<'. This is not a real "deterministic tie handling"
+policy -- it's an accidental dependency on vertex labels being
+mutually orderable. It fails (TypeError) on legal inputs where tied
+vertices are of incomparable types (e.g. an int label and a str
+label), which is demonstrated below.
+
+Fix: give every heap entry a strictly increasing integer sequence
+number as a secondary sort key: (distance, sequence_number, vertex).
+Since sequence numbers are always unique, the vertex is never
+compared, ties are broken purely by insertion (discovery) order, and
+the algorithm never depends on vertex-label orderability -- making
+tie handling deterministic and crash-free for any hashable vertex
+type, as required.
+"""
+
+import heapq
+from typing import Dict, Hashable, Iterable, List, Tuple
+
+Vertex = Hashable
+Edge = Tuple[Vertex, Vertex, float]
+
+
+def build_adjacency_list(
+    vertices: Iterable[Vertex], edges: Iterable[Edge]
+) -> Dict[Vertex, List[Tuple[Vertex, float]]]:
+    """Build a directed adjacency list from vertices and edges."""
+    adj: Dict[Vertex, List[Tuple[Vertex, float]]] = {v: [] for v in vertices}
+    for (u, v, w) in edges:
+        if w < 0:
+            raise ValueError(
+                f"Negative edge weight ({w}) on edge ({u} -> {v}) is not "
+                "allowed: Dijkstra's algorithm requires non-negative weights."
+            )
+        adj.setdefault(u, [])
+        adj.setdefault(v, [])
+        adj[u].append((v, w))
+    return adj
+
+
+def _naive_dijkstra_BUGGY(
+    adj: Dict[Vertex, List[Tuple[Vertex, float]]], source: Vertex
+) -> Dict[Vertex, float]:
+    """
+    The defective version kept ONLY to demonstrate the bug below.
+    Pushes (distance, vertex) with no tie-breaker.
+    """
+    INF = float("inf")
+    dist = {v: INF for v in adj}
+    dist[source] = 0
+    finalized = set()
+    heap: List[Tuple[float, Vertex]] = [(0, source)]
+
+    while heap:
+        d, u = heapq.heappop(heap)  # <-- ties fall back to comparing u
+        if u in finalized:
+            continue
+        finalized.add(u)
+        for (v, w) in adj.get(u, []):
+            if v in finalized:
+                continue
+            nd = d + w
+            if nd < dist[v]:
+                dist[v] = nd
+                heapq.heappush(heap, (nd, v))  # <-- no secondary key
+
+    return {v: (-1 if dist[v] == INF else dist[v]) for v in adj}
+
+
+def dijkstra(
+    adj: Dict[Vertex, List[Tuple[Vertex, float]]], source: Vertex
+) -> Dict[Vertex, float]:
+    """
+    Correct, deterministic Dijkstra with a binary heap.
+
+    Tie-breaking fix: every heap entry is (distance, seq, vertex),
+    where seq is a strictly increasing counter. Because seq is always
+    unique, heapq never needs to compare vertices to break a tie --
+    ties are resolved purely by discovery order, deterministically,
+    regardless of vertex type.
+    """
+    if source not in adj:
+        raise ValueError(f"Source vertex {source!r} is not in the graph.")
+
+    INF = float("inf")
+    dist: Dict[Vertex, float] = {v: INF for v in adj}
+    dist[source] = 0
+
+    finalized = set()
+    counter = 0  # monotonic tie-breaker, never reused
+    heap: List[Tuple[float, int, Vertex]] = [(0, counter, source)]
+
+    while heap:
+        d, _, u = heapq.heappop(heap)
+        if u in finalized:
+            continue  # stale entry
+        finalized.add(u)
+
+        for (v, w) in adj.get(u, []):
+            if v in finalized:
+                continue
+            new_dist = d + w
+            if new_dist < dist[v]:
+                dist[v] = new_dist
+                counter += 1
+                heapq.heappush(heap, (new_dist, counter, v))
+
+    return {v: (-1 if dist[v] == INF else dist[v]) for v in adj}
+
+
+def shortest_distances(
+    vertices: Iterable[Vertex], edges: Iterable[Edge], source: Vertex
+) -> Dict[Vertex, float]:
+    """Convenience wrapper: build adjacency list, then run Dijkstra."""
+    adj = build_adjacency_list(vertices, edges)
+    return dijkstra(adj, source)
+
+
+def _demonstrate_defect_and_fix() -> None:
+    """
+    Small, valid example: mixed-type vertex labels (int and str) that
+    tie on distance from the source. This is a perfectly legal input
+    (vertices only need to be hashable), yet the naive implementation
+    crashes on it, while the fixed one handles it deterministically.
+    """
+    vertices: List[Vertex] = ["S", 1, "A"]
+    edges: List[Edge] = [
+        ("S", 1, 1),    # S -> 1   (int label), distance 1
+        ("S", "A", 1),  # S -> "A" (str label), distance 1  -> TIE with above
+    ]
+    adj = build_adjacency_list(vertices, edges)
+
+    print("Demonstrating the defect (naive implementation):")
+    try:
+        _naive_dijkstra_BUGGY(adj, "S")
+        print("  (unexpectedly did not crash)")
+    except TypeError as e:
+        print(f"  CRASHED as expected: TypeError: {e}")
+
+    print("\nRunning the corrected implementation on the same input:")
+    result = dijkstra(adj, "S")
+    for v in vertices:
+        print(f"  {v!r}: {result[v]}")
+    assert result == {"S": 0, 1: 1, "A": 1}
+    print("  OK: correct, deterministic result, no crash.")
+
+
+def _demo() -> None:
+    """Original functional example, re-verified against the fix."""
+    vertices = ["A", "B", "C", "D", "E"]
+    edges: List[Edge] = [
+        ("A", "B", 4),
+        ("A", "C", 1),
+        ("C", "B", 2),
+        ("B", "D", 1),
+        ("C", "D", 5),
+        ("D", "E", 3),
+        # "F" intentionally omitted to demonstrate an unreachable vertex.
+    ]
+    vertices_with_unreachable = vertices + ["F"]
+    result = shortest_distances(vertices_with_unreachable, edges, "A")
+    print("\nShortest distances from 'A':")
+    for v in vertices_with_unreachable:
+        print(f"  {v}: {result[v]}")
+    assert result == {"A": 0, "B": 3, "C": 1, "D": 4, "E": 7, "F": -1}
+
+
+if __name__ == "__main__":
+    _demonstrate_defect_and_fix()
+    _demo()

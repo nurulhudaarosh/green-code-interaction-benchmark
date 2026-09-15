@@ -1,0 +1,100 @@
+```python
+import csv
+import re
+import sys
+
+
+def normalize_email(email: str) -> str:
+    """Lowercase and strip whitespace; return '' if invalid/empty."""
+    if not email:
+        return ""
+    email = email.strip().lower()
+    if "@" not in email or email.count("@") != 1:
+        return ""
+    local, domain = email.split("@")
+    if not local or not domain:
+        return ""
+    return f"{local}@{domain}"
+
+
+def normalize_phone(phone: str) -> str:
+    """Strip everything but digits; keep leading '+' if present. Normalize to E.164-ish form."""
+    if not phone:
+        return ""
+    phone = phone.strip()
+    has_plus = phone.startswith("+")
+    digits = re.sub(r"\D", "", phone)
+    if not digits:
+        return ""
+    # Assume 10-digit numbers are US numbers missing country code
+    if len(digits) == 10:
+        digits = "1" + digits
+    return f"+{digits}" if (has_plus or len(digits) == 11) else digits
+
+
+def completeness_score(record: dict) -> int:
+    """Count non-empty, meaningful fields."""
+    score = 0
+    for key, value in record.items():
+        if value is not None and str(value).strip() != "":
+            score += 1
+    return score
+
+
+def normalize_csv(input_path: str, output_path: str) -> None:
+    with open(input_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames
+        if not fieldnames:
+            raise ValueError("Input CSV has no header row")
+
+        email_field = next((c for c in fieldnames if c.lower() == "email"), None)
+        phone_field = next((c for c in fieldnames if c.lower() == "phone"), None)
+        if not email_field:
+            raise ValueError("No 'email' column found in CSV")
+
+        groups: dict[str, dict] = {}   # normalized_email -> best record (with normalized fields)
+        best_score: dict[str, int] = {}
+        best_row_index: dict[str, int] = {}
+
+        for row_index, row in enumerate(reader):
+            norm_email = normalize_email(row.get(email_field, ""))
+            if not norm_email:
+                continue  # skip records without a valid email
+
+            normalized_row = dict(row)
+            normalized_row[email_field] = norm_email
+            if phone_field:
+                normalized_row[phone_field] = normalize_phone(row.get(phone_field, ""))
+
+            score = completeness_score(normalized_row)
+
+            if norm_email not in groups:
+                groups[norm_email] = normalized_row
+                best_score[norm_email] = score
+                best_row_index[norm_email] = row_index
+            else:
+                # Prefer higher completeness; on tie, keep the earliest row (do nothing,
+                # since the earlier row is already stored).
+                if score > best_score[norm_email]:
+                    groups[norm_email] = normalized_row
+                    best_score[norm_email] = score
+                    best_row_index[norm_email] = row_index
+                # else: keep existing (earlier) record — no action needed
+
+    # Deterministic output: sorted by normalized email
+    sorted_records = [groups[key] for key in sorted(groups.keys())]
+
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for record in sorted_records:
+            writer.writerow(record)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: python normalizer.py <input.csv> <output.csv>")
+        sys.exit(1)
+    normalize_csv(sys.argv[1], sys.argv[2])
+```

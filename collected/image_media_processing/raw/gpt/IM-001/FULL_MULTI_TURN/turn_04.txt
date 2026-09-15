@@ -1,0 +1,62 @@
+```python
+from pathlib import Path
+from PIL import Image
+
+def batch_resize(input_dir, output_dir, target_size,
+                 resample_filter=Image.Resampling.LANCZOS):
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    valid_extensions = {".png", ".jpg", ".jpeg"}
+
+    filters = {
+        "NEAREST": Image.Resampling.NEAREST,
+        "BILINEAR": Image.Resampling.BILINEAR,
+        "BICUBIC": Image.Resampling.BICUBIC,
+        "LANCZOS": Image.Resampling.LANCZOS,
+    }
+
+    if isinstance(resample_filter, str):
+        filter_name = resample_filter.upper()
+        if filter_name not in filters:
+            raise ValueError(
+                "resample_filter must be one of: "
+                "NEAREST, BILINEAR, BICUBIC, LANCZOS"
+            )
+        resample_filter = filters[filter_name]
+
+    processed_count = 0
+    skipped = []
+
+    if not input_path.exists() or not input_path.is_dir():
+        return {"processed_count": 0, "skipped": []}
+
+    image_files = [
+        f for f in input_path.iterdir()
+        if f.is_file() and f.suffix.lower() in valid_extensions
+    ]
+
+    if not image_files:
+        return {"processed_count": 0, "skipped": []}
+
+    for image_path in image_files:
+        try:
+            with Image.open(image_path) as img:
+                resized_img = img.resize(
+                    target_size,
+                    resample=resample_filter
+                )
+                output_file = output_path / image_path.name
+                resized_img.save(output_file)
+
+            processed_count += 1
+
+        except (OSError, ValueError):
+            skipped.append(image_path.name)
+
+    return {
+        "processed_count": processed_count,
+        "skipped": skipped
+    }
+```

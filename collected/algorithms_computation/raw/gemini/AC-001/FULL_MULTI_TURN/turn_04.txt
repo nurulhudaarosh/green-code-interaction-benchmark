@@ -1,0 +1,142 @@
+## Problem Restatement & Core Rules
+
+The **Interval Conflict Analyzer** calculates concurrency metrics over half-open time intervals $[start, end)$:
+
+1. **`max_active`**: The peak number of overlapping active meetings at any timestamp.
+2. **`max_starts`**: A strictly sorted list of unique timestamps at which the active count transitions to `max_active`.
+3. **`operation_summary`** *(Optional)*: A deterministic audit dictionary reporting event metrics, sort upper bounds, state transitions, peak discovery updates, and timestamp recordings.
+
+### Required Invariants & Edge Handling Rules
+
+* **Half-Open Intervals $[start, end)$**: A meeting ending at timestamp $T$ yields before a meeting starting at timestamp $T$.
+* **Deterministic Sweep-Line Tie Handling**: At identical timestamp $T$, all **END** events (`delta = -1`) are processed strictly before **START** events (`delta = +1`).
+* **Empty Structures**: An empty input list `[]` yields `max_active = 0` and `max_starts = []`.
+* **Single Interval (Smallest Input)**: Input with 1 interval $[s, e)$ yields `max_active = 1` and `max_starts = [s]`.
+* **Disconnected Intervals**: Non-overlapping intervals $[1, 2), [5, 6)$ yield `max_active = 1` and `max_starts = [1, 5]` (all distinct start times where the global peak of 1 is reached).
+* **Zero-Duration / Point Intervals**: Invalid intervals where $start \ge end$ are safely filtered out before event processing.
+
+---
+
+## Python Implementation & Edge-Case Test Suite
+
+```python
+import math
+from typing import List, Tuple, Dict, Any, Union
+
+def max_simultaneous_meetings(
+    intervals: List[Tuple[int, int]], 
+    include_summary: bool = False
+) -> Union[Tuple[int, List[int]], Tuple[int, List[int], Dict[str, Any]]]:
+    """
+    Finds the peak number of simultaneous meetings and sorted start timestamps
+    where that peak begins for half-open intervals [start, end).
+
+    Handles empty inputs, single-interval inputs, zero-duration invalid intervals,
+    and disconnected intervals.
+    """
+    # Filter invalid intervals (start >= end)
+    valid_intervals = [inv for inv in intervals if inv[0] < inv[1]]
+
+    if not valid_intervals:
+        summary = {
+            "total_events": 0,
+            "sorting_comparisons_bound": 0.0,
+            "state_transitions": 0,
+            "peak_updates": 0,
+            "peak_start_recordings": 0
+        }
+        return (0, [], summary) if include_summary else (0, [])
+
+    # 1. Event Generation: (timestamp, delta)
+    # END = -1, START = +1. Sorting -1 before +1 enforces half-open interval rules.
+    events = []
+    for start, end in valid_intervals:
+        events.append((start, 1))
+        events.append((end, -1))
+
+    total_events = len(events)
+    sorting_ops = round(total_events * math.log2(total_events), 2) if total_events > 0 else 0.0
+
+    # 2. Deterministic Sweep Sort: primary by timestamp (asc), secondary by delta (asc: -1 before +1)
+    events.sort(key=lambda x: (x[0], x[1]))
+
+    max_active = 0
+    current_active = 0
+    max_starts = []
+    
+    state_transitions = 0
+    peak_updates = 0
+    peak_start_recordings = 0
+
+    # 3. Sweep-Line Process
+    for time, delta in events:
+        state_transitions += 1
+        current_active += delta
+
+        if delta == 1:
+            if current_active > max_active:
+                max_active = current_active
+                max_starts = [time]
+                peak_updates += 1
+                peak_start_recordings = 1
+            elif current_active == max_active:
+                if not max_starts or max_starts[-1] != time:
+                    max_starts.append(time)
+                    peak_start_recordings += 1
+
+    if include_summary:
+        operation_summary = {
+            "total_events": total_events,
+            "sorting_comparisons_bound": sorting_ops,
+            "state_transitions": state_transitions,
+            "peak_updates": peak_updates,
+            "peak_start_recordings": peak_start_recordings
+        }
+        return max_active, max_starts, operation_summary
+
+    return max_active, max_starts
+
+
+# =====================================================================
+# Comprehensive Unit Test Suite
+# =====================================================================
+
+def run_tests():
+    print("Running Edge-Case Unit Tests...\n")
+
+    # 1. Empty Structure
+    res_cnt, res_starts = max_simultaneous_meetings([])
+    assert res_cnt == 0 and res_starts == [], f"Failed Empty Input: got {res_cnt}, {res_starts}"
+
+    # 2. Smallest Valid Input (Single Interval)
+    res_cnt, res_starts = max_simultaneous_meetings([(10, 20)])
+    assert res_cnt == 1 and res_starts == [10], f"Failed Single Interval: got {res_cnt}, {res_starts}"
+
+    # 3. Disconnected / Non-overlapping Intervals
+    # Each interval reaches max peak of 1 independently
+    res_cnt, res_starts = max_simultaneous_meetings([(1, 3), (5, 7), (10, 12)])
+    assert res_cnt == 1 and res_starts == [1, 5, 10], f"Failed Disconnected: got {res_cnt}, {res_starts}"
+
+    # 4. Strictly Adjacent Intervals (Boundary Tie Handling)
+    # [1, 4) ends at 4, [4, 7) starts at 4 -> Active count at t=4 drops to 0 then rises to 1.
+    res_cnt, res_starts = max_simultaneous_meetings([(1, 4), (4, 7)])
+    assert res_cnt == 1 and res_starts == [1, 4], f"Failed Adjacent Boundary: got {res_cnt}, {res_starts}"
+
+    # 5. Invalid/Zero-length Intervals Filtered
+    res_cnt, res_starts = max_simultaneous_meetings([(5, 5), (10, 8), (2, 6)])
+    assert res_cnt == 1 and res_starts == [2], f"Failed Invalid Filtering: got {res_cnt}, {res_starts}"
+
+    # 6. Identical Intervals (Multiple Full Overlaps)
+    res_cnt, res_starts = max_simultaneous_meetings([(3, 8), (3, 8), (3, 8)])
+    assert res_cnt == 3 and res_starts == [3], f"Failed Identical Overlaps: got {res_cnt}, {res_starts}"
+
+    # 7. Summary Inclusion Check
+    max_c, starts_l, summary = max_simultaneous_meetings([(1, 4), (2, 5)], include_summary=True)
+    assert max_c == 2 and starts_l == [2] and summary["total_events"] == 4, "Failed Summary Flag"
+
+    print("All tests passed successfully!")
+
+if __name__ == "__main__":
+    run_tests()
+
+```

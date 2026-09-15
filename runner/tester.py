@@ -28,13 +28,40 @@ def reference_names(ns):
 
 
 def compare(a, b):
-    """Deep-ish comparison of harness outputs (must be JSON-serializable)."""
+    """Deep-ish comparison of harness outputs (must be JSON-serializable).
+
+    Shape-tolerant: the dataset references often return dicts
+    ({"max_overlap": ..., "peak_times": ...}) while member code returns
+    tuples/lists of the same values ((max, times)). When one side is a
+    dict and the other a list, the dict's values (insertion order) are
+    aligned with the list before comparing.
+    """
+    if _json_eq(a, b):
+        return True
+    return _shape_eq(a, b)
+
+
+def _json_eq(a, b):
     try:
         return json.dumps(a, sort_keys=True, default=str) == json.dumps(
             b, sort_keys=True, default=str
         )
     except (TypeError, ValueError):
         return repr(a) == repr(b)
+
+
+def _shape_eq(a, b):
+    if isinstance(a, dict) and isinstance(b, (list, tuple)):
+        return _shape_eq(list(a.values()), b)
+    if isinstance(b, dict) and isinstance(a, (list, tuple)):
+        return _shape_eq(a, list(b.values()))
+    if isinstance(a, dict) and isinstance(b, dict):
+        return (set(a.keys()) == set(b.keys())
+                and all(_shape_eq(a[k], b[k]) for k in a))
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return (len(a) == len(b)
+                and all(_shape_eq(x, y) for x, y in zip(a, b)))
+    return _json_eq(a, b)
 
 
 def safe_call(fn, args, kwargs, errors):

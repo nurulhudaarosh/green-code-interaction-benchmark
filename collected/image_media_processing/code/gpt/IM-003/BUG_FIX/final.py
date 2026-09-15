@@ -1,0 +1,75 @@
+from pathlib import Path
+from PIL import Image
+
+
+def convert_format(input_dir, output_dir, target_format):
+    """
+    Convert PNG/JPEG images in input_dir to PNG or JPEG.
+
+    Transparent areas are composited onto a white background
+    when converting to JPEG.
+    """
+    target_format = target_format.upper()
+
+    if target_format not in {"PNG", "JPEG"}:
+        raise ValueError("target_format must be 'PNG' or 'JPEG'")
+
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    valid_extensions = {".png", ".jpg", ".jpeg"}
+    processed_count = 0
+    skipped = []
+
+    for input_path in input_dir.rglob("*"):
+        if not input_path.is_file():
+            continue
+
+        if input_path.suffix.lower() not in valid_extensions:
+            skipped.append(str(input_path))
+            continue
+
+        try:
+            with Image.open(input_path) as img:
+                if target_format == "JPEG":
+                    # Composite transparency onto white before converting
+                    # to RGB. Direct RGBA -> RGB conversion can produce
+                    # black pixels where the image is transparent.
+                    if img.mode in ("RGBA", "LA") or (
+                        img.mode == "P" and "transparency" in img.info
+                    ):
+                        rgba = img.convert("RGBA")
+                        background = Image.new(
+                            "RGB",
+                            rgba.size,
+                            (255, 255, 255)
+                        )
+                        background.paste(
+                            rgba,
+                            mask=rgba.getchannel("A")
+                        )
+                        img = background
+                    else:
+                        img = img.convert("RGB")
+
+                elif target_format == "PNG":
+                    if img.mode not in ("RGB", "RGBA", "L", "LA", "P"):
+                        img = img.convert("RGBA")
+
+                relative_path = input_path.relative_to(input_dir)
+                extension = ".jpg" if target_format == "JPEG" else ".png"
+                output_path = output_dir / relative_path.with_suffix(extension)
+
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                img.save(output_path, format=target_format)
+
+                processed_count += 1
+
+        except (OSError, ValueError) as exc:
+            skipped.append(f"{input_path}: {exc}")
+
+    return {
+        "processed_count": processed_count,
+        "skipped": skipped,
+    }

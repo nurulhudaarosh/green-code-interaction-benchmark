@@ -1,0 +1,192 @@
+I'll restate the original problem and add the requested `operation_summary` feature while keeping all original functionality intact.
+
+```python
+import sys
+import bisect
+
+def solve_weighted_interval_scheduling(jobs, include_summary=False):
+    """
+    Solve weighted interval scheduling with tie-breaking by original index.
+    
+    Args:
+        jobs: List of tuples (start, finish, profit)
+        include_summary: If True, return an operation_summary dict; if False, return only
+                         (max_profit, selected_indices) as before
+    
+    Returns:
+        If include_summary is False:
+            Tuple of (max_profit, selected_indices) where selected_indices is a list
+            of original indices (0-based) in sorted order by finish time.
+        If include_summary is True:
+            Tuple of (max_profit, selected_indices, operation_summary) where
+            operation_summary is a dict containing deterministic computation metrics.
+    """
+    if not jobs:
+        if include_summary:
+            return 0, [], {
+                'total_comparisons': 0,
+                'dp_iterations': 0,
+                'binary_searches': 0,
+                'sort_operations': 0,
+                'total_operations': 0
+            }
+        return 0, []
+    
+    n = len(jobs)
+    
+    # Track operations for summary
+    comparisons = 0
+    binary_searches = 0
+    sort_ops = 0
+    
+    # Create jobs with original indices and sort by finish time
+    indexed_jobs = [(start, finish, profit, i) for i, (start, finish, profit) in enumerate(jobs)]
+    # Sorting: deterministic with multiple keys
+    indexed_jobs.sort(key=lambda x: (x[1], x[0], x[3]))
+    sort_ops += len(indexed_jobs) * (len(indexed_jobs) - 1) // 2  # Rough estimate of sort comparisons
+    
+    # Extract sorted data
+    starts = [job[0] for job in indexed_jobs]
+    finishes = [job[1] for job in indexed_jobs]
+    profits = [job[2] for job in indexed_jobs]
+    orig_indices = [job[3] for job in indexed_jobs]
+    
+    # DP arrays
+    dp = [0] * n
+    selected = [[] for _ in range(n)]
+    
+    # Base case
+    dp[0] = profits[0]
+    selected[0] = [orig_indices[0]]
+    comparisons += 1
+    
+    # Binary search helper
+    for i in range(1, n):
+        # Option 1: exclude job i (one comparison)
+        best_profit = dp[i-1]
+        best_selected = selected[i-1][:]
+        comparisons += 1
+        
+        # Option 2: include job i
+        # Find compatible predecessor using binary search
+        j = bisect.bisect_right(finishes, starts[i]) - 1
+        binary_searches += 1
+        
+        include_profit = profits[i]
+        include_selected = [orig_indices[i]]
+        
+        if j >= 0:
+            include_profit += dp[j]
+            include_selected = selected[j][:] + [orig_indices[i]]
+        
+        # Choose better option (comparison)
+        if include_profit > best_profit:
+            best_profit = include_profit
+            best_selected = include_selected
+            comparisons += 1
+        elif include_profit == best_profit:
+            comparisons += 1
+            # Tie-breaking: choose lexicographically smaller sequence
+            if include_selected < best_selected:
+                best_selected = include_selected
+                comparisons += 1
+        else:
+            comparisons += 1
+        
+        dp[i] = best_profit
+        selected[i] = best_selected
+    
+    # Build result
+    result = (dp[n-1], selected[n-1])
+    
+    if include_summary:
+        # Total operations: each DP iteration does base work plus binary search
+        total_dp_operations = n  # Each job processed once
+        total_comparisons = comparisons
+        total_binary_searches = binary_searches
+        
+        operation_summary = {
+            'total_comparisons': total_comparisons,
+            'dp_iterations': n,
+            'binary_searches': total_binary_searches,
+            'sort_operations': sort_ops,
+            'total_operations': total_comparisons + total_binary_searches + total_dp_operations + sort_ops
+        }
+        return result[0], result[1], operation_summary
+    
+    return result[0], result[1]
+
+def main():
+    """Main function to read input and output results."""
+    # Read all input
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    
+    # First token is number of jobs
+    n = int(data[0])
+    jobs = []
+    idx = 1
+    
+    for _ in range(n):
+        start = int(data[idx])
+        finish = int(data[idx + 1])
+        profit = int(data[idx + 2])
+        jobs.append((start, finish, profit))
+        idx += 3
+    
+    # Check if summary is requested (via command line flag or special input)
+    # For determinism, we'll use a simple approach: if there's a 4th parameter after all jobs
+    # or we can use an environment variable or argument
+    include_summary = False
+    
+    # If there are extra tokens, check for summary flag
+    if idx < len(data):
+        if data[idx].lower() in ['summary', '--summary', '-s']:
+            include_summary = True
+    
+    # Solve
+    if include_summary:
+        max_profit, selected_indices, summary = solve_weighted_interval_scheduling(jobs, include_summary=True)
+        print(max_profit)
+        print(' '.join(map(str, selected_indices)))
+        print("Operation Summary:")
+        for key, value in summary.items():
+            print(f"{key}: {value}")
+    else:
+        max_profit, selected_indices = solve_weighted_interval_scheduling(jobs, include_summary=False)
+        print(max_profit)
+        print(' '.join(map(str, selected_indices)))
+
+if __name__ == "__main__":
+    main()
+```
+
+## Original Problem Restatement
+
+**Problem:** Given a set of jobs where each job has a start time, finish time, and profit, select a subset of non-overlapping jobs that maximizes total profit.
+
+**Key Constraints:**
+1. **Compatibility**: Jobs that touch at endpoints (one finishes exactly when another starts) are considered compatible and can both be selected.
+2. **Tie-breaking**: When multiple subsets achieve the same maximum profit, choose the subset with the lexicographically smallest sequence of original indices (0-based).
+3. **Determinism**: The solution must be fully deterministic with no randomness, external services, or human interaction.
+
+**Required Output (Original):**
+1. **First line**: Maximum profit achievable (integer)
+2. **Second line**: Space-separated list of original indices (0-based) of the selected jobs, sorted by finish time (and deterministically ordered for ties)
+
+---
+
+## New Feature: `operation_summary`
+
+**When enabled** (via `include_summary=True`), the function returns an additional `operation_summary` dictionary containing:
+
+| Field | Description |
+|-------|-------------|
+| `total_comparisons` | Number of comparison operations made during DP decision-making |
+| `dp_iterations` | Number of DP iterations (equals number of jobs) |
+| `binary_searches` | Number of binary search operations performed (one per job except first) |
+| `sort_operations` | Estimated number of comparison operations during sorting |
+| `total_operations` | Sum of all tracked operations |
+
+**Backward Compatibility:** When `include_summary=False` (default), the function returns exactly the original `(max_profit, selected_indices)` tuple, preserving all original behavior.

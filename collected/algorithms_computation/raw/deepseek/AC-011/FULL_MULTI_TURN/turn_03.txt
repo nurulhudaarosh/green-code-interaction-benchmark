@@ -1,0 +1,244 @@
+## Problem Restatement
+
+**Capacity-Constrained Knapsack Problem:**
+
+Given `n` indivisible items, each with a `weight` and `value`, and a knapsack `capacity`:
+- **Goal**: Maximize total value without exceeding capacity
+- **Return**: List of original indices (0-based) in ascending order of selected items
+- **Tie-breaking**: Among multiple optimal subsets, return the **lexicographically smallest** index list
+
+**Existing Requirements:**
+1. Use 0/1 knapsack DP with descending capacity updates
+2. Deterministic solution using only standard library
+3. No network access, APIs, external services, randomness, or human interaction
+4. Return selected original indices
+
+**New Feature:**
+- Return an additional `operation_summary` field containing a useful deterministic summary
+- For this task, report the **number of major computational decisions/operations** made by the algorithm
+- When the feature is disabled or not requested, keep all original fields and requirements unchanged
+
+---
+
+## Implementation with Operation Summary
+
+```python
+def knapsack_selected_indices(weights, values, capacity, include_summary=False):
+    """
+    Solve 0/1 knapsack and return lexicographically smallest list of selected indices.
+    
+    Args:
+        weights: List of item weights
+        values:  List of item values
+        capacity: Knapsack capacity
+        include_summary: If True, include operation_summary in return
+    
+    Returns:
+        If include_summary is False:
+            List of original indices (0-based) in ascending order
+        If include_summary is True:
+            Tuple (selected_indices, operation_summary)
+            where operation_summary is a dict with computation metrics
+    """
+    n = len(weights)
+    
+    # Initialize operation counters
+    dp_comparisons = 0
+    dp_additions = 0
+    reconstruction_comparisons = 0
+    reconstruction_additions = 0
+    total_iterations = 0
+    
+    # DP table: dp[i][c] = max value using items from i to n-1 with capacity c
+    dp = [[0] * (capacity + 1) for _ in range(n + 1)]
+    
+    # Fill DP table from bottom to top
+    for i in range(n - 1, -1, -1):
+        w = weights[i]
+        v = values[i]
+        for c in range(capacity + 1):
+            total_iterations += 1
+            if c >= w:
+                # Two major decisions: skip or include
+                skip_value = dp[i + 1][c]
+                include_value = dp[i + 1][c - w] + v
+                dp_additions += 1  # for include_value
+                
+                # Major decision: compare skip vs include
+                dp_comparisons += 1
+                if include_value > skip_value:
+                    dp[i][c] = include_value
+                else:
+                    dp[i][c] = skip_value
+            else:
+                dp[i][c] = dp[i + 1][c]
+    
+    # Reconstruct lexicographically smallest index list
+    selected = []
+    remaining_capacity = capacity
+    
+    for i in range(n):
+        w = weights[i]
+        v = values[i]
+        
+        # Check if we can include item i
+        if remaining_capacity >= w:
+            # Value if we include item i
+            include_value = dp[i + 1][remaining_capacity - w] + v
+            reconstruction_additions += 1
+            
+            # Value if we skip item i
+            skip_value = dp[i + 1][remaining_capacity]
+            
+            # Major decision: compare include vs skip
+            reconstruction_comparisons += 1
+            if include_value > skip_value:
+                selected.append(i)
+                remaining_capacity -= w
+            elif include_value == skip_value:
+                # Tie: include current item to get lexicographically smaller list
+                selected.append(i)
+                remaining_capacity -= w
+            # else: skip (include_value < skip_value)
+        # else: cannot include, skip
+    
+    # Prepare operation summary if requested
+    if include_summary:
+        operation_summary = {
+            "dp_table_size": f"{n+1} x {capacity+1}",
+            "total_dp_iterations": total_iterations,
+            "dp_comparisons": dp_comparisons,
+            "dp_additions": dp_additions,
+            "reconstruction_comparisons": reconstruction_comparisons,
+            "reconstruction_additions": reconstruction_additions,
+            "total_major_operations": dp_comparisons + dp_additions + 
+                                       reconstruction_comparisons + reconstruction_additions,
+            "items_processed": n,
+            "capacity_processed": capacity,
+            "solution_value": sum(values[i] for i in selected),
+            "solution_weight": sum(weights[i] for i in selected)
+        }
+        return selected, operation_summary
+    
+    return selected
+
+
+# Example usage and testing
+if __name__ == "__main__":
+    print("=" * 60)
+    print("TEST 1: Without summary (original behavior)")
+    print("=" * 60)
+    weights = [1, 1, 2]
+    values = [2, 2, 4]
+    capacity = 2
+    
+    result = knapsack_selected_indices(weights, values, capacity)
+    print(f"Selected indices: {result}")
+    print(f"Total value: {sum(values[i] for i in result)}")
+    print(f"Total weight: {sum(weights[i] for i in result)}")
+    print(f"Expected: [0, 1] -> {'✓' if result == [0, 1] else '✗'}")
+    
+    print("\n" + "=" * 60)
+    print("TEST 2: With summary (new feature enabled)")
+    print("=" * 60)
+    result, summary = knapsack_selected_indices(weights, values, capacity, include_summary=True)
+    print(f"Selected indices: {result}")
+    print(f"Total value: {sum(values[i] for i in result)}")
+    print(f"Total weight: {sum(weights[i] for i in result)}")
+    print("\nOperation Summary:")
+    for key, value in summary.items():
+        print(f"  {key}: {value}")
+    
+    print("\n" + "=" * 60)
+    print("TEST 3: Larger example with summary")
+    print("=" * 60)
+    weights2 = [2, 3, 4, 5, 6, 7]
+    values2 = [3, 4, 5, 6, 7, 8]
+    capacity2 = 10
+    
+    result2, summary2 = knapsack_selected_indices(weights2, values2, capacity2, include_summary=True)
+    print(f"Selected indices: {result2}")
+    print(f"Total value: {sum(values2[i] for i in result2)}")
+    print(f"Total weight: {sum(weights2[i] for i in result2)}")
+    print("\nOperation Summary:")
+    for key, value in summary2.items():
+        print(f"  {key}: {value}")
+    
+    print("\n" + "=" * 60)
+    print("TEST 4: Edge case - empty capacity with summary")
+    print("=" * 60)
+    weights3 = [1, 2, 3]
+    values3 = [5, 10, 15]
+    capacity3 = 0
+    
+    result3, summary3 = knapsack_selected_indices(weights3, values3, capacity3, include_summary=True)
+    print(f"Selected indices: {result3}")
+    print(f"Total value: {sum(values3[i] for i in result3)}")
+    print(f"Total weight: {sum(weights3[i] for i in result3)}")
+    print("\nOperation Summary:")
+    for key, value in summary3.items():
+        print(f"  {key}: {value}")
+    
+    print("\n" + "=" * 60)
+    print("TEST 5: Edge case - no items with summary")
+    print("=" * 60)
+    weights4 = []
+    values4 = []
+    capacity4 = 10
+    
+    result4, summary4 = knapsack_selected_indices(weights4, values4, capacity4, include_summary=True)
+    print(f"Selected indices: {result4}")
+    print(f"Total value: {sum(values4[i] for i in result4)}")
+    print(f"Total weight: {sum(weights4[i] for i in result4)}")
+    print("\nOperation Summary:")
+    for key, value in summary4.items():
+        print(f"  {key}: {value}")
+    
+    print("\n" + "=" * 60)
+    print("TEST 6: Multiple ties with summary")
+    print("=" * 60)
+    weights5 = [1, 1, 1, 3]
+    values5 = [1, 1, 1, 3]
+    capacity5 = 3
+    
+    result5, summary5 = knapsack_selected_indices(weights5, values5, capacity5, include_summary=True)
+    print(f"Selected indices: {result5}")
+    print(f"Total value: {sum(values5[i] for i in result5)}")
+    print(f"Total weight: {sum(weights5[i] for i in result5)}")
+    print(f"Expected: [0, 1, 2] -> {'✓' if result5 == [0, 1, 2] else '✗'}")
+    print("\nOperation Summary:")
+    for key, value in summary5.items():
+        print(f"  {key}: {value}")
+```
+
+---
+
+## Key Features of the Implementation
+
+### Original Behavior (when `include_summary=False`):
+- Returns only the list of selected indices
+- All original requirements unchanged
+- Fully deterministic
+- Uses standard library only
+
+### New Feature (when `include_summary=True`):
+- Returns `(selected_indices, operation_summary)`
+- `operation_summary` is a dictionary containing:
+  - `dp_table_size`: Size of the DP table
+  - `total_dp_iterations`: Total number of DP cell computations
+  - `dp_comparisons`: Number of comparison operations in DP phase
+  - `dp_additions`: Number of addition operations in DP phase
+  - `reconstruction_comparisons`: Number of comparisons during reconstruction
+  - `reconstruction_additions`: Number of additions during reconstruction
+  - `total_major_operations`: Sum of all major computational decisions
+  - `items_processed`: Number of items
+  - `capacity_processed`: Knapsack capacity
+  - `solution_value`: Total value of selected items
+  - `solution_weight`: Total weight of selected items
+
+### Deterministic Summary
+The operation summary is fully deterministic because:
+- All operations are counted in a fixed, predictable pattern
+- No randomness or external factors influence the counts
+- The counts depend only on `n` and `capacity`, which are known inputs
+- The tie-breaking rule ensures consistent reconstruction decisions

@@ -1,0 +1,87 @@
+from datetime import datetime, timedelta
+from collections import defaultdict
+
+def analyze_user_sessions(log_events):
+    """
+    Analyzes raw login/logout events for users.
+    
+    Expected log_events format:
+    [
+        {"user_id": "alice", "type": "login", "timestamp": "2026-09-12 08:00:00"},
+        {"user_id": "alice", "type": "logout", "timestamp": "2026-09-12 09:30:00"},
+        ...
+    ]
+    """
+    # Group and sort events by user
+    user_events = defaultdict(list)
+    for event in log_events:
+        ts = datetime.strptime(event["timestamp"], "%Y-%m-%d %H:%M:%S") if isinstance(event["timestamp"], str) else event["timestamp"]
+        user_events[event["user_id"]].append((ts, event["type"]))
+
+    summaries = []
+
+    for user_id, events in user_events.items():
+        # 1. Sort events chronologically
+        events.sort(key=lambda x: x[0])
+
+        # 2. Pair each login with the next valid logout
+        raw_sessions = []
+        pending_login = None
+
+        for ts, event_type in events:
+            if event_type == "login":
+                # If there's already an active login without a logout, close it at the current login time
+                if pending_login is not None:
+                    raw_sessions.append((pending_login, ts))
+                pending_login = ts
+            elif event_type == "logout":
+                if pending_login is not None:
+                    raw_sessions.append((pending_login, ts))
+                    pending_login = None
+                # Unmatched logouts are ignored
+
+        # 3. Merge overlapping or touching sessions
+        merged_sessions = []
+        for start, end in raw_sessions:
+            if not merged_sessions:
+                merged_sessions.append((start, end))
+            else:
+                last_start, last_end = merged_sessions[-1]
+                if start <= last_end:  # Overlapping or touching
+                    merged_sessions[-1] = (last_start, max(last_end, end))
+                else:
+                    merged_sessions.append((start, end))
+
+        # 4. Calculate total active time in seconds
+        total_seconds = sum((end - start).total_seconds() for start, end in merged_sessions)
+
+        summaries.append({
+            "user_id": user_id,
+            "total_active_seconds": int(total_seconds),
+            "total_active_time": str(timedelta(seconds=int(total_seconds))),
+            "sessions": merged_sessions
+        })
+
+    # Sort user summaries by user_id
+    summaries.sort(key=lambda x: x["user_id"])
+    return summaries
+
+
+# Example usage:
+if __name__ == "__main__":
+    events = [
+        {"user_id": "alice", "type": "login", "timestamp": "2026-09-12 08:00:00"},
+        {"user_id": "alice", "type": "login", "timestamp": "2026-09-12 08:30:00"}, # Overlapping login
+        {"user_id": "alice", "type": "logout", "timestamp": "2026-09-12 09:30:00"},
+        {"user_id": "bob", "type": "login", "timestamp": "2026-09-12 10:00:00"},
+        {"user_id": "bob", "type": "logout", "timestamp": "2026-09-12 11:15:00"},
+        {"user_id": "alice", "type": "login", "timestamp": "2026-09-12 10:00:00"},
+        {"user_id": "alice", "type": "logout", "timestamp": "2026-09-12 10:45:00"}
+    ]
+
+    results = analyze_user_sessions(events)
+    for summary in results:
+        print(f"User: {summary['user_id']}")
+        print(f"  Active Seconds: {summary['total_active_seconds']}")
+        print(f"  Active Time: {summary['total_active_time']}")
+        print(f"  Merged Sessions: {summary['sessions']}\n")

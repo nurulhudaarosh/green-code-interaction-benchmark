@@ -1,0 +1,360 @@
+#!/usr/bin/env python3
+"""
+Deterministic maximum s-t flow via Dinic's blocking-flow algorithm.
+
+- Standard library only (uses collections.deque for BFS).
+- No randomness, no network/API/human-interaction dependence.
+- Supports parallel edges, self-loops, n=1, s==t, m=0, zero-capacity
+  edges, disconnected s/t, and very large integer capacities.
+- Returns per-edge flow values in the SAME ORDER the edges were supplied.
+- All flow arithmetic is exact integer arithmetic (no floats), guaranteeing
+  deterministic, reproducible results across runs/platforms.
+- Optional `operation_summary` (opt-in, additive only): reports the number
+  of major computational decisions Dinic's algorithm made (BFS phases and
+  augmenting-path pushes). When not requested, all original outputs and
+  the original return shape are completely unchanged.
+
+Input format (stdin), if run as a script:
+    n m s t
+    u1 v1 cap1
+    u2 v2 cap2
+    ...
+    um vm capm
+
+Output (stdout):
+    <max_flow_value>
+    <flow on edge 1>
+    <flow on edge 2>
+    ...
+    <flow on edge m>
+"""
+
+from collections import deque
+from typing import List, Tuple, Dict, Union
+
+# Internal sentinel used only for "unbounded" DFS push amount. Chosen large
+# enough to exceed any realistic sum of edge capacities; user-supplied
+# capacities are never compared against this for correctness, only used
+# as an upper bound in min(), so even a capacity equal to INF is handled
+# correctly (min() just returns the smaller of the two, still exact).
+INF = 1 << 62
+
+
+class Dinic:
+    """
+    Deterministic Dinic's algorithm.
+
+    Internal representation: flat arrays `to[]` and `cap[]` hold every arc
+    (forward and reverse). For an edge added at call j, its forward arc is
+    stored at index 2*j and its reverse (residual) arc at index 2*j + 1.
+    graph[u] lists arc indices leaving u, always appended in the order the
+    edges were added, so BFS/DFS traversal order is fully determined by
+    input order (no sets, no hashing of vertices used for iteration).
+    """
+
+    def __init__(self, n: int):
+        if n < 1:
+            raise ValueError("n must be at least 1")
+        self.n = n
+        self.graph: List[List[int]] = [[] for _ in range(n)]
+        self.to: List[int] = []
+        self.cap: List[int] = []
+        self.bfs_phases = 0
+        self.augmenting_paths = 0
+
+    def add_edge(self, u: int, v: int, capacity: int) -> int:
+        """Add a directed edge u->v with given capacity. Returns the
+        forward-arc index (used later to recover flow on this edge).
+        Self-loops (u == v) and zero-capacity edges are valid and are
+        tracked like any other edge; their flow will correctly be 0."""
+        if not (0 <= u < self.n) or not (0 <= v < self.n):
+            raise ValueError(f"edge endpoints out of range: ({u}, {v}) for n={self.n}")
+        if capacity < 0:
+            raise ValueError("edge capacities must be non-negative")
+        if not isinstance(capacity, int):
+            raise TypeError("edge capacities must be integers for exact, "
+                             "deterministic flow computation")
+        fwd_index = len(self.to)
+        self.graph[u].append(fwd_index)
+        self.to.append(v)
+        self.cap.append(capacity)
+
+        rev_index = len(self.to)
+        self.graph[v].append(rev_index)
+        self.to.append(u)
+        self.cap.append(0)
+
+        return fwd_index
+
+    def _bfs_levels(self, s: int, t: int) -> List[int]:
+        """Build level graph from s. level[v] = -1 if unreachable.
+        Handles disconnected t (level[t] stays -1) deterministically."""
+        level = [-1] * self.n
+        level[s] = 0
+        q = deque([s])
+        while q:
+            u = q.popleft()
+            if u == t:
+                continue
+            for arc in self.graph[u]:
+                v = self.to[arc]
+                if self.cap[arc] > 0 and level[v] == -1:
+                    level[v] = level[u] + 1
+                    q.append(v)
+        return level
+
+    def _dfs_blocking(self, u: int, t: int, pushed: int,
+                       level: List[int], it: List[int]) -> int:
+        """Push up to `pushed` units of flow along level-respecting paths
+        from u to t; a self-loop arc (u == v) can never satisfy
+        level[v] == level[u] + 1, so it is naturally skipped without
+        special-casing."""
+        if u == t or pushed == 0:
+            return pushed
+        while it[u] < len(self.graph[u]):
+            arc = self.graph[u][it[u]]
+            v = self.to[arc]
+            if self.cap[arc] > 0 and level[v] == level[u] + 1:
+                delta = self._dfs_blocking(
+                    v, t, min(pushed, self.cap[arc]), level, it
+                )
+                if delta > 0:
+                    self.cap[arc] -= delta
+                    self.cap[arc ^ 1] += delta
+                    return delta
+            it[u] += 1
+        return 0
+
+    def max_flow(self, s: int, t: int) -> int:
+        """Compute and return the maximum flow value from s to t (int).
+        s == t is handled explicitly (flow is trivially 0, zero BFS
+        phases counted, since no augmentation is meaningful or possible)."""
+        if not (0 <= s < self.n) or not (0 <= t < self.n):
+            raise ValueError(f"s/t out of range: s={s}, t={t}, n={self.n}")
+        if s == t:
+            return 0
+
+        total_flow = 0
+        while True:
+            level = self._bfs_levels(s, t)
+            self.bfs_phases += 1
+            if level[t] == -1:
+                break
+
+            it = [0] * self.n
+            while True:
+                pushed = self._dfs_blocking(s, t, INF, level, it)
+                if pushed == 0:
+                    break
+                self.augmenting_paths += 1
+                total_flow += pushed
+
+        return total_flow
+
+    def flow_on_edge(self, fwd_index: int, original_capacity: int) -> int:
+        """Recover the flow actually sent on the edge whose forward arc
+        is stored at fwd_index. Zero-capacity edges always yield 0."""
+        return original_capacity - self.cap[fwd_index]
+
+
+def max_flow_with_edge_flows(
+    n: int,
+    edges: List[Tuple[int, int, int]],
+    s: int,
+    t: int,
+    include_summary: bool = False,
+) -> Union[
+    Tuple[int, List[int]],
+    Tuple[int, List[int], Dict[str, int]],
+]:
+    """
+    Compute max flow and per-edge flow values, preserving input edge order.
+    Handles boundary cases: n=1, s==t, m=0 (empty edges), zero-capacity
+    edges, self-loops, parallel edges, disconnected s/t, and arbitrarily
+    large integer capacities -- all deterministically and without changing
+    the original output contract.
+
+    Parameters
+    ----------
+    n               : number of vertices, labeled 0..n-1 (n >= 1)
+    edges           : list of (u, v, capacity) tuples, in the order they
+                      should be reported back (may be empty)
+    s, t            : source and sink vertex indices (may be equal)
+    include_summary : opt-in flag (default False). When False (default),
+                      returns exactly the original 2-tuple, unchanged.
+                      When True, additionally returns an
+                      `operation_summary` dict as a third tuple element.
+
+    Returns
+    -------
+    Default (include_summary=False):
+        (max_flow_value, flows)
+
+    With include_summary=True:
+        (max_flow_value, flows, operation_summary) where operation_summary
+        has "bfs_phases", "augmenting_paths", "total_major_operations".
+
+    flows[i] is the flow assigned to edges[i], in the same order as the
+    input list; both the total and each flow entry are exact Python ints.
+    """
+    din = Dinic(n)
+    fwd_indices = []
+    for (u, v, c) in edges:
+        fwd_indices.append(din.add_edge(u, v, c))
+
+    total = din.max_flow(s, t)
+
+    flows = [
+        din.flow_on_edge(fwd_indices[i], edges[i][2])
+        for i in range(len(edges))
+    ]
+
+    if not include_summary:
+        return total, flows
+
+    operation_summary = {
+        "bfs_phases": din.bfs_phases,
+        "augmenting_paths": din.augmenting_paths,
+        "total_major_operations": din.bfs_phases + din.augmenting_paths,
+    }
+    return total, flows, operation_summary
+
+
+def _read_input() -> Tuple[int, List[Tuple[int, int, int]], int, int]:
+    import sys
+    data = sys.stdin.read().split()
+    idx = 0
+
+    def next_int():
+        nonlocal idx
+        val = int(data[idx])
+        idx += 1
+        return val
+
+    n = next_int()
+    m = next_int()
+    s = next_int()
+    t = next_int()
+    edges = []
+    for _ in range(m):
+        u = next_int()
+        v = next_int()
+        c = next_int()
+        edges.append((u, v, c))
+    return n, edges, s, t
+
+
+def _self_test():
+    """Deterministic sanity checks: main example plus boundary cases."""
+
+    # --- Original textbook example: default output unchanged ---
+    edges = [
+        (0, 1, 16), (0, 2, 13), (1, 2, 10), (2, 1, 4),
+        (1, 3, 12), (3, 2, 9), (2, 4, 14), (4, 3, 7),
+        (3, 5, 20), (4, 5, 4),
+    ]
+    total, flows = max_flow_with_edge_flows(6, edges, 0, 5)
+    assert total == 23, f"expected max flow 23, got {total}"
+    assert isinstance(total, int)
+    for (u, v, cap), f in zip(edges, flows):
+        assert isinstance(f, int)
+        assert 0 <= f <= cap
+    print("Test 1 (baseline) passed. Max flow =", total)
+
+    total2, flows2, summary = max_flow_with_edge_flows(6, edges, 0, 5, include_summary=True)
+    assert (total2, flows2) == (total, flows), "summary must not alter results"
+    total3, flows3, summary2 = max_flow_with_edge_flows(6, edges, 0, 5, include_summary=True)
+    assert summary == summary2, "operation_summary must be deterministic"
+    print("Test 2 (summary determinism) passed. operation_summary =", summary)
+
+    # --- Boundary: n = 1, s == t (only one vertex possible) ---
+    total, flows = max_flow_with_edge_flows(1, [], 0, 0)
+    assert total == 0 and flows == []
+    print("Test 3 (n=1, s==t, m=0) passed.")
+
+    # --- Boundary: s == t with edges present (must still be 0) ---
+    total, flows = max_flow_with_edge_flows(3, [(0, 1, 5), (1, 0, 3)], 0, 0)
+    assert total == 0
+    assert flows == [0, 0], "s==t must yield zero flow on every edge"
+    print("Test 4 (s==t with edges) passed.")
+
+    # --- Boundary: m = 0 (no edges), s != t ---
+    total, flows = max_flow_with_edge_flows(4, [], 0, 3)
+    assert total == 0 and flows == []
+    print("Test 5 (m=0, disconnected s,t) passed.")
+
+    # --- Boundary: zero-capacity edges must yield flow 0 ---
+    edges_zero = [(0, 1, 0), (1, 2, 0), (0, 2, 0)]
+    total, flows = max_flow_with_edge_flows(3, edges_zero, 0, 2)
+    assert total == 0
+    assert flows == [0, 0, 0]
+    print("Test 6 (all zero-capacity edges) passed.")
+
+    # --- Boundary: self-loop must never carry flow ---
+    edges_loop = [(0, 0, 100), (0, 1, 5), (1, 2, 5)]
+    total, flows = max_flow_with_edge_flows(3, edges_loop, 0, 2)
+    assert total == 5, f"self-loop must not affect max flow, got {total}"
+    assert flows[0] == 0, "self-loop edge must carry zero flow"
+    assert flows[1] == 5 and flows[2] == 5
+    print("Test 7 (self-loop) passed.")
+
+    # --- Boundary: parallel edges between same pair, order preserved ---
+    edges_par = [(0, 1, 3), (0, 1, 4), (0, 1, 2), (1, 2, 100)]
+    total, flows = max_flow_with_edge_flows(3, edges_par, 0, 2)
+    assert total == 9, f"expected combined parallel capacity 9, got {total}"
+    assert sum(flows[:3]) == 9
+    assert flows[3] == 9
+    for (u, v, cap), f in zip(edges_par, flows):
+        assert 0 <= f <= cap
+    print("Test 8 (parallel edges) passed. flows =", flows)
+
+    # --- Boundary: disconnected s and t (s has no path to t) ---
+    edges_disc = [(0, 1, 10), (2, 3, 10)]
+    total, flows = max_flow_with_edge_flows(4, edges_disc, 0, 3)
+    assert total == 0
+    assert flows == [0, 0]
+    print("Test 9 (disconnected s,t) passed.")
+
+    # --- Boundary: very large integer capacities stay exact ---
+    big = 10 ** 15
+    edges_big = [(0, 1, big), (1, 2, big - 1)]
+    total, flows = max_flow_with_edge_flows(3, edges_big, 0, 2)
+    assert total == big - 1
+    assert isinstance(total, int)
+    assert flows == [big - 1, big - 1]
+    print("Test 10 (very large capacities, exact ints) passed.")
+
+    # --- Boundary: single edge equal to internal INF sentinel scale ---
+    edges_inf_scale = [(0, 1, INF), (1, 2, 7)]
+    total, flows = max_flow_with_edge_flows(3, edges_inf_scale, 0, 2)
+    assert total == 7, "capacity equal to internal sentinel must not corrupt result"
+    assert flows == [7, 7]
+    print("Test 11 (capacity == internal INF sentinel) passed.")
+
+    print("All self-tests passed.")
+
+
+if __name__ == "__main__":
+    import sys
+    args = sys.argv[1:]
+    if "--self-test" in args:
+        _self_test()
+    else:
+        want_summary = "--summary" in args
+        n, edges, s, t = _read_input()
+        if want_summary:
+            total, flows, summary = max_flow_with_edge_flows(
+                n, edges, s, t, include_summary=True
+            )
+        else:
+            total, flows = max_flow_with_edge_flows(n, edges, s, t)
+
+        print(total)
+        for f in flows:
+            print(f)
+
+        if want_summary:
+            print("--- operation_summary ---")
+            print("bfs_phases:", summary["bfs_phases"])
+            print("augmenting_paths:", summary["augmenting_paths"])
+            print("total_major_operations:", summary["total_major_operations"])

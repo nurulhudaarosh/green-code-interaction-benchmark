@@ -1,0 +1,199 @@
+## Problem
+
+Given a numeric grid and a threshold `T`, find the **largest 4-connected region** consisting only of cells whose value is at least `T`.
+
+For the selected region, return:
+
+1. **Size** — number of cells in the region.
+2. **Perimeter** — total number of sides exposed to the grid boundary or to a cell that is below `T`.
+3. **Smallest coordinate** — the lexicographically smallest `(row, column)` coordinate in the region.
+
+If multiple regions have the same size:
+
+* Prefer the region with the **larger perimeter**.
+* If size and perimeter are also equal, prefer the region with the **smaller coordinate**.
+
+### Key constraints
+
+* Connectivity is **4-directional** only: up, down, left, right.
+* A cell belongs to a region iff `grid[r][c] >= T`.
+* Every exposed side must be counted for the perimeter.
+* Results must be deterministic.
+* Use **iterative flood fill**, not recursive DFS, to avoid recursion-depth problems.
+* Use only Python's standard library.
+
+### Required output
+
+Return:
+
+
+For an empty grid or a grid containing no cell with value `>= T`, return:
+
+
+
+### Algorithm
+
+Scan the grid in row-major order. Whenever an eligible, unvisited cell is found, perform an **iterative BFS/flood fill** using a stack.
+
+For every cell in the region:
+
+* Count it toward `size`.
+* Update `smallest_coordinate`.
+* Check all four neighbors.
+
+  * If the neighbor is outside the grid or below `T`, that side contributes `1` to the perimeter.
+  * If the neighbor is eligible and unvisited, add it to the flood-fill stack.
+
+After finding each region, compare it with the current best using:
+
+```text
+larger size
+then larger perimeter
+then smaller coordinate
+```
+
+## Deterministic Python implementation
+
+```python
+from typing import List, Optional, Tuple
+
+Coordinate = Tuple[int, int]
+Result = Tuple[int, int, Optional[Coordinate]]
+
+
+def largest_threshold_region(
+    grid: List[List[float]],
+    T: float
+) -> Result:
+    """
+    Find the largest 4-connected region containing cells with value >= T.
+
+    Returns:
+        (size, perimeter, smallest_coordinate)
+
+    Tie-breaking:
+        1. Larger region size.
+        2. Larger perimeter.
+        3. Smaller lexicographical coordinate (row, column).
+
+    For an empty grid or no qualifying cells:
+        (0, 0, None)
+    """
+
+    if not grid:
+        return (0, 0, None)
+
+    rows = len(grid)
+
+    # Treat the grid as potentially rectangular. A valid input is expected
+    # to have equal row lengths.
+    cols = len(grid[0])
+
+    if cols == 0:
+        return (0, 0, None)
+
+    # Validate rectangular shape.
+    for row in grid:
+        if len(row) != cols:
+            raise ValueError("grid must be rectangular")
+
+    visited = [[False] * cols for _ in range(rows)]
+
+    directions = (
+        (-1, 0),  # up
+        (1, 0),   # down
+        (0, -1),  # left
+        (0, 1),   # right
+    )
+
+    best_size = 0
+    best_perimeter = 0
+    best_coordinate = None
+
+    for r in range(rows):
+        for c in range(cols):
+            # Skip cells that cannot belong to a region or were already
+            # included in another region.
+            if visited[r][c] or grid[r][c] < T:
+                continue
+
+            # Iterative flood fill.
+            stack = [(r, c)]
+            visited[r][c] = True
+
+            size = 0
+            perimeter = 0
+            smallest_coordinate = (r, c)
+
+            while stack:
+                cr, cc = stack.pop()
+                size += 1
+
+                if (cr, cc) < smallest_coordinate:
+                    smallest_coordinate = (cr, cc)
+
+                for dr, dc in directions:
+                    nr = cr + dr
+                    nc = cc + dc
+
+                    # Outside the grid => exposed side.
+                    if nr < 0 or nr >= rows or nc < 0 or nc >= cols:
+                        perimeter += 1
+                        continue
+
+                    # Neighbor below threshold => exposed side.
+                    if grid[nr][nc] < T:
+                        perimeter += 1
+                        continue
+
+                    # Eligible neighbor not yet visited.
+                    if not visited[nr][nc]:
+                        visited[nr][nc] = True
+                        stack.append((nr, nc))
+
+            # Apply deterministic tie-breaking.
+            is_better = (
+                size > best_size
+                or (
+                    size == best_size
+                    and perimeter > best_perimeter
+                )
+                or (
+                    size == best_size
+                    and perimeter == best_perimeter
+                    and (
+                        best_coordinate is None
+                        or smallest_coordinate < best_coordinate
+                    )
+                )
+            )
+
+            if is_better:
+                best_size = size
+                best_perimeter = perimeter
+                best_coordinate = smallest_coordinate
+
+    return (best_size, best_perimeter, best_coordinate)
+
+
+if __name__ == "__main__":
+    grid = [
+        [5, 5, 1, 2],
+        [5, 4, 1, 2],
+        [1, 4, 4, 2],
+        [3, 1, 2, 2],
+    ]
+
+    T = 4
+
+    print(largest_threshold_region(grid, T))
+```
+
+### Complexity
+
+For an `R × C` grid:
+
+* **Time:** `O(R × C)` — every cell is visited at most once, and each visited cell checks four sides.
+* **Space:** `O(R × C)` for the visited matrix and flood-fill stack.
+
+The perimeter is counted **side-by-side**, so adjacent cells in the same region do not contribute perimeter between themselves.

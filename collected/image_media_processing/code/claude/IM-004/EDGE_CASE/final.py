@@ -1,0 +1,92 @@
+import os
+from pathlib import Path
+import numpy as np
+from PIL import Image
+
+# Common image extensions to look for
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".gif", ".webp"}
+
+
+def preprocess_images(input_dir, output_dir):
+    """
+    Grayscale and min-max normalize every image in input_dir to the full
+    0-255 range, saving results as PNG files in output_dir.
+
+    For each image:
+        1. Convert to grayscale ('L' mode).
+        2. Record the original min and max pixel values.
+        3. Min-max normalize to stretch values across the full 0-255 range.
+           If the image is flat (min == max, e.g. all-black or all-white),
+           the original constant value is preserved instead of dividing
+           by zero.
+        4. Save the result as a PNG file (same base name, .png extension)
+           in output_dir.
+
+    Args:
+        input_dir (str or Path): Directory containing input images.
+        output_dir (str or Path): Directory where processed PNGs are saved.
+            Created if it doesn't already exist.
+
+    Returns:
+        dict: Mapping of original filename -> {"min": float, "max": float}
+              for the grayscale pixel values before normalization.
+              Files that fail to process are skipped and reported via a
+              printed warning (not included in the returned stats).
+    """
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    stats = {}
+
+    for entry in sorted(input_dir.iterdir()):
+        if not entry.is_file():
+            continue
+        if entry.suffix.lower() not in IMAGE_EXTENSIONS:
+            continue
+
+        try:
+            with Image.open(entry) as img:
+                gray = img.convert("L")
+                arr = np.asarray(gray, dtype=np.float64)
+
+                orig_min = float(arr.min())
+                orig_max = float(arr.max())
+
+                if orig_max > orig_min:
+                    norm = (arr - orig_min) / (orig_max - orig_min) * 255.0
+                else:
+                    # Flat image (e.g. all-black or all-white): min == max,
+                    # so min-max stretching is undefined (would divide by
+                    # zero). Rather than arbitrarily forcing it to black,
+                    # preserve the original constant value -- this keeps
+                    # an all-white image white and an all-black image
+                    # black instead of collapsing both to the same output.
+                    norm = np.full_like(arr, orig_min)
+
+                norm = np.clip(norm, 0, 255).astype(np.uint8)
+
+                out_path = output_dir / f"{entry.stem}.png"
+                Image.fromarray(norm, mode="L").save(out_path, format="PNG")
+
+                stats[entry.name] = {"min": orig_min, "max": orig_max}
+
+        except Exception as e:
+            print(f"Warning: skipped '{entry.name}' due to error: {e}")
+
+    return stats
+
+
+if __name__ == "__main__":
+    import argparse
+    import json
+
+    parser = argparse.ArgumentParser(
+        description="Grayscale + min-max normalize images to 0-255 PNGs."
+    )
+    parser.add_argument("input_dir", help="Directory containing input images")
+    parser.add_argument("output_dir", help="Directory to save processed PNGs")
+    args = parser.parse_args()
+
+    result = preprocess_images(args.input_dir, args.output_dir)
+    print(json.dumps(result, indent=2))

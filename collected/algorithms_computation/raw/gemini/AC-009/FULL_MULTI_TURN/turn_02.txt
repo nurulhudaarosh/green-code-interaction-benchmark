@@ -1,0 +1,125 @@
+### Restatement of Problem & Expected Behavior
+
+**Minimum Coin Construction:**
+Given a list of positive coin denominations and a target `amount`, find the minimum number of coins needed to sum to `amount` along with the exact combination of coins used.
+
+* Coins can be reused indefinitely.
+* If the target amount cannot be formed, return `(-1, [])`.
+* **Deterministic Tie Handling:** When multiple distinct combinations use the exact same minimum number of coins, the implementation must produce a deterministic result based on a consistent tie-breaking rule (e.g., systematically preferring larger coin denominations or lexicographically smaller combinations).
+
+---
+
+### Demonstration of the Defect
+
+In the previous implementation, the inner loop iterate through sorted coins (`valid_coins = [1, 2, 5]`) and updated `dp[i]` using the strict inequality `<`:
+
+
+
+**Why this fails deterministic tie handling:**
+
+Consider `coins = [1, 3, 4]` and `amount = 6`:
+
+* To make amount `6`, there are two combinations that both use **2 coins**: `[3, 3]` and `[2 coins using 1 & 5 or 4 & 2...]` — specifically `[3, 3]` vs `[4, 2]` (if 2 existed) or `[3, 3]` vs `[1, 5]`.
+* Let's take `coins = [1, 3, 4]`, `amount = 6`:
+* Combination `[3, 3]` uses 2 coins.
+* Combination `[4, 1, 1]` uses 3 coins.
+
+
+* What about `coins = [1, 2, 4]`, `amount = 4`?
+* `[4]` = 1 coin.
+* `[2, 2]` = 2 coins.
+
+
+* Let's look at a true tie example: `coins = [1, 3, 4]`, `amount = 7`:
+* `[4, 3]` = 2 coins ($4 + 3 = 7$)
+* `[3, 4]` = 2 coins ($3 + 4 = 7$)
+* But consider `coins = [2, 3, 5]`, `amount = 5`: `[5]` (1 coin).
+* Consider `coins = [2, 3, 4]`, `amount = 6`:
+* `[3, 3]` (2 coins)
+* `[4, 2]` (2 coins)
+
+
+
+
+
+Let's trace `coins = [2, 3, 4]`, `amount = 6` with `valid_coins = [2, 3, 4]`:
+
+1. When evaluating `i = 6`:
+* `coin = 2`: `dp[6 - 2] + 1` = `dp[4] + 1` = `1 + 1 = 2`. Since `2 < inf`, `parent[6]` becomes `2`.
+* `coin = 3`: `dp[6 - 3] + 1` = `dp[3] + 1` = `1 + 1 = 2`. Since `2 < 2` is **False**, `parent[6]` stays `2`.
+* `coin = 4`: `dp[6 - 4] + 1` = `dp[2] + 1` = `1 + 1 = 2`. Since `2 < 2` is **False**, `parent[6]` stays `2`.
+
+
+
+Because `<` keeps the **first** coin that achieved the minimum count (which is the smallest coin `2`), `parent[6]` chooses `2`, reconstructing `[2, 4]`.
+
+However, if `coins` were passed in reverse order `[4, 3, 2]` without sorting descending, or if we want a clear policy (such as **Greedy/Largest Coin Preference**), standard iteration from small to large with `<` results in picking smaller coins first, which violates the convention of preferring larger coin denominations for ties.
+
+Furthermore, if tie-breaking rules are intended to consistently prefer larger coins (or lexicographically sorted larger coin selections), iterating through coins in descending order (`[4, 3, 2]`) with `<` ensures larger coins are recorded as `parent[i]` for minimum steps.
+
+---
+
+### Corrected Python Solution
+
+To ensure **strict determinism**, we explicitly sort coin denominations in **descending order** (largest coins first). By using `<` when checking `dp[i - coin] + 1 < dp[i]`, we guarantee that if multiple coin choices result in the exact same minimum coin count, the **largest denomination** is selected as the parent.
+
+```python
+def min_coin_change(coins: list[int], amount: int) -> tuple[int, list[int]]:
+    """
+    Finds the minimum number of coins to reach a target amount and returns both
+    the count and a deterministically reconstructed combination (preferring larger coins).
+    
+    Returns:
+        tuple[int, list[int]]: (min_coin_count, list_of_coins_used)
+    """
+    if amount < 0:
+        return -1, []
+    if amount == 0:
+        return 0, []
+    
+    # Filter positive coins and sort in DESCENDING order for deterministic tie-breaking
+    # (Preferring larger coins when coin counts are identical)
+    valid_coins = sorted(list(set(c for c in coins if c > 0)), reverse=True)
+    if not valid_coins:
+        return -1, []
+
+    # dp[i] holds minimum coins needed for amount i
+    dp = [float('inf')] * (amount + 1)
+    # parent[i] holds the coin denomination chosen for amount i
+    parent = [-1] * (amount + 1)
+    
+    dp[0] = 0
+
+    for i in range(1, amount + 1):
+        for coin in valid_coins:
+            if coin <= i and dp[i - coin] + 1 < dp[i]:
+                dp[i] = dp[i - coin] + 1
+                parent[i] = coin
+
+    # If amount cannot be reached
+    if dp[amount] == float('inf'):
+        return -1, []
+
+    # Deterministic Path Reconstruction
+    combination = []
+    curr = amount
+    while curr > 0:
+        coin_used = parent[curr]
+        combination.append(coin_used)
+        curr -= coin_used
+
+    return int(dp[amount]), combination
+
+
+# Verification Example
+if __name__ == "__main__":
+    # Ties between [4, 2] and [3, 3] (both 2 coins)
+    # Solved deterministically picking [4, 2] due to descending order preference
+    test_coins = [2, 3, 4]
+    test_amount = 6
+    count, combination = min_coin_change(test_coins, test_amount)
+    print(f"Amount: {test_amount}")
+    print(f"Minimum Coins: {count}")
+    print(f"Deterministic Combination: {combination}")  # Output: [4, 2]
+
+```

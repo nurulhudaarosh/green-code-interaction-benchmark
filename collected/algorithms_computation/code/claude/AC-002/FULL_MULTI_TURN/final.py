@@ -1,0 +1,274 @@
+#!/usr/bin/env python3
+"""
+Dependency Build Planner
+=========================
+
+Problem restatement (original, unchanged)
+-------------------------------------------
+Given a set of packages and a set of prerequisite (dependency) pairs,
+produce:
+  1. A single, deterministic, valid build order in which every package
+     is built only after all of its prerequisites have been built.
+  2. The number of distinct "dependency levels" in that build — one
+     more than the length of the longest prerequisite chain (a package
+     with no prerequisites sits at level 1).
+
+If the dependency graph contains a cycle, return an empty order and -1
+levels.
+
+Required outputs (unchanged)
+-------------------------------
+- `order`: list[T]  -- deterministic build order, or [] if a cycle exists.
+- `levels`: int     -- number of dependency levels, or -1 if a cycle exists.
+- `operation_summary` (optional, only when `include_summary=True`): a
+  dict of deterministic operation counts from the same run that produced
+  `order`/`levels`. Unrequested/disabled behavior is byte-for-byte
+  identical to the original 2-tuple contract.
+
+Tie-breaking rule (unchanged): among all packages simultaneously ready to
+build (in-degree 0), the lexicographically smallest is always chosen
+next. Enforced via Kahn's algorithm with a min-heap frontier, seeded and
+updated exclusively through `heapq.heapify`/`heapq.heappush` (never a
+plain queue/list scan), while longest-prerequisite `depth` is tracked
+incrementally as edges are relaxed. Standard library only; no
+randomness, network, or external interaction.
+
+New: explicit handling of repeated values
+--------------------------------------------
+Two kinds of "repeated values" are now treated as *valid* input rather
+than errors, and are handled deterministically:
+
+1. Repeated packages in the `packages` list (e.g. the same package name
+   supplied twice). These are deduplicated, keeping each package's
+   *first* occurrence position for reference only — deduplication itself
+   has no effect on final order, since the min-heap tie-break is what
+   actually determines build order, not input position. A package that
+   never appears in `packages` at all is still an error (unknown
+   reference), but a duplicate listing of a valid package is not.
+
+2. Repeated prerequisite pairs (the same (pkg, prereq) edge supplied more
+   than once, possibly interleaved with other pairs). These are silently
+   collapsed to a single edge — an edge either exists or it doesn't;
+   supplying it twice must not double-count in-degree or double-relax
+   depth, or the algorithm would (a) leave a phantom in-degree that never
+   reaches zero, breaking a valid graph into a false "cycle", and (b)
+   double count `edge_relaxations` in `operation_summary`.
+
+All original output fields and the min-heap tie-breaking rule are
+unchanged by this handling — deduplication happens purely at graph
+construction time, before Kahn's algorithm runs.
+"""
+
+from __future__ import annotations
+
+import heapq
+from collections import defaultdict
+from typing import Dict, Hashable, List, Sequence, Tuple, TypeVar, Union
+
+T = TypeVar("T", bound=Hashable)
+
+OperationSummary = Dict[str, Union[int, bool]]
+
+
+def build_order(
+    packages: Sequence[T],
+    prerequisites: Sequence[Tuple[T, T]],
+    include_summary: bool = False,
+) -> Union[Tuple[List[T], int], Tuple[List[T], int, OperationSummary]]:
+    """
+    Compute a deterministic valid build order and the number of dependency
+    levels for a package dependency graph, using Kahn's algorithm with a
+    min-heap frontier (guaranteeing lexicographically-smallest-first tie
+    handling among simultaneously-ready packages) and longest-prerequisite
+    depth tracking. Repeated packages and repeated prerequisite pairs are
+    valid input and are deduplicated deterministically before the
+    algorithm runs.
+
+    Parameters
+    ----------
+    packages:
+        Sequence of package identifiers; may contain duplicates (a
+        package listed more than once is treated as a single package).
+    prerequisites:
+        Sequence of (package, prerequisite) pairs: `prerequisite` must be
+        built before `package`. May contain duplicate pairs; each
+        distinct pair contributes exactly one edge.
+    include_summary:
+        If False (default), return exactly the original `(order, levels)`
+        contract, unchanged. If True, additionally compute and return
+        `operation_summary` as a third tuple element.
+
+    Returns
+    -------
+    (order, levels)
+        when `include_summary` is False (original, unchanged contract).
+    (order, levels, operation_summary)
+        when `include_summary` is True.
+
+    Raises
+    ------
+    ValueError
+        If a prerequisite pair references a package absent from
+        `packages` (after deduplication).
+    """
+    # --- Deduplicate packages, preserving first-occurrence order. ---
+    package_list: List[T] = []
+    package_set = set()
+    for p in packages:
+        if p not in package_set:
+            package_set.add(p)
+            package_list.append(p)
+
+    graph: Dict[T, List[T]] = defaultdict(list)
+    indegree: Dict[T, int] = {p: 0 for p in package_list}
+
+    # --- Deduplicate prerequisite pairs: each distinct edge counted once. ---
+    seen_edges = set()
+    for pkg, prereq in prerequisites:
+        if pkg not in package_set or prereq not in package_set:
+            raise ValueError(
+                f"Prerequisite pair ({pkg!r}, {prereq!r}) references an "
+                f"unknown package."
+            )
+        edge = (prereq, pkg)
+        if edge in seen_edges:
+            continue  # repeated edge: valid input, collapses to one edge
+        seen_edges.add(edge)
+        graph[prereq].append(pkg)
+        indegree[pkg] += 1
+
+    depth: Dict[T, int] = {p: 0 for p in package_list}
+
+    # Deterministic min-heap frontier: seeded via heapify, updated only via
+    # heappush/heappop. Guarantees lexicographically-smallest-first order
+    # among simultaneously-ready packages, regardless of input ordering.
+    ready_heap: List[T] = [p for p in package_list if indegree[p] == 0]
+    heapq.heapify(ready_heap)
+
+    order: List[T] = []
+
+    heap_pops = 0
+    heap_pushes = len(ready_heap)
+    edge_relaxations = 0
+    depth_updates = 0
+
+    while ready_heap:
+        node = heapq.heappop(ready_heap)
+        heap_pops += 1
+        order.append(node)
+
+        for nxt in graph[node]:
+            indegree[nxt] -= 1
+            edge_relaxations += 1
+            if depth[node] + 1 > depth[nxt]:
+                depth[nxt] = depth[node] + 1
+                depth_updates += 1
+            if indegree[nxt] == 0:
+                heapq.heappush(ready_heap, nxt)
+                heap_pushes += 1
+
+    cycle_detected = len(order) != len(package_list)
+
+    if cycle_detected:
+        result_order: List[T] = []
+        result_levels = -1
+    else:
+        result_order = order
+        result_levels = (max(depth.values()) + 1) if package_list else 0
+
+    if not include_summary:
+        return result_order, result_levels
+
+    operation_summary: OperationSummary = {
+        "heap_pops": heap_pops,
+        "heap_pushes": heap_pushes,
+        "edge_relaxations": edge_relaxations,
+        "depth_updates": depth_updates,
+        "cycle_detected": cycle_detected,
+    }
+    return result_order, result_levels, operation_summary
+
+
+def _demo() -> None:
+    print("1) Baseline DAG -- original contract, no repeats")
+    packages = ["a", "b", "c", "d", "e", "f"]
+    prerequisites = [
+        ("b", "a"),
+        ("c", "a"),
+        ("d", "b"),
+        ("d", "c"),
+        ("e", "d"),
+        ("f", "a"),
+    ]
+    result = build_order(packages, prerequisites)
+    print("  result:", result)
+    assert result == (["a", "b", "c", "f", "d", "e"], 4)
+
+    print("\n2) Repeated packages in input list are deduplicated")
+    dup_packages = ["a", "b", "a", "c", "b", "b"]
+    dup_prereqs = [("b", "a"), ("c", "a")]
+    order, levels = build_order(dup_packages, dup_prereqs)
+    print("  order :", order, " levels:", levels)
+    assert order == ["a", "b", "c"], order  # exactly 3 packages, no dupes
+    assert levels == 2
+
+    print("\n3) Repeated prerequisite pairs collapse to a single edge")
+    rp_packages = ["x", "y", "z"]
+    rp_prereqs = [("y", "x"), ("y", "x"), ("y", "x"), ("z", "y")]
+    order2, levels2, summary2 = build_order(rp_packages, rp_prereqs, include_summary=True)
+    print("  order  :", order2, " levels:", levels2)
+    print("  summary:", summary2)
+    assert order2 == ["x", "y", "z"]
+    assert levels2 == 3
+    # Only 2 distinct edges exist (y<-x, z<-y) despite 4 pairs supplied.
+    assert summary2["edge_relaxations"] == 2
+
+    print("\n4) Repeated packages AND repeated edges combined")
+    combo_packages = ["m", "n", "m", "o", "n"]
+    combo_prereqs = [("n", "m"), ("n", "m"), ("o", "m"), ("o", "n"), ("o", "n")]
+    order3, levels3 = build_order(combo_packages, combo_prereqs)
+    print("  order :", order3, " levels:", levels3)
+    assert order3 == ["m", "n", "o"]
+    assert levels3 == 3
+
+    print("\n5) Deterministic ties: many simultaneously-ready packages, no edges")
+    tie_packages = ["banana", "apple", "cherry", "date", "apple", "banana"]
+    order4, levels4 = build_order(tie_packages, [])
+    print("  order :", order4, " levels:", levels4)
+    assert order4 == ["apple", "banana", "cherry", "date"]  # lexicographic, dedup'd
+    assert levels4 == 1
+
+    print("\n6) Deterministic ties mid-graph: two independent roots feed one node")
+    tie2_packages = ["z", "y", "x", "w"]
+    tie2_prereqs = [("w", "x"), ("w", "y"), ("w", "z")]
+    # x, y, z are all simultaneously ready at the start.
+    order5, levels5 = build_order(tie2_packages, tie2_prereqs)
+    print("  order :", order5, " levels:", levels5)
+    assert order5 == ["x", "y", "z", "w"]  # ties broken lexicographically
+    assert levels5 == 2
+
+    print("\n7) Determinism under different input orderings of the same repeats")
+    a_order, a_levels = build_order(["a", "b", "b", "a", "c"], [("b", "a"), ("b", "a")])
+    b_order, b_levels = build_order(["c", "b", "a"], [("b", "a")])
+    print("  a:", a_order, a_levels, " b:", b_order, b_levels)
+    assert a_order == b_order and a_levels == b_levels
+
+    print("\n8) Cycle detection still correct alongside repeats")
+    cyc_packages = ["p", "q", "r", "p", "q"]
+    cyc_prereqs = [("p", "q"), ("p", "q"), ("q", "r"), ("r", "p")]
+    order6, levels6 = build_order(cyc_packages, cyc_prereqs)
+    print("  order :", order6, " levels:", levels6)
+    assert order6 == [] and levels6 == -1
+
+    print("\n9) Unknown package reference still raises (not a 'repeated value' case)")
+    try:
+        build_order(["a", "b"], [("a", "zzz")])
+        raise AssertionError("expected ValueError")
+    except ValueError as exc:
+        print("  raised as expected:", exc)
+
+    print("\nAll checks passed.")
+
+
+if __name__ == "__main__":
+    _demo()

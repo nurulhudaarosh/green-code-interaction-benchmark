@@ -1,0 +1,175 @@
+"""
+Rectangle Statistics Engine
+============================
+Preprocess an integer matrix and answer inclusive rectangle queries.
+
+For each query (r1, c1, r2, c2) with inclusive bounds, return exactly:
+    (sum, min, max)
+
+Design (mixed preprocessing/query workload):
+  - 2D prefix-sum table  -> O(1) sum queries
+  - Direct rectangle scan -> O(area) min/max queries
+
+Rules enforced:
+  - Return exactly the required triple (sum, min, max) in that order.
+  - Deterministic tie handling: extrema are seeded from the first element
+    of the rectangle (a real integer), then updated with strict comparisons.
+    No float sentinels (inf / -inf) can ever leak into the result.
+  - Invalid rectangles raise ValueError instead of silently returning
+    sentinels.
+"""
+
+
+def build_prefix_sum(matrix):
+    """Build 2D prefix-sum table for O(1) sum queries."""
+    if not matrix or not matrix[0]:
+        return []
+    rows, cols = len(matrix), len(matrix[0])
+    prefix = [[0] * (cols + 1) for _ in range(rows + 1)]
+    for i in range(rows):
+        for j in range(cols):
+            prefix[i + 1][j + 1] = (
+                matrix[i][j]
+                + prefix[i][j + 1]
+                + prefix[i + 1][j]
+                - prefix[i][j]
+            )
+    return prefix
+
+
+def query_sum(prefix, r1, c1, r2, c2):
+    """Inclusive rectangle sum via inclusion-exclusion, O(1)."""
+    return (
+        prefix[r2 + 1][c2 + 1]
+        - prefix[r1][c2 + 1]
+        - prefix[r2 + 1][c1]
+        + prefix[r1][c1]
+    )
+
+
+def query_min_max(matrix, r1, c1, r2, c2):
+    """
+    Direct scan for extrema, O(area).
+
+    Deterministic: seed from the first element of the rectangle (an int),
+    then apply strict comparisons. Never returns float sentinels for a
+    non-empty rectangle.
+    """
+    min_val = matrix[r1][c1]
+    max_val = matrix[r1][c1]
+    for i in range(r1, r2 + 1):
+        for j in range(c1, c2 + 1):
+            if i == r1 and j == c1:
+                continue  # already seeded
+            val = matrix[i][j]
+            if val < min_val:
+                min_val = val
+            if val > max_val:
+                max_val = val
+    return min_val, max_val
+
+
+def process_queries(matrix, queries):
+    """
+    Process rectangle queries.
+
+    Returns a list of (sum, min, max) triples, one per query, in order.
+    Raises ValueError on any invalid rectangle.
+    """
+    if not matrix or not matrix[0]:
+        return []
+    rows, cols = len(matrix), len(matrix[0])
+    prefix = build_prefix_sum(matrix)
+
+    results = []
+    for r1, c1, r2, c2 in queries:
+        if not (0 <= r1 <= r2 < rows and 0 <= c1 <= c2 < cols):
+            raise ValueError(
+                f"Invalid query rectangle: ({r1}, {c1}, {r2}, {c2})"
+            )
+        rect_sum = query_sum(prefix, r1, c1, r2, c2)
+        rect_min, rect_max = query_min_max(matrix, r1, c1, r2, c2)
+        results.append((rect_sum, rect_min, rect_max))
+    return results
+
+
+def _brute_force(matrix, r1, c1, r2, c2):
+    """Reference implementation for verification."""
+    s = 0
+    mn = matrix[r1][c1]
+    mx = matrix[r1][c1]
+    for i in range(r1, r2 + 1):
+        for j in range(c1, c2 + 1):
+            v = matrix[i][j]
+            s += v
+            if v < mn:
+                mn = v
+            if v > mx:
+                mx = v
+    return s, mn, mx
+
+
+def _verify(matrix, queries):
+    """Assert engine output matches brute force for every query."""
+    got = process_queries(matrix, queries)
+    for q, g in zip(queries, got):
+        b = _brute_force(matrix, *q)
+        assert g == b, f"Mismatch on {q}: engine={g} brute={b}"
+        # Type check: required result must be ints, never floats.
+        assert all(isinstance(x, int) for x in g), \
+            f"Non-integer result on {q}: {g}"
+        # Tie-handling / determinism: re-run and confirm identical output.
+        assert process_queries(matrix, [q])[0] == g
+    return got
+
+
+def main():
+    # --- Small valid example demonstrating the fix -------------------------
+    print("Small example (single cell):")
+    m1 = [[7]]
+    q1 = [(0, 0, 0, 0)]
+    print("  matrix:", m1)
+    print("  query :", q1)
+    print("  result:", process_queries(m1, q1))
+    # -> [(7, 7, 7)] exactly, no inf/-inf, no floats
+
+    print()
+    print("Tie handling (all-equal 2x2):")
+    m2 = [[5, 5],
+          [5, 5]]
+    q2 = [(0, 0, 1, 1)]
+    print("  result:", process_queries(m2, q2))
+    # -> [(20, 5, 5)] deterministic integer extrema
+
+    print()
+    print("Invalid rectangle raises instead of leaking sentinels:")
+    try:
+        process_queries([[1, 2], [3, 4]], [(1, 0, 0, 0)])
+    except ValueError as e:
+        print("  ValueError:", e)
+
+    # --- Full correctness sweep -------------------------------------------
+    print()
+    print("Full verification on 4x4 matrix:")
+    matrix = [
+        [1,  2,  3,  4],
+        [5,  6,  7,  8],
+        [9, 10, 11, 12],
+        [13, 14, 15, 16],
+    ]
+    queries = [
+        (0, 0, 1, 1),   # top-left 2x2
+        (1, 1, 2, 2),   # middle 2x2
+        (0, 0, 3, 3),   # entire matrix
+        (2, 0, 3, 1),   # bottom-left 2x2
+        (0, 3, 3, 3),   # rightmost column
+        (2, 2, 2, 2),   # single cell
+    ]
+    results = _verify(matrix, queries)
+    for q, r in zip(queries, results):
+        print(f"  rect {q} -> sum={r[0]}, min={r[1]}, max={r[2]}")
+    print("  All queries verified against brute force.")
+
+
+if __name__ == "__main__":
+    main()

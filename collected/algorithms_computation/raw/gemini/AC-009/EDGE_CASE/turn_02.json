@@ -1,0 +1,11 @@
+{
+  "task_id": "AC-009",
+  "model": "gemini",
+  "interaction": "EDGE_CASE",
+  "turn": 2,
+  "saved_at": "2026-09-08T11:58:41.470191+00:00",
+  "response_sha256": "781ada4ba4ba3342e23813cfecc6d0f8febaca3a05669eb65fe84f49141227c0",
+  "code_sha256": "68b72f976f9a257eb109efcfc08c7f76680f9fbe54466a400705dbf652386a79",
+  "raw_file": ".collection/raw/gemini/AC-009/EDGE_CASE/turn_02.txt",
+  "code_file": ".collection/code/gemini/AC-009/EDGE_CASE/final.py"
+}

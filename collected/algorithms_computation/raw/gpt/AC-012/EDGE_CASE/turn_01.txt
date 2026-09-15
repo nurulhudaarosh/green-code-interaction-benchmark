@@ -1,0 +1,157 @@
+## Problem
+
+Given two strings `X` and `Y`, find:
+
+1. The **length of their Longest Common Subsequence (LCS)**.
+2. One actual **LCS string**.
+3. When two choices have the same DP score during reconstruction, **prefer advancing in the first string `X`**.
+
+A subsequence does not need to be contiguous, but its characters must remain in the same order.
+
+### Key constraints
+
+* Use **quadratic dynamic programming**: `O(n × m)` time.
+* Use **predecessor reconstruction** to recover the LCS.
+* Reconstruction must be **deterministic**.
+* On an equal-score tie, prefer moving/advancing in the **first string**.
+* Use only Python's **standard library**.
+* No network access, APIs, external services, randomness, or human interaction.
+
+### Required output
+
+Return:
+
+```text
+{
+    "length": <LCS length>,
+    "lcs": <one deterministic LCS>
+}
+```
+
+### Algorithm
+
+Let `dp[i][j]` be the LCS length for `X[:i]` and `Y[:j]`.
+
+* If `X[i-1] == Y[j-1]`, take that character:
+  `dp[i][j] = dp[i-1][j-1] + 1`
+* Otherwise, choose the larger of:
+
+  * `dp[i-1][j]` → advance in the first string
+  * `dp[i][j-1]` → advance in the second string
+* If they are equal, choose `dp[i-1][j]`, which implements the required **first-string preference**.
+
+A predecessor table records whether each DP cell came from a diagonal, up, or left cell. We then follow those predecessors backward to reconstruct the LCS.
+
+```python
+def lcs(x: str, y: str) -> dict:
+    """
+    Compute the Longest Common Subsequence (LCS) of two strings.
+
+    Deterministic tie-breaking:
+        If dp[i-1][j] == dp[i][j-1], prefer advancing
+        in the first string (move up).
+
+    Returns:
+        {
+            "length": int,
+            "lcs": str
+        }
+
+    Time:  O(n * m)
+    Space: O(n * m)
+    """
+
+    n = len(x)
+    m = len(y)
+
+    # dp[i][j] = LCS length of x[:i] and y[:j]
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+
+    # predecessor[i][j]:
+    #   "diag" -> came from (i-1, j-1)
+    #   "up"   -> came from (i-1, j)
+    #   "left" -> came from (i, j-1)
+    predecessor = [[None] * (m + 1) for _ in range(n + 1)]
+
+    # Build the DP table.
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            if x[i - 1] == y[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+                predecessor[i][j] = "diag"
+
+            elif dp[i - 1][j] >= dp[i][j - 1]:
+                # Prefer advancing in the first string on ties.
+                dp[i][j] = dp[i - 1][j]
+                predecessor[i][j] = "up"
+
+            else:
+                dp[i][j] = dp[i][j - 1]
+                predecessor[i][j] = "left"
+
+    # Reconstruct the LCS using the predecessor table.
+    result = []
+    i, j = n, m
+
+    while i > 0 and j > 0:
+        move = predecessor[i][j]
+
+        if move == "diag":
+            result.append(x[i - 1])
+            i -= 1
+            j -= 1
+
+        elif move == "up":
+            i -= 1
+
+        elif move == "left":
+            j -= 1
+
+        else:
+            # This can only occur at the DP boundaries.
+            break
+
+    result.reverse()
+
+    return {
+        "length": dp[n][m],
+        "lcs": "".join(result)
+    }
+
+
+# -------------------------
+# Examples / tests
+# -------------------------
+
+if __name__ == "__main__":
+    tests = [
+        ("ABCBDAB", "BDCABA"),
+        ("AGGTAB", "GXTXAYB"),
+        ("ABC", "ABC"),
+        ("ABC", "DEF"),
+        ("", "ABC"),
+        ("ABC", ""),
+        ("AAAA", "AA"),
+    ]
+
+    for x, y in tests:
+        print(f"X = {x!r}, Y = {y!r}")
+        print(lcs(x, y))
+        print()
+```
+
+For example, `lcs("AGGTAB", "GXTXAYB")` returns:
+
+```text
+{
+    "length": 4,
+    "lcs": "GTAB"
+}
+```
+
+The important tie-breaking condition is `>=` in:
+
+
+
+
+That makes the result deterministic and explicitly prefers **advancing in the first string** when both choices have the same LCS score.

@@ -1,0 +1,60 @@
+import os
+from pathlib import Path
+import numpy as np
+from PIL import Image
+
+
+def preprocess_images(input_dir, output_dir):
+    """
+    Grayscale and min-max normalize every image in input_dir to full 0-255 range,
+    save as PNG in output_dir, and return original min/max stats per file.
+
+    Args:
+        input_dir (str | Path): Directory containing source images.
+        output_dir (str | Path): Directory to write normalized PNGs.
+
+    Returns:
+        dict: {filename: {"original_min": int, "original_max": int,
+                          "output_path": str}}
+    """
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Common image extensions
+    valid_exts = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp", ".gif"}
+
+    stats = {}
+
+    for path in sorted(input_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in valid_exts:
+            continue
+
+        # Load as grayscale ('L' mode converts RGB/RGBA/etc. to 8-bit luminance)
+        with Image.open(path) as img:
+            gray = img.convert("L")
+            arr = np.asarray(gray, dtype=np.float32)
+
+        orig_min = int(arr.min())
+        orig_max = int(arr.max())
+
+        # Min-max normalize to [0, 255]
+        if orig_max > orig_min:
+            norm = (arr - orig_min) / (orig_max - orig_min) * 255.0
+        else:
+            # Constant image — nothing to stretch
+            norm = np.zeros_like(arr)
+
+        # Round and clip to valid uint8 range
+        norm = np.clip(np.round(norm), 0, 255).astype(np.uint8)
+
+        out_path = output_dir / f"{path.stem}.png"
+        Image.fromarray(norm, mode="L").save(out_path, format="PNG")
+
+        stats[path.name] = {
+            "original_min": orig_min,
+            "original_max": orig_max,
+            "output_path": str(out_path),
+        }
+
+    return stats

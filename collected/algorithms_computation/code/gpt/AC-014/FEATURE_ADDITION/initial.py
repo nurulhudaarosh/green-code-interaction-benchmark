@@ -1,0 +1,220 @@
+"""
+One-Dimensional K-Cluster Partition
+
+Problem:
+Sort one-dimensional points and partition them into exactly k contiguous
+clusters. Each cluster's cost is the sum of squared deviations of its points
+from that cluster's mean. The goal is to minimize the total cost.
+
+Key constraints / requirements:
+- Input points are one-dimensional numeric values.
+- Points are sorted before clustering.
+- Clusters must be contiguous in the sorted order.
+- Exactly k non-empty clusters are required.
+- Cluster cost:
+      sum((x_i - mean(cluster))^2)
+- Use prefix sums to calculate interval costs efficiently.
+- Use interval-cost dynamic programming.
+- Tie handling must be deterministic.
+- Return the minimum total cost and the final boundary indices.
+- Standard library only.
+- No network, APIs, external services, randomness, or human interaction.
+
+Output:
+{
+    "cost": minimum_total_squared_deviation,
+    "boundaries": [end_index_1, ..., end_index_k]
+}
+
+The boundary indices refer to the sorted points and are inclusive.
+For example, boundaries [1, 3, 5] represent clusters:
+    [0..1], [2..3], [4..5]
+
+Algorithm:
+1. Sort the points.
+2. Build prefix sums P and squared-prefix sums Q.
+3. For interval [l, r], let:
+       n   = r - l + 1
+       sum = P[r + 1] - P[l]
+       sq  = Q[r + 1] - Q[l]
+   Its squared-deviation cost is:
+       sq - sum^2 / n
+4. Define dp[c][i] as the minimum cost of partitioning the first i
+   sorted points into exactly c clusters.
+5. Try every possible previous boundary and use the interval-cost formula.
+6. Store the chosen boundary for reconstruction.
+7. On equal costs, choose the smaller previous boundary so that the result
+   is deterministic.
+8. Reconstruct the final inclusive boundary indices.
+
+Time complexity:
+- Sorting: O(n log n)
+- DP: O(k * n^2)
+- Prefix sums: O(n)
+- Space: O(k * n)
+
+The implementation uses exact rational arithmetic for DP costs, avoiding
+floating-point tie ambiguity.
+"""
+
+from fractions import Fraction
+
+
+def one_dimensional_k_cluster(points, k):
+    """
+    Partition points into exactly k contiguous clusters after sorting.
+
+    Returns:
+        {
+            "cost": Fraction,
+            "boundaries": list[int]
+        }
+
+    The returned boundary indices are inclusive indices into the sorted list.
+    """
+
+    n = len(points)
+
+    if not isinstance(k, int):
+        raise TypeError("k must be an integer")
+
+    if n == 0:
+        if k == 0:
+            return {"cost": Fraction(0), "boundaries": []}
+        raise ValueError("k must be 0 when points is empty")
+
+    if k < 1 or k > n:
+        raise ValueError("k must satisfy 1 <= k <= number of points")
+
+    # Sort the one-dimensional points.
+    x = sorted(points)
+
+    # Prefix sums of x and x^2.
+    prefix_sum = [0] * (n + 1)
+    prefix_sq = [0] * (n + 1)
+
+    for i, value in enumerate(x):
+        prefix_sum[i + 1] = prefix_sum[i] + value
+        prefix_sq[i + 1] = prefix_sq[i] + value * value
+
+    def interval_cost(left, right):
+        """
+        Cost of one cluster containing sorted points[left:right+1].
+        """
+        count = right - left + 1
+        total = prefix_sum[right + 1] - prefix_sum[left]
+        total_sq = prefix_sq[right + 1] - prefix_sq[left]
+
+        # sum((x - mean)^2) = sum(x^2) - sum(x)^2 / count
+        return Fraction(total_sq * count - total * total, count)
+
+    INF = None
+
+    # dp[c][i]:
+    # minimum cost for the first i points using exactly c clusters.
+    dp = [[INF] * (n + 1) for _ in range(k + 1)]
+
+    # parent[c][i]:
+    # index where the final cluster starts.
+    parent = [[None] * (n + 1) for _ in range(k + 1)]
+
+    dp[0][0] = Fraction(0)
+
+    for clusters in range(1, k + 1):
+        # Need at least 'clusters' points for 'clusters' non-empty clusters.
+        for i in range(clusters, n + 1):
+            best_cost = INF
+            best_start = None
+
+            # Final cluster is [start, i-1].
+            # Previous clusters therefore cover [0, start-1].
+            for start in range(clusters - 1, i):
+                previous = dp[clusters - 1][start]
+
+                if previous is None:
+                    continue
+
+                candidate = previous + interval_cost(start, i - 1)
+
+                # Deterministic tie handling:
+                # choose the smaller start index.
+                if (
+                    best_cost is None
+                    or candidate < best_cost
+                    or (
+                        candidate == best_cost
+                        and (best_start is None or start < best_start)
+                    )
+                ):
+                    best_cost = candidate
+                    best_start = start
+
+            dp[clusters][i] = best_cost
+            parent[clusters][i] = best_start
+
+    # Reconstruct inclusive final boundary indices.
+    boundaries = []
+    i = n
+
+    for clusters in range(k, 0, -1):
+        start = parent[clusters][i]
+        if start is None:
+            raise RuntimeError("Failed to reconstruct optimal partition")
+
+        # The final cluster ends at i - 1.
+        boundaries.append(i - 1)
+        i = start
+
+    boundaries.reverse()
+
+    return {
+        "cost": dp[k][n],
+        "boundaries": boundaries,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Examples / tests
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    # Example:
+    # Sorted points = [1, 2, 3, 10, 11]
+    #
+    # Optimal 2-cluster partition:
+    #   [1, 2, 3] and [10, 11]
+    #
+    # Costs:
+    #   [1,2,3] -> 2
+    #   [10,11] -> 1/2
+    # Total = 5/2
+    result = one_dimensional_k_cluster([10, 1, 3, 11, 2], 2)
+
+    assert result["cost"] == Fraction(5, 2)
+    assert result["boundaries"] == [2, 4]
+
+    # k = 1: every point belongs to one cluster.
+    result = one_dimensional_k_cluster([1, 2, 3], 1)
+
+    assert result["cost"] == Fraction(2)
+    assert result["boundaries"] == [2]
+
+    # k = n: every point is its own cluster, so the cost is zero.
+    result = one_dimensional_k_cluster([3, 1, 2], 3)
+
+    assert result["cost"] == Fraction(0)
+    assert result["boundaries"] == [0, 1, 2]
+
+    # Duplicate values.
+    result = one_dimensional_k_cluster([5, 5, 5, 10], 2)
+
+    assert result["cost"] == Fraction(0)
+    assert result["boundaries"] == [2, 3]
+
+    # Negative values.
+    result = one_dimensional_k_cluster([-3, -2, 4, 5], 2)
+
+    assert result["cost"] == Fraction(1)
+    assert result["boundaries"] == [1, 3]
+
+    print("All tests passed.")

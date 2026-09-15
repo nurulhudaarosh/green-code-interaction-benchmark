@@ -1,0 +1,43 @@
+Here is the implementation using Python and Pillow (`PIL`):
+
+```python
+from pathlib import Path
+from PIL import Image
+
+def batch_resize(input_dir, output_dir, target_size):
+    """
+    Resizes all PNG and JPEG images in input_dir to target_size
+    and saves them in output_dir.
+
+    :param input_dir: Path to source directory (str or Path)
+    :param output_dir: Path to destination directory (str or Path)
+    :param target_size: Tuple of (width, height) in pixels
+    :return: Number of successfully processed images (int)
+    """
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    valid_extensions = {".jpg", ".jpeg", ".png"}
+    processed_count = 0
+
+    for file_path in input_path.iterdir():
+        if file_path.is_file() and file_path.suffix.lower() in valid_extensions:
+            try:
+                with Image.open(file_path) as img:
+                    # Lanczos provides high-quality downsampling/upsampling
+                    resized_img = img.resize(target_size, Image.Resampling.LANCZOS)
+                    
+                    # Convert RGBA to RGB if saving as JPEG to avoid format errors
+                    dest_file = output_path / file_path.name
+                    if dest_file.suffix.lower() in {".jpg", ".jpeg"} and resized_img.mode in ("RGBA", "P"):
+                        resized_img = resized_img.convert("RGB")
+                    
+                    resized_img.save(dest_file)
+                    processed_count += 1
+            except Exception as e:
+                print(f"Skipping {file_path.name} due to error: {e}")
+
+    return processed_count
+
+```

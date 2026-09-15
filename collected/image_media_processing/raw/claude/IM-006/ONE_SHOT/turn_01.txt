@@ -1,0 +1,46 @@
+```python
+import os
+from PIL import Image
+
+def extract_metadata(input_dir):
+    """
+    Scan input_dir for image files and return a sorted list of dicts with
+    filename, format, mode, width, height, and file_size_bytes.
+
+    Sorted by filename (alphabetically).
+    """
+    results = []
+
+    for entry in os.listdir(input_dir):
+        full_path = os.path.join(input_dir, entry)
+
+        if not os.path.isfile(full_path):
+            continue
+
+        try:
+            with Image.open(full_path) as img:
+                width, height = img.size
+                results.append({
+                    "filename": entry,
+                    "format": img.format,
+                    "mode": img.mode,
+                    "width": width,
+                    "height": height,
+                    "file_size_bytes": os.path.getsize(full_path),
+                })
+        except (IOError, OSError):
+            # Not a valid image file (or unreadable) — skip it
+            continue
+
+    results.sort(key=lambda d: d["filename"])
+    return results
+```
+
+Notes on the design choices:
+
+- **`PIL.Image.open` for detection**: rather than filtering by file extension, it tries to open every file and skips anything that isn't a valid image. This avoids missing images with unusual extensions and avoids false positives from non-image files that happen to have image-like extensions.
+- **`with Image.open(...)`**: ensures the file handle is closed properly after reading metadata.
+- **Sorting**: sorted alphabetically by `filename`. If you'd rather sort by something else (e.g. file size, or a natural/numeric sort for names like `img2.png` vs `img10.png`), let me know and I can adjust.
+- **`file_size_bytes`**: read via `os.path.getsize`, independent of PIL, since it's the size on disk rather than pixel/decoded data size.
+
+If you want, I can also add recursive subdirectory scanning, or filter to only certain formats (e.g. just PNG/JPEG).

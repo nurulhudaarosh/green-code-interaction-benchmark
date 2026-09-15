@@ -1,0 +1,56 @@
+```python
+def inventory_utility(records):
+    """
+    Clean inventory records by:
+    - Rejecting invalid/non-numeric quantities
+    - Rejecting negative quantities
+    - Removing duplicate SKUs (latest valid record wins)
+    - Ignoring malformed records
+    """
+    if not records:
+        return []
+
+    inventory = {}
+
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+
+        sku = record.get("sku")
+        quantity = record.get("quantity")
+
+        # Validate SKU
+        if not isinstance(sku, str) or not sku.strip():
+            continue
+
+        # Validate quantity
+        if (
+            not isinstance(quantity, (int, float))
+            or isinstance(quantity, bool)
+            or quantity < 0
+        ):
+            continue
+
+        sku = sku.strip()
+
+        # Duplicate SKU: latest valid record wins
+        inventory[sku] = {
+            "sku": sku,
+            "quantity": quantity
+        }
+
+    return list(inventory.values())
+
+
+# Example
+records = [
+    {"sku": "A101", "quantity": 10},
+    {"sku": "B202", "quantity": 5},
+    {"sku": "A101", "quantity": 15},   # duplicate -> latest valid value
+    {"sku": "C303", "quantity": -2},   # invalid quantity
+    {"sku": "D404", "quantity": "10"}, # invalid quantity
+    {"sku": "", "quantity": 8},        # invalid SKU
+]
+
+print(inventory_utility(records))
+```

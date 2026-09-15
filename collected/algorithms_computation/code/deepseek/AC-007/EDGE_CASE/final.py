@@ -1,0 +1,312 @@
+import sys
+from typing import List, Tuple, Optional
+
+class DSU:
+    """Disjoint Set Union data structure with path compression and union by rank."""
+    
+    def __init__(self, n: int):
+        self.parent = list(range(n))
+        self.rank = [0] * n
+        self.size = [1] * n  # Track component size
+    
+    def find(self, x: int) -> int:
+        """Find the root of element x with path compression."""
+        if self.parent[x] != x:
+            self.parent[x] = self.find(self.parent[x])
+        return self.parent[x]
+    
+    def union(self, x: int, y: int) -> bool:
+        """Union two sets. Returns True if they were merged, False if already connected."""
+        root_x = self.find(x)
+        root_y = self.find(y)
+        
+        if root_x == root_y:
+            return False
+        
+        # Union by rank for better performance
+        if self.rank[root_x] < self.rank[root_y]:
+            self.parent[root_x] = root_y
+            self.size[root_y] += self.size[root_x]
+        elif self.rank[root_x] > self.rank[root_y]:
+            self.parent[root_y] = root_x
+            self.size[root_x] += self.size[root_y]
+        else:
+            self.parent[root_y] = root_x
+            self.rank[root_x] += 1
+            self.size[root_x] += self.size[root_y]
+        
+        return True
+    
+    def get_component_size(self, x: int) -> int:
+        """Get the size of the component containing x."""
+        return self.size[self.find(x)]
+
+
+def minimum_spanning_forest(n: int, edges: List[Tuple[int, int, int, int]]) -> Tuple[int, List[int]]:
+    """
+    Find the minimum spanning forest of an undirected weighted graph.
+    
+    Handles all edge cases including:
+    - Empty graph (n=0)
+    - No edges (m=0)
+    - Single vertex
+    - Disconnected components
+    - Multiple edges between same vertices
+    - Equal weights with tie-breaking by ID
+    - Large weights (boundary values)
+    
+    Args:
+        n: Number of vertices (0 to n-1)
+        edges: List of (id, u, v, weight) where id is the original edge ID
+        
+    Returns:
+        Tuple of (total_cost, selected_edge_ids)
+    """
+    # Handle empty graph case
+    if n <= 0:
+        return 0, []
+    
+    # Handle no edges case
+    if not edges:
+        return 0, []
+    
+    # Sort edges by (weight, id) for deterministic tie-breaking
+    # This ensures equal-weight edges are processed by original ID ascending
+    sorted_edges = sorted(edges, key=lambda x: (x[3], x[0]))
+    
+    dsu = DSU(n)
+    total_cost = 0
+    selected_ids = []
+    
+    # Track number of components to optimize
+    components = n
+    
+    for edge_id, u, v, weight in sorted_edges:
+        # Validate vertex indices
+        if u < 0 or u >= n or v < 0 or v >= n:
+            raise ValueError(f"Invalid vertex index: edge {edge_id} has vertices ({u}, {v}) but n={n}")
+        
+        if dsu.union(u, v):
+            total_cost += weight
+            selected_ids.append(edge_id)
+            components -= 1
+            
+            # Early termination: if all vertices are connected, we're done
+            # We need at most n-1 edges for a spanning forest
+            if components == 1:
+                break
+    
+    return total_cost, sorted(selected_ids)  # Sort selected IDs for consistent output
+
+
+def test_minimum_spanning_forest():
+    """Comprehensive test suite for boundary cases and edge conditions."""
+    
+    def run_test(n: int, edges: List[Tuple[int, int, int, int]], expected_cost: int, expected_ids: List[int], test_name: str):
+        """Helper function to run a single test case."""
+        print(f"\nTest: {test_name}")
+        print(f"  n={n}, m={len(edges)}")
+        
+        total_cost, selected_ids = minimum_spanning_forest(n, edges)
+        
+        # Verify total cost
+        cost_correct = (total_cost == expected_cost)
+        print(f"  Cost: {total_cost} (expected {expected_cost}) {'✓' if cost_correct else '✗'}")
+        
+        # Verify selected IDs
+        ids_correct = (selected_ids == expected_ids)
+        print(f"  IDs: {selected_ids} (expected {expected_ids}) {'✓' if ids_correct else '✗'}")
+        
+        # Additional verification: ensure selected edges form a forest
+        if selected_ids:
+            # Check for cycles in selected edges
+            test_dsu = DSU(n)
+            is_forest = True
+            for eid in selected_ids:
+                # Find the edge in original list
+                edge = next((e for e in edges if e[0] == eid), None)
+                if edge:
+                    _, u, v, _ = edge
+                    if not test_dsu.union(u, v):
+                        is_forest = False
+                        print(f"  ✗ Cycle detected in selected edges!")
+                        break
+            
+            if is_forest:
+                print(f"  ✓ Selected edges form a valid forest")
+        
+        # Verify connectivity coverage (all vertices should be in the forest)
+        # Note: In a forest, each vertex is a tree, so all vertices are covered
+        covered_vertices = set()
+        for eid in selected_ids:
+            edge = next((e for e in edges if e[0] == eid), None)
+            if edge:
+                _, u, v, _ = edge
+                covered_vertices.add(u)
+                covered_vertices.add(v)
+        
+        # Isolated vertices (no edges) are still covered (they are trees of size 1)
+        all_vertices = set(range(n))
+        # A vertex with no incident edges is still in the forest as a single vertex tree
+        isolated_vertices = all_vertices - covered_vertices
+        # These are valid - they're just isolated vertices in the forest
+        
+        if isolated_vertices and any(n > 0 for n in edges):
+            print(f"  ℹ Isolated vertices: {sorted(isolated_vertices)} (valid for disconnected graph)")
+        
+        return cost_correct and ids_correct
+    
+    # Test Case 1: Empty graph
+    run_test(0, [], 0, [], "Empty graph (n=0)")
+    
+    # Test Case 2: Single vertex, no edges
+    run_test(1, [], 0, [], "Single vertex, no edges")
+    
+    # Test Case 3: Single vertex with self-loop (should be ignored)
+    run_test(1, [(0, 0, 0, 5)], 0, [], "Single vertex with self-loop")
+    
+    # Test Case 4: Two vertices, one edge
+    run_test(2, [(0, 0, 1, 10)], 10, [0], "Two vertices, one edge")
+    
+    # Test Case 5: Disconnected graph
+    run_test(4, [
+        (0, 0, 1, 5),
+        (1, 2, 3, 3)
+    ], 8, [0, 1], "Disconnected graph (two components)")
+    
+    # Test Case 6: Equal weights - tie-breaking by ID
+    run_test(3, [
+        (1, 0, 1, 5),
+        (0, 1, 2, 5),
+        (2, 0, 2, 5)
+    ], 10, [0, 1], "Equal weights - tie-breaking by ID")
+    
+    # Test Case 7: Multiple edges between same vertices
+    run_test(3, [
+        (0, 0, 1, 10),
+        (1, 0, 1, 5),
+        (2, 1, 2, 3)
+    ], 8, [1, 2], "Multiple edges between same vertices")
+    
+    # Test Case 8: Boundary weights (large numbers)
+    run_test(3, [
+        (0, 0, 1, 10**9),
+        (1, 1, 2, 10**9),
+        (2, 0, 2, 2*10**9)
+    ], 2*10**9, [0, 1], "Boundary weights (large numbers)")
+    
+    # Test Case 9: Boundary weights (negative? - typically weights are non-negative, but handle if given)
+    # Note: Standard MST assumes non-negative weights, but we can handle negative if they appear
+    run_test(3, [
+        (0, 0, 1, -5),
+        (1, 1, 2, -3),
+        (2, 0, 2, -10)
+    ], -8, [0, 1], "Negative weights (if supported)")
+    
+    # Test Case 10: Complete graph with many equal edges
+    run_test(4, [
+        (0, 0, 1, 1),
+        (1, 0, 2, 1),
+        (2, 0, 3, 1),
+        (3, 1, 2, 1),
+        (4, 1, 3, 1),
+        (5, 2, 3, 1)
+    ], 3, [0, 1, 2], "Complete graph with equal weights")
+    
+    # Test Case 11: Large n with sparse edges
+    n = 100
+    edges_sparse = [(i, i, i+1, i*2) for i in range(50)]
+    expected_cost = sum(i*2 for i in range(50))
+    expected_ids = list(range(50))
+    run_test(n, edges_sparse, expected_cost, expected_ids, f"Large n={n} with 50 edges")
+    
+    # Test Case 12: Graph with isolated vertices (disconnected)
+    run_test(5, [
+        (0, 0, 1, 2),
+        (1, 0, 1, 3),
+        (2, 2, 3, 1),
+    ], 3, [0, 2], "Graph with isolated vertices (vertices 4 is isolated)")
+    
+    # Test Case 13: Edge count at input limit (many edges)
+    n_small = 10
+    # Generate many edges between 2 vertices only
+    edges_many = [(i, 0, 1, i % 100 + 1) for i in range(1000)]
+    expected_cost = 1  # Smallest weight edges: ID 0 has weight 1, ID 100 has weight 1, etc.
+    expected_ids_many = [i for i in range(0, 1000, 100)]  # IDs 0, 100, 200, ..., 900 all have weight 1
+    # But we only need 1 edge for 2 vertices, so first edge (ID 0) will be selected
+    run_test(n_small, edges_many, 1, [0], "Many edges between same vertices")
+    
+    # Test Case 14: Pre-sorted edges (to verify sorting doesn't matter)
+    run_test(4, [
+        (2, 0, 1, 3),
+        (3, 1, 2, 2),
+        (0, 2, 3, 1),
+        (1, 0, 3, 4),
+    ], 6, [0, 2, 3], "Edges not sorted initially")
+    
+    # Test Case 15: Single edge with self-loop plus valid edge
+    run_test(3, [
+        (0, 0, 0, 5),  # self-loop
+        (1, 0, 1, 3),
+        (2, 1, 2, 4),
+    ], 7, [1, 2], "Self-loop with valid edges")
+    
+    print("\n" + "="*50)
+    print("All tests completed!")
+    print("="*50)
+
+
+def main():
+    """Main function to read input and output the result."""
+    # If no command line arguments, run tests
+    if len(sys.argv) > 1 and sys.argv[1] == "--test":
+        test_minimum_spanning_forest()
+        return
+    
+    # Read input from stdin
+    data = sys.stdin.read().strip().split()
+    if not data:
+        print("No input provided. Use --test to run tests.")
+        return
+    
+    try:
+        # First two numbers: n (vertices) and m (edges)
+        idx = 0
+        n = int(data[idx])
+        idx += 1
+        m = int(data[idx])
+        idx += 1
+        
+        edges = []
+        for i in range(m):
+            # Each edge: id, u, v, weight
+            edge_id = int(data[idx])
+            idx += 1
+            u = int(data[idx])
+            idx += 1
+            v = int(data[idx])
+            idx += 1
+            weight = int(data[idx])
+            idx += 1
+            edges.append((edge_id, u, v, weight))
+        
+        # Find the minimum spanning forest
+        total_cost, selected_ids = minimum_spanning_forest(n, edges)
+        
+        # Output: total cost on first line, then selected edge IDs
+        print(total_cost)
+        if selected_ids:
+            print(' '.join(map(str, selected_ids)))
+        else:
+            print()  # Empty line if no edges selected
+            
+    except (ValueError, IndexError) as e:
+        print(f"Error parsing input: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

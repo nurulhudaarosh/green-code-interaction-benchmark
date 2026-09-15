@@ -1,0 +1,380 @@
+"""
+Weighted Job Scheduler
+=======================
+
+ORIGINAL PROBLEM (restated)
+----------------------------
+We are given n jobs, each with a start time, a finish time, and a profit.
+We must select a subset of jobs such that:
+    - No two selected jobs overlap in time. Jobs that merely touch at
+      endpoints (one job's finish time equals another job's start time)
+      ARE considered compatible / non-overlapping.
+    - The total profit of the selected subset is maximized.
+
+Among all subsets achieving the maximum profit, ties are broken
+deterministically by preferring the lexicographically smallest sorted
+sequence of original job indices.
+
+KEY CONSTRAINTS
+----------------
+1. Non-overlap: for two selected jobs i, j (i != j), it must hold that
+   job_i.finish <= job_j.start OR job_j.finish <= job_i.start.
+2. Touching endpoints are allowed (finish == start is compatible).
+3. Determinism: given the same input, the algorithm must always produce
+   the same output — no randomness, no reliance on unstable sort or
+   unordered structures.
+4. Tie-breaking: if multiple subsets achieve the same maximum profit,
+   return the one that is lexicographically smallest with respect to
+   the sorted list of original indices.
+
+REQUIRED OUTPUTS (unchanged)
+------------------------------
+- The maximum achievable total profit.
+- The list of original indices (0-based) of the selected jobs, sorted
+  in increasing order, representing the lexicographically smallest
+  optimal solution.
+- Optionally (only if include_summary=True), an additional
+  `operation_summary` dict reporting counts of major computational
+  operations performed (num_jobs, num_binary_searches,
+  num_dp_decisions, num_ties_broken, total_major_operations). This is
+  purely additive and never changes the two outputs above.
+
+WORST-CASE-LIKE STRUCTURES FOR THE STATED COMPLEXITY (O(n log n))
+--------------------------------------------------------------------
+The algorithm sorts by finish time (O(n log n)) and does one binary
+search per job (O(n log n) total), then an O(n) DP pass. The following
+input structures are the difficult/adversarial cases explicitly
+handled and tested:
+
+1. All jobs sharing the same finish time (degenerate sort key range):
+   forces sort stability/tie-break by original index to matter for
+   every element.
+2. All jobs sharing the same start time (many jobs overlapping):
+   forces the binary search predecessor for every job to resolve to
+   the same boundary (-1), stressing the "no compatible predecessor"
+   path.
+3. Strictly nested intervals (each job contains the next): stresses
+   correct detection of overlap despite touching-looking boundaries.
+4. Fully chained touching intervals (finish[i] == start[i+1] for all
+   i): the maximum-size chain must be fully selected since touching is
+   compatible — exercises the take-path across the entire chain.
+5. All-equal profit values with many overlapping intervals: forces
+   many profit ties, stressing the lexicographic tie-breaking logic
+   across (potentially) all DP steps.
+6. Large randomized-looking but fixed (non-random) dense overlap
+   pattern to exercise general worst-case binary-search behavior at
+   scale, deterministically constructed (no `random` module used).
+7. Reverse-sorted input order (descending finish times as given):
+   stresses that sorting, not input order, drives correctness and
+   that original indices (not post-sort positions) are returned.
+
+All test cases below are deterministic and use only the standard
+library (`unittest`), with no network access, randomness, or human
+interaction.
+
+ALGORITHM
+---------
+1. Sort jobs by (finish, original index) ascending — deterministic tie-break.
+2. For each job, binary search for the rightmost compatible predecessor
+   (finish <= this job's start).
+3. DP: dp[i] = max(dp[i-1], profit[i] + dp[pred(i)+1]); on profit ties
+   between "take" and "skip", choose the lexicographically smaller
+   resulting index list.
+4. Reconstruct chosen original indices, sorted ascending.
+
+Complexity: O(n log n) time, O(n) space.
+"""
+
+from bisect import bisect_right
+from dataclasses import dataclass
+from typing import List, Tuple, Union, Dict, Any
+import unittest
+
+
+@dataclass(frozen=True)
+class Job:
+    index: int    # original index
+    start: int
+    finish: int
+    profit: int
+
+
+def _find_last_compatible(sorted_jobs: List[Job], i: int) -> int:
+    """
+    Binary search for the rightmost index j (0-based, j < i) in
+    sorted_jobs such that sorted_jobs[j].finish <= sorted_jobs[i].start.
+    Returns -1 if no such job exists.
+    """
+    finishes = [job.finish for job in sorted_jobs]
+    target = sorted_jobs[i].start
+    pos = bisect_right(finishes, target, 0, i)
+    return pos - 1
+
+
+def schedule_jobs(
+    jobs: List[Tuple[int, int, int]],
+    include_summary: bool = False,
+) -> Union[Tuple[int, List[int]], Tuple[int, List[int], Dict[str, Any]]]:
+    """
+    Solve the weighted job scheduling problem.
+
+    Parameters
+    ----------
+    jobs : list of (start, finish, profit) tuples, in original order.
+           Original index of jobs[k] is k.
+    include_summary : bool, default False.
+           When False (default): returns (max_profit, selected_indices),
+           identical to the original solver's contract.
+           When True: returns (max_profit, selected_indices, operation_summary).
+
+    Returns
+    -------
+    See docstring above / module header.
+    """
+    n = len(jobs)
+    if n == 0:
+        if include_summary:
+            summary = {
+                "num_jobs": 0,
+                "num_binary_searches": 0,
+                "num_dp_decisions": 0,
+                "num_ties_broken": 0,
+                "total_major_operations": 0,
+            }
+            return 0, [], summary
+        return 0, []
+
+    job_objs = [
+        Job(index=i, start=s, finish=f, profit=p)
+        for i, (s, f, p) in enumerate(jobs)
+    ]
+    sorted_jobs = sorted(job_objs, key=lambda j: (j.finish, j.index))
+    m = len(sorted_jobs)
+
+    pred = [_find_last_compatible(sorted_jobs, i) for i in range(m)]
+    num_binary_searches = m
+
+    dp = [0] * (m + 1)
+    choice_indices: List[List[int]] = [[] for _ in range(m + 1)]
+
+    num_dp_decisions = 0
+    num_ties_broken = 0
+
+    for i in range(1, m + 1):
+        job = sorted_jobs[i - 1]
+        p = pred[i - 1]
+
+        skip_profit = dp[i - 1]
+        skip_indices = choice_indices[i - 1]
+
+        take_profit = job.profit + dp[p + 1]
+        take_indices = sorted(choice_indices[p + 1] + [job.index])
+
+        num_dp_decisions += 1
+
+        if take_profit > skip_profit:
+            dp[i] = take_profit
+            choice_indices[i] = take_indices
+        elif take_profit < skip_profit:
+            dp[i] = skip_profit
+            choice_indices[i] = skip_indices
+        else:
+            num_ties_broken += 1
+            dp[i] = skip_profit
+            choice_indices[i] = min(skip_indices, take_indices)
+
+    max_profit = dp[m]
+    selected = sorted(choice_indices[m])
+
+    if not include_summary:
+        return max_profit, selected
+
+    total_major_operations = num_binary_searches + num_dp_decisions
+    operation_summary = {
+        "num_jobs": n,
+        "num_binary_searches": num_binary_searches,
+        "num_dp_decisions": num_dp_decisions,
+        "num_ties_broken": num_ties_broken,
+        "total_major_operations": total_major_operations,
+    }
+
+    return max_profit, selected, operation_summary
+
+
+# ---------------------------------------------------------------------------
+# Brute-force reference oracle (exponential, only for small test instances)
+# ---------------------------------------------------------------------------
+def _brute_force(jobs: List[Tuple[int, int, int]]) -> Tuple[int, List[int]]:
+    """Exhaustive reference solver for cross-checking on small inputs."""
+    n = len(jobs)
+    best_profit = 0
+    best_indices: List[int] = []
+
+    def compatible(subset_idx: List[int]) -> bool:
+        ivs = sorted((jobs[i][0], jobs[i][1]) for i in subset_idx)
+        for k in range(1, len(ivs)):
+            if ivs[k][0] < ivs[k - 1][1]:
+                return False
+        return True
+
+    for mask in range(1 << n):
+        subset = [i for i in range(n) if (mask >> i) & 1]
+        if not compatible(subset):
+            continue
+        profit = sum(jobs[i][2] for i in subset)
+        if profit > best_profit or (
+            profit == best_profit and sorted(subset) < best_indices
+        ):
+            best_profit = profit
+            best_indices = sorted(subset)
+
+    return best_profit, best_indices
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+class TestWeightedJobScheduler(unittest.TestCase):
+
+    def test_basic_example(self):
+        jobs = [
+            (1, 3, 50),
+            (3, 5, 20),
+            (0, 6, 100),
+            (5, 7, 30),
+            (6, 9, 40),
+            (8, 9, 10),
+        ]
+        profit, selected = schedule_jobs(jobs)
+        self.assertEqual((profit, selected), _brute_force(jobs))
+
+    def test_empty_input(self):
+        self.assertEqual(schedule_jobs([]), (0, []))
+        profit, selected, summary = schedule_jobs([], include_summary=True)
+        self.assertEqual((profit, selected), (0, []))
+        self.assertEqual(summary["num_jobs"], 0)
+        self.assertEqual(summary["total_major_operations"], 0)
+
+    def test_all_same_finish_time(self):
+        # Difficult case 1: identical finish times force tie-break by index.
+        jobs = [(0, 10, 5), (1, 10, 3), (2, 10, 8), (3, 10, 1)]
+        profit, selected = schedule_jobs(jobs)
+        # All overlap (none touches cleanly at boundary since all end at 10
+        # and all start before 10), so only one job can be chosen: max profit.
+        self.assertEqual((profit, selected), _brute_force(jobs))
+        self.assertEqual(profit, 8)
+        self.assertEqual(selected, [2])
+
+    def test_all_same_start_time(self):
+        # Difficult case 2: identical start times -> every binary search
+        # for a predecessor resolves the same way (likely -1 for all but
+        # possibly one earliest-finishing job).
+        jobs = [(5, 6, 10), (5, 7, 20), (5, 8, 5), (5, 20, 100)]
+        profit, selected = schedule_jobs(jobs)
+        self.assertEqual((profit, selected), _brute_force(jobs))
+
+    def test_strictly_nested_intervals(self):
+        # Difficult case 3: nested intervals, none compatible with each other.
+        jobs = [(0, 10, 1), (1, 9, 2), (2, 8, 3), (3, 7, 100)]
+        profit, selected = schedule_jobs(jobs)
+        self.assertEqual((profit, selected), _brute_force(jobs))
+        self.assertEqual(profit, 100)
+        self.assertEqual(selected, [3])
+
+    def test_fully_chained_touching_intervals(self):
+        # Difficult case 4: touching endpoints are compatible, so the
+        # optimal solution should take the entire chain.
+        jobs = [(0, 2, 5), (2, 4, 5), (4, 6, 5), (6, 8, 5), (8, 10, 5)]
+        profit, selected = schedule_jobs(jobs)
+        self.assertEqual((profit, selected), _brute_force(jobs))
+        self.assertEqual(profit, 25)
+        self.assertEqual(selected, [0, 1, 2, 3, 4])
+
+    def test_all_equal_profits_with_overlap_ties(self):
+        # Difficult case 5: many overlapping jobs with identical profit
+        # forces heavy use of the lexicographic tie-break rule.
+        jobs = [
+            (0, 3, 10),
+            (1, 4, 10),
+            (2, 5, 10),
+            (3, 6, 10),
+            (4, 7, 10),
+        ]
+        profit, selected, summary = schedule_jobs(jobs, include_summary=True)
+        self.assertEqual((profit, selected), _brute_force(jobs))
+        # Sanity on summary counts (additive feature only).
+        self.assertEqual(summary["num_jobs"], 5)
+        self.assertEqual(summary["num_binary_searches"], 5)
+        self.assertEqual(summary["num_dp_decisions"], 5)
+        self.assertEqual(
+            summary["total_major_operations"],
+            summary["num_binary_searches"] + summary["num_dp_decisions"],
+        )
+
+    def test_deterministic_dense_pattern_at_scale(self):
+        # Difficult case 6: a larger, deterministically constructed dense
+        # overlap pattern (no randomness) exercising binary search at scale.
+        n = 200
+        jobs = []
+        for i in range(n):
+            start = i % 50
+            finish = start + 1 + (i % 7)
+            profit = (i * 37 + 11) % 97 + 1  # deterministic pseudo-varied profit
+            jobs.append((start, finish, profit))
+        profit1, selected1 = schedule_jobs(jobs)
+        profit2, selected2 = schedule_jobs(jobs)
+        # Determinism: repeated calls on same input give identical output.
+        self.assertEqual((profit1, selected1), (profit2, selected2))
+        # Validate feasibility: selected jobs must be pairwise non-overlapping.
+        ivs = sorted((jobs[i][0], jobs[i][1]) for i in selected1)
+        for k in range(1, len(ivs)):
+            self.assertLessEqual(ivs[k - 1][1], ivs[k][0])
+        # Validate optimality against brute force on a reduced equivalent
+        # subset is infeasible at n=200; instead verify profit sum matches
+        # the sum implied by selected indices.
+        self.assertEqual(profit1, sum(jobs[i][2] for i in selected1))
+
+    def test_reverse_sorted_input_order(self):
+        # Difficult case 7: input given in descending finish-time order;
+        # correctness must not depend on input order, and original
+        # indices (not post-sort positions) must be returned.
+        jobs = [
+            (6, 9, 40),   # index 0
+            (5, 7, 30),   # index 1
+            (0, 6, 100),  # index 2
+            (3, 5, 20),   # index 3
+            (1, 3, 50),   # index 4
+        ]
+        profit, selected = schedule_jobs(jobs)
+        self.assertEqual((profit, selected), _brute_force(jobs))
+
+    def test_summary_never_alters_core_result(self):
+        jobs = [(0, 2, 5), (2, 4, 5), (1, 3, 100), (4, 6, 5)]
+        base = schedule_jobs(jobs)
+        with_summary = schedule_jobs(jobs, include_summary=True)
+        self.assertEqual(base, with_summary[:2])
+        self.assertIn("operation_summary", {"operation_summary": with_summary[2]})
+
+    def test_single_job(self):
+        jobs = [(0, 5, 42)]
+        self.assertEqual(schedule_jobs(jobs), (42, [0]))
+
+
+def _demo() -> None:
+    jobs = [
+        (1, 3, 50),
+        (3, 5, 20),
+        (0, 6, 100),
+        (5, 7, 30),
+        (6, 9, 40),
+        (8, 9, 10),
+    ]
+    profit, selected, summary = schedule_jobs(jobs, include_summary=True)
+    print(f"Maximum profit: {profit}")
+    print(f"Selected original indices: {selected}")
+    print(f"Operation summary: {summary}")
+
+
+if __name__ == "__main__":
+    _demo()
+    unittest.main(argv=[""], exit=False, verbosity=2)

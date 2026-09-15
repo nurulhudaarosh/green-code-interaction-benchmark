@@ -1,0 +1,331 @@
+"""
+One-Dimensional K-Cluster Partition
+
+Original problem:
+Sort one-dimensional points and partition them into exactly k non-empty,
+contiguous clusters. The objective is to minimize the total sum of squared
+deviations of the points in each cluster from that cluster's mean.
+
+Original required outputs:
+{
+    "cost": minimum_total_squared_deviation,
+    "boundaries": [end_index_1, ..., end_index_k]
+}
+
+- `cost` is the minimum clustering cost.
+- `boundaries` contains the final inclusive boundary indices in the sorted
+  points. For example, [1, 3, 5] means:
+      cluster 1 = sorted_points[0..1]
+      cluster 2 = sorted_points[2..3]
+      cluster 3 = sorted_points[4..5]
+
+New feature:
+Return an additional `operation_summary` field containing a useful,
+deterministic summary of the major computational decisions/operations made
+by the algorithm.
+
+The new output is:
+{
+    "cost": ...,
+    "boundaries": [...],
+    "operation_summary": {
+        "interval_cost_evaluations": ...,
+        "dp_candidate_evaluations": ...,
+        "dp_state_updates": ...
+    }
+}
+
+The original fields and requirements remain unchanged. When the feature is
+disabled or not requested, only `cost` and `boundaries` are returned.
+
+Key constraints:
+- Sort the points before clustering.
+- Exactly k non-empty contiguous clusters.
+- Use prefix sums for interval costs.
+- Use interval-cost dynamic programming.
+- Deterministic tie handling.
+- Standard library only.
+- No network access, APIs, external services, randomness, or interaction.
+- The operation summary must itself be deterministic.
+
+Algorithm:
+1. Sort the points.
+2. Build prefix sums of values and squared values.
+3. Calculate an interval's squared-deviation cost from the prefix sums.
+4. Use DP:
+       dp[c][i] = minimum cost for the first i points using c clusters.
+5. Try every valid starting position of the final cluster.
+6. On equal costs, choose the smaller final-cluster start index.
+7. Reconstruct the final inclusive boundary indices.
+8. Count interval-cost evaluations, DP candidate evaluations, and successful
+   DP state updates for the optional operation summary.
+
+Complexity:
+- Sorting: O(n log n)
+- Prefix sums: O(n)
+- Dynamic programming: O(k * n^2)
+- Space: O(k * n)
+"""
+
+from fractions import Fraction
+
+
+def one_dimensional_k_cluster(points, k, include_operation_summary=False):
+    """
+    Partition points into exactly k contiguous clusters after sorting.
+
+    Parameters:
+        points:
+            Iterable of numeric one-dimensional points.
+        k:
+            Number of required non-empty clusters.
+        include_operation_summary:
+            If True, include the deterministic operation_summary field.
+
+    Returns:
+        Without the optional feature:
+            {
+                "cost": Fraction,
+                "boundaries": list[int]
+            }
+
+        With the optional feature:
+            {
+                "cost": Fraction,
+                "boundaries": list[int],
+                "operation_summary": {
+                    "interval_cost_evaluations": int,
+                    "dp_candidate_evaluations": int,
+                    "dp_state_updates": int
+                }
+            }
+
+    Boundary indices are inclusive indices into the sorted point list.
+    """
+
+    n = len(points)
+
+    if not isinstance(k, int):
+        raise TypeError("k must be an integer")
+
+    if n == 0:
+        if k == 0:
+            result = {
+                "cost": Fraction(0),
+                "boundaries": []
+            }
+
+            if include_operation_summary:
+                result["operation_summary"] = {
+                    "interval_cost_evaluations": 0,
+                    "dp_candidate_evaluations": 0,
+                    "dp_state_updates": 0
+                }
+
+            return result
+
+        raise ValueError("k must be 0 when points is empty")
+
+    if k < 1 or k > n:
+        raise ValueError("k must satisfy 1 <= k <= number of points")
+
+    # Sort the points.
+    x = sorted(points)
+
+    # Prefix sums.
+    prefix_sum = [0] * (n + 1)
+    prefix_sq = [0] * (n + 1)
+
+    for i, value in enumerate(x):
+        prefix_sum[i + 1] = prefix_sum[i] + value
+        prefix_sq[i + 1] = prefix_sq[i] + value * value
+
+    # Deterministic operation counters.
+    interval_cost_evaluations = 0
+    dp_candidate_evaluations = 0
+    dp_state_updates = 0
+
+    def interval_cost(left, right):
+        """
+        Return the sum of squared deviations for x[left:right+1].
+        """
+        nonlocal interval_cost_evaluations
+        interval_cost_evaluations += 1
+
+        count = right - left + 1
+        total = prefix_sum[right + 1] - prefix_sum[left]
+        total_sq = prefix_sq[right + 1] - prefix_sq[left]
+
+        # SSE = sum(x^2) - sum(x)^2 / n
+        return Fraction(
+            total_sq * count - total * total,
+            count
+        )
+
+    # dp[c][i] = minimum cost for first i points using exactly c clusters.
+    dp = [[None] * (n + 1) for _ in range(k + 1)]
+
+    # parent[c][i] = start index of the final cluster.
+    parent = [[None] * (n + 1) for _ in range(k + 1)]
+
+    dp[0][0] = Fraction(0)
+
+    for clusters in range(1, k + 1):
+        for i in range(clusters, n + 1):
+
+            best_cost = None
+            best_start = None
+
+            # The final cluster is [start, i - 1].
+            for start in range(clusters - 1, i):
+                previous = dp[clusters - 1][start]
+
+                if previous is None:
+                    continue
+
+                dp_candidate_evaluations += 1
+
+                candidate = previous + interval_cost(start, i - 1)
+
+                if (
+                    best_cost is None
+                    or candidate < best_cost
+                    or (
+                        candidate == best_cost
+                        and (
+                            best_start is None
+                            or start < best_start
+                        )
+                    )
+                ):
+                    best_cost = candidate
+                    best_start = start
+                    dp_state_updates += 1
+
+            dp[clusters][i] = best_cost
+            parent[clusters][i] = best_start
+
+    # Reconstruct inclusive final boundary indices.
+    boundaries = []
+    i = n
+
+    for clusters in range(k, 0, -1):
+        start = parent[clusters][i]
+
+        if start is None:
+            raise RuntimeError("Failed to reconstruct optimal partition")
+
+        boundaries.append(i - 1)
+        i = start
+
+    boundaries.reverse()
+
+    result = {
+        "cost": dp[k][n],
+        "boundaries": boundaries
+    }
+
+    if include_operation_summary:
+        result["operation_summary"] = {
+            "interval_cost_evaluations": interval_cost_evaluations,
+            "dp_candidate_evaluations": dp_candidate_evaluations,
+            "dp_state_updates": dp_state_updates
+        }
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+
+    # Original behavior: operation_summary is not included by default.
+    result = one_dimensional_k_cluster(
+        [10, 1, 3, 11, 2],
+        2
+    )
+
+    assert result == {
+        "cost": Fraction(5, 2),
+        "boundaries": [2, 4]
+    }
+
+    assert "operation_summary" not in result
+
+    # New behavior: operation_summary is included when requested.
+    result = one_dimensional_k_cluster(
+        [10, 1, 3, 11, 2],
+        2,
+        include_operation_summary=True
+    )
+
+    assert result["cost"] == Fraction(5, 2)
+    assert result["boundaries"] == [2, 4]
+
+    assert result["operation_summary"] == {
+        "interval_cost_evaluations": 14,
+        "dp_candidate_evaluations": 14,
+        "dp_state_updates": 9
+    }
+
+    # k = 1.
+    result = one_dimensional_k_cluster(
+        [1, 2, 3],
+        1,
+        include_operation_summary=True
+    )
+
+    assert result["cost"] == Fraction(2)
+    assert result["boundaries"] == [2]
+    assert result["operation_summary"]["interval_cost_evaluations"] == 3
+
+    # k = n: every point is its own cluster.
+    result = one_dimensional_k_cluster(
+        [3, 1, 2],
+        3,
+        include_operation_summary=True
+    )
+
+    assert result["cost"] == Fraction(0)
+    assert result["boundaries"] == [0, 1, 2]
+
+    # Duplicate values.
+    result = one_dimensional_k_cluster(
+        [5, 5, 5, 10],
+        2,
+        include_operation_summary=True
+    )
+
+    assert result["cost"] == Fraction(0)
+    assert result["boundaries"] == [2, 3]
+
+    # Negative values.
+    result = one_dimensional_k_cluster(
+        [-3, -2, 4, 5],
+        2,
+        include_operation_summary=True
+    )
+
+    assert result["cost"] == Fraction(1)
+    assert result["boundaries"] == [1, 3]
+
+    # Empty input with k = 0.
+    result = one_dimensional_k_cluster(
+        [],
+        0,
+        include_operation_summary=True
+    )
+
+    assert result == {
+        "cost": Fraction(0),
+        "boundaries": [],
+        "operation_summary": {
+            "interval_cost_evaluations": 0,
+            "dp_candidate_evaluations": 0,
+            "dp_state_updates": 0
+        }
+    }
+
+    print("All tests passed.")

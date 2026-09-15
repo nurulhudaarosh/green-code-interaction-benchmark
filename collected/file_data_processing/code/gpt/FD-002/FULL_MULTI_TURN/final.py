@@ -1,0 +1,107 @@
+import json
+import sys
+from collections import defaultdict
+
+
+def analyze_ndjson(input_file, output_file):
+    users = defaultdict(lambda: {
+        "request_count": 0,
+        "error_count": 0,
+        "total_latency": 0.0,
+        "endpoint_counts": defaultdict(int)
+    })
+
+    malformed_lines = 0
+
+    with open(input_file, "r", encoding="utf-8") as file:
+        for line in file:
+            line = line.strip()
+
+            if not line:
+                continue
+
+            try:
+                record = json.loads(line)
+            except (json.JSONDecodeError, TypeError):
+                malformed_lines += 1
+                continue
+
+            if not isinstance(record, dict):
+                malformed_lines += 1
+                continue
+
+            user = record.get("user")
+            request = record.get("request")
+
+            if not isinstance(user, dict) or not isinstance(request, dict):
+                continue
+
+            user_id = user.get("id")
+
+            if user_id is None:
+                continue
+
+            user_id = str(user_id)
+            stats = users[user_id]
+
+            stats["request_count"] += 1
+
+            status = request.get("status")
+            if isinstance(status, int) and status >= 400:
+                stats["error_count"] += 1
+
+            latency = request.get("latency")
+            try:
+                stats["total_latency"] += float(latency)
+            except (TypeError, ValueError):
+                pass
+
+            endpoint = request.get("endpoint")
+            if endpoint is not None:
+                stats["endpoint_counts"][str(endpoint)] += 1
+
+    result = {
+        "malformed_lines": malformed_lines,
+        "users": {}
+    }
+
+    for user_id in sorted(users):
+        stats = users[user_id]
+        endpoint_counts = stats["endpoint_counts"]
+
+        if endpoint_counts:
+            most_requested_endpoint = min(
+                endpoint_counts,
+                key=lambda endpoint: (-endpoint_counts[endpoint], endpoint)
+            )
+        else:
+            most_requested_endpoint = None
+
+        average_latency = (
+            stats["total_latency"] / stats["request_count"]
+            if stats["request_count"] > 0
+            else 0.0
+        )
+
+        result["users"][user_id] = {
+            "request_count": stats["request_count"],
+            "error_count": stats["error_count"],
+            "average_latency": average_latency,
+            "most_requested_endpoint": most_requested_endpoint
+        }
+
+    with open(output_file, "w", encoding="utf-8") as file:
+        json.dump(
+            result,
+            file,
+            indent=2,
+            ensure_ascii=False
+        )
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: python analyzer.py input.ndjson output.json")
+        sys.exit(1)
+
+    analyze_ndjson(sys.argv[1], sys.argv[2])

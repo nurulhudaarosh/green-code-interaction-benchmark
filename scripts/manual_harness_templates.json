@@ -1,0 +1,98 @@
+{
+  "_comment": "Manual input templates for tasks whose public tests are missing or description-only. funcs: ordered calls; args: per-param values. List args are tiled to scale n (unless 'tile' narrows them); {'__out__': fn, 'pick': i} chains a previous return; {'__square__': m} builds an n-by-n matrix from base m. scale_lens caps the per-scale workload n.",
+  "SR-016": {
+    "scale_lens": {"small": 60, "medium": 150, "large": 400},
+    "funcs": [
+      {"name": "find_near_duplicates",
+       "args": {"docs": ["error warning critical failure", "error warning critical alert", "unrelated text about weather patterns", "error warning critical failure"],
+                "k": 5, "threshold": 0.3}}
+    ]
+  },
+  "SR-021": {
+    "scale_lens": {"small": 100, "medium": 1000, "large": 5000},
+    "funcs": [
+      {"name": "build_grid",
+       "args": {"points": [[1.5, 2.5], [7.2, 3.1], [12.0, 8.4], [3.3, 9.9]], "cell_size": 5}},
+      {"name": "nearest_neighbor",
+       "args": {"points": [[1.5, 2.5], [7.2, 3.1], [12.0, 8.4], [3.3, 9.9]],
+                "grid": {"__out__": "build_grid"},
+                "cell_size": 5, "query_point": [3.2, 7.7]}}
+    ]
+  },
+  "AC-020": {
+    "scale_lens": {"small": 10, "medium": 12, "large": 14},
+    "funcs": [
+      {"name": "solve_tsp",
+       "args": {"d": {"dist": {"__square__": [[0, 3, 9, 2], [3, 0, 2, 7], [9, 2, 0, 1], [2, 7, 1, 0]]}}}}
+    ]
+  },
+  "AC-025": {
+    "scale_lens": {"small": 5, "medium": 8, "large": 12},
+    "funcs": [
+      {"name": "solve_alloc",
+       "args": {"d": {"stages": [[[1, 1, 5], [2, 1, 6]], [[1, 2, 4], [2, 1, 8]]], "budget": 40, "memory": 40}}}
+    ]
+  },
+  "RA-006": {
+    "scale_lens": {"small": 1, "medium": 1, "large": 1},
+    "funcs": [
+      {"name": "validate_config",
+       "args": {"cfg": {"server": {"host": "localhost", "port": 8080, "debug": true}, "name": "app", "retries": 3},
+                "schema": {"fields": {"server.host": {"type": "str", "required": true}, "server.port": {"type": "int"}, "name": {"type": "str"}, "retries": {"type": "int"}, "missing.key": {"type": "str", "required": true}}}}}
+    ]
+  },
+  "RA-007": {
+    "scale_lens": {"small": 50, "medium": 300, "large": 1000},
+    "funcs": [
+      {"name": "process_invoices",
+       "args": {"invoices": [{"invoice_id": "INV-001", "customer": "Acme Corp", "tax_rate": 10.0, "lines": [{"quantity": 2, "price": 5.0}, {"quantity": 1, "price": 3.5}]}, {"invoice_id": "INV-002", "customer": "Globex", "tax_rate": 5.0, "lines": [{"quantity": 10, "price": 2.25}]}]}}
+    ]
+  },
+  "RA-010": {
+    "scale_lens": {"small": 50, "medium": 300, "large": 1000},
+    "funcs": [
+      {"name": "schedule_meetings",
+       "args": {"meetings": [{"id": "m1", "start": 1, "end": 10, "priority": 2}, {"id": "m2", "start": 5, "end": 12, "priority": 1}, {"id": "m3", "start": 20, "end": 30, "priority": 3}],
+                "room_count": 2}}
+    ]
+  },
+  "RA-016": {
+    "scale_lens": {"small": 60, "medium": 400, "large": 1500},
+    "funcs": [
+      {"name": "build_index",
+       "args": {"docs": [{"id": "d1", "text": "error warning info"}, {"id": "d2", "text": "warning alert error"}, {"id": "d3", "text": "unrelated content here"}]}},
+      {"name": "search_index",
+       "args": {"index": {"__out__": "build_index", "pick": 0},
+                "sizes": {"__out__": "build_index", "pick": 1},
+                "query": "error warning", "and_mode": false}}
+    ]
+  },
+  "RA-019": {
+    "scale_lens": {"small": 30, "medium": 200, "large": 600},
+    "funcs": [
+      {"name": "plan_routes",
+       "args": {"locations": ["depot", "a", "b", "c"],
+                "distances": {"depot": {"depot": 0, "a": 5, "b": 7, "c": 9}, "a": {"depot": 5, "a": 0, "b": 3, "c": 4}, "b": {"depot": 7, "a": 3, "b": 0, "c": 2}, "c": {"depot": 9, "a": 4, "b": 2, "c": 0}},
+                "deliveries": [{"id": "d1", "destination": "a", "weight": 3}, {"id": "d2", "destination": "b", "weight": 4}, {"id": "d3", "destination": "c", "weight": 2}],
+                "capacity": 10, "depot": "depot"},
+       "tile": ["deliveries"]}
+    ]
+  },
+  "RA-023": {
+    "scale_lens": {"small": 20, "medium": 100, "large": 300},
+    "funcs": [
+      {"name": "forecast",
+       "args": {"start_balance": 10000.0, "start_date": "2026-01-01", "end_date": "2026-03-31",
+                "recurring": [{"amount": -50.0, "frequency": "weekly", "start": "2026-01-05"}],
+                "one_time": [{"date": "2026-01-10", "amount": -200.0}],
+                "low_threshold": 100}}
+    ]
+  },
+  "RA-025": {
+    "scale_lens": {"small": 50, "medium": 300, "large": 1000},
+    "funcs": [
+      {"name": "build_manifest",
+       "args": {"files": [{"path": "a/b.txt", "content": [104, 101, 108, 108, 111]}, {"path": "c/d.bin", "content": [1, 2, 3, 4]}]}}
+    ]
+  }
+}

@@ -1,0 +1,40 @@
+```python
+import os
+from PIL import Image, ImageFilter
+
+def apply_blur(input_dir, output_dir, radius):
+    if radius < 0:
+        raise ValueError(f"radius must be non-negative, got {radius}")
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    valid_ext = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tiff", ".webp"}
+
+    for name in os.listdir(input_dir):
+        src_path = os.path.join(input_dir, name)
+
+        if not os.path.isfile(src_path):
+            continue
+        if os.path.splitext(name)[1].lower() not in valid_ext:
+            continue
+
+        with Image.open(src_path) as img:
+            if radius == 0:
+                # Passthrough: just save a copy, no blurring
+                result = img.copy()
+            else:
+                result = img.filter(ImageFilter.GaussianBlur(radius=radius))
+
+            dst_path = os.path.join(output_dir, name)
+            result.save(dst_path)
+```
+
+Notes on the design choices:
+
+- **`radius < 0`** raises a `ValueError` immediately, before touching the filesystem, so bad input fails fast.
+- **`radius == 0`** skips the filter entirely and just copies/re-saves the image — cheap and avoids any edge-case blur artifacts from a zero-radius kernel.
+- Non-image files (and subdirectories) in `input_dir` are silently skipped via the extension whitelist; adjust `valid_ext` if you need to support more formats.
+- Output filenames match input filenames, written into `output_dir` (created if it doesn't exist).
+- Each image is opened in a `with` block so file handles close properly even if `save` throws.
+
+If you'd rather preserve *all* files regardless of extension (e.g. treat unknown extensions as passthrough copies too), or want recursive subdirectory handling, let me know and I can adjust.

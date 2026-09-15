@@ -1,0 +1,8 @@
+{
+  "source": "zip_src/RA.zip (member-RA), re-derived from inbox raw copy",
+  "note": "JSON was valid but backslash escapes were decoded wrong by the generator ('\\\\' in python strings became '\\'); re-processed with scripts/repair_dataset.py. 2 reference solutions had genuine '*' unpacking bugs at source, fixed manually.",
+  "manual_fixes": {
+    "RA-012": "for *,*,c,kws in prepared: -> for _,_,c,kws in prepared:",
+    "RA-021": "for s,e,*,* in sorted(rows): -> for s,e,_,_ in sorted(rows):; line 28: s,e,*,* -> s,e,_,_"
+  }
+}

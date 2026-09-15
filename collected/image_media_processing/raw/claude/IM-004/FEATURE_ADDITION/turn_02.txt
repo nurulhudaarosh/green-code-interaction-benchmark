@@ -1,0 +1,82 @@
+```python
+import os
+from pathlib import Path
+import numpy as np
+from PIL import Image
+
+def preprocess_images(input_dir, output_dir, clip_percentile=None):
+    """
+    Grayscale and min-max normalize every image in input_dir to the full
+    0-255 range, saving results as PNG in output_dir.
+
+    Args:
+        input_dir: directory containing input images.
+        output_dir: directory to save processed PNGs.
+        clip_percentile: optional float in [0, 50). If set, pixel values
+            below the clip_percentile-th percentile and above the
+            (100 - clip_percentile)-th percentile are clipped before
+            min/max is computed, making normalization robust to outlier
+            pixels (e.g. hot pixels, sensor noise). E.g. clip_percentile=1
+            clips the bottom 1% and top 1% of values.
+
+    Returns:
+        dict mapping filename -> {
+            "min": original raw min (pre-clip),
+            "max": original raw max (pre-clip),
+            "clip_min": value used as normalization floor (post-clip),
+            "clip_max": value used as normalization ceiling (post-clip),
+        }
+        clip_min/clip_max equal min/max when clip_percentile is None.
+    """
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if clip_percentile is not None and not (0 <= clip_percentile < 50):
+        raise ValueError("clip_percentile must be in [0, 50)")
+
+    valid_ext = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+    stats = {}
+
+    for file in sorted(input_dir.iterdir()):
+        if not file.is_file() or file.suffix.lower() not in valid_ext:
+            continue
+
+        try:
+            img = Image.open(file).convert("L")  # grayscale
+        except Exception as e:
+            print(f"Skipping {file.name}: {e}")
+            continue
+
+        arr = np.array(img, dtype=np.float64)
+        orig_min, orig_max = float(arr.min()), float(arr.max())
+
+        if clip_percentile is not None and clip_percentile > 0:
+            clip_min = float(np.percentile(arr, clip_percentile))
+            clip_max = float(np.percentile(arr, 100 - clip_percentile))
+            arr = arr.clip(clip_min, clip_max)
+        else:
+            clip_min, clip_max = orig_min, orig_max
+
+        if clip_max > clip_min:
+            norm = (arr - clip_min) / (clip_max - clip_min) * 255.0
+        else:
+            # constant-value image (or degenerate clip range); avoid
+            # divide-by-zero, output all zeros
+            norm = np.zeros_like(arr)
+
+        norm = norm.clip(0, 255).astype(np.uint8)
+
+        out_name = file.stem + ".png"
+        out_path = output_dir / out_name
+        Image.fromarray(norm, mode="L").save(out_path, format="PNG")
+
+        stats[file.name] = {
+            "min": orig_min,
+            "max": orig_max,
+            "clip_min": clip_min,
+            "clip_max": clip_max,
+        }
+
+    return stats
+```

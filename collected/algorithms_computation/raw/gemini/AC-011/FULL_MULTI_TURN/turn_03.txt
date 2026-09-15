@@ -1,0 +1,124 @@
+### Problem Restatement & Required Output
+
+The **0/1 Capacity-Constrained Knapsack** problem requires selecting a subset of indivisible items—each having a weight $w_i \ge 0$ and a value $v_i \ge 0$—to maximize the total value without exceeding a maximum knapsack weight capacity $W$.
+
+* **Original Requirements:**
+1. Each item can be selected at most once ($0/1$).
+2. Return the list of original 0-based indices corresponding to the selected items.
+3. If multiple subsets yield the same maximum value within the capacity, break ties deterministically by selecting the subset that produces the **lexicographically smallest** list of indices.
+
+
+* **New Feature (`operation_summary`):**
+* Introduce an optional parameter `include_summary: bool = False`.
+* When `False` (default), the function maintains backward compatibility and returns only `list[int]`.
+* When `True`, the function returns a tuple `(selected_indices, operation_summary)`, where `operation_summary` is a dictionary detailing deterministic execution metrics (e.g., total state evaluation decisions, capacity updates, and trace steps).
+
+
+
+---
+
+### Python Implementation
+
+```python
+from typing import Union, Tuple, Dict, Any
+
+
+def knapsack_01(
+    weights: list[int],
+    values: list[int],
+    capacity: int,
+    include_summary: bool = False
+) -> Union[list[int], Tuple[list[int], Dict[str, Any]]]:
+    """
+    Solves 0/1 Knapsack deterministically with exact tie-breaking.
+    
+    Args:
+        weights: List of item weights.
+        values: List of item values.
+        capacity: Maximum weight capacity of the knapsack.
+        include_summary: Optional flag to request an operational execution summary.
+        
+    Returns:
+        If include_summary is False:
+            List of selected item indices (lexicographically smallest on ties).
+        If include_summary is True:
+            Tuple of (selected_indices, operation_summary_dict).
+    """
+    n = len(weights)
+    decisions_count = 0
+    state_updates = 0
+    
+    # dp[i][w] = max value using a subset of items from index 0..i-1 with capacity w
+    dp = [[0] * (capacity + 1) for _ in range(n + 1)]
+    
+    for i in range(1, n + 1):
+        w_i, v_i = weights[i - 1], values[i - 1]
+        for w in range(capacity + 1):
+            decisions_count += 1
+            if w_i <= w:
+                val_with = dp[i - 1][w - w_i] + v_i
+                val_without = dp[i - 1][w]
+                if val_with > val_without:
+                    dp[i][w] = val_with
+                    state_updates += 1
+                else:
+                    dp[i][w] = val_without
+            else:
+                dp[i][w] = dp[i - 1][w]
+                
+    # Reconstruct the optimal lexicographical path
+    selected_indices = []
+    curr_w = capacity
+    max_val = dp[n][capacity]
+    
+    # Find minimum capacity yielding max_val
+    for w in range(capacity + 1):
+        decisions_count += 1
+        if dp[n][w] == max_val:
+            curr_w = w
+            break
+            
+    reconstruction_steps = 0
+    for i in range(n):
+        reconstruction_steps += 1
+        w_i, v_i = weights[i], values[i]
+        
+        # Check if item i can contribute to an optimal solution path
+        if w_i <= curr_w and dp[n][curr_w] == dp[n][curr_w - w_i] + v_i:
+            if dp[i + 1][curr_w] != dp[i][curr_w]:
+                selected_indices.append(i)
+                curr_w -= w_i
+
+    if not include_summary:
+        return selected_indices
+
+    summary = {
+        "max_value": max_val,
+        "dp_table_cell_evaluations": n * (capacity + 1),
+        "decision_points_evaluated": decisions_count,
+        "state_updates": state_updates,
+        "reconstruction_steps": reconstruction_steps,
+        "total_major_operations": decisions_count + reconstruction_steps
+    }
+
+    return selected_indices, summary
+
+
+# Example Usage & Verification
+if __name__ == "__main__":
+    weights = [1, 1]
+    values = [10, 10]
+    capacity = 1
+    
+    # 1. Standard Behavior (backward compatible)
+    indices_only = knapsack_01(weights, values, capacity)
+    print("Default Output:", indices_only)  # Output: [0]
+    
+    # 2. Enhanced Output with Summary
+    indices, summary = knapsack_01(weights, values, capacity, include_summary=True)
+    print("Selected Indices:", indices)
+    print("Operation Summary:")
+    for k, v in summary.items():
+        print(f"  - {k}: {v}")
+
+```

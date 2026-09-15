@@ -1,0 +1,158 @@
+## Restated problem
+
+Given an **undirected weighted graph**, construct its **minimum spanning forest (MSF)**.
+
+Expected behavior:
+
+* For every connected component, select edges forming a minimum spanning tree.
+* If the graph is disconnected, return a forest rather than forcing connectivity.
+* Process edges in ascending order of:
+
+  1. **weight**
+  2. **original edge ID** for equal-weight edges.
+* An edge is selected only when it connects two different DSU components.
+* Return **exactly**:
+
+  * the total cost of the selected edges
+  * the selected **original edge IDs**
+* The implementation must be deterministic.
+* Use **Kruskal's algorithm with a Disjoint Set Union (DSU)**.
+* Keep all unrelated requirements unchanged.
+
+## Defect demonstration
+
+The important bug is failing to use the **original edge ID as the second sorting key**.
+
+Consider this valid graph:
+
+```text
+Vertices: 0, 1, 2
+
+Edges:
+(0, 1, 1, 20)
+(0, 2, 1, 10)
+(1, 2, 2, 30)
+```
+
+The two cheapest edges have equal weight `1`.
+
+The required processing order is therefore:
+
+```text
+edge 10  -> weight 1
+edge 20  -> weight 1
+edge 30  -> weight 2
+```
+
+So Kruskal selects:
+
+```text
+10, 20
+```
+
+with total cost:
+
+```text
+2
+```
+
+A defective implementation that sorts only by weight can preserve the input order and process edge `20` before edge `10`, producing:
+
+```text
+20, 10
+```
+
+The **cost is still 2**, but the selected-ID result is not deterministic according to the required tie rule.
+
+The fix is simply to sort by `(weight, original_edge_id)`.
+
+## Corrected implementation
+
+```python
+from typing import List, Sequence, Tuple
+
+
+class DSU:
+    """Disjoint Set Union with path compression and union by size."""
+
+    def __init__(self, n: int) -> None:
+        self.parent = list(range(n))
+        self.size = [1] * n
+
+    def find(self, x: int) -> int:
+        """Return the representative of x's component."""
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]
+            x = self.parent[x]
+        return x
+
+    def union(self, a: int, b: int) -> bool:
+        """
+        Merge the components containing a and b.
+
+        Returns True if a merge occurred, otherwise False.
+        """
+        root_a = self.find(a)
+        root_b = self.find(b)
+
+        if root_a == root_b:
+            return False
+
+        # Union by size.
+        if self.size[root_a] < self.size[root_b]:
+            root_a, root_b = root_b, root_a
+
+        self.parent[root_b] = root_a
+        self.size[root_a] += self.size[root_b]
+
+        return True
+
+
+def minimum_spanning_forest(
+    n: int,
+    edges: Sequence[Tuple[int, int, int, int]],
+) -> Tuple[int, List[int]]:
+    """
+    Return the total cost and selected original edge IDs
+    of a minimum spanning forest.
+
+    Each edge is:
+        (u, v, weight, edge_id)
+
+    Vertices are numbered 0 through n - 1.
+    """
+
+    if n < 0:
+        raise ValueError("Number of vertices cannot be negative.")
+
+    # Validate endpoints.
+    for u, v, _weight, _edge_id in edges:
+        if not (0 <= u < n) or not (0 <= v < n):
+            raise ValueError(
+                f"Invalid edge endpoint: ({u}, {v}) for {n} vertices."
+            )
+
+    # IMPORTANT:
+    # First sort by weight, then by original edge ID.
+    # This enforces deterministic tie handling.
+    sorted_edges = sorted(
+        edges,
+        key=lambda edge: (edge[2], edge[3])
+    )
+
+    dsu = DSU(n)
+
+    total_cost = 0
+    selected_edge_ids: List[int] = []
+
+    # Kruskal's algorithm.
+    for u, v, weight, edge_id in sorted_edges:
+        if dsu.union(u, v):
+            total_cost += weight
+            selected_edge_ids.append(edge_id)
+
+    return total_cost, selected_edge_ids
+```
+
+
+The correction is intentionally limited to the required behavior: **Kruskal remains the algorithm, DSU remains the cycle detector, the original edge IDs remain unchanged, and the only critical tie-breaking rule is explicitly enforced with `(weight, edge_id)`.**

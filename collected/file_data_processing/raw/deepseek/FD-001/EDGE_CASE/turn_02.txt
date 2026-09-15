@@ -1,0 +1,131 @@
+```python
+import csv
+import sys
+from collections import defaultdict
+from datetime import datetime
+
+def process_customer_events(input_file, output_file):
+    """
+    Process customer event CSV file with the following steps:
+    1. Remove duplicate customer/timestamp records by keeping the last occurrence
+    2. Select the chronologically latest record for each customer (true latest timestamp)
+    3. Calculate count and total amount by status using retained records
+    4. Write deterministic output sorted by customer_id
+    """
+    
+    # Read all records from CSV
+    records = []
+    try:
+        with open(input_file, 'r', newline='') as f:
+            reader = csv.DictReader(f)
+            # Verify required columns exist
+            required_fields = ['customer_id', 'timestamp', 'status', 'amount']
+            if not all(field in reader.fieldnames for field in required_fields):
+                print("Error: CSV must contain columns: customer_id, timestamp, status, amount")
+                return False
+            
+            for row in reader:
+                try:
+                    # Parse timestamp for comparison (handles ISO format)
+                    timestamp = datetime.fromisoformat(row['timestamp'])
+                    records.append({
+                        'customer_id': int(row['customer_id']),
+                        'timestamp': timestamp,
+                        'timestamp_str': row['timestamp'],
+                        'status': row['status'],
+                        'amount': float(row['amount'])
+                    })
+                except (ValueError, KeyError) as e:
+                    print(f"Skipping invalid row: {row} - Error: {e}")
+                    continue
+    except FileNotFoundError:
+        print(f"Error: Input file '{input_file}' not found")
+        return False
+    
+    if not records:
+        print("No valid records found in input file")
+        return False
+    
+    # Step 1: Remove duplicate customer/timestamp records by keeping the last occurrence
+    # Use a dict with (customer_id, timestamp_str) as key to store the last occurrence
+    # Since we iterate in order, later records with same timestamp will overwrite earlier ones
+    unique_records = {}
+    for record in records:
+        key = (record['customer_id'], record['timestamp_str'])
+        unique_records[key] = record
+    
+    # Step 2: Select the true chronologically latest record for each customer
+    # Compare timestamps directly to find the maximum timestamp for each customer
+    latest_by_customer = {}
+    for record in unique_records.values():
+        customer_id = record['customer_id']
+        if customer_id not in latest_by_customer:
+            latest_by_customer[customer_id] = record
+        elif record['timestamp'] > latest_by_customer[customer_id]['timestamp']:
+            # Found a later timestamp, replace the record
+            latest_by_customer[customer_id] = record
+        # If timestamps are equal, keep the one already stored (deterministic)
+    
+    # Step 3: Calculate count and total amount by status using retained records
+    status_stats = defaultdict(lambda: {'count': 0, 'total_amount': 0.0})
+    for record in latest_by_customer.values():
+        status = record['status']
+        status_stats[status]['count'] += 1
+        status_stats[status]['total_amount'] += record['amount']
+    
+    # Step 4: Write deterministic output sorted by customer_id
+    try:
+        with open(output_file, 'w', newline='') as f:
+            # Write header with summary statistics (commented lines)
+            f.write("# Customer Event Processing Summary\n")
+            f.write("# " + "="*50 + "\n")
+            f.write(f"# Total unique customers: {len(latest_by_customer)}\n")
+            f.write(f"# Total records retained (latest per customer): {len(latest_by_customer)}\n")
+            f.write("# " + "-"*50 + "\n")
+            f.write("# Status Statistics:\n")
+            for status in sorted(status_stats.keys()):
+                stats = status_stats[status]
+                f.write(f"#   {status}: count={stats['count']}, total_amount={stats['total_amount']:.2f}\n")
+            f.write("# " + "="*50 + "\n\n")
+            
+            # Write the retained records sorted by customer_id (deterministic)
+            writer = csv.writer(f)
+            writer.writerow(['customer_id', 'timestamp', 'status', 'amount'])
+            
+            for customer_id in sorted(latest_by_customer.keys()):
+                record = latest_by_customer[customer_id]
+                writer.writerow([
+                    record['customer_id'],
+                    record['timestamp_str'],
+                    record['status'],
+                    f"{record['amount']:.2f}"
+                ])
+        
+        print(f"Processing complete. Output written to '{output_file}'")
+        print(f"Retained {len(latest_by_customer)} unique customer records (latest timestamp each)")
+        return True
+        
+    except IOError as e:
+        print(f"Error writing to output file: {e}")
+        return False
+
+def main():
+    # Default input/output files
+    input_file = 'customer_events.csv'
+    output_file = 'processed_events.csv'
+    
+    # Handle command line arguments
+    if len(sys.argv) >= 2:
+        input_file = sys.argv[1]
+    if len(sys.argv) >= 3:
+        output_file = sys.argv[2]
+    
+    print(f"Processing: {input_file} -> {output_file}")
+    success = process_customer_events(input_file, output_file)
+    
+    if not success:
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+```

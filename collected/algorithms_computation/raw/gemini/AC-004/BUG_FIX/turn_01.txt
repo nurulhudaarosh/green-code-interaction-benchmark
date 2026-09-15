@@ -1,0 +1,123 @@
+### Problem Identification & Understanding
+
+This is the **Weighted Interval Scheduling** problem. We are given a set of $n$ jobs, where each job $i$ is defined by a start time $s_i$, a finish time $f_i$, and a profit $p_i$. The objective is to select a subset of mutually compatible (non-overlapping) jobs such that the sum of profits is maximized.
+
+Key details:
+
+* **Compatibility:** Two jobs $i$ and $j$ are non-overlapping if one finishes before or at the exact time the other starts ($f_i \le s_j$ or $f_j \le s_i$). Touching at endpoints is allowed.
+* **Tie-Breaking:** If multiple job subsets achieve the same maximum profit, select the one that yields the lexicographically smallest sequence of original 0-based job indices.
+
+---
+
+### Key Constraints & Required Output
+
+* **Time/Space Efficiency:** The algorithm should run in $O(n \log n)$ time complexity and $O(n)$ space.
+* **Constraints:**
+* Number of jobs $n \ge 0$.
+* Start and finish times are numerical ($s_i \le f_i$).
+* Profits are non-negative.
+
+
+* **Output:** A tuple/list containing:
+1. The **maximum profit** achievable (integer or float).
+2. The **list of original job indices** that achieve this profit, sorted in ascending order and tied deterministically by lexicographical order.
+
+
+
+---
+
+### Algorithm Description
+
+1. **Sort:** Sort the jobs primarily by their finish time $f_i$ ascending, and secondarily by their original index ascending to maintain deterministic ordering.
+2. **Predecessor Lookup:** For each job $i$ in the sorted array, use **binary search** (`bisect_right`) to find the latest job $j < i$ that finishes on or before job $i$ starts ($f_j \le s_i$).
+3. **Dynamic Programming:**
+* Maintain a DP array where `dp[k]` stores a tuple `(max_profit, selected_indices_list)` considering a subset of the first $k$ sorted jobs.
+* For the $k$-th job, compare:
+1. **Excluding job $k$:** Inherit `dp[k - 1]`.
+2. **Including job $k$:** Combine the profit and selected indices from `dp[pred + 1]` with job $k$.
+
+
+* Choose the option yielding the higher profit. If profits are equal, choose the one with the lexicographically smaller sequence of original job indices.
+
+
+
+---
+
+### Python Implementation
+
+```python
+from bisect import bisect_right
+from typing import List, Tuple, Any
+
+def max_profit_job_scheduling(jobs: List[Tuple[Any, Any, Any]]) -> Tuple[float, List[int]]:
+    """
+    Finds the non-overlapping subset of jobs with maximum profit.
+    
+    Args:
+        jobs: List of tuples (start, finish, profit)
+        
+    Returns:
+        Tuple of (max_profit, list_of_original_indices)
+    """
+    if not jobs:
+        return 0, []
+
+    # Store original indices along with job details
+    # Form: (start, finish, profit, original_index)
+    indexed_jobs = [(job[0], job[1], job[2], i) for i, job in enumerate(jobs)]
+    
+    # Sort primarily by finish time, secondarily by original index
+    indexed_jobs.sort(key=lambda x: (x[1], x[3]))
+    
+    n = len(indexed_jobs)
+    finish_times = [job[1] for job in indexed_jobs]
+    
+    # dp[i] stores (max_profit, sorted_list_of_original_indices) for the first i jobs
+    dp = [(0, [])] * (n + 1)
+
+    for i in range(1, n + 1):
+        start, finish, profit, orig_idx = indexed_jobs[i - 1]
+        
+        # Binary search for the latest compatible job (finish_time <= start)
+        pred_idx = bisect_right(finish_times, start, hi=i - 1)
+        
+        # Option 1: Exclude the current job
+        profit_exclude, path_exclude = dp[i - 1]
+        
+        # Option 2: Include the current job
+        profit_pred, path_pred = dp[pred_idx]
+        profit_include = profit_pred + profit
+        
+        # Form the sorted list of indices for Option 2
+        path_include = sorted(path_pred + [orig_idx])
+        
+        # Compare and select (tie-breaking by smaller original-index sequence)
+        if profit_include > profit_exclude:
+            dp[i] = (profit_include, path_include)
+        elif profit_exclude > profit_include:
+            dp[i] = (profit_exclude, path_exclude)
+        else:
+            # Profits are equal; break tie lexicographically
+            if path_include < path_exclude:
+                dp[i] = (profit_include, path_include)
+            else:
+                dp[i] = (profit_exclude, path_exclude)
+
+    return dp[n]
+
+
+# Example usage
+if __name__ == "__main__":
+    # Jobs represented as (start, finish, profit)
+    example_jobs = [
+        (1, 3, 50),
+        (2, 4, 10),
+        (3, 5, 20),
+        (3, 6, 70)
+    ]
+
+    max_p, selected = max_profit_job_scheduling(example_jobs)
+    print(f"Maximum Profit: {max_p}")
+    print(f"Selected Job Indices: {selected}")
+
+```

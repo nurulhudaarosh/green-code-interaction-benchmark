@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""
+Customer Event CSV Utility (offline, stdlib-only)
+
+Pipeline:
+1. Read input CSV (expected columns: customer_id, timestamp, status, amount)
+2. Remove duplicate (customer_id, timestamp) records -> keep the LAST occurrence
+3. From the remaining rows, keep only the chronologically LATEST record per customer_id
+4. Compute count and total amount per status, using only the retained (latest) records
+5. Write two deterministic outputs:
+   - latest_records.csv  (one row per customer, sorted by customer_id)
+   - status_summary.csv  (count + total amount per status, sorted by status)
+
+Usage:
+    python customer_events.py input.csv --outdir ./output
+"""
+
+import csv
+import sys
+import argparse
+from datetime import datetime
+from collections import OrderedDict, defaultdict
+from decimal import Decimal, InvalidOperation
+
+
+REQUIRED_FIELDS = ["customer_id", "timestamp", "status", "amount"]
+
+# Add/adjust formats here if your timestamps differ
+TIMESTAMP_FORMATS = [
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%dT%H:%M:%S",
+    "%Y-%m-%d",
+]
+
+
+def parse_timestamp(value: str) -> datetime:
+    value = value.strip()
+    for fmt in TIMESTAMP_FORMATS:
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    raise ValueError(f"Unrecognized timestamp format: {value!r}")
+
+
+def parse_amount(value: str) -> Decimal:
+    try:
+        return Decimal(value.strip())
+    except (InvalidOperation, AttributeError):
+        raise ValueError(f"Invalid amount value: {value!r}")
+
+
+def load_rows(path: str):
+    with open(path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        missing = [c for c in REQUIRED_FIELDS if c not in (reader.fieldnames or [])]
+        if missing:
+            raise ValueError(f"Missing required columns: {missing}")
+
+        rows = []
+        for i, raw in enumerate(reader, start=2):  # line 1 = header
+            try:
+                row = {
+                    "customer_id": raw["customer_id"].strip(),
+                    "timestamp": raw["timestamp"].strip(),
+                    "status": raw["status"].strip(),
+                    "amount": raw["amount"].strip(),
+                    "_dt": parse_timestamp(raw["timestamp"]),
+                    "_amt": parse_amount(raw["amount"]),
+                }
+            except ValueError as e:
+                raise ValueError(f"Row {i}: {e}") from e
+            rows.append(row)
+        return rows
+
+
+def dedupe_by_customer_and_timestamp(rows):
+    """Keep the LAST occurrence for each (customer_id, timestamp) pair,
+    preserving original file order for the surviving rows' relative order
+    within that key (last one wins)."""
+    dedup = OrderedDict()  # key -> row
+    for row in rows:
+        key = (row["customer_id"], row["timestamp"])
+        dedup[key] = row  # later occurrence overwrites earlier one
+    return list(dedup.values())
+
+
+def latest_per_customer(rows):
+    """From deduped rows, keep only the chronologically latest record
+    per customer_id. Ties broken by original row order (last wins)."""
+    latest = {}
+    for row in rows:
+        cid = row["customer_id"]
+        if cid not in latest or row["_dt"] >= latest[cid]["_dt"]:
+            latest[cid] = row
+    return latest  # dict: customer_id -> row
+
+
+def summarize_by_status(latest_rows):
+    """count + total amount per status, using only retained latest records."""
+    summary = defaultdict(lambda: {"count": 0, "total_amount": Decimal("0")})
+    for row in latest_rows.values():
+        s = summary[row["status"]]
+        s["count"] += 1
+        s["total_amount"] += row["_amt"]
+    return summary
+
+
+def write_latest_records(latest_rows, out_path):
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["customer_id", "timestamp", "status", "amount"])
+        for cid in sorted(latest_rows.keys()):
+            row = latest_rows[cid]
+            writer.writerow([cid, row["timestamp"], row["status"], row["amount"]])
+
+
+def write_status_summary(summary, out_path):
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["status", "count", "total_amount"])
+        for status in sorted(summary.keys()):
+            s = summary[status]
+            writer.writerow([status, s["count"], str(s["total_amount"])])
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Process customer event CSV file (offline).")
+    parser.add_argument("input_csv", help="Path to input CSV file")
+    parser.add_argument("--outdir", default=".", help="Directory to write output files (default: current dir)")
+    args = parser.parse_args()
+
+    rows = load_rows(args.input_csv)
+    deduped = dedupe_by_customer_and_timestamp(rows)
+    latest_rows = latest_per_customer(deduped)
+    summary = summarize_by_status(latest_rows)
+
+    latest_out = f"{args.outdir.rstrip('/')}/latest_records.csv"
+    summary_out = f"{args.outdir.rstrip('/')}/status_summary.csv"
+
+    write_latest_records(latest_rows, latest_out)
+    write_status_summary(summary, summary_out)
+
+    print(f"Input rows read:        {len(rows)}")
+    print(f"After (customer,ts) dedup: {len(deduped)}")
+    print(f"Unique customers (latest): {len(latest_rows)}")
+    print(f"Wrote: {latest_out}")
+    print(f"Wrote: {summary_out}")
+
+
+if __name__ == "__main__":
+    main()

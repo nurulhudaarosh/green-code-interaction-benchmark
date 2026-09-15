@@ -1,0 +1,72 @@
+```pyhton
+import os
+from pathlib import Path
+from PIL import Image
+
+def convert_format(input_dir, output_dir, target_format, background=(255, 255, 255)):
+    """
+    Convert all images in input_dir to target_format ('PNG' or 'JPEG'),
+    writing results to output_dir. Flattens transparency onto a solid
+    background when converting to JPEG, since JPEG has no alpha channel.
+
+    Args:
+        input_dir: folder containing source images
+        output_dir: folder to write converted images to (created if missing)
+        target_format: 'PNG' or 'JPEG' (case-insensitive)
+        background: RGB tuple used to flatten transparency for JPEG output
+    """
+    target_format = target_format.upper()
+    if target_format not in ("PNG", "JPEG"):
+        raise ValueError("target_format must be 'PNG' or 'JPEG'")
+
+    ext = ".jpg" if target_format == "JPEG" else ".png"
+
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Common image extensions Pillow can read
+    valid_exts = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tiff", ".tif", ".webp"}
+
+    converted, skipped = [], []
+
+    for file in sorted(input_dir.iterdir()):
+        if not file.is_file() or file.suffix.lower() not in valid_exts:
+            continue
+
+        try:
+            with Image.open(file) as img:
+                img.load()  # force load pixel data before any mode conversion
+
+                if target_format == "JPEG":
+                    # Flatten transparency: RGBA, LA, or palette-with-transparency
+                    if img.mode in ("RGBA", "LA") or (
+                        img.mode == "P" and "transparency" in img.info
+                    ):
+                        img = img.convert("RGBA")
+                        flattened = Image.new("RGB", img.size, background)
+                        flattened.paste(img, mask=img.split()[-1])  # alpha channel as mask
+                        img = flattened
+                    elif img.mode != "RGB":
+                        img = img.convert("RGB")
+                else:  # PNG
+                    # PNG supports alpha; just normalize odd modes
+                    if img.mode not in ("RGB", "RGBA", "L", "LA", "P"):
+                        img = img.convert("RGBA")
+
+                out_path = output_dir / (file.stem + ext)
+                save_kwargs = {"quality": 95} if target_format == "JPEG" else {}
+                img.save(out_path, format=target_format, **save_kwargs)
+                converted.append(out_path.name)
+
+        except Exception as e:
+            skipped.append((file.name, str(e)))
+
+    print(f"Converted {len(converted)} file(s) to {target_format}.")
+    if skipped:
+        print(f"Skipped {len(skipped)} file(s):")
+        for name, err in skipped:
+            print(f"  - {name}: {err}")
+
+    return converted, skipped
+```

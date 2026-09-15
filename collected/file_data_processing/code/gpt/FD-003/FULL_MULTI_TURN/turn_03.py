@@ -1,0 +1,65 @@
+import csv
+from collections import defaultdict
+from decimal import Decimal, InvalidOperation
+
+
+def aggregate_sales(input_file, output_file):
+    aggregates = defaultdict(lambda: {
+        "total_units": Decimal("0"),
+        "total_revenue": Decimal("0")
+    })
+
+    with open(input_file, "r", newline="", encoding="utf-8") as infile:
+        reader = csv.DictReader(infile)
+
+        for row in reader:
+            try:
+                region = row["region"].strip()
+                category = row["category"].strip()
+                units = Decimal(row["units"].strip())
+                unit_price = Decimal(row["unit_price"].strip())
+
+                if not region or not category:
+                    continue
+
+                if units <= 0 or unit_price < 0:
+                    continue
+
+            except (KeyError, AttributeError, InvalidOperation, TypeError):
+                continue
+
+            key = (region, category)
+            aggregates[key]["total_units"] += units
+            aggregates[key]["total_revenue"] += units * unit_price
+
+    with open(output_file, "w", newline="", encoding="utf-8") as outfile:
+        fieldnames = [
+            "region",
+            "category",
+            "total_units",
+            "total_revenue",
+            "weighted_avg_unit_price"
+        ]
+
+        writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for (region, category), data in sorted(aggregates.items()):
+            total_units = data["total_units"]
+            total_revenue = data["total_revenue"]
+
+            weighted_avg = total_revenue / total_units
+
+            writer.writerow({
+                "region": region,
+                "category": category,
+                "total_units": total_units,
+                "total_revenue": total_revenue.quantize(Decimal("0.01")),
+                "weighted_avg_unit_price": weighted_avg.quantize(
+                    Decimal("0.01")
+                )
+            })
+
+
+if __name__ == "__main__":
+    aggregate_sales("sales.csv", "sales_summary.csv")

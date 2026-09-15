@@ -1,0 +1,67 @@
+import csv
+import sys
+
+def sort_csv_log(input_path, output_path,
+                  timestamp_field="timestamp",
+                  severity_field="severity",
+                  severity_order=None):
+    # Higher number = higher priority when sorting "severity descending"
+    if severity_order is None:
+        severity_order = {
+            "CRITICAL": 5,
+            "ERROR": 4,
+            "WARNING": 3,
+            "INFO": 2,
+            "DEBUG": 1,
+        }
+
+    # csv.DictReader correctly parses quoted fields containing commas,
+    # embedded quotes (doubled per RFC 4180), and newlines.
+    with open(input_path, newline="", encoding="utf-8") as infile:
+        reader = csv.DictReader(infile)
+        fieldnames = reader.fieldnames
+        rows = list(reader)
+
+    # Assign zero-based sequence numbers based on original row order.
+    # This is the deterministic tiebreaker for equal timestamp+severity.
+    for idx, row in enumerate(rows):
+        row["_seq"] = idx
+
+    def sort_key(row):
+        timestamp = row.get(timestamp_field, "")
+        severity_raw = (row.get(severity_field, "") or "").strip().upper()
+        severity_rank = severity_order.get(severity_raw, 0)
+        return (
+            timestamp,            # ascending
+            -severity_rank,       # descending (via negation)
+            row["_seq"],          # ascending -> stable, deterministic tiebreak
+        )
+
+    # Python's sort is stable, and since sort_key already includes _seq,
+    # ties are always broken by original input order explicitly (not
+    # relying only on sort stability), so the result is deterministic
+    # even if this function is called on a re-ordered or merged list.
+    rows.sort(key=sort_key)
+
+    for row in rows:
+        del row["_seq"]
+
+    with open(output_path, "w", newline="", encoding="utf-8") as outfile:
+        # QUOTE_MINIMAL + csv module handles re-quoting any field that
+        # contains commas, quotes, or newlines, preserving full message text.
+        writer = csv.DictWriter(
+            outfile,
+            fieldnames=fieldnames,
+            quoting=csv.QUOTE_MINIMAL,
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: python sort_csv_log.py <input.csv> <output.csv>")
+        sys.exit(1)
+
+    sort_csv_log(sys.argv[1], sys.argv[2])

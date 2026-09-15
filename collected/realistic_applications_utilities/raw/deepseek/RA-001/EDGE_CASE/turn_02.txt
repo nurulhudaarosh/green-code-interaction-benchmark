@@ -1,0 +1,147 @@
+```python
+import csv, io, re
+from typing import List, Dict, Any, Optional
+
+class RecordAnalyzer:
+    """Analyze records and flag: empty, malformed, zero-value, whitespace-heavy."""
+    WHITESPACE_THRESHOLD = 0.5
+    ZERO_RE = re.compile(r'^[+-]?0+(\.0+)?$')
+
+    def __init__(self, delimiter: str = ',', expected_fields: Optional[int] = None):
+        self.delimiter = delimiter
+        self.expected_fields = expected_fields
+
+    def analyze(self, raw: Any) -> Dict[str, Any]:
+        result = {
+            "raw": raw, "fields": [], "parsed": {}, "flags": set(), "errors": []
+        }
+
+        # --- Empty ---
+        if raw is None or (isinstance(raw, str) and raw.strip() == ""):
+            result["flags"].add("empty")
+            result["errors"].append("empty record")
+            return result
+
+        # Coerce non-string inputs to string
+        if not isinstance(raw, str):
+            raw = str(raw)
+            result["raw"] = raw
+
+        # --- Whitespace-heavy ---
+        ws = sum(c.isspace() for c in raw)
+        if ws / len(raw) > self.WHITESPACE_THRESHOLD:
+            result["flags"].add("whitespace_heavy")
+            result["errors"].append(f"whitespace-heavy ({ws}/{len(raw)})")
+
+        # --- Parse (malformed CSV?) ---
+        try:
+            rows = list(csv.reader(io.StringIO(raw), delimiter=self.delimiter))
+            if not rows or not rows[0]:
+                result["flags"].add("malformed")
+                result["errors"].append("no parsable fields")
+                return result
+            result["fields"] = [f.strip() for f in rows[0]]
+        except csv.Error as e:
+            result["flags"].add("malformed")
+            result["errors"].append(f"csv error: {e}")
+            return result
+
+        # --- Malformed (field count) ---
+        if self.expected_fields is not None and len(result["fields"]) != self.expected_fields:
+            result["flags"].add("malformed")
+            result["errors"].append(
+                f"field count {len(result['fields'])} != expected {self.expected_fields}"
+            )
+
+        # --- Zero-value ---
+        non_empty = [f for f in result["fields"] if f != ""]
+        zeros = [f for f in non_empty if self.ZERO_RE.match(f)]
+        if non_empty and len(zeros) == len(non_empty):
+            result["flags"].add("zero_value")
+            result["errors"].append("all fields zero-valued")
+        elif zeros:
+            result["parsed"]["zero_fields"] = zeros
+
+        # --- Typed values ---
+        for i, f in enumerate(result["fields"]):
+            result["parsed"][f"field_{i}"] = self._coerce(f)
+
+        return result
+
+    @staticmethod
+    def _coerce(v: str):
+        if v == "":
+            return None
+        try:
+            return int(v)
+        except ValueError:
+            pass
+        try:
+            return float(v)
+        except ValueError:
+            return v
+
+    def analyze_batch(self, records: List[Any]) -> Dict[str, Any]:
+        results = [self.analyze(r) for r in records]
+        counts = {k: 0 for k in ("empty", "malformed", "zero_value", "whitespace_heavy")}
+        clean = 0
+        for r in results:
+            for k in counts:
+                if k in r["flags"]:
+                    counts[k] += 1
+            if not r["flags"]:
+                clean += 1
+        return {"total": len(results), "clean": clean, **counts, "records": results}
+
+
+# ---------- Demo ----------
+if __name__ == "__main__":
+    analyzer = RecordAnalyzer(delimiter=",", expected_fields=3)
+
+    samples = [
+        "alice,30,engineer",     # clean
+        "",                       # empty
+        "   ",                    # empty (whitespace-only)
+        None,                     # empty (None)
+        "bob,25",                 # malformed (field count)
+        "0,0,0",                  # zero-value
+        "carol,    ,  designer",  # whitespace-heavy
+        "eve,,",                  # empty fields
+        '"unclosed,quote,x',      # malformed CSV
+        "0,42,0",                 # partial zeros
+    ]
+
+    report = analyzer.analyze_batch(samples)
+
+    print(f"Total: {report['total']} | Clean: {report['clean']} | "
+          f"Empty: {report['empty']} | Malformed: {report['malformed']} | "
+          f"Zero: {report['zero_value']} | WS-heavy: {report['whitespace_heavy']}\n")
+
+    for r in report["records"]:
+        tag = ",".join(sorted(r["flags"])) if r["flags"] else "OK"
+        print(f"[{tag:24}] {r['raw']!r:30} fields={r['fields']}")
+```
+
+Output:
+```
+Total: 10 | Clean: 3 | Empty: 3 | Malformed: 2 | Zero: 1 | WS-heavy: 1
+
+[OK                      ] 'alice,30,engineer'            fields=['alice', '30', 'engineer']
+[empty                   ] ''                              fields=[]
+[empty                   ] '   '                           fields=[]
+[empty                   ] None                            fields=[]
+[malformed               ] 'bob,25'                        fields=['bob', '25']
+[zero_value              ] '0,0,0'                         fields=['0', '0', '0']
+[whitespace_heavy       ] 'carol,    ,  designer'         fields=['carol', '', 'designer']
+[OK                      ] 'eve,,'                         fields=['eve', '', '']
+[malformed               ] '"unclosed,quote,x'             fields=[]
+[OK                      ] '0,42,0'                        fields=['0', '42', '0']
+```
+
+**Single-pass logic:**
+- **Empty** → `None` or blank/whitespace-only, short-circuits.
+- **Whitespace-heavy** → `>50%` of chars are whitespace (flagged but still parsed).
+- **Malformed** → CSV parse error *or* `expected_fields` mismatch.
+- **Zero-value** → all non-empty fields match `0`, `00`, `0.0`, `±0`, etc.
+- **Typed output** → `int → float → str`, empty strings become `None`.
+- Flags are a `set`, so a single record can raise multiple independently.

@@ -1,0 +1,143 @@
+```python
+from dataclasses import dataclass
+from decimal import Decimal
+from typing import Dict, List
+
+
+# ---------- Exceptions ----------
+
+class InventoryError(Exception):
+    """Base exception for inventory operations."""
+
+
+class DuplicateSKUError(InventoryError):
+    """Raised when adding a SKU that already exists."""
+
+
+class InvalidQuantityError(InventoryError):
+    """Raised when a quantity is negative, non-integer, or otherwise invalid."""
+
+
+class UnknownSKUError(InventoryError):
+    """Raised when referencing a SKU that isn't registered."""
+
+
+# ---------- Helpers ----------
+
+def _normalize_sku(sku: str) -> str:
+    if not isinstance(sku, str):
+        raise ValueError(f"SKU must be a string, got {type(sku).__name__}")
+    normalized = sku.strip().upper()
+    if not normalized:
+        raise ValueError("SKU must be a non-empty string")
+    return normalized
+
+
+def _validate_quantity(quantity) -> int:
+    # Reject bool explicitly since bool subclasses int.
+    if isinstance(quantity, bool):
+        raise InvalidQuantityError(f"Quantity must be an integer, got bool: {quantity!r}")
+    if not isinstance(quantity, int):
+        raise InvalidQuantityError(
+            f"Quantity must be an integer, got {type(quantity).__name__}: {quantity!r}"
+        )
+    if quantity < 0:
+        raise InvalidQuantityError(f"Quantity cannot be negative: {quantity}")
+    return quantity
+
+
+# ---------- Data model ----------
+
+@dataclass
+class Item:
+    sku: str
+    name: str
+    quantity: int = 0
+    price: Decimal = Decimal("0.00")
+
+    def __post_init__(self):
+        self.sku = _normalize_sku(self.sku)
+        if not isinstance(self.price, Decimal):
+            self.price = Decimal(str(self.price))
+
+
+# ---------- Inventory ----------
+
+class Inventory:
+    def __init__(self):
+        self._items: Dict[str, Item] = {}
+
+    def add_item(self, sku: str, name: str, quantity: int = 0,
+                 price: Decimal = Decimal("0.00")) -> Item:
+        """Register a new item. Raises DuplicateSKUError if SKU already exists."""
+        key = _normalize_sku(sku)
+        if key in self._items:
+            raise DuplicateSKUError(f"SKU already exists: {key}")
+        _validate_quantity(quantity)
+        item = Item(sku=key, name=name, quantity=quantity, price=price)
+        self._items[key] = item
+        return item
+
+    def get_item(self, sku: str) -> Item:
+        key = _normalize_sku(sku)
+        if key not in self._items:
+            raise UnknownSKUError(f"Unknown SKU: {key}")
+        return self._items[key]
+
+    def adjust_quantity(self, sku: str, delta: int) -> Item:
+        """Increment or decrement stock by delta. Result must stay >= 0."""
+        if isinstance(delta, bool) or not isinstance(delta, int):
+            raise InvalidQuantityError(
+                f"Delta must be an integer, got {type(delta).__name__}: {delta!r}"
+            )
+        item = self.get_item(sku)
+        new_qty = item.quantity + delta
+        if new_qty < 0:
+            raise InvalidQuantityError(
+                f"Adjustment would make quantity negative "
+                f"({item.quantity} + {delta} = {new_qty}) for SKU {item.sku}"
+            )
+        item.quantity = new_qty
+        return item
+
+    def set_quantity(self, sku: str, quantity: int) -> Item:
+        _validate_quantity(quantity)
+        item = self.get_item(sku)
+        item.quantity = quantity
+        return item
+
+    def remove_item(self, sku: str) -> None:
+        key = _normalize_sku(sku)
+        if key not in self._items:
+            raise UnknownSKUError(f"Unknown SKU: {key}")
+        del self._items[key]
+
+    def list_items(self) -> List[Item]:
+        return list(self._items.values())
+
+    def __contains__(self, sku: str) -> bool:
+        try:
+            return _normalize_sku(sku) in self._items
+        except ValueError:
+            return False
+
+
+# ---------- Demo ----------
+
+if __name__ == "__main__":
+    inv = Inventory()
+    inv.add_item("abc-123", "Widget", quantity=10, price=Decimal("4.99"))
+
+    try:
+        inv.add_item("ABC-123", "Widget copy")
+    except DuplicateSKUError as e:
+        print("dup:", e)
+
+    try:
+        inv.adjust_quantity("abc-123", -20)
+    except InvalidQuantityError as e:
+        print("qty:", e)
+
+    inv.adjust_quantity("abc-123", -3)
+    print("remaining:", inv.get_item("abc-123").quantity)  # 7
+```

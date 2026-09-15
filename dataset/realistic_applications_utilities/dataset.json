@@ -1,9 +1,1653 @@
 {
   "dataset_metadata": {
-    "category": "realistic_applications_utilities",
+    "dataset_name": "AI_Code_Interaction_Energy_Benchmark",
+    "dataset_version": "candidate-1.0",
     "category_code": "RA",
-    "dataset_version": "pending",
-    "status": "awaiting member collection"
+    "category": "realistic_applications_utilities",
+    "candidate_task_count": 25,
+    "target_final_task_count": 20,
+    "language": "Python",
+    "execution_environment": [
+      "Jupyter",
+      "Google Colab"
+    ]
   },
-  "tasks": []
+  "tasks": [
+    {
+      "task_id": "RA-001",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Common benchmark patterns for data transformation and analytics, combined with an original household expense-analysis workflow.",
+      "title": "Household Expense Analyzer",
+      "difficulty": "easy",
+      "language": "Python",
+      "problem_description": "Implement an offline utility that reads transaction dictionaries, normalizes categories, filters invalid-but-recoverable records, and produces category and monthly spending summaries.",
+      "functional_requirements": [
+        "Load transaction records.",
+        "Normalize merchant/category text.",
+        "Ignore records with unrecoverable dates or amounts.",
+        "Aggregate spending by month and category.",
+        "Support optional minimum-amount filtering."
+      ],
+      "input_specification": {
+        "records": "List of dictionaries with date, amount, category, and merchant fields.",
+        "date": "YYYY-MM-DD string.",
+        "amount": "Non-negative numeric value.",
+        "optional_filter": "Minimum amount, default 0."
+      },
+      "output_specification": "Dictionary containing total spending, monthly totals, category totals, and transaction count.",
+      "constraints": [
+        "Do not mutate caller-owned records.",
+        "Amounts are rounded to two decimal places only in final output.",
+        "Malformed individual records are skipped."
+      ],
+      "input_scales": {
+        "small": "1000 records",
+        "medium": "10000 records",
+        "large": "100000 records"
+      },
+      "computational_profile": "CPU+memory: parsing, normalization, filtering, and dictionary aggregation.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Single-pass validation and normalization followed by nested dictionary aggregation.",
+        "complexity": "O(n) time and O(c+m) additional memory, where c is category count and m is month count.",
+        "code": "from collections import defaultdict\n\ndef analyze_expenses(records, min_amount=0):\n    categories=defaultdict(float); months=defaultdict(float); count=0; total=0.0\n    for r in records:\n        try:\n            date=str(r['date']).strip(); amount=float(r['amount']); category=' '.join(str(r['category']).split()).lower()\n            if len(date)!=10 or date[4]!='-' or date[7]!='-' or amount<min_amount or amount<0 or not category: continue\n            month=date[:7]\n        except (KeyError,TypeError,ValueError): continue\n        categories[category]+=amount; months[month]+=amount; total+=amount; count+=1\n    return {'total':round(total,2),'monthly':dict(sorted((k,round(v,2)) for k,v in months.items())),'categories':dict(sorted((k,round(v,2)) for k,v in categories.items())),'count':count}"
+      },
+      "requirement_matrix": {
+        "R1": "load transaction data",
+        "R2": "normalize fields",
+        "R3": "validate and filter records",
+        "R4": "calculate monthly and category summaries",
+        "R5": "support minimum-amount filtering"
+      },
+      "interactions": {
+        "ONE_SHOT": "Build the complete expense analyzer with all five requirements.",
+        "BUG_FIX": "Build the analyzer, then fix incorrect handling of malformed transaction records.",
+        "FEATURE_ADDITION": "Build the analyzer, then add minimum-amount filtering.",
+        "EDGE_CASE": "Build the analyzer, then handle empty, malformed, zero-value, and whitespace-heavy records.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Build the initial expense analyzer.",
+          "Turn 2: Fix malformed-record handling.",
+          "Turn 3: Add minimum-amount filtering.",
+          "Turn 4: Handle empty and boundary inputs."
+        ]
+      },
+      "correctness_criteria": "All R1-R5 outputs match the reference semantics.",
+      "static_analysis_targets": [
+        "No mutation of input records.",
+        "No network or GUI dependencies.",
+        "Functions are deterministic."
+      ],
+      "dataset_validation": "Unique application; deterministic generated records; all scales are locally executable."
+    },
+    {
+      "task_id": "RA-002",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Record-processing benchmark patterns and original small-business stock reconciliation.",
+      "title": "Inventory Reconciliation Utility",
+      "difficulty": "easy",
+      "language": "Python",
+      "problem_description": "Compare inventory snapshots with sales records and produce current stock, low-stock items, and discrepancy reports.",
+      "functional_requirements": [
+        "Load product and sales records.",
+        "Aggregate sales quantities by product.",
+        "Calculate remaining stock.",
+        "Identify low-stock products.",
+        "Report unknown product references."
+      ],
+      "input_specification": {
+        "products": "List of {sku,name,stock,reorder_level}.",
+        "sales": "List of {sku,quantity}."
+      },
+      "output_specification": "Dictionary with stock_by_sku, low_stock, and unknown_sales.",
+      "constraints": [
+        "Duplicate product SKUs are resolved by retaining the first valid product.",
+        "Invalid sales quantities are skipped."
+      ],
+      "input_scales": {
+        "small": "500 products and 2000 sales",
+        "medium": "5000 products and 20000 sales",
+        "large": "50000 products and 200000 sales"
+      },
+      "computational_profile": "CPU+memory: hash-based aggregation over product and sales records.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Index valid products by SKU, aggregate sales, then calculate stock in one final pass.",
+        "complexity": "O(p+s) time and O(p) memory.",
+        "code": "def reconcile_inventory(products,sales):\n    items={}\n    for p in products:\n        try:\n            sku=str(p['sku']).strip(); stock=int(p['stock']); level=int(p['reorder_level'])\n            if sku and sku not in items and stock>=0 and level>=0: items[sku]=(stock,level)\n        except (KeyError,TypeError,ValueError): pass\n    sold={}; unknown={}\n    for s in sales:\n        try:\n            sku=str(s['sku']).strip(); q=int(s['quantity'])\n            if not sku or q<0: continue\n        except (KeyError,TypeError,ValueError): continue\n        if sku in items: sold[sku]=sold.get(sku,0)+q\n        else: unknown[sku]=unknown.get(sku,0)+q\n    stock={k:v-sold.get(k,0) for k,v in items.items()}\n    low=sorted(k for k,(base,level) in items.items() if stock[k]<=level)\n    return {'stock_by_sku':dict(sorted(stock.items())),'low_stock':low,'unknown_sales':dict(sorted(unknown.items()))}"
+      },
+      "requirement_matrix": {
+        "R1": "load product and sales data",
+        "R2": "aggregate sales quantities",
+        "R3": "calculate remaining stock",
+        "R4": "identify low-stock products",
+        "R5": "report unknown SKUs"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement all inventory reconciliation requirements.",
+        "BUG_FIX": "Implement the utility, then fix duplicate-SKU and invalid-quantity handling.",
+        "FEATURE_ADDITION": "Implement the utility, then add low-stock reporting.",
+        "EDGE_CASE": "Handle empty data, unknown SKUs, zero stock, and boundary reorder levels.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Implement inventory reconciliation.",
+          "Turn 2: Fix duplicate and invalid records.",
+          "Turn 3: Add low-stock reporting.",
+          "Turn 4: Handle boundary and empty inputs."
+        ]
+      },
+      "correctness_criteria": "Stock, low-stock, and unknown-sale results match reference semantics.",
+      "static_analysis_targets": [
+        "Hash-based product lookup.",
+        "No external dependencies.",
+        "No nondeterministic ordering."
+      ],
+      "dataset_validation": "Distinct inventory-processing workload with scalable deterministic generated data."
+    },
+    {
+      "task_id": "RA-003",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Educational record analytics patterns and original course-grade reporting workflow.",
+      "title": "Student Performance Analyzer",
+      "difficulty": "easy",
+      "language": "Python",
+      "problem_description": "Analyze student assessment records to compute weighted scores, pass rates, subject averages, and ranked students.",
+      "functional_requirements": [
+        "Load student assessment records.",
+        "Calculate weighted student scores.",
+        "Calculate subject averages.",
+        "Determine pass/fail status.",
+        "Return deterministic ranking."
+      ],
+      "input_specification": {
+        "students": "Records containing student_id, subject, score, and weight.",
+        "pass_mark": "Numeric threshold."
+      },
+      "output_specification": "Student summaries, subject averages, pass rate, and ranking.",
+      "constraints": [
+        "Scores outside 0-100 are ignored.",
+        "Weights must be positive.",
+        "Student ranking breaks ties by student ID."
+      ],
+      "input_scales": {
+        "small": "1000 assessment records",
+        "medium": "10000 assessment records",
+        "large": "100000 assessment records"
+      },
+      "computational_profile": "CPU-bound aggregation and sorting.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Aggregate weighted score and total weight per student and subject statistics separately, then sort rankings.",
+        "complexity": "O(n+s log s) time and O(s+c) memory.",
+        "code": "def analyze_students(records,pass_mark=50):\n    stu={}; sub={}\n    for r in records:\n        try:\n            sid=str(r['student_id']).strip(); subject=str(r['subject']).strip(); score=float(r['score']); w=float(r['weight'])\n            if not sid or not subject or not 0<=score<=100 or w<=0: continue\n        except (KeyError,TypeError,ValueError): continue\n        a=stu.setdefault(sid,[0.0,0.0]); a[0]+=score*w; a[1]+=w\n        b=sub.setdefault(subject,[0.0,0]); b[0]+=score; b[1]+=1\n    summaries={k:{'score':round(v[0]/v[1],2),'passed':v/v[1]>=pass_mark} for k,v in stu.items()}\n    averages={k:round(v[0]/v[1],2) for k,v in sub.items()}\n    ranking=sorted(summaries,key=lambda k:(-summaries[k]['score'],k))\n    passed=sum(x['passed'] for x in summaries.values())\n    return {'students':dict(sorted(summaries.items())),'subject_averages':dict(sorted(averages.items())),'pass_rate':(passed/len(summaries) if summaries else 0.0),'ranking':ranking}"
+      },
+      "requirement_matrix": {
+        "R1": "load assessment data",
+        "R2": "calculate weighted student scores",
+        "R3": "calculate subject averages",
+        "R4": "determine pass status",
+        "R5": "produce deterministic ranking"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement the complete student performance analyzer.",
+        "BUG_FIX": "Implement it, then correct invalid-score and weight validation.",
+        "FEATURE_ADDITION": "Implement it, then add deterministic ranking.",
+        "EDGE_CASE": "Handle empty data, exact pass marks, ties, and malformed assessments.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Implement student analysis.",
+          "Turn 2: Fix validation.",
+          "Turn 3: Add ranking.",
+          "Turn 4: Handle empty and boundary cases."
+        ]
+      },
+      "correctness_criteria": "All computed scores, averages, pass rates, and rankings match the reference.",
+      "static_analysis_targets": [
+        "Deterministic sorting.",
+        "No network access.",
+        "No global mutable state."
+      ],
+      "dataset_validation": "Distinct educational analytics workload with scalable records."
+    },
+    {
+      "task_id": "RA-004",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Local file-processing utilities and original document inventory classification.",
+      "title": "Offline Document Organizer",
+      "difficulty": "easy",
+      "language": "Python",
+      "problem_description": "Process a supplied list of document metadata and organize records into deterministic folders based on extension, year, and size class.",
+      "functional_requirements": [
+        "Normalize file names and extensions.",
+        "Classify files by extension.",
+        "Classify by modification year.",
+        "Classify by size bucket.",
+        "Generate deterministic destination paths."
+      ],
+      "input_specification": "List of metadata records containing name, modified date, and size.",
+      "output_specification": "List of source-to-destination mappings plus skipped-record count.",
+      "constraints": [
+        "No actual filesystem changes are required.",
+        "Hidden files use their final extension when present.",
+        "Invalid metadata is skipped."
+      ],
+      "input_scales": {
+        "small": "2000 files",
+        "medium": "20000 files",
+        "large": "200000 files"
+      },
+      "computational_profile": "CPU+memory with string processing and sorting.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Normalize each record, derive extension/year/size bucket, build a path, then sort.",
+        "complexity": "O(n log n) due to final deterministic sorting.",
+        "code": "import os\n\ndef organize_metadata(records):\n    out=[]; skipped=0\n    for r in records:\n        try:\n            name=str(r['name']).strip(); date=str(r['modified']).strip(); size=int(r['size'])\n            if not name or size<0 or len(date)<4: raise ValueError\n            safe=name.replace('/','*').replace('\\\\','*'); base,ext=os.path.splitext(safe)\n            ext=ext[1:].lower() if ext else 'unknown'; year=date[:4]\n            bucket='small' if size<1_000_000 else 'medium' if size<10_000_000 else 'large'\n            out.append({'source':name,'destination':f'{year}/{ext}/{bucket}/{safe}'})\n        except (KeyError,TypeError,ValueError): skipped+=1\n    out.sort(key=lambda x:x)\n    return {'mappings':out,'skipped':skipped}"
+      },
+      "requirement_matrix": {
+        "R1": "normalize metadata",
+        "R2": "classify extension",
+        "R3": "classify modification year",
+        "R4": "classify size bucket",
+        "R5": "produce deterministic destination mappings"
+      },
+      "interactions": {
+        "ONE_SHOT": "Build the complete document organizer.",
+        "BUG_FIX": "Build it, then fix extension and malformed-date handling.",
+        "FEATURE_ADDITION": "Build it, then add size-bucket classification.",
+        "EDGE_CASE": "Handle missing extensions, separators, empty names, and exact size boundaries.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Build the organizer.",
+          "Turn 2: Fix metadata validation.",
+          "Turn 3: Add size classification.",
+          "Turn 4: Handle boundary names and sizes."
+        ]
+      },
+      "correctness_criteria": "Mappings and skipped counts match reference semantics.",
+      "static_analysis_targets": [
+        "No filesystem mutation.",
+        "No network access.",
+        "Deterministic sorting."
+      ],
+      "dataset_validation": "Offline metadata processing only."
+    },
+    {
+      "task_id": "RA-005",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Log-analysis benchmark patterns and original local application monitoring utility.",
+      "title": "Application Log Summarizer",
+      "difficulty": "easy",
+      "language": "Python",
+      "problem_description": "Parse structured log lines, aggregate severity and endpoint statistics, detect repeated error bursts, and return a compact report.",
+      "functional_requirements": [
+        "Parse timestamp, level, endpoint, and message.",
+        "Count records by severity.",
+        "Aggregate endpoint counts.",
+        "Identify repeated errors within a configurable threshold.",
+        "Skip malformed lines."
+      ],
+      "input_specification": "List of strings formatted as `timestamp|level|endpoint|message`.",
+      "output_specification": "Severity counts, endpoint counts, malformed count, and repeated-error groups.",
+      "constraints": [
+        "Levels are normalized to uppercase.",
+        "Threshold is a positive integer.",
+        "Only exact normalized messages participate in repetition detection."
+      ],
+      "input_scales": {
+        "small": "5000 log lines",
+        "medium": "50000 log lines",
+        "large": "500000 log lines"
+      },
+      "computational_profile": "CPU-intensive parsing and grouping.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Parse each line with split(maxsplit=3), aggregate counters, and track consecutive normalized endpoint-message occurrences.",
+        "complexity": "O(n) time and O(k) memory for distinct endpoint/message combinations.",
+        "code": "from collections import Counter,defaultdict\n\ndef summarize_logs(lines,threshold=3):\n    levels=Counter(); endpoints=Counter(); malformed=0; groups=defaultdict(int); streak={}\n    for line in lines:\n        p=str(line).split('|',3)\n        if len(p)!=4: malformed+=1; continue\n        ts,level,ep,msg=(x.strip() for x in p)\n        if not ts or not ep or not level: malformed+=1; continue\n        level=level.upper(); levels[level]+=1; endpoints[ep]+=1; key=(ep,msg)\n        if streak.get(key,0)+1>=threshold: groups[key]+=1\n        for k in list(streak):\n            if k!=key: streak[k]=0\n        streak[key]=streak.get(key,0)+1\n    return {'levels':dict(sorted(levels.items())),'endpoints':dict(sorted(endpoints.items())),'malformed':malformed,'repeated_errors':{f'{a}|{b}':v for (a,b),v in sorted(groups.items())}}"
+      },
+      "requirement_matrix": {
+        "R1": "parse log lines",
+        "R2": "count severities",
+        "R3": "aggregate endpoint activity",
+        "R4": "detect repeated errors",
+        "R5": "handle malformed lines"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement the complete log summarizer.",
+        "BUG_FIX": "Implement it, then fix malformed-line parsing.",
+        "FEATURE_ADDITION": "Implement it, then add repeated-error detection.",
+        "EDGE_CASE": "Handle empty logs, extra separators, case differences, and exact thresholds.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Implement log summarization.",
+          "Turn 2: Fix parser robustness.",
+          "Turn 3: Add repeated-error detection.",
+          "Turn 4: Handle threshold boundaries and malformed lines."
+        ]
+      },
+      "correctness_criteria": "All counts and repeated-error results match the reference.",
+      "static_analysis_targets": [
+        "Linear processing.",
+        "No external logging service.",
+        "Deterministic output."
+      ],
+      "dataset_validation": "Large local text-processing workload."
+    },
+    {
+      "task_id": "RA-006",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Configuration-validation patterns and original deployment-profile checker.",
+      "title": "Configuration Validator",
+      "difficulty": "medium",
+      "language": "Python",
+      "problem_description": "Validate nested application configuration dictionaries against a schema containing required fields, types, ranges, enumerations, and mutually dependent fields.",
+      "functional_requirements": [
+        "Validate required fields.",
+        "Validate primitive types.",
+        "Validate numeric ranges.",
+        "Validate enumerated values.",
+        "Validate cross-field dependencies."
+      ],
+      "input_specification": "Configuration dictionary and validation schema.",
+      "output_specification": "Deterministically ordered list of validation errors.",
+      "constraints": [
+        "Nested dotted paths are supported.",
+        "Validation continues after individual failures.",
+        "No schema mutation."
+      ],
+      "input_scales": {
+        "small": "100 fields",
+        "medium": "1000 fields",
+        "large": "10000 fields"
+      },
+      "computational_profile": "CPU+memory: recursive traversal and validation.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Iterate schema rules, resolve dotted paths, apply type/range/enum rules, then evaluate dependency rules.",
+        "complexity": "O(r*d) time where r is rule count and d is path depth; O(r) output memory.",
+        "code": "def validate_config(cfg,schema):\n    errors=[]\n    def get(path):\n        cur=cfg\n        for part in path.split('.'):\n            if not isinstance(cur,dict) or part not in cur: return False,None\n            cur=cur[part]\n        return True,cur\n    for path,rule in schema.get('fields',{}).items():\n        ok,val=get(path)\n        if not ok:\n            if rule.get('required'): errors.append((path,'missing'))\n            continue\n        typ=rule.get('type')\n        valid={'str':str,'int':int,'float':(int,float),'bool':bool}.get(typ)\n        if valid and (not isinstance(val,valid) or (typ=='int' and isinstance(val,bool))): errors.append((path,'type')) ; continue\n        if isinstance(val,(int,float)) and not isinstance(val,bool):\n            if 'min' in rule and val<rule['min']: errors.append((path,'min'))\n            if 'max' in rule and val>rule['max']: errors.append((path,'max'))\n        if 'enum' in rule and val not in rule['enum']: errors.append((path,'enum'))\n    for dep in schema.get('dependencies',[]):\n        a,b=dep\n        oka,va=get(a); okb,vb=get(b)\n        if oka and va and not okb: errors.append((b,'dependency'))\n    return [{'path':p,'error':e} for p,e in sorted(set(errors))]"
+      },
+      "requirement_matrix": {
+        "R1": "validate required fields",
+        "R2": "validate field types",
+        "R3": "validate ranges",
+        "R4": "validate enumerations",
+        "R5": "validate dependencies"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement all configuration-validation rules.",
+        "BUG_FIX": "Implement it, then fix nested-path and boolean type handling.",
+        "FEATURE_ADDITION": "Implement it, then add cross-field dependencies.",
+        "EDGE_CASE": "Handle empty configurations, boundary values, missing nested paths, and mixed types.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Implement configuration validation.",
+          "Turn 2: Fix nested/type validation.",
+          "Turn 3: Add dependencies.",
+          "Turn 4: Handle boundary and missing fields."
+        ]
+      },
+      "correctness_criteria": "Every required validation rule produces the expected deterministic error set.",
+      "static_analysis_targets": [
+        "No schema mutation.",
+        "No exception-driven normal control flow.",
+        "Deterministic error ordering."
+      ],
+      "dataset_validation": "Recursive validation workload with no external services."
+    },
+    {
+      "task_id": "RA-007",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Invoice-processing workflows and original local accounting utility.",
+      "title": "Invoice Batch Processor",
+      "difficulty": "medium",
+      "language": "Python",
+      "problem_description": "Process invoice records, calculate line-item totals and taxes, reject invalid invoices, and summarize totals by customer.",
+      "functional_requirements": [
+        "Validate invoice headers.",
+        "Calculate line-item subtotals.",
+        "Calculate invoice tax.",
+        "Reject invalid invoices with reasons.",
+        "Aggregate accepted totals by customer."
+      ],
+      "input_specification": "Invoices containing invoice_id, customer, tax_rate, and line items.",
+      "output_specification": "Accepted invoice summaries, rejected invoices, and customer totals.",
+      "constraints": [
+        "Quantity and prices must be nonnegative.",
+        "Tax rate must be 0-100.",
+        "Duplicate invoice IDs are rejected after the first valid occurrence."
+      ],
+      "input_scales": {
+        "small": "1000 invoices",
+        "medium": "10000 invoices",
+        "large": "100000 invoices"
+      },
+      "computational_profile": "CPU-bound nested record processing.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Validate each invoice and all lines, calculate subtotal and tax, then aggregate accepted invoices.",
+        "complexity": "O(L+n) time where L is total line items; O(n+c) memory.",
+        "code": "def process_invoices(invoices):\n    seen=set(); accepted=[]; rejected=[]; customers={}\n    for inv in invoices:\n        try:\n            iid=str(inv['invoice_id']).strip(); customer=' '.join(str(inv['customer']).split()); rate=float(inv['tax_rate']); lines=inv['lines']\n            if not iid or not customer or iid in seen or not 0<=rate<=100 or not lines: raise ValueError('invalid header')\n            subtotal=0.0\n            for line in lines:\n                q=float(line['quantity']); price=float(line['price'])\n                if q<0 or price<0: raise ValueError('invalid line')\n                subtotal+=q*price\n            tax=subtotal*rate/100; total=subtotal+tax\n            seen.add(iid); rec={'invoice_id':iid,'customer':customer,'subtotal':round(subtotal,2),'tax':round(tax,2),'total':round(total,2)}; accepted.append(rec)\n            customers[customer]=customers.get(customer,0)+total\n        except (KeyError,TypeError,ValueError) as e: rejected.append({'invoice_id':str(inv.get('invoice_id','')).strip(),'reason':str(e)})\n    return {'accepted':accepted,'rejected':rejected,'customer_totals':{k:round(v,2) for k,v in sorted(customers.items())}}"
+      },
+      "requirement_matrix": {
+        "R1": "validate invoice headers",
+        "R2": "calculate line subtotals",
+        "R3": "calculate tax",
+        "R4": "reject invalid invoices",
+        "R5": "aggregate customer totals"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement the complete invoice processor.",
+        "BUG_FIX": "Implement it, then fix invalid line-item handling.",
+        "FEATURE_ADDITION": "Implement it, then add customer-level aggregation.",
+        "EDGE_CASE": "Handle duplicate IDs, empty lines, zero tax, and boundary rates.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Implement invoice processing.",
+          "Turn 2: Fix line validation.",
+          "Turn 3: Add customer aggregation.",
+          "Turn 4: Handle duplicates and tax boundaries."
+        ]
+      },
+      "correctness_criteria": "Accepted, rejected, tax, and customer totals match reference semantics.",
+      "static_analysis_targets": [
+        "No external payment system.",
+        "Deterministic ordering.",
+        "No mutation of invoice input."
+      ],
+      "dataset_validation": "Nested invoice computation provides meaningful scalable workload."
+    },
+    {
+      "task_id": "RA-008",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Offline contact-search patterns and original address-book analytics.",
+      "title": "Contact Search and Duplicate Detector",
+      "difficulty": "easy",
+      "language": "Python",
+      "problem_description": "Normalize local contact records, build searchable indexes, detect probable duplicates, and return deterministic search results.",
+      "functional_requirements": [
+        "Normalize names and phone numbers.",
+        "Build name and phone indexes.",
+        "Search by name substring.",
+        "Detect duplicate normalized phones.",
+        "Return deterministic results."
+      ],
+      "input_specification": "Contact dictionaries with name, phone, email, and optional tags.",
+      "output_specification": "Search results and duplicate groups.",
+      "constraints": [
+        "Phone search uses digits only.",
+        "Blank names are invalid.",
+        "Duplicate groups contain at least two contacts."
+      ],
+      "input_scales": {
+        "small": "2000 contacts",
+        "medium": "20000 contacts",
+        "large": "200000 contacts"
+      },
+      "computational_profile": "Mixed CPU+memory indexing workload.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Normalize contacts once, build dictionaries keyed by normalized phone and name tokens, then perform substring scans over normalized names.",
+        "complexity": "O(n*l) search in the simple baseline plus O(n) indexing memory.",
+        "code": "import re\n\ndef contact_index(contacts):\n    rows=[]; phones={}\n    for i,c in enumerate(contacts):\n        try:\n            name=' '.join(str(c['name']).split()).lower(); phone=re.sub(r'\\\\D','',str(c.get('phone','')))\n            if not name: continue\n            row={'index':i,'name':name,'phone':phone,'email':str(c.get('email','')).strip().lower(),'tags':list(c.get('tags',[]))}; rows.append(row)\n            if phone: phones.setdefault(phone,[]).append(i)\n        except (TypeError,ValueError): continue\n    duplicates={k:v for k,v in sorted(phones.items()) if len(v)>=2}\n    return rows,duplicates\n\ndef search_contacts(contacts,query):\n    rows,_=contact_index(contacts); q=' '.join(str(query).split()).lower()\n    return [r for r in rows if q in r['name']]"
+      },
+      "requirement_matrix": {
+        "R1": "normalize contact fields",
+        "R2": "build indexes",
+        "R3": "search names",
+        "R4": "detect duplicate phones",
+        "R5": "return deterministic results"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement contact indexing, searching, and duplicate detection.",
+        "BUG_FIX": "Implement it, then fix phone normalization.",
+        "FEATURE_ADDITION": "Implement it, then add substring search.",
+        "EDGE_CASE": "Handle blank fields, formatted phones, case differences, and empty queries.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Implement contact processing.",
+          "Turn 2: Fix phone normalization.",
+          "Turn 3: Add name search.",
+          "Turn 4: Handle malformed and boundary inputs."
+        ]
+      },
+      "correctness_criteria": "Normalized records, searches, and duplicate groups match the reference.",
+      "static_analysis_targets": [
+        "Indexes built once.",
+        "No network contact lookup.",
+        "No nondeterministic result ordering."
+      ],
+      "dataset_validation": "Large in-memory indexing workload."
+    },
+    {
+      "task_id": "RA-009",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Personal library-management workflows and original offline book catalog analyzer.",
+      "title": "Offline Library Catalog Analyzer",
+      "difficulty": "easy",
+      "language": "Python",
+      "problem_description": "Analyze a local book catalog by author, publication year, genre, and availability while supporting title searches.",
+      "functional_requirements": [
+        "Normalize catalog records.",
+        "Aggregate books by genre and author.",
+        "Calculate availability rates.",
+        "Search titles by substring.",
+        "Sort results deterministically."
+      ],
+      "input_specification": "Book records with title, author, year, genre, and available fields.",
+      "output_specification": "Genre counts, author counts, availability rate, and matching titles.",
+      "constraints": [
+        "Publication year must be a positive integer.",
+        "Availability accepts booleans.",
+        "Invalid records are skipped."
+      ],
+      "input_scales": {
+        "small": "2000 books",
+        "medium": "20000 books",
+        "large": "200000 books"
+      },
+      "computational_profile": "CPU+memory aggregation and search.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Normalize valid books, aggregate counters, compute availability, and filter/sort titles.",
+        "complexity": "O(n log n) for sorted search output.",
+        "code": "from collections import Counter\n\ndef analyze_library(books,query=''):\n    valid=[]\n    for b in books:\n        try:\n            title=' '.join(str(b['title']).split()); author=' '.join(str(b['author']).split()); genre=' '.join(str(b['genre']).split()).lower(); year=int(b['year']); available=bool(b['available'])\n            if not title or not author or year<=0: continue\n            valid.append({'title':title,'author':author,'genre':genre,'year':year,'available':available})\n        except (KeyError,TypeError,ValueError): continue\n    genres=Counter(x['genre'] for x in valid); authors=Counter(x['author'] for x in valid); q=str(query).strip().lower(); matches=sorted((x['title'] for x in valid if q in x['title'].lower())) if q else []\n    return {'genre_counts':dict(sorted(genres.items())),'author_counts':dict(sorted(authors.items())),'availability_rate':sum(x['available'] for x in valid)/len(valid) if valid else 0.0,'matches':matches}"
+      },
+      "requirement_matrix": {
+        "R1": "normalize books",
+        "R2": "aggregate genres and authors",
+        "R3": "calculate availability",
+        "R4": "search titles",
+        "R5": "sort output deterministically"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement the complete library analyzer.",
+        "BUG_FIX": "Implement it, then fix invalid-record handling.",
+        "FEATURE_ADDITION": "Implement it, then add title search.",
+        "EDGE_CASE": "Handle empty catalogs, invalid years, exact matches, and duplicate titles.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Implement library analysis.",
+          "Turn 2: Fix validation.",
+          "Turn 3: Add title search.",
+          "Turn 4: Handle empty and duplicate inputs."
+        ]
+      },
+      "correctness_criteria": "All catalog statistics and search results match the reference.",
+      "static_analysis_targets": [
+        "No external database.",
+        "Deterministic sorting.",
+        "No input mutation."
+      ],
+      "dataset_validation": "Distinct catalog-analysis workload."
+    },
+    {
+      "task_id": "RA-010",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Scheduling and interval-processing benchmark patterns with an original meeting-room allocator.",
+      "title": "Meeting Room Scheduler",
+      "difficulty": "medium",
+      "language": "Python",
+      "problem_description": "Assign meetings to a fixed number of rooms while detecting conflicts and producing a deterministic schedule.",
+      "functional_requirements": [
+        "Validate meeting intervals.",
+        "Sort meetings by start time and ID.",
+        "Assign available rooms.",
+        "Detect unschedulable conflicts.",
+        "Return room schedules."
+      ],
+      "input_specification": "Meetings with id, start, end, and optional priority; room_count is positive.",
+      "output_specification": "Room assignments and rejected meetings.",
+      "constraints": [
+        "Intervals are half-open [start,end).",
+        "End must be greater than start.",
+        "Priority ties use meeting ID."
+      ],
+      "input_scales": {
+        "small": "1000 meetings",
+        "medium": "10000 meetings",
+        "large": "100000 meetings"
+      },
+      "computational_profile": "CPU-intensive sorting and heap scheduling.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Sort meetings by start, priority, and ID; use a min-heap of occupied rooms keyed by end time and a heap of free room IDs.",
+        "complexity": "O(n log n) time and O(n+r) memory.",
+        "code": "import heapq\n\ndef schedule_meetings(meetings,room_count):\n    if room_count<=0: raise ValueError('room_count must be positive')\n    valid=[]; rejected=[]\n    for m in meetings:\n        try:\n            mid=str(m['id']); start=int(m['start']); end=int(m['end']); priority=int(m.get('priority',0))\n            if end<=start: raise ValueError('invalid interval')\n            valid.append((start,-priority,mid,end))\n        except (KeyError,TypeError,ValueError) as e: rejected.append({'id':str(m.get('id','')),'reason':str(e)})\n    valid.sort(); free=list(range(1,room_count+1)); heapq.heapify(free); busy=[]; assignments=[]\n    for start,negp,mid,end in valid:\n        while busy and busy[0][0]<=start: _,room=heapq.heappop(busy); heapq.heappush(free,room)\n        if not free: rejected.append({'id':mid,'reason':'no_room'}); continue\n        room=heapq.heappop(free); heapq.heappush(busy,(end,room)); assignments.append({'id':mid,'room':room,'start':start,'end':end})\n    return {'assignments':assignments,'rejected':rejected}"
+      },
+      "requirement_matrix": {
+        "R1": "validate meeting intervals",
+        "R2": "deterministically order meetings",
+        "R3": "allocate available rooms",
+        "R4": "detect conflicts",
+        "R5": "return room schedules"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement the meeting scheduler.",
+        "BUG_FIX": "Implement it, then fix interval-boundary and room-release logic.",
+        "FEATURE_ADDITION": "Implement it, then add meeting priorities.",
+        "EDGE_CASE": "Handle zero rooms, empty schedules, simultaneous meetings, and exact end/start boundaries.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Implement room scheduling.",
+          "Turn 2: Fix room release and interval boundaries.",
+          "Turn 3: Add priority ordering.",
+          "Turn 4: Handle simultaneous and empty inputs."
+        ]
+      },
+      "correctness_criteria": "Assignments and rejections match deterministic reference behavior.",
+      "static_analysis_targets": [
+        "Heap-based scheduling.",
+        "No wall-clock dependency.",
+        "Deterministic room selection."
+      ],
+      "dataset_validation": "Scalable interval scheduling workload."
+    },
+    {
+      "task_id": "RA-011",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Backup and deduplication utility patterns with original local snapshot comparison.",
+      "title": "Backup Manifest Comparator",
+      "difficulty": "medium",
+      "language": "Python",
+      "problem_description": "Compare two offline file manifests and classify files as added, deleted, modified, unchanged, or renamed based on metadata and content hashes.",
+      "functional_requirements": [
+        "Normalize manifest paths.",
+        "Index files by path.",
+        "Compare size and hash metadata.",
+        "Detect hash-based renames.",
+        "Produce deterministic change lists."
+      ],
+      "input_specification": "Manifest records with path, size, modified timestamp, and hash.",
+      "output_specification": "Added, deleted, modified, unchanged, and renamed lists.",
+      "constraints": [
+        "Paths use normalized slash separators.",
+        "A hash uniquely identifies content for this utility.",
+        "Duplicate hashes are handled deterministically."
+      ],
+      "input_scales": {
+        "small": "5000 files per manifest",
+        "medium": "50000 files per manifest",
+        "large": "500000 files per manifest"
+      },
+      "computational_profile": "Memory-intensive indexing plus CPU comparison.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Build path indexes for both manifests, classify common paths, then pair deleted and added files by hash.",
+        "complexity": "O(n log n) primarily from deterministic sorting; O(n) memory.",
+        "code": "def compare_manifests(old,new):\n    def norm(records):\n        d={}\n        for r in records:\n            try:\n                p=str(r['path']).replace('\\\\','/').strip('/'); size=int(r['size']); h=str(r['hash']).strip()\n                if p and size>=0 and h and p not in d: d[p]={'path':p,'size':size,'hash':h}\n            except (KeyError,TypeError,ValueError): pass\n        return d\n    a=norm(old); b=norm(new); added=set(b)-set(a); deleted=set(a)-set(b); modified=[]; unchanged=[]\n    for p in sorted(set(a)&set(b)):\n        if a[p]['hash']==b[p]['hash']: unchanged.append(p)\n        else: modified.append(p)\n    byhash={}\n    for p in sorted(added): byhash.setdefault(b[p]['hash'],[]).append(p)\n    renamed=[]; final_added=[]; used=set()\n    for p in sorted(deleted):\n        candidates=byhash.get(a[p]['hash'],[])\n        target=next((x for x in candidates if x not in used),None)\n        if target: renamed.append({'from':p,'to':target}); used.add(target)\n        else: pass\n    final_added=[p for p in sorted(added) if p not in used]\n    final_deleted=[p for p in sorted(deleted) if not any(x['from']==p for x in renamed)]\n    return {'added':final_added,'deleted':final_deleted,'modified':modified,'unchanged':unchanged,'renamed':renamed}"
+      },
+      "requirement_matrix": {
+        "R1": "normalize paths and records",
+        "R2": "index manifests",
+        "R3": "compare file metadata",
+        "R4": "detect hash-based renames",
+        "R5": "produce deterministic classifications"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement manifest comparison with all classifications.",
+        "BUG_FIX": "Implement it, then fix path normalization and duplicate-hash pairing.",
+        "FEATURE_ADDITION": "Implement it, then add rename detection.",
+        "EDGE_CASE": "Handle empty manifests, duplicate hashes, malformed records, and unchanged hashes with changed sizes.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Implement manifest comparison.",
+          "Turn 2: Fix normalization and duplicate handling.",
+          "Turn 3: Add rename detection.",
+          "Turn 4: Handle empty and duplicate-hash cases."
+        ]
+      },
+      "correctness_criteria": "Every path classification matches reference semantics.",
+      "static_analysis_targets": [
+        "O(n) indexes.",
+        "No filesystem access.",
+        "No network dependency."
+      ],
+      "dataset_validation": "Large-memory manifest workload."
+    },
+    {
+      "task_id": "RA-012",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Transaction categorization and rule-engine patterns with original offline bank-statement processing.",
+      "title": "Transaction Categorizer",
+      "difficulty": "medium",
+      "language": "Python",
+      "problem_description": "Categorize transaction descriptions using ordered keyword rules, calculate category totals, and identify unmatched transactions.",
+      "functional_requirements": [
+        "Normalize transaction descriptions.",
+        "Apply ordered categorization rules.",
+        "Aggregate amounts by category.",
+        "Report unmatched transactions.",
+        "Support rule priorities."
+      ],
+      "input_specification": "Transactions with id, description, and amount; rules contain category, keywords, and priority.",
+      "output_specification": "Categorized transactions, category totals, and unmatched IDs.",
+      "constraints": [
+        "Highest priority wins.",
+        "Keyword matching is case-insensitive substring matching.",
+        "Transactions with invalid numeric amounts are skipped."
+      ],
+      "input_scales": {
+        "small": "5000 transactions and 100 rules",
+        "medium": "50000 transactions and 500 rules",
+        "large": "500000 transactions and 2000 rules"
+      },
+      "computational_profile": "CPU-intensive rule matching; O(transactions × rules × keywords) baseline.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Normalize and sort rules by descending priority while preserving original order; scan rules for each transaction.",
+        "complexity": "O(n*r*k) worst case, where n is transactions, r rules, and k average keywords.",
+        "code": "def categorize_transactions(transactions,rules):\n    prepared=[]\n    for i,r in enumerate(rules):\n        try:\n            cat=str(r['category']).strip(); kws=[str(x).strip().lower() for x in r['keywords'] if str(x).strip()]; pri=int(r.get('priority',0))\n            if cat and kws: prepared.append((pri,i,cat,kws))\n        except (KeyError,TypeError,ValueError): pass\n    prepared.sort(key=lambda x:(-x[0],x[1])); totals={}; rows=[]; unmatched=[]\n    for t in transactions:\n        try: tid=str(t['id']); desc=' '.join(str(t['description']).split()).lower(); amount=float(t['amount'])\n        except (KeyError,TypeError,ValueError): continue\n        cat=None\n        for _,_,c,kws in prepared:\n            if any(k in desc for k in kws): cat=c; break\n        if cat is None: unmatched.append(tid); continue\n        totals[cat]=totals.get(cat,0)+amount; rows.append({'id':tid,'category':cat,'amount':amount})\n    return {'transactions':rows,'totals':{k:round(v,2) for k,v in sorted(totals.items())},'unmatched':sorted(unmatched)}"
+      },
+      "requirement_matrix": {
+        "R1": "normalize descriptions",
+        "R2": "apply categorization rules",
+        "R3": "respect rule priorities",
+        "R4": "aggregate category totals",
+        "R5": "report unmatched transactions"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement the transaction categorizer.",
+        "BUG_FIX": "Implement it, then fix rule-priority handling.",
+        "FEATURE_ADDITION": "Implement it, then add explicit rule priorities.",
+        "EDGE_CASE": "Handle empty rules, negative amounts, equal priorities, and multiple matching keywords.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Implement categorization.",
+          "Turn 2: Fix priority resolution.",
+          "Turn 3: Add configurable priorities.",
+          "Turn 4: Handle matching and malformed-input boundaries."
+        ]
+      },
+      "correctness_criteria": "Categorization and aggregate totals match reference rule semantics.",
+      "static_analysis_targets": [
+        "Deterministic rule ordering.",
+        "No network access.",
+        "No mutation of rules."
+      ],
+      "dataset_validation": "Rule-matching workload intentionally provides CPU pressure."
+    },
+    {
+      "task_id": "RA-013",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Dataset indexing patterns and original offline CSV-like report generator.",
+      "title": "Local Sales Report Generator",
+      "difficulty": "medium",
+      "language": "Python",
+      "problem_description": "Transform local sales records into regional and product reports, including totals, averages, top products, and date filtering.",
+      "functional_requirements": [
+        "Validate sales records.",
+        "Filter by date range.",
+        "Aggregate sales by region and product.",
+        "Calculate average order value.",
+        "Return top products."
+      ],
+      "input_specification": "Sales records containing date, region, product, quantity, unit_price, and order_id.",
+      "output_specification": "Regional totals, product totals, average order value, and ranked top products.",
+      "constraints": [
+        "Quantity and price must be nonnegative.",
+        "Date range is inclusive.",
+        "Each order ID counts once toward order count."
+      ],
+      "input_scales": {
+        "small": "5000 records",
+        "medium": "50000 records",
+        "large": "500000 records"
+      },
+      "computational_profile": "CPU+memory aggregation and sorting.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Validate and filter records, aggregate revenue by region/product and order IDs, then calculate statistics.",
+        "complexity": "O(n+p log p) time and O(r+p+o) memory.",
+        "code": "def sales_report(records,start=None,end=None,top_n=10):\n    regions={}; products={}; orders={}; valid=0\n    for r in records:\n        try:\n            d=str(r['date'])[:10]; region=' '.join(str(r['region']).split()); product=' '.join(str(r['product']).split()); q=float(r['quantity']); price=float(r['unit_price']); oid=str(r['order_id'])\n            if not region or not product or q<0 or price<0 or len(d)!=10 or (start and d<start) or (end and d>end): continue\n        except (KeyError,TypeError,ValueError): continue\n        revenue=q*price; valid+=1; regions[region]=regions.get(region,0)+revenue; products[product]=products.get(product,0)+revenue; orders[oid]=orders.get(oid,0)+revenue\n    ranked=sorted(products.items(),key=lambda x:(-x[1],x[0]))[:top_n]\n    return {'regions':{k:round(v,2) for k,v in sorted(regions.items())},'products':{k:round(v,2) for k,v in sorted(products.items())},'average_order_value':round(sum(orders.values())/len(orders),2) if orders else 0.0,'top_products':[(k,round(v,2)) for k,v in ranked],'valid_records':valid}"
+      },
+      "requirement_matrix": {
+        "R1": "validate sales records",
+        "R2": "filter date range",
+        "R3": "aggregate regional and product sales",
+        "R4": "calculate average order value",
+        "R5": "rank top products"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement the complete sales report generator.",
+        "BUG_FIX": "Implement it, then fix date-range filtering.",
+        "FEATURE_ADDITION": "Implement it, then add top-product ranking.",
+        "EDGE_CASE": "Handle empty data, date boundaries, repeated orders, and zero-price records.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Implement sales reporting.",
+          "Turn 2: Fix date filtering.",
+          "Turn 3: Add top-product ranking.",
+          "Turn 4: Handle repeated orders and date boundaries."
+        ]
+      },
+      "correctness_criteria": "All summaries and rankings match reference semantics.",
+      "static_analysis_targets": [
+        "Single-pass aggregation.",
+        "No external storage.",
+        "Deterministic ranking."
+      ],
+      "dataset_validation": "Large tabular aggregation workload."
+    },
+    {
+      "task_id": "RA-014",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Recommendation benchmark patterns and original local product recommendation utility.",
+      "title": "Offline Product Recommender",
+      "difficulty": "medium",
+      "language": "Python",
+      "problem_description": "Generate item recommendations from user-item ratings using co-occurrence similarity and deterministic ranking.",
+      "functional_requirements": [
+        "Load valid ratings.",
+        "Build user-item rating indexes.",
+        "Calculate item similarity.",
+        "Exclude already-rated items.",
+        "Return top-k recommendations."
+      ],
+      "input_specification": "Ratings with user_id, item_id, and rating; target user and k.",
+      "output_specification": "Ranked recommended item IDs with scores.",
+      "constraints": [
+        "Ratings are 1-5.",
+        "Cosine similarity is used.",
+        "Ties break lexically by item ID."
+      ],
+      "input_scales": {
+        "small": "5000 ratings",
+        "medium": "50000 ratings",
+        "large": "500000 ratings"
+      },
+      "computational_profile": "CPU+memory: sparse similarity computation.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Build user vectors, invert to item vectors, calculate pairwise cosine similarities for items sharing users, then score unrated candidates.",
+        "complexity": "Worst-case O(i^2*u) but sparse in practical datasets; O(r+i) memory.",
+        "code": "from math import sqrt\n\ndef recommend(ratings,user_id,k=5):\n    users={}; rated=set()\n    for r in ratings:\n        try:\n            u=str(r['user_id']); item=str(r['item_id']); score=float(r['rating'])\n            if not u or not item or not 1<=score<=5: continue\n            users.setdefault(u,{})[item]=score\n        except (KeyError,TypeError,ValueError): continue\n    target=users.get(str(user_id),{}); rated=set(target); items={}\n    for u,vals in users.items():\n        for i,s in vals.items(): items.setdefault(i,{})[u]=s\n    scores={}\n    for i,vec in items.items():\n        if i in rated: continue\n        dot=na=db=0.0\n        for u,a in target.items():\n            if u in vec: dot+=a*vec[u]; na+=a*a; db+=vec[u]*vec[u]\n        if dot and na and db: scores[i]=dot/(sqrt(na)*sqrt(db))\n    return [{'item_id':i,'score':round(s,6)} for i,s in sorted(scores.items(),key=lambda x:(-x[1],x[0]))[:max(0,k)]]"
+      },
+      "requirement_matrix": {
+        "R1": "load valid ratings",
+        "R2": "build rating indexes",
+        "R3": "calculate similarity scores",
+        "R4": "exclude already-rated items",
+        "R5": "rank top-k recommendations"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement the offline recommender.",
+        "BUG_FIX": "Implement it, then fix invalid-rating and zero-vector handling.",
+        "FEATURE_ADDITION": "Implement it, then add top-k recommendation limits.",
+        "EDGE_CASE": "Handle empty ratings, k=0, duplicate ratings, and unrated users.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Implement recommendation generation.",
+          "Turn 2: Fix rating validation.",
+          "Turn 3: Add top-k output.",
+          "Turn 4: Handle empty and duplicate rating cases."
+        ]
+      },
+      "correctness_criteria": "Recommendation membership and score ordering match reference semantics.",
+      "static_analysis_targets": [
+        "Sparse dictionaries.",
+        "No network or model downloads.",
+        "Deterministic tie handling."
+      ],
+      "dataset_validation": "Meaningful sparse recommendation workload."
+    },
+    {
+      "task_id": "RA-015",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Attendance-processing utilities and original workforce attendance analytics.",
+      "title": "Attendance Analytics Utility",
+      "difficulty": "medium",
+      "language": "Python",
+      "problem_description": "Process employee attendance events to calculate daily attendance, late arrivals, absence rates, and monthly summaries.",
+      "functional_requirements": [
+        "Normalize employee and date fields.",
+        "Pair valid check-in/check-out events.",
+        "Calculate worked duration.",
+        "Identify late arrivals.",
+        "Aggregate monthly attendance statistics."
+      ],
+      "input_specification": "Events with employee_id, date, time, type; configurable work start time.",
+      "output_specification": "Per-employee attendance summaries and monthly aggregates.",
+      "constraints": [
+        "Events are local timestamps without timezone conversion.",
+        "Duplicate consecutive event types are ignored.",
+        "Negative worked durations are invalid."
+      ],
+      "input_scales": {
+        "small": "5000 events",
+        "medium": "50000 events",
+        "large": "500000 events"
+      },
+      "computational_profile": "CPU+memory event sorting and state tracking.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Normalize valid events, sort by employee/date/time, pair state transitions, then aggregate daily and monthly statistics.",
+        "complexity": "O(n log n) due to sorting; O(n) memory.",
+        "code": "from datetime import datetime\n\ndef attendance_report(events,work_start='09:00'):\n    rows=[]\n    for e in events:\n        try:\n            emp=str(e['employee_id']).strip(); date=str(e['date'])[:10]; tm=str(e['time'])[:5]; typ=str(e['type']).lower().strip()\n            if not emp or typ not in ('in','out'): continue\n            dt=datetime.strptime(date+' '+tm,'%Y-%m-%d %H:%M'); rows.append((emp,date,dt,typ))\n        except (KeyError,TypeError,ValueError): continue\n    rows.sort(); open_in={}; daily={}; late={}\n    start=datetime.strptime(work_start,'%H:%M').time()\n    for emp,date,dt,typ in rows:\n        key=(emp,date)\n        if typ=='in':\n            if key not in open_in: open_in[key]=dt; late[key]=max(0,(dt.hour*60+dt.minute)-(start.hour*60+start.minute))\n        elif key in open_in:\n            mins=int((dt-open_in.pop(key)).total_seconds()/60)\n            if mins>=0: daily[key]=daily.get(key,0)+mins\n    employees={}\n    for (emp,date),mins in daily.items():\n        m=date[:7]; employees.setdefault(emp,{'days':0,'minutes':0,'late_days':0}); employees[emp]['days']+=1; employees[emp]['minutes']+=mins; employees[emp]['late_days']+=int(late.get((emp,date),0)>0)\n    return dict(sorted(employees.items()))"
+      },
+      "requirement_matrix": {
+        "R1": "normalize attendance events",
+        "R2": "pair check-in and check-out events",
+        "R3": "calculate worked duration",
+        "R4": "identify late arrivals",
+        "R5": "aggregate employee attendance"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement attendance analytics.",
+        "BUG_FIX": "Implement it, then fix event ordering and duplicate check-in handling.",
+        "FEATURE_ADDITION": "Implement it, then add late-arrival statistics.",
+        "EDGE_CASE": "Handle incomplete sessions, exact start times, malformed timestamps, and duplicate events.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Implement attendance analytics.",
+          "Turn 2: Fix event pairing.",
+          "Turn 3: Add late-arrival statistics.",
+          "Turn 4: Handle incomplete and boundary sessions."
+        ]
+      },
+      "correctness_criteria": "Session durations and employee summaries match reference semantics.",
+      "static_analysis_targets": [
+        "Offline datetime processing.",
+        "No current-time dependency.",
+        "Deterministic event ordering."
+      ],
+      "dataset_validation": "Large event-stream processing workload."
+    },
+    {
+      "task_id": "RA-016",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Text indexing and document-search benchmark patterns with original offline notes search.",
+      "title": "Local Document Keyword Index",
+      "difficulty": "medium",
+      "language": "Python",
+      "problem_description": "Build an inverted index for local text documents and support ranked keyword queries using term frequency and document frequency.",
+      "functional_requirements": [
+        "Normalize document text.",
+        "Build an inverted index.",
+        "Calculate document frequencies.",
+        "Rank documents for keyword queries.",
+        "Support AND queries."
+      ],
+      "input_specification": "Documents as {id,text}; queries as strings.",
+      "output_specification": "Ranked document IDs with scores.",
+      "constraints": [
+        "Tokenization uses alphanumeric lowercase tokens.",
+        "Repeated terms contribute frequency.",
+        "AND queries require every query term."
+      ],
+      "input_scales": {
+        "small": "2000 documents",
+        "medium": "20000 documents",
+        "large": "100000 documents"
+      },
+      "computational_profile": "Memory-intensive inverted indexing plus CPU query ranking.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Tokenize documents, map terms to per-document frequencies, then score candidate documents using normalized term frequency divided by document frequency.",
+        "complexity": "O(total tokens + query candidates) time and O(total distinct postings) memory.",
+        "code": "import re,math\n\ndef build_index(docs):\n    idx={}; sizes={}\n    for d in docs:\n        try: did=str(d['id']); text=str(d['text']); tokens=re.findall(r'[a-z0-9]+',text.lower())\n        except (KeyError,TypeError): continue\n        freq={}\n        for t in tokens: freq[t]=freq.get(t,0)+1\n        sizes[did]=len(tokens)\n        for t,c in freq.items(): idx.setdefault(t,{})[did]=c\n    return idx,sizes\n\ndef search_index(index,sizes,query,and_mode=False):\n    terms=list(dict.fromkeys(re.findall(r'[a-z0-9]+',str(query).lower())))\n    if not terms: return []\n    sets=[set(index.get(t,{})) for t in terms]; candidates=set.intersection(*sets) if and_mode else set.union(*sets)\n    scores=[]\n    for d in candidates:\n        s=0.0\n        for t in terms:\n            f=index.get(t,{}).get(d,0); df=len(index.get(t,{})); s+=(f/(sizes.get(d,1)))*(math.log((len(sizes)+1)/(df+1))+1)\n        scores.append((d,s))\n    return [{'id':d,'score':round(s,6)} for d,s in sorted(scores,key=lambda x:(-x[1],x[0]))]"
+      },
+      "requirement_matrix": {
+        "R1": "tokenize and normalize documents",
+        "R2": "build inverted index",
+        "R3": "calculate document frequencies",
+        "R4": "rank query results",
+        "R5": "support AND queries"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement the local document keyword index.",
+        "BUG_FIX": "Implement it, then fix tokenization and ranking errors.",
+        "FEATURE_ADDITION": "Implement it, then add AND-query support.",
+        "EDGE_CASE": "Handle empty documents, punctuation, repeated terms, empty queries, and ties.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Build the keyword index.",
+          "Turn 2: Fix tokenization and ranking.",
+          "Turn 3: Add AND queries.",
+          "Turn 4: Handle empty and repeated terms."
+        ]
+      },
+      "correctness_criteria": "Index membership and ranking scores match reference semantics.",
+      "static_analysis_targets": [
+        "Inverted index retained in memory.",
+        "No external search engine.",
+        "Deterministic ranking."
+      ],
+      "dataset_validation": "Large text indexing workload."
+    },
+    {
+      "task_id": "RA-017",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Local data-cleaning tasks and original customer-record deduplication.",
+      "title": "Customer Record Deduplicator",
+      "difficulty": "medium",
+      "language": "Python",
+      "problem_description": "Normalize customer records and merge probable duplicates using exact email or phone matches, retaining the most complete information.",
+      "functional_requirements": [
+        "Normalize customer fields.",
+        "Identify duplicate groups.",
+        "Merge records deterministically.",
+        "Retain the most complete values.",
+        "Report merged-record counts."
+      ],
+      "input_specification": "Customer records with name, email, phone, address, and optional metadata.",
+      "output_specification": "Deduplicated customer records and merge statistics.",
+      "constraints": [
+        "Email matching is case-insensitive.",
+        "Phone matching uses digits only.",
+        "Conflicting nonempty fields prefer the first record in input order."
+      ],
+      "input_scales": {
+        "small": "5000 records",
+        "medium": "50000 records",
+        "large": "500000 records"
+      },
+      "computational_profile": "Memory-intensive normalization and union-style grouping.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Use a disjoint-set structure keyed by normalized email and phone, then merge each component in first-seen order.",
+        "complexity": "O(n alpha(n)) expected plus normalization cost; O(n) memory.",
+        "code": "import re\n\ndef deduplicate_customers(records):\n    parent=list(range(len(records)))\n    def find(x):\n        while parent[x]!=x: parent[x]=parent[parent[x]]; x=parent[x]\n        return x\n    def union(a,b):\n        a,b=find(a),find(b)\n        if a!=b: parent[b]=a\n    keys={}\n    norm=[]\n    for i,r in enumerate(records):\n        try:\n            email=' '.join(str(r.get('email','')).split()).lower(); phone=re.sub(r'\\\\D','',str(r.get('phone','')))\n            norm.append(dict(r))\n            for key in [('e',email),('p',phone)]:\n                if key[1]:\n                    if key in keys: union(i,keys[key])\n                    else: keys[key]=i\n        except TypeError: norm.append({})\n    groups={}\n    for i,r in enumerate(norm): groups.setdefault(find(i),[]).append(i)\n    out=[]\n    for ids in sorted(groups.values(),key=lambda x:min(x)):\n        merged={}\n        for i in ids:\n            for k,v in norm[i].items():\n                if k not in merged or merged[k] in ('',None): merged[k]=v\n        out.append(merged)\n    return {'records':out,'original_count':len(records),'deduplicated_count':len(out),'merged_count':len(records)-len(out)}"
+      },
+      "requirement_matrix": {
+        "R1": "normalize customer identifiers",
+        "R2": "identify duplicate components",
+        "R3": "merge records",
+        "R4": "resolve field conflicts",
+        "R5": "report deduplication statistics"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement customer deduplication.",
+        "BUG_FIX": "Implement it, then fix transitive duplicate grouping.",
+        "FEATURE_ADDITION": "Implement it, then add merge statistics.",
+        "EDGE_CASE": "Handle blank identifiers, formatted phones, conflicting fields, and empty input.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Implement deduplication.",
+          "Turn 2: Fix transitive grouping.",
+          "Turn 3: Add merge statistics.",
+          "Turn 4: Handle identifier and conflict boundaries."
+        ]
+      },
+      "correctness_criteria": "Groups, merged values, and counts match reference semantics.",
+      "static_analysis_targets": [
+        "Near-linear grouping.",
+        "No external identity service.",
+        "Deterministic first-record precedence."
+      ],
+      "dataset_validation": "Large record-linkage workload."
+    },
+    {
+      "task_id": "RA-018",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Batch CSV transformation and report-generation patterns with original utility for utility-meter readings.",
+      "title": "Utility Meter Anomaly Reporter",
+      "difficulty": "hard",
+      "language": "Python",
+      "problem_description": "Process chronological meter readings, calculate consumption deltas, detect impossible resets and statistical spikes, and generate anomaly reports.",
+      "functional_requirements": [
+        "Normalize and sort meter readings.",
+        "Calculate consumption between readings.",
+        "Detect counter resets.",
+        "Detect statistical consumption spikes.",
+        "Produce per-meter summaries."
+      ],
+      "input_specification": "Readings with meter_id, timestamp, reading; configurable spike multiplier.",
+      "output_specification": "Consumption totals, average deltas, resets, and spike anomalies.",
+      "constraints": [
+        "Negative deltas are classified as resets.",
+        "Spike detection compares a delta against the meter's median positive delta multiplied by threshold.",
+        "Malformed readings are skipped."
+      ],
+      "input_scales": {
+        "small": "10000 readings",
+        "medium": "100000 readings",
+        "large": "1000000 readings"
+      },
+      "computational_profile": "CPU+memory-intensive sorting and per-meter statistics.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Group readings by meter, sort chronologically, derive deltas, separate resets, calculate median positive delta, then classify spikes.",
+        "complexity": "O(n log n) time and O(n) memory.",
+        "code": "from statistics import median\n\ndef meter_anomalies(readings,spike_multiplier=3):\n    groups={}\n    for pos,r in enumerate(readings):\n        try:\n            m=str(r['meter_id']).strip(); ts=str(r['timestamp']); val=float(r['reading'])\n            if not m or val<0: continue\n            groups.setdefault(m,[]).append((ts,pos,val))\n        except (KeyError,TypeError,ValueError): continue\n    result={}\n    for m,rows in sorted(groups.items()):\n        rows.sort(key=lambda x:(x[0],x[1])); positives=[]; resets=[]; sequence=[]; total=0.0\n        for i in range(1,len(rows)):\n            d=rows[i][2]-rows[i-1][2]\n            if d<0: resets.append({'timestamp':rows[0],'previous':rows[2],'current':rows[2]})\n            else: positives.append(d); total+=d; sequence.append((rows[i][0],d))\n        med=median(positives) if positives else 0\n        spikes=[{'timestamp':ts,'delta':round(d,6)} for ts,d in sequence if med>0 and d>med*spike_multiplier]\n        result[m]={'consumption':round(total,6),'average_delta':round(sum(positives)/len(positives),6) if positives else 0.0,'resets':resets,'spikes':spikes}\n    return result"
+      },
+      "requirement_matrix": {
+        "R1": "normalize and sort readings",
+        "R2": "calculate consumption deltas",
+        "R3": "detect resets",
+        "R4": "calculate median-based spikes",
+        "R5": "generate meter summaries"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement the complete meter anomaly reporter.",
+        "BUG_FIX": "Implement it, then fix chronological ordering and reset handling.",
+        "FEATURE_ADDITION": "Implement it, then add median-based spike detection.",
+        "EDGE_CASE": "Handle one-reading meters, equal timestamps, resets, and exact spike thresholds.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Implement meter analysis.",
+          "Turn 2: Fix ordering and reset detection.",
+          "Turn 3: Add spike detection.",
+          "Turn 4: Handle statistical and boundary cases."
+        ]
+      },
+      "correctness_criteria": "Per-meter deltas, resets, spikes, and summaries match reference semantics.",
+      "static_analysis_targets": [
+        "Avoid quadratic pair comparisons.",
+        "No external data source.",
+        "Stable handling of equal timestamps."
+      ],
+      "dataset_validation": "One-million-record workload provides substantial computational pressure."
+    },
+    {
+      "task_id": "RA-019",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Scheduling optimization patterns and original local delivery-route planning.",
+      "title": "Delivery Route Planner",
+      "difficulty": "hard",
+      "language": "Python",
+      "problem_description": "Create deterministic delivery routes from a distance matrix and delivery requests using a capacity constraint and nearest-feasible-stop heuristic.",
+      "functional_requirements": [
+        "Validate delivery requests.",
+        "Track vehicle capacity.",
+        "Select feasible next stops.",
+        "Calculate route distance.",
+        "Report unassigned deliveries."
+      ],
+      "input_specification": "Locations, symmetric distance matrix, deliveries with destination and weight, vehicle capacity.",
+      "output_specification": "Route stop sequences, loads, distances, and unassigned delivery IDs.",
+      "constraints": [
+        "Distances are nonnegative.",
+        "A delivery exceeding vehicle capacity is unassigned.",
+        "Nearest stop ties break by location ID."
+      ],
+      "input_scales": {
+        "small": "100 locations and 1000 deliveries",
+        "medium": "500 locations and 10000 deliveries",
+        "large": "2000 locations and 100000 deliveries"
+      },
+      "computational_profile": "CPU-intensive nearest-neighbor selection with matrix memory.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Repeatedly choose the nearest feasible unserved delivery from the current location; return to depot when no feasible delivery remains.",
+        "complexity": "O(d*l) selection work with a straightforward scan, plus O(l^2) matrix storage.",
+        "code": "def plan_routes(locations,distances,deliveries,capacity,depot):\n    locs=set(map(str,locations)); pending=[]; rejected=[]\n    for d in deliveries:\n        try:\n            did=str(d['id']); dest=str(d['destination']); w=float(d['weight'])\n            if dest not in locs or w<0 or w>capacity: raise ValueError('invalid delivery')\n            pending.append({'id':did,'destination':dest,'weight':w})\n        except (KeyError,TypeError,ValueError) as e: rejected.append({'id':str(d.get('id','')),'reason':str(e)})\n    routes=[]\n    while pending:\n        cur=str(depot); load=0; stops=[cur]; distance=0.0; chosen=[]\n        while True:\n            candidates=[d for d in pending if load+d['weight']<=capacity]\n            if not candidates: break\n            candidates.sort(key=lambda d:(distances[cur][d['destination']],d['destination'],d['id']))\n            d=candidates[0]; distance+=distances[cur][d['destination']]; cur=d['destination']; load+=d['weight']; stops.append(cur); chosen.append(d); pending.remove(d)\n        if not chosen: break\n        distance+=distances[cur][str(depot)]; stops.append(str(depot)); routes.append({'stops':stops,'load':load,'distance':distance,'deliveries':[d['id'] for d in chosen]})\n    return {'routes':routes,'unassigned':sorted([d['id'] for d in pending]+[x['id'] for x in rejected]),'rejected':rejected}"
+      },
+      "requirement_matrix": {
+        "R1": "validate delivery requests",
+        "R2": "enforce vehicle capacity",
+        "R3": "select feasible nearest stops",
+        "R4": "calculate route distances",
+        "R5": "report unassigned deliveries"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement the complete delivery route planner.",
+        "BUG_FIX": "Implement it, then fix capacity and unknown-location handling.",
+        "FEATURE_ADDITION": "Implement it, then add deterministic nearest-stop selection.",
+        "EDGE_CASE": "Handle zero capacity, oversized deliveries, equal distances, and empty requests.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Implement route planning.",
+          "Turn 2: Fix capacity validation.",
+          "Turn 3: Add deterministic nearest-stop selection.",
+          "Turn 4: Handle empty, oversized, and tied destinations."
+        ]
+      },
+      "correctness_criteria": "Routes, loads, distances, and unassigned IDs match reference semantics.",
+      "static_analysis_targets": [
+        "No network routing API.",
+        "Deterministic heuristic.",
+        "Explicit capacity checks."
+      ],
+      "dataset_validation": "Distance matrix plus large delivery workload."
+    },
+    {
+      "task_id": "RA-020",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "File deduplication and hashing utilities with original content-signature analyzer.",
+      "title": "Local File Duplicate Analyzer",
+      "difficulty": "hard",
+      "language": "Python",
+      "problem_description": "Analyze supplied local file metadata and content chunks to identify duplicate files using size prefiltering and content hashes, then calculate reclaimable storage.",
+      "functional_requirements": [
+        "Validate file metadata.",
+        "Group candidates by size.",
+        "Hash supplied file content.",
+        "Group exact duplicates.",
+        "Calculate reclaimable bytes."
+      ],
+      "input_specification": "Records with path, size, and bytes content. The utility operates entirely on supplied data.",
+      "output_specification": "Duplicate groups and total reclaimable bytes.",
+      "constraints": [
+        "Only identical complete byte content counts as duplicate.",
+        "First lexical path is retained as canonical.",
+        "Empty files can be duplicates."
+      ],
+      "input_scales": {
+        "small": "2000 files",
+        "medium": "20000 files",
+        "large": "100000 files"
+      },
+      "computational_profile": "I/O-like byte processing plus CPU hashing and memory for content.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Group records by size first, hash only candidates in each size group, then group by digest.",
+        "complexity": "O(total bytes) hashing plus O(n log n) sorting; O(n) metadata memory.",
+        "code": "import hashlib\n\ndef find_duplicates(files):\n    valid=[]\n    for f in files:\n        try:\n            p=str(f['path']).replace('\\\\','/'); data=bytes(f['content']); size=int(f['size'])\n            if size<0 or size!=len(data): continue\n            valid.append((p,size,data))\n        except (KeyError,TypeError,ValueError): continue\n    bysize={}\n    for p,s,d in valid: bysize.setdefault(s,[]).append((p,d))\n    groups=[]\n    reclaim=0\n    for size,rows in sorted(bysize.items()):\n        hashes={}\n        for p,d in rows: hashes.setdefault(hashlib.sha256(d).hexdigest(),[]).append(p)\n        for h,paths in sorted(hashes.items()):\n            paths=sorted(paths)\n            if len(paths)>1:\n                groups.append({'hash':h,'paths':paths,'size':size}); reclaim+=size*(len(paths)-1)\n    return {'duplicate_groups':groups,'reclaimable_bytes':reclaim}"
+      },
+      "requirement_matrix": {
+        "R1": "validate file metadata",
+        "R2": "prefilter by file size",
+        "R3": "hash content",
+        "R4": "identify duplicate groups",
+        "R5": "calculate reclaimable storage"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement the local duplicate analyzer.",
+        "BUG_FIX": "Implement it, then fix size validation and duplicate grouping.",
+        "FEATURE_ADDITION": "Implement it, then add reclaimable-byte reporting.",
+        "EDGE_CASE": "Handle empty files, same-size different contents, malformed sizes, and path ties.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Implement duplicate analysis.",
+          "Turn 2: Fix metadata and grouping validation.",
+          "Turn 3: Add reclaimable storage calculation.",
+          "Turn 4: Handle empty and same-size edge cases."
+        ]
+      },
+      "correctness_criteria": "Duplicate groups and reclaimable bytes exactly match content equality semantics.",
+      "static_analysis_targets": [
+        "Size prefilter before hashing.",
+        "No filesystem/network dependency.",
+        "Stable canonical ordering."
+      ],
+      "dataset_validation": "Byte-processing workload is suitable for runtime and memory evaluation."
+    },
+    {
+      "task_id": "RA-021",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Calendar conflict analysis and interval graph patterns with original personal schedule analyzer.",
+      "title": "Personal Schedule Conflict Analyzer",
+      "difficulty": "hard",
+      "language": "Python",
+      "problem_description": "Analyze a local event calendar, detect overlapping events, calculate daily free intervals, and identify high-conflict periods.",
+      "functional_requirements": [
+        "Normalize event intervals.",
+        "Detect all overlapping event pairs.",
+        "Calculate free intervals per day.",
+        "Compute conflict counts.",
+        "Return peak-conflict periods."
+      ],
+      "input_specification": "Events with ID, date, start minute, end minute, and title.",
+      "output_specification": "Conflict pairs, free intervals, and conflict statistics.",
+      "constraints": [
+        "Intervals are half-open.",
+        "Events crossing midnight are invalid.",
+        "Events with equal start times are sorted by ID."
+      ],
+      "input_scales": {
+        "small": "5000 events",
+        "medium": "50000 events",
+        "large": "500000 events"
+      },
+      "computational_profile": "CPU-intensive interval processing; naive conflict enumeration may be quadratic in dense schedules.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Group events by date, sort by start, enumerate overlapping pairs with an active-event list, and sweep minute boundaries for conflict counts.",
+        "complexity": "O(n log n + p) where p is the number of reported conflict pairs, plus sweep work.",
+        "code": "def schedule_conflicts(events):\n    days={}; invalid=0\n    for e in events:\n        try:\n            eid=str(e['id']); day=str(e['date'])[:10]; start=int(e['start']); end=int(e['end']); title=str(e.get('title',''))\n            if not eid or start<0 or end<=start or end>1440: raise ValueError\n            days.setdefault(day,[]).append((start,end,eid,title))\n        except (KeyError,TypeError,ValueError): invalid+=1\n    conflicts=[]; free={}; peaks={}\n    for day,rows in sorted(days.items()):\n        rows.sort(key=lambda x:(x[0],x[2])); active=[]; points={0,1440}\n        for start,end,eid,title in rows:\n            points.update((start,end)); active=[x for x in active if x[1]>start]\n            for x in active: conflicts.append(tuple(sorted((x[2],eid))))\n            active.append((start,end,eid,title))\n        merged=[]\n        for s,e,_,_ in sorted(rows):\n            if merged and s<=merged[-1][1]: merged[-1]=(merged[-1][0],max(merged[-1][1],e))\n            else: merged.append((s,e))\n        gaps=[]; cur=0\n        for s,e in merged:\n            if cur<s: gaps.append((cur,s))\n            cur=max(cur,e)\n        if cur<1440: gaps.append((cur,1440))\n        free[day]=gaps\n        peak=[]\n        for a,b in zip(sorted(points),sorted(points)[1:]):\n            count=sum(s<=a<e for s,e,_,_ in rows)\n            if count>0: peak.append((a,b,count))\n        peaks[day]=peak\n    return {'conflicts':sorted(set(conflicts)),'free_intervals':free,'conflict_periods':peaks,'invalid':invalid}"
+      },
+      "requirement_matrix": {
+        "R1": "normalize event intervals",
+        "R2": "detect overlapping event pairs",
+        "R3": "calculate free intervals",
+        "R4": "calculate conflict counts",
+        "R5": "report conflict periods"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement the complete schedule conflict analyzer.",
+        "BUG_FIX": "Implement it, then fix active-event and interval-boundary logic.",
+        "FEATURE_ADDITION": "Implement it, then add conflict-period statistics.",
+        "EDGE_CASE": "Handle adjacent events, empty days, exact boundaries, and dense overlaps.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Implement schedule analysis.",
+          "Turn 2: Fix overlap detection.",
+          "Turn 3: Add conflict-period statistics.",
+          "Turn 4: Handle interval boundaries and dense schedules."
+        ]
+      },
+      "correctness_criteria": "Conflict pairs, free intervals, and conflict periods match reference semantics.",
+      "static_analysis_targets": [
+        "Avoid comparing events across dates.",
+        "Half-open interval semantics.",
+        "Deterministic pair ordering."
+      ],
+      "dataset_validation": "Dense interval workloads provide substantial CPU pressure."
+    },
+    {
+      "task_id": "RA-022",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Configuration migration tools and original local settings migration utility.",
+      "title": "Configuration Migration Utility",
+      "difficulty": "hard",
+      "language": "Python",
+      "problem_description": "Migrate versioned nested configuration dictionaries between schema versions using ordered rename, default, conversion, and removal rules.",
+      "functional_requirements": [
+        "Validate source configuration.",
+        "Apply field renames.",
+        "Insert version-specific defaults.",
+        "Convert field values.",
+        "Remove deprecated fields."
+      ],
+      "input_specification": "Nested configuration, source version, target version, and migration-rule map.",
+      "output_specification": "Migrated configuration and ordered migration warnings.",
+      "constraints": [
+        "Migrations execute sequentially by version.",
+        "Dotted paths are supported.",
+        "Conversion failures preserve the original field and emit a warning."
+      ],
+      "input_scales": {
+        "small": "100 configurations with 50 fields each",
+        "medium": "1000 configurations with 100 fields each",
+        "large": "10000 configurations with 200 fields each"
+      },
+      "computational_profile": "Mixed CPU+memory recursive transformation.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Deep-copy each configuration, apply migration steps in ascending version order, resolve dotted paths, and collect warnings.",
+        "complexity": "O(c*f*s) where c is configs, f fields, and s migration steps.",
+        "code": "from copy import deepcopy\n\ndef migrate_config(cfg,source,target,rules):\n    out=deepcopy(cfg); warnings=[]\n    def get_parent(path,create=False):\n        parts=path.split('.'); cur=out\n        for p in parts[:-1]:\n            if p not in cur:\n                if not create: return None,parts[-1]\n                cur[p]={}\n            if not isinstance(cur[p],dict): return None,parts[-1]\n            cur=cur[p]\n        return cur,parts[-1]\n    for ver in sorted(v for v in rules if source<v<=target):\n        step=rules[ver]\n        for old,new in step.get('rename',{}).items():\n            p,k=get_parent(old)\n            if p is not None and k in p:\n                value=p.pop(k); np,nk=get_parent(new,True); np.setdefault(nk,value)\n        for path,value in step.get('defaults',{}).items():\n            p,k=get_parent(path,True); p.setdefault(k,deepcopy(value))\n        for path,fn in step.get('convert',{}).items():\n            p,k=get_parent(path)\n            if p is not None and k in p:\n                try: p[k]=fn(p[k])\n                except Exception: warnings.append((path,'conversion_failed'))\n        for path in step.get('remove',[]):\n            p,k=get_parent(path)\n            if p is not None: p.pop(k,None)\n    return out,[{'path':p,'warning':w} for p,w in sorted(warnings)]"
+      },
+      "requirement_matrix": {
+        "R1": "validate and copy source configuration",
+        "R2": "apply ordered renames",
+        "R3": "apply defaults",
+        "R4": "convert values",
+        "R5": "remove deprecated fields and report warnings"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement versioned configuration migration.",
+        "BUG_FIX": "Implement it, then fix migration ordering and nested-path handling.",
+        "FEATURE_ADDITION": "Implement it, then add value conversion rules.",
+        "EDGE_CASE": "Handle missing paths, failed conversions, empty configs, and already-renamed fields.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Implement migration.",
+          "Turn 2: Fix ordering and nested paths.",
+          "Turn 3: Add conversions.",
+          "Turn 4: Handle failed conversions and empty configurations."
+        ]
+      },
+      "correctness_criteria": "Final configuration and warnings match each sequential migration rule.",
+      "static_analysis_targets": [
+        "Deep-copy input.",
+        "No arbitrary code loading.",
+        "Deterministic migration ordering."
+      ],
+      "dataset_validation": "Versioned transformations are deterministic and offline."
+    },
+    {
+      "task_id": "RA-023",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Spreadsheet-style financial aggregation and original household cash-flow forecasting.",
+      "title": "Cash Flow Forecast Utility",
+      "difficulty": "hard",
+      "language": "Python",
+      "problem_description": "Forecast daily cash balances from recurring income and expense schedules, including one-time transactions and insufficient-balance alerts.",
+      "functional_requirements": [
+        "Normalize recurring schedules.",
+        "Generate scheduled transactions over a date range.",
+        "Apply one-time transactions.",
+        "Calculate daily balances.",
+        "Report low-balance dates."
+      ],
+      "input_specification": "Starting balance, start/end dates, recurring rules, and one-time transactions.",
+      "output_specification": "Daily balance series, total inflow/outflow, and low-balance alerts.",
+      "constraints": [
+        "Date range is inclusive.",
+        "Recurring frequencies are daily, weekly, and monthly.",
+        "Transactions on the same day are applied before balance evaluation."
+      ],
+      "input_scales": {
+        "small": "1 year and 100 recurring rules",
+        "medium": "5 years and 1000 recurring rules",
+        "large": "20 years and 10000 recurring rules"
+      },
+      "computational_profile": "CPU+memory date generation and aggregation.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Generate dates, collect recurring and one-time amounts into a daily delta map, then perform a cumulative balance scan.",
+        "complexity": "O(D+R*D/frequency+T), with O(D) daily memory.",
+        "code": "from datetime import date,timedelta\n\ndef forecast(start_balance,start_date,end_date,recurring=[],one_time=[],low_threshold=0):\n    s=date.fromisoformat(start_date); e=date.fromisoformat(end_date)\n    if e<s: raise ValueError('invalid range')\n    delta={}; cur=s\n    while cur<=e: delta[cur]=0.0; cur+=timedelta(days=1)\n    for r in recurring:\n        try:\n            amount=float(r['amount']); freq=str(r['frequency']).lower(); first=date.fromisoformat(r['start'])\n            if freq not in ('daily','weekly','monthly') or first< s: first=max(first,s)\n            d=first\n            while d<=e:\n                if d>=s: delta[d]+=amount\n                if freq=='daily': d+=timedelta(days=1)\n                elif freq=='weekly': d+=timedelta(days=7)\n                else:\n                    y=d.year+(d.month==12); m=1 if d.month==12 else d.month+1\n                    import calendar; day=min(d.day,calendar.monthrange(y,m)[1]); d=date(y,m,day)\n        except (KeyError,TypeError,ValueError): continue\n    for t in one_time:\n        try:\n            d=date.fromisoformat(str(t['date'])); amount=float(t['amount'])\n            if d in delta: delta[d]+=amount\n        except (KeyError,TypeError,ValueError): continue\n    balance=float(start_balance); daily=[]; low=[]\n    for d in sorted(delta):\n        balance+=delta[d]; daily.append({'date':d.isoformat(),'change':round(delta[d],2),'balance':round(balance,2)})\n        if balance<=low_threshold: low.append(d.isoformat())\n    return {'daily':daily,'low_balance_dates':low,'total_change':round(sum(delta.values()),2)}"
+      },
+      "requirement_matrix": {
+        "R1": "normalize recurring schedules",
+        "R2": "generate recurring transactions",
+        "R3": "apply one-time transactions",
+        "R4": "calculate daily balances",
+        "R5": "report low-balance dates"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement the cash-flow forecast utility.",
+        "BUG_FIX": "Implement it, then fix recurrence and month-boundary handling.",
+        "FEATURE_ADDITION": "Implement it, then add low-balance alerts.",
+        "EDGE_CASE": "Handle empty schedules, inclusive dates, month-end recurrence, and threshold equality.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Implement forecasting.",
+          "Turn 2: Fix recurrence handling.",
+          "Turn 3: Add low-balance alerts.",
+          "Turn 4: Handle date and threshold boundaries."
+        ]
+      },
+      "correctness_criteria": "Daily balances and alert dates match reference recurrence semantics.",
+      "static_analysis_targets": [
+        "No current-date dependence.",
+        "Deterministic monthly recurrence.",
+        "No external financial API."
+      ],
+      "dataset_validation": "Long-horizon date generation provides meaningful workload."
+    },
+    {
+      "task_id": "RA-024",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Data-quality profiling patterns and original local dataset profiler.",
+      "title": "Dataset Quality Profiler",
+      "difficulty": "hard",
+      "language": "Python",
+      "problem_description": "Profile a list-of-dictionaries dataset by field completeness, inferred types, distinct counts, numeric statistics, and duplicate rows.",
+      "functional_requirements": [
+        "Discover all fields.",
+        "Measure missingness.",
+        "Infer dominant field types.",
+        "Calculate numeric statistics.",
+        "Detect duplicate rows."
+      ],
+      "input_specification": "List of dictionaries with heterogeneous fields.",
+      "output_specification": "Per-field quality statistics and duplicate-row count.",
+      "constraints": [
+        "Null-like values include None and empty strings.",
+        "Type inference recognizes bool, int, float, and string.",
+        "Numeric statistics use valid numeric values only."
+      ],
+      "input_scales": {
+        "small": "5000 rows x 20 fields",
+        "medium": "50000 rows x 50 fields",
+        "large": "200000 rows x 100 fields"
+      },
+      "computational_profile": "Memory-intensive multi-field scanning and hashing.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Collect union of fields, scan each row for missing/type/distinct/numeric statistics, and serialize rows into deterministic representations for duplicate detection.",
+        "complexity": "O(n*f) time plus serialization cost; O(f*v+n) memory where v is distinct values.",
+        "code": "import json\n\ndef profile_dataset(rows):\n    fields=set();\n    for r in rows:\n        if isinstance(r,dict): fields.update(r)\n    stats={}\n    for f in sorted(fields):\n        present=[]; missing=0; types={}; distinct=set(); nums=[]\n        for r in rows:\n            if not isinstance(r,dict) or f not in r or r[f] in (None,''): missing+=1; continue\n            v=r[f]; typ='bool' if isinstance(v,bool) else 'int' if isinstance(v,int) else 'float' if isinstance(v,float) else 'string'\n            types[typ]=types.get(typ,0)+1; distinct.add(json.dumps(v,sort_keys=True,default=str))\n            if isinstance(v,(int,float)) and not isinstance(v,bool): nums.append(float(v))\n        total=len(rows); entry={'missing':missing,'completeness':(total-missing)/total if total else 0.0,'types':dict(sorted(types.items())),'distinct':len(distinct)}\n        if nums: entry['numeric']={'min':min(nums),'max':max(nums),'mean':sum(nums)/len(nums)}\n        stats[f]=entry\n    seen=set(); duplicates=0\n    for r in rows:\n        key=json.dumps(r,sort_keys=True,default=str)\n        if key in seen: duplicates+=1\n        seen.add(key)\n    return {'fields':stats,'duplicate_rows':duplicates,'row_count':len(rows)}"
+      },
+      "requirement_matrix": {
+        "R1": "discover dataset fields",
+        "R2": "measure field completeness",
+        "R3": "infer field types",
+        "R4": "calculate numeric statistics",
+        "R5": "detect duplicate rows"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement the complete dataset profiler.",
+        "BUG_FIX": "Implement it, then fix missing-field and boolean-type handling.",
+        "FEATURE_ADDITION": "Implement it, then add duplicate-row detection.",
+        "EDGE_CASE": "Handle empty data, heterogeneous fields, nested values, and numeric boundaries.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Implement dataset profiling.",
+          "Turn 2: Fix missing and type inference.",
+          "Turn 3: Add duplicate detection.",
+          "Turn 4: Handle empty, nested, and boundary values."
+        ]
+      },
+      "correctness_criteria": "Field statistics, numeric summaries, and duplicate counts match reference semantics.",
+      "static_analysis_targets": [
+        "No dataframe dependency required.",
+        "Deterministic field ordering.",
+        "No mutation of source rows."
+      ],
+      "dataset_validation": "Wide large datasets create substantial memory and CPU workload."
+    },
+    {
+      "task_id": "RA-025",
+      "category_code": "RA",
+      "category": "realistic_applications_utilities",
+      "source_type": "hybrid",
+      "source_inspiration": "Batch document processing and checksum/indexing patterns with original offline archive manifest builder.",
+      "title": "Archive Manifest Builder",
+      "difficulty": "hard",
+      "language": "Python",
+      "problem_description": "Build an offline archive manifest from supplied file-like records by normalizing paths, calculating checksums, grouping directories, and generating summary statistics.",
+      "functional_requirements": [
+        "Validate file-like records.",
+        "Normalize relative paths.",
+        "Calculate content checksums.",
+        "Aggregate directory statistics.",
+        "Generate deterministic manifest output."
+      ],
+      "input_specification": "Records with relative path and byte content.",
+      "output_specification": "Manifest entries containing path, size, checksum, and directory; directory summaries containing file count and bytes.",
+      "constraints": [
+        "Absolute paths are rejected.",
+        "Parent traversal components are rejected.",
+        "Checksum uses SHA-256.",
+        "Duplicate normalized paths retain the first valid record."
+      ],
+      "input_scales": {
+        "small": "2000 files",
+        "medium": "20000 files",
+        "large": "200000 files"
+      },
+      "computational_profile": "Mixed byte-processing, hashing, string processing, and aggregation.",
+      "tests": {
+        "public_tests": []
+      },
+      "reference_solution": {
+        "architecture_algorithm": "Validate safe relative paths, normalize them with POSIX semantics, hash content, retain first occurrence, then aggregate by directory.",
+        "complexity": "O(total bytes + n log n) time and O(n) metadata memory.",
+        "code": "import hashlib,posixpath\n\ndef build_manifest(files):\n    entries={}; dirs={}; rejected=0\n    for f in files:\n        try:\n            raw=str(f['path']).replace('\\\\','/'); data=bytes(f['content']); p=posixpath.normpath(raw)\n            if raw.startswith('/') or p in ('..','.') and raw!='.' or p.startswith('../') or '/..' in p.split('/'): raise ValueError('unsafe path')\n            if p not in entries:\n                directory=posixpath.dirname(p) or '.'; digest=hashlib.sha256(data).hexdigest(); entries[p]={'path':p,'size':len(data),'sha256':digest,'directory':directory}\n        except (KeyError,TypeError,ValueError): rejected+=1\n    for p,e in entries.items():\n        d=e['directory']; x=dirs.setdefault(d,{'file_count':0,'bytes':0}); x['file_count']+=1; x['bytes']+=e['size']\n    return {'manifest':[entries[p] for p in sorted(entries)],'directories':dict(sorted(dirs.items())),'rejected':rejected}"
+      },
+      "requirement_matrix": {
+        "R1": "validate file-like records",
+        "R2": "normalize safe relative paths",
+        "R3": "calculate SHA-256 checksums",
+        "R4": "aggregate directory statistics",
+        "R5": "generate deterministic manifest"
+      },
+      "interactions": {
+        "ONE_SHOT": "Implement the archive manifest builder.",
+        "BUG_FIX": "Implement it, then fix unsafe-path and duplicate-path handling.",
+        "FEATURE_ADDITION": "Implement it, then add directory-level statistics.",
+        "EDGE_CASE": "Handle empty files, root-level files, duplicate paths, and traversal attempts.",
+        "FULL_MULTI_TURN": [
+          "Turn 1: Implement manifest generation.",
+          "Turn 2: Fix path validation and duplicate handling.",
+          "Turn 3: Add directory summaries.",
+          "Turn 4: Handle empty files and path boundaries."
+        ]
+      },
+      "correctness_criteria": "Manifest entries, checksums, directory statistics, and rejection counts match reference semantics.",
+      "static_analysis_targets": [
+        "Path traversal protection.",
+        "No filesystem or network dependency.",
+        "Deterministic manifest ordering."
+      ],
+      "dataset_validation": "Large byte-hashing workload is deterministic and locally executable."
+    }
+  ]
 }

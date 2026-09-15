@@ -1,0 +1,186 @@
+import csv
+import argparse
+from collections import defaultdict
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+
+
+def parse_timestamp(value):
+    """Convert timestamp text into a datetime for chronological comparison."""
+    value = value.strip()
+
+    formats = [
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%dT%H:%M:%SZ",
+    ]
+
+    for fmt in formats:
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+
+    raise ValueError(f"Invalid timestamp: {value}")
+
+
+def process_csv(input_file, output_file):
+    # ---------------------------------------------------------
+    # 1. Remove duplicate (customer_id, timestamp) records.
+    #    Last occurrence in the input file wins.
+    # ---------------------------------------------------------
+    records = {}
+
+    with open(input_file, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+
+        required_columns = {
+            "customer_id",
+            "timestamp",
+            "status",
+            "amount",
+        }
+
+        if not required_columns.issubset(reader.fieldnames or []):
+            missing = required_columns - set(reader.fieldnames or [])
+            raise ValueError(
+                f"Missing required columns: {', '.join(sorted(missing))}"
+            )
+
+        for row in reader:
+            key = (
+                row["customer_id"],
+                row["timestamp"],
+            )
+
+            # Last occurrence wins.
+            records[key] = row
+
+    # ---------------------------------------------------------
+    # 2. Select the TRUE latest timestamp for each customer.
+    #    Input file ordering does not matter.
+    # ---------------------------------------------------------
+    latest_by_customer = {}
+
+    for (customer_id, timestamp), row in records.items():
+        current_timestamp = parse_timestamp(timestamp)
+
+        if customer_id not in latest_by_customer:
+            latest_by_customer[customer_id] = row
+        else:
+            existing_timestamp = parse_timestamp(
+                latest_by_customer[customer_id]["timestamp"]
+            )
+
+            if current_timestamp > existing_timestamp:
+                latest_by_customer[customer_id] = row
+
+    # ---------------------------------------------------------
+    # 3. Sort final customer records by customer_id.
+    # ---------------------------------------------------------
+    retained_records = sorted(
+        latest_by_customer.values(),
+        key=lambda row: row["customer_id"]
+    )
+
+    # ---------------------------------------------------------
+    # 4. Calculate status summary ONLY from retained records.
+    # ---------------------------------------------------------
+    status_summary = defaultdict(
+        lambda: {
+            "count": 0,
+            "total_amount": Decimal("0"),
+        }
+    )
+
+    for row in retained_records:
+        status = row["status"]
+
+        try:
+            amount = Decimal(row["amount"])
+        except InvalidOperation:
+            raise ValueError(
+                f"Invalid amount '{row['amount']}' "
+                f"for customer '{row['customer_id']}'"
+            )
+
+        status_summary[status]["count"] += 1
+        status_summary[status]["total_amount"] += amount
+
+    # ---------------------------------------------------------
+    # 5. Write deterministic customer-level output.
+    # ---------------------------------------------------------
+    with open(output_file, "w", newline="", encoding="utf-8") as f:
+        fieldnames = [
+            "customer_id",
+            "timestamp",
+            "status",
+            "amount",
+        ]
+
+        writer = csv.DictWriter(
+            f,
+            fieldnames=fieldnames
+        )
+
+        writer.writeheader()
+
+        for row in retained_records:
+            writer.writerow({
+                "customer_id": row["customer_id"],
+                "timestamp": row["timestamp"],
+                "status": row["status"],
+                "amount": row["amount"],
+            })
+
+    # ---------------------------------------------------------
+    # 6. Print status summary.
+    # ---------------------------------------------------------
+    print("\nStatus Summary")
+    print("=" * 50)
+    print(
+        f"{'Status':<15}"
+        f"{'Retained Records':>18}"
+        f"{'Total Amount':>17}"
+    )
+    print("-" * 50)
+
+    for status in sorted(status_summary):
+        count = status_summary[status]["count"]
+        total = status_summary[status]["total_amount"]
+
+        print(
+            f"{status:<15}"
+            f"{count:>18}"
+            f"{total:>17.2f}"
+        )
+
+    print("=" * 50)
+    print(f"Total retained customer records: {len(retained_records)}")
+    print(f"Output written to: {output_file}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Process customer event CSV files."
+    )
+
+    parser.add_argument(
+        "input",
+        help="Input CSV file"
+    )
+
+    parser.add_argument(
+        "output",
+        help="Output CSV file"
+    )
+
+    args = parser.parse_args()
+
+    process_csv(args.input, args.output)
+
+
+if __name__ == "__main__":
+    main()

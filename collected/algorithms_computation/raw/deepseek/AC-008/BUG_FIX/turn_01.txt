@@ -1,0 +1,120 @@
+I understand the problem. We need to maintain an integer array that supports:
+1. **Point replacement** – update a single element to a new value.
+2. **Inclusive range-sum queries** – return the sum of elements from index `l` to `r` (inclusive).
+
+We must process a sequence of operations and return the results of all range-sum queries in the order they appear.
+
+---
+
+## Key Constraints (typical for this problem)
+- Array size `n` can be up to \(10^5\) or \(10^6\).
+- Number of operations `q` can be up to \(10^5\) or \(10^6\).
+- Values and sums fit in 64-bit integers.
+
+---
+
+## Required Output
+A list of integers (or printed line by line) representing the result of each range-sum query, in the same order as the queries.
+
+---
+
+## Algorithm
+We use a **Fenwick tree (Binary Indexed Tree)** because:
+- Point update: `O(log n)`
+- Prefix sum query: `O(log n)`
+- Range sum: `prefix(r) - prefix(l-1)`
+
+We initialize the Fenwick tree with the initial array.
+
+For each operation:
+- If it's a point replacement:  
+  compute delta = new_value - old_value, update tree at position `i` by delta, and store the new value in the array.
+- If it's a range-sum query:  
+  compute `sum(r) - sum(l-1)` and append to results.
+
+---
+
+## Deterministic Python Solution (using only standard library)
+
+```python
+import sys
+
+class Fenwick:
+    def __init__(self, arr):
+        self.n = len(arr)
+        self.tree = [0] * (self.n + 1)
+        # Build tree in O(n) using linear construction
+        for i, val in enumerate(arr, 1):
+            self.tree[i] += val
+            j = i + (i & -i)
+            if j <= self.n:
+                self.tree[j] += self.tree[i]
+
+    def update(self, idx, delta):
+        # idx is 0-based, convert to 1-based
+        i = idx + 1
+        while i <= self.n:
+            self.tree[i] += delta
+            i += i & -i
+
+    def prefix_sum(self, idx):
+        # idx is 0-based index (inclusive), return sum[0..idx]
+        if idx < 0:
+            return 0
+        i = idx + 1
+        s = 0
+        while i > 0:
+            s += self.tree[i]
+            i -= i & -i
+        return s
+
+    def range_sum(self, l, r):
+        # inclusive, 0-based
+        return self.prefix_sum(r) - self.prefix_sum(l - 1)
+
+
+def main():
+    data = sys.stdin.buffer.read().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    arr = [int(next(it)) for _ in range(n)]
+    fenwick = Fenwick(arr)
+    
+    q = int(next(it))
+    results = []
+    for _ in range(q):
+        typ = int(next(it))
+        if typ == 0:  # point replacement: 0 i new_val
+            i = int(next(it))
+            new_val = int(next(it))
+            delta = new_val - arr[i]
+            arr[i] = new_val
+            fenwick.update(i, delta)
+        else:  # range sum query: 1 l r
+            l = int(next(it))
+            r = int(next(it))
+            results.append(str(fenwick.range_sum(l, r)))
+    
+    sys.stdout.write("\n".join(results))
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## Explanation of Input/Output Format
+- First line: integer `n`
+- Next line: `n` integers (initial array)
+- Next line: integer `q` (number of operations)
+- Then `q` lines, each either:
+  - `0 i new_val` → replace element at index `i` (0‑based) with `new_val`
+  - `1 l r` → output sum of `arr[l..r]` (inclusive, 0‑based)
+
+The program prints each query result on a new line, in order.
+
+---
+
+This solution is deterministic, uses only standard library, and runs in `O((n+q) log n)` time with `O(n)` memory.

@@ -1,0 +1,101 @@
+### Problem Identification & Understanding
+
+The goal is to analyze a set of half-open meeting intervals $[start, end)$ to determine:
+
+1. The **maximum number of simultaneously active meetings** (peak concurrency).
+2. The **sorted list of timestamps** where a new peak concurrency begins (i.e., transitions from $max\_meetings - 1$ to $max\_meetings$).
+
+Because intervals are half-open $[start, end)$, a meeting ending at time $T$ releases its resource before or at the exact instant another meeting starting at time $T$ begins. Therefore, at any time $T$, end events must be processed **before** start events.
+
+---
+
+### Key Constraints & Required Output
+
+* **Input Format:** A list of intervals (tuples or lists of length 2: `[start, end]`), where $start < end$.
+* **Interval Type:** Half-open $[start, end)$. End events at time $T$ take precedence over start events at time $T$.
+* **Output:** A tuple/pair: `(max_simultaneous_meetings, sorted_peak_start_times)`.
+* **Determinism:** Strictly deterministic execution using only Python standard library.
+
+---
+
+### Algorithm Description
+
+1. **Event Transformation:** Transform each interval $[start, end)$ into two discrete events:
+* A **start event**: `(start_time, +1)`
+* An **end event**: `(end_time, -1)`
+
+
+2. **Sweep-Line Sorting:** Sort all events primarily by timestamp ascending. To satisfy the half-open interval property, sort secondarily by event type such that end events (`-1`) are ordered before start events (`+1`).
+3. **Sweep Execution:** Iterate through sorted events while maintaining a running count of active meetings `current_active` and tracking `max_active`.
+4. **Peak Detection:** Whenever `current_active` increases to exceed `max_active`:
+* Update `max_active = current_active`.
+* Reset `peak_start_times = [timestamp]`.
+If `current_active` increases and reaches an already established `max_active` (after having dropped below), append the current `timestamp` to `peak_start_times`.
+
+
+
+---
+
+```python
+def max_simultaneous_meetings(intervals: list[tuple[int, int]]) -> tuple[int, list[int]]:
+    """
+    Finds the maximum number of simultaneously active half-open meeting intervals [start, end)
+    and the sorted timestamps at which that maximum level of concurrency begins.
+
+    Args:
+        intervals: List of tuples/lists representing [start, end) meeting times.
+
+    Returns:
+        A tuple containing:
+            - int: Maximum number of simultaneous meetings.
+            - list[int]: Sorted timestamps where maximum concurrency is first reached.
+    """
+    if not intervals:
+        return 0, []
+
+    # End events (-1) come before start events (+1) at the same timestamp
+    # because intervals are half-open [start, end).
+    events = []
+    for start, end in intervals:
+        events.append((start, 1))   # Start meeting
+        events.append((end, -1))   # End meeting
+
+    # Sort primarily by timestamp ascending, secondarily by change (-1 before 1)
+    events.sort(key=lambda x: (x[0], x[1]))
+
+    max_active = 0
+    current_active = 0
+    peak_start_times = []
+
+    for time, change in events:
+        previous_active = current_active
+        current_active += change
+
+        # Peak reached via a start event
+        if change > 0:
+            if current_active > max_active:
+                max_active = current_active
+                peak_start_times = [time]
+            elif current_active == max_active and previous_active < max_active:
+                if not peak_start_times or peak_start_times[-1] != time:
+                    peak_start_times.append(time)
+
+    return max_active, peak_start_times
+
+
+if __name__ == "__main__":
+    # Test cases
+    sample_intervals = [
+        (1, 4),
+        (2, 5),
+        (4, 6),
+        (5, 8),
+        (5, 7),
+        (7, 9)
+    ]
+    
+    max_count, peak_times = max_simultaneous_meetings(sample_intervals)
+    print(f"Max Simultaneous Meetings: {max_count}")
+    print(f"Peak Start Times: {peak_times}")
+
+```

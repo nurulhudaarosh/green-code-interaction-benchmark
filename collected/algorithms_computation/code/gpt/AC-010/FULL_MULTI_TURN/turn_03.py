@@ -1,0 +1,207 @@
+def matrix_chain_planner(p, include_operation_summary=False):
+    """
+    Matrix Chain Planner.
+
+    Given matrix dimensions p = [p0, p1, ..., pn], find:
+      - minimum scalar multiplication cost
+      - optimal parenthesization
+
+    Tie-breaking:
+      Equal-cost choices use the smallest split index k.
+
+    Output when include_operation_summary=False:
+        {
+            "cost": ...,
+            "parenthesization": ...
+        }
+
+    Output when include_operation_summary=True:
+        {
+            "cost": ...,
+            "parenthesization": ...,
+            "operation_summary": ...
+        }
+
+    operation_summary:
+        Number of split decisions evaluated by the interval
+        dynamic-programming algorithm.
+    """
+
+    # -------------------------
+    # Input validation
+    # -------------------------
+    if not isinstance(p, list):
+        raise TypeError("p must be a list")
+
+    if len(p) < 2:
+        raise ValueError("p must contain at least two dimensions")
+
+    if any(
+        not isinstance(x, int) or isinstance(x, bool) or x <= 0
+        for x in p
+    ):
+        raise ValueError("All dimensions must be positive integers")
+
+    if not isinstance(include_operation_summary, bool):
+        raise TypeError("include_operation_summary must be a boolean")
+
+    # Number of matrices
+    n = len(p) - 1
+
+    # dp[i][j] = minimum cost for multiplying Ai ... Aj
+    dp = [[0] * (n + 1) for _ in range(n + 1)]
+
+    # split[i][j] = optimal split index k
+    split = [[0] * (n + 1) for _ in range(n + 1)]
+
+    # Counts every candidate split k evaluated.
+    operation_count = 0
+
+    # -------------------------
+    # Interval Dynamic Programming
+    # -------------------------
+    for length in range(2, n + 1):
+        for i in range(1, n - length + 2):
+            j = i + length - 1
+
+            best_cost = float("inf")
+            best_k = None
+
+            # Smallest k is considered first.
+            # Strict '<' preserves the smallest k on ties.
+            for k in range(i, j):
+                operation_count += 1
+
+                cost = (
+                    dp[i][k]
+                    + dp[k + 1][j]
+                    + p[i - 1] * p[k] * p[j]
+                )
+
+                if cost < best_cost:
+                    best_cost = cost
+                    best_k = k
+
+            dp[i][j] = best_cost
+            split[i][j] = best_k
+
+    # -------------------------
+    # Build parenthesization
+    # -------------------------
+    def build_parenthesization(i, j):
+        if i == j:
+            return f"A{i}"
+
+        k = split[i][j]
+
+        left = build_parenthesization(i, k)
+        right = build_parenthesization(k + 1, j)
+
+        return f"({left} × {right})"
+
+    # -------------------------
+    # Preserve original output
+    # -------------------------
+    result = {
+        "cost": dp[1][n],
+        "parenthesization": build_parenthesization(1, n)
+    }
+
+    # Add the new field only when explicitly requested.
+    if include_operation_summary:
+        result["operation_summary"] = operation_count
+
+    return result
+
+
+# =========================================================
+# TESTS
+# =========================================================
+
+# Original behavior: feature not requested.
+assert matrix_chain_planner([5, 10]) == {
+    "cost": 0,
+    "parenthesization": "A1"
+}
+
+assert matrix_chain_planner([10, 20, 30]) == {
+    "cost": 6000,
+    "parenthesization": "(A1 × A2)"
+}
+
+# Original tie-breaking rule:
+# [2, 2, 2, 2] has equal-cost choices.
+# Smallest split k=1 must be selected.
+assert matrix_chain_planner([2, 2, 2, 2]) == {
+    "cost": 16,
+    "parenthesization": "((A1 × A2) × A3)"
+}
+
+# Feature enabled.
+assert matrix_chain_planner(
+    [2, 2, 2, 2],
+    include_operation_summary=True
+) == {
+    "cost": 16,
+    "parenthesization": "((A1 × A2) × A3)",
+    "operation_summary": 3
+}
+
+# For 4 matrices, the number of candidate splits is:
+# length 2: 3 decisions
+# length 3: 2 decisions
+# length 4: 1 decision
+# total = 6
+result = matrix_chain_planner(
+    [10, 20, 30, 40, 30],
+    include_operation_summary=True
+)
+
+assert result["operation_summary"] == 6
+
+# Classic matrix-chain example.
+assert matrix_chain_planner([30, 35, 15, 5, 10, 20, 25]) == {
+    "cost": 15125,
+    "parenthesization": "((A1 × (A2 × A3)) × ((A4 × A5) × A6))"
+}
+
+# Invalid input tests.
+try:
+    matrix_chain_planner([10])
+    assert False
+except ValueError:
+    pass
+
+try:
+    matrix_chain_planner([10, 0, 20])
+    assert False
+except ValueError:
+    pass
+
+try:
+    matrix_chain_planner([10, -5, 20])
+    assert False
+except ValueError:
+    pass
+
+try:
+    matrix_chain_planner("10,20,30")
+    assert False
+except TypeError:
+    pass
+
+try:
+    matrix_chain_planner([10, 20], include_operation_summary="yes")
+    assert False
+except TypeError:
+    pass
+
+
+# Demonstration
+print(matrix_chain_planner([2, 2, 2, 2]))
+print(matrix_chain_planner(
+    [2, 2, 2, 2],
+    include_operation_summary=True
+))
+
+print("All tests passed.")

@@ -1,0 +1,90 @@
+Here’s an efficient Python solution that processes the file **line by line**, so it can handle files with millions of lines without loading the whole file into memory.
+
+```python
+import re
+from collections import Counter
+
+
+def word_frequency(file_path, top_n=10):
+    """
+    Compute word frequencies from a plain-text file.
+
+    Words are:
+      - case-insensitive
+      - made of letters/digits
+      - may contain internal apostrophes (e.g. don't, user's)
+
+    Returns:
+      - top_n: list of (word, count)
+      - total_words: total number of words
+      - unique_words: number of distinct words
+    """
+
+    # Matches words such as:
+    # hello
+    # hello123
+    # don't
+    # user's
+    word_pattern = re.compile(r"[A-Za-z0-9]+(?:'[A-Za-z0-9]+)*")
+
+    counter = Counter()
+    total_words = 0
+
+    with open(file_path, "r", encoding="utf-8") as file:
+        for line in file:
+            words = word_pattern.findall(line.lower())
+
+            counter.update(words)
+            total_words += len(words)
+
+    unique_words = len(counter)
+    top_words = counter.most_common(top_n)
+
+    return top_words, total_words, unique_words
+
+
+# Example usage
+file_path = "input.txt"
+top_words, total_words, unique_words = word_frequency(file_path, top_n=10)
+
+print("Top words:")
+for word, count in top_words:
+    print(f"{word}: {count}")
+
+print("\nSummary:")
+print(f"Total words: {total_words}")
+print(f"Unique words: {unique_words}")
+```
+
+### Example output
+
+If `input.txt` contains:
+
+```text
+Hello world! Hello Python.
+Python is great. Don't you think Python is great?
+```
+
+Output:
+
+```text
+Top words:
+python: 3
+hello: 2
+great: 2
+world: 1
+is: 2
+don't: 1
+you: 1
+think: 1
+
+Summary:
+Total words: 14
+Unique words: 8
+```
+
+**Complexity:**
+
+* Time: **O(total number of characters/words)**
+* Memory: **O(number of unique words)**
+* The file itself is processed **line by line**, making it suitable for very large files.

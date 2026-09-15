@@ -1,0 +1,105 @@
+def kmeans_1d(points, k, include_operation_summary=False):
+    """
+    One-dimensional K-Cluster Partition (optimal contiguous k-means in 1D).
+
+    Parameters
+    ----------
+    points : list[float]
+        Sorted (non-decreasing) 1D points.
+    k : int
+        Number of contiguous clusters, 1 <= k <= n.
+    include_operation_summary : bool, default False
+        If True, also return a dict summarizing the number of major
+        computational decisions made by the algorithm.
+
+    Returns
+    -------
+    If include_operation_summary is False:
+        (cost, boundaries)
+    If include_operation_summary is True:
+        (cost, boundaries, operation_summary)
+    """
+    n = len(points)
+    if k <= 0 or k > n:
+        raise ValueError("k must be between 1 and n")
+
+    # ---- Prefix sums ----
+    pref = [0.0] * (n + 1)
+    pref2 = [0.0] * (n + 1)
+    for i, x in enumerate(points):
+        pref[i + 1] = pref[i] + x
+        pref2[i + 1] = pref2[i] + x * x
+
+    def interval_cost(i, j):
+        cnt = j - i + 1
+        s = pref[j + 1] - pref[i]
+        s2 = pref2[j + 1] - pref2[i]
+        return s2 - (s * s) / cnt
+
+    INF = float("inf")
+    dp = [[INF] * (n + 1) for _ in range(k + 1)]
+    split = [[-1] * (n + 1) for _ in range(k + 1)]
+
+    # ---- Operation counter (only used if requested) ----
+    operations = 0
+
+    # ---- Base case: m = 1 ----
+    for i in range(1, n + 1):
+        dp[1][i] = interval_cost(0, i - 1)
+        split[1][i] = 0
+        operations += 1  # one base-case decision per i
+
+    # ---- DP for m >= 2 ----
+    for m in range(2, k + 1):
+        for i in range(m, n + 1):
+            best = INF
+            best_p = -1
+            for p in range(m - 1, i):
+                c = dp[m - 1][p] + interval_cost(p, i - 1)
+                operations += 1  # one major decision per candidate
+                if c < best:
+                    best = c
+                    best_p = p
+            dp[m][i] = best
+            split[m][i] = best_p
+
+    # ---- Reconstruct boundaries (not counted as decisions) ----
+    boundaries = []
+    i = n
+    for m in range(k, 0, -1):
+        p = split[m][i]
+        boundaries.append((p, i - 1))
+        i = p
+    boundaries.reverse()
+
+    cost = dp[k][n]
+
+    if not include_operation_summary:
+        return cost, boundaries
+
+    operation_summary = {
+        "operations": operations,
+        "description": (
+            "Number of DP transition candidate evaluations "
+            "plus base-case assignments"
+        ),
+    }
+    return cost, boundaries, operation_summary
+
+
+if __name__ == "__main__":
+    pts = [1.0, 2.0, 3.0, 10.0, 11.0, 12.0, 20.0]
+    k = 3
+
+    # Original behavior (feature disabled)
+    cost, bounds = kmeans_1d(pts, k)
+    print("Original outputs (feature disabled):")
+    print("  cost       =", cost)
+    print("  boundaries =", bounds)
+
+    # Extended behavior (feature enabled)
+    cost, bounds, summary = kmeans_1d(pts, k, include_operation_summary=True)
+    print("\nExtended outputs (feature enabled):")
+    print("  cost              =", cost)
+    print("  boundaries        =", bounds)
+    print("  operation_summary =", summary)

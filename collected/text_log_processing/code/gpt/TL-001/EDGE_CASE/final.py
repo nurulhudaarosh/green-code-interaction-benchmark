@@ -1,0 +1,38 @@
+import re
+from collections import Counter
+
+
+def word_frequency(file_path, top_n):
+    # Word pattern:
+    # letters/digits, with optional internal apostrophes
+    pattern = re.compile(r"[A-Za-z0-9]+(?:'[A-Za-z0-9]+)*")
+
+    counter = Counter()
+    total_words = 0
+
+    # Read line by line to handle very large files
+    with open(file_path, "r", encoding="utf-8") as file:
+        for line in file:
+            words = pattern.findall(line.lower())
+            counter.update(words)
+            total_words += len(words)
+
+    unique_words = len(counter)
+    top_words = counter.most_common(top_n)
+
+    return {
+        "top_words": top_words,
+        "total_words": total_words,
+        "unique_words": unique_words
+    }
+
+
+# Example
+result = word_frequency("input.txt", 10)
+
+print("Top words:")
+for word, count in result["top_words"]:
+    print(f"{word}: {count}")
+
+print(f"\nTotal words: {result['total_words']}")
+print(f"Unique words: {result['unique_words']}")

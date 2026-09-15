@@ -1,0 +1,1767 @@
+{
+"dataset_metadata": {
+"dataset_name": "AI_Code_Interaction_Energy_Benchmark",
+"dataset_version": "candidate-1.0",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"candidate_task_count": 25,
+"target_final_task_count": 20,
+"language": "Python",
+"execution_environment": [
+"Jupyter",
+"Google Colab"
+]
+},
+"tasks": [
+{
+"task_id": "TL-001",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "benchmark_inspired",
+"source_inspiration": "Common web server log aggregation patterns",
+"title": "Apache Access Log IP Frequency & Bandwidth Aggregator",
+"difficulty": "Medium",
+"language": "Python",
+"problem_description": "Parse a large volume of Apache/Nginx combined log format lines, extract client IP addresses and transfer bytes, aggregate total request counts and total bytes transferred per IP, and output the top N IPs sorted by bandwidth consumption.",
+"functional_requirements": [
+"R1: Parse standard combined log format strings using regex or string splitting.",
+"R2: Aggregate request count and sum transfer bytes per unique IP address.",
+"R3: Handle malformed log lines gracefully by skipping or recording parse errors.",
+"R4: Sort aggregated results descending by total bytes, then ascending by IP address.",
+"R5: Return the top N results as a list of dictionaries."
+],
+"input_specification": "A list of log strings and an integer N representing the top limit.",
+"output_specification": "A list of dicts with keys: 'ip', 'requests', 'bytes'.",
+"constraints": "Memory efficient handling of large input lists; pure standard library Python.",
+"input_scales": {
+"small": "1,000 log lines",
+"medium": "100,000 log lines",
+"large": "5,000,000 log lines"
+},
+"computational_profile": "CPU-intensive regex parsing and sorting, I/O-bound scaling.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": ["127.0.0.1 - - [10/Oct/2023:13:55:36 +0000] "GET /index.html HTTP/1.0" 200 1024"], "expected": [{"ip": "127.0.0.1", "requests": 1, "bytes": 1024}]},
+{"type": "boundary", "input": [], "expected": []},
+{"type": "empty/minimal", "input": ["malformed log line"], "expected": []},
+{"type": "large", "input": ["192.168.1.1 - - [10/Oct/2023:13:55:36 +0000] "GET / HTTP/1.1" 200 512"] * 1000, "expected": [{"ip": "192.168.1.1", "requests": 1000, "bytes": 512000}]},
+{"type": "unusual valid input", "input": ["::1 - - [10/Oct/2023:13:55:36 +0000] "GET / HTTP/1.1" 200 -"], "expected": [{"ip": "::1", "requests": 1, "bytes": 0}]}
+],
+"hidden_test_specs": [
+{"type": "large_mixed_malformed", "description": "Tests 500k lines with 10% malformed data and multiple IPs."},
+{"type": "tie_breaker", "description": "Tests sorting stability when byte counts are identical."},
+{"type": "zero_byte_handling", "description": "Tests handling of '-' byte fields in logs."},
+{"type": "ipv6_addresses", "description": "Tests correct parsing of diverse IPv6 client representations."},
+{"type": "memory_stress", "description": "Evaluates generator-based parsing overhead on large datasets."}
+]
+},
+"reference_solution": {
+"algorithm": "Regex matching per line, aggregate into a hash map, sort by tuple key.",
+"complexity": "Time: O(M + K log K) where M is lines, K is unique IPs. Space: O(K).",
+"code": "import re\nfrom collections import defaultdict\n\nLOG_PATTERN = re.compile(r'^(\S+) \S+ \S+ \[([^\]]+)\] "[A-Z]+ \S+ HTTP/[0-9.]+" \d+ ([\d-]+)')\n\ndef aggregate_logs(log_lines, top_n=10):\n    stats = defaultdict(lambda: {'requests': 0, 'bytes': 0})\n    for line in log_lines:\n        m = LOG_PATTERN.match(line)\n        if m:\n            ip, *, b_str = m.groups()\n            b = int(b_str) if b_str != '-' else 0\n            stats[ip]['requests'] += 1\n            stats[ip]['bytes'] += b\n    sorted_ips = sorted(stats.items(), key=lambda x: (-x[1]['bytes'], x[0]))\n    return [{'ip': ip, 'requests': v['requests'], 'bytes': v['bytes']} for ip, v in sorted_ips[:top_n]]"
+},
+"requirement_matrix": {
+"R1": "Parse log strings",
+"R2": "Aggregate count and bytes",
+"R3": "Handle malformed lines",
+"R4": "Sort descending bytes, ascending IP",
+"R5": "Return top N list of dicts"
+},
+"interactions": {
+"one_shot": "Implement the Apache log aggregator meeting all requirements in a single response.",
+"bug_fix": "Fix an issue where byte fields containing '-' cause ValueError during int conversion.",
+"feature_addition": "Add support for filtering logs by an optional status code parameter.",
+"edge_case": "Ensure correct sorting and aggregation when log inputs contain IPv6 addresses.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement the base Apache log aggregator for R1, R2, R3, R4, R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Fix bug where '-' bytes cause conversion crashes.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Add status code filtering feature.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle edge case for IPv6 formatting correctly.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Output matches expected aggregated dictionaries precisely for all test suites.",
+"static_analysis_targets": ["cyclomatic_complexity", "pep8_compliance"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-002",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "original_realistic",
+"source_inspiration": "Distributed microservice log stream chronological merging",
+"title": "Multi-File JSON Log Stream Merger and Timestamp Sorter",
+"difficulty": "Medium",
+"language": "Python",
+"problem_description": "Merge multiple streams of JSON log lines from different sources, parse ISO timestamps, and output a single chronologically sorted stream of log objects.",
+"functional_requirements": [
+"R1: Read and parse JSON strings from multiple independent collections.",
+"R2: Extract ISO 8601 timestamps from a specified key in each JSON object.",
+"R3: Merge all streams into a single unified sequence.",
+"R4: Sort records chronologically by timestamp.",
+"R5: Handle invalid JSON or missing timestamp keys cleanly."
+],
+"input_specification": "A list of lists containing JSON-formatted log strings, and a timestamp key name.",
+"output_specification": "A sorted list of parsed dictionaries.",
+"constraints": "Pure Python, heap-based merging or efficient sorting for large streams.",
+"input_scales": {
+"small": "3 streams of 100 records each",
+"medium": "5 streams of 10,000 records each",
+"large": "10 streams of 500,000 records each"
+},
+"computational_profile": "Memory-intensive sorting and CPU-bound JSON parsing.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": [[ '{"time": "2023-10-01T12:00:00Z", "msg": "a"}'], ['{"time": "2023-10-01T11:00:00Z", "msg": "b"}']], "expected": [{"time": "2023-10-01T11:00:00Z", "msg": "b"}, {"time": "2023-10-01T12:00:00Z", "msg": "a"}]},
+{"type": "boundary", "input": [[], []], "expected": []},
+{"type": "empty/minimal", "input": [['invalid json'], ['{"time": "2023-10-01T12:00:00Z"}']], "expected": [{"time": "2023-10-01T12:00:00Z"}]},
+{"type": "large", "input": [[f'{{"time": "2023-10-01T00:0{i}:00Z"}}' for i in range(5)]], "expected": [{ "time": f"2023-10-01T00:0{i}:00Z" } for i in range(5)]},
+{"type": "unusual valid input", "input": [['{"time": "2023-10-01T12:00:00.123456Z"}']], "expected": [{"time": "2023-10-01T12:00:00.123456Z"}]}
+],
+"hidden_test_specs": [
+{"type": "heap_merge_efficiency", "description": "Tests heap-based k-way merge on massive streams."},
+{"type": "timezone_normalization", "description": "Tests handling of 'Z' vs offset timezones."},
+{"type": "missing_key", "description": "Tests robust fallback when timestamp key is absent."},
+{"type": "malformed_json", "description": "Tests graceful recovery on syntax errors."},
+{"type": "exact_timestamp_ties", "description": "Tests secondary sort stability on identical timestamps."}
+]
+},
+"reference_solution": {
+"algorithm": "Parse JSON objects, filter out invalid ones, use Python's Timsort on parsed datetime objects.",
+"complexity": "Time: O(N log N) where N is total records. Space: O(N).",
+"code": "import json\nfrom datetime import datetime\n\ndef merge_and_sort_logs(stream_lists, time_key='time'):\n    all_records = []\n    for stream in stream_lists:\n        for line in stream:\n            try:\n                obj = json.loads(line)\n                if time_key in obj:\n                    dt = datetime.fromisoformat(obj[time_key].replace('Z', '+00:00'))\n                    all_records.append((dt, obj))\n            except (json.JSONDecodeError, ValueError, AttributeError):\n                continue\n    all_records.sort(key=lambda x: x[0])\n    return [item[1] for item in all_records]"
+},
+"requirement_matrix": {
+"R1": "Read and parse JSON",
+"R2": "Extract ISO timestamps",
+"R3": "Merge streams",
+"R4": "Sort chronologically",
+"R5": "Handle invalid/missing keys"
+},
+"interactions": {
+"one_shot": "Implement JSON log merger meeting R1-R5.",
+"bug_fix": "Fix crash when timestamp string lacks timezone specifier.",
+"feature_addition": "Add secondary sorting by log level severity when timestamps match.",
+"edge_case": "Handle fractional seconds correctly across different python versions.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement the base log merger for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Fix timezone parsing issues.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Add secondary sort by severity.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle fractional seconds edge case.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Streams correctly merged and sorted chronologically.",
+"static_analysis_targets": ["type_hinting", "error_handling"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-003",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "benchmark_inspired",
+"source_inspiration": "SIEM security event extraction patterns",
+"title": "Regex-Based Security Incident Extractor from Syslogs",
+"difficulty": "Medium",
+"language": "Python",
+"problem_description": "Scan raw system logs to extract failed SSH login attempts, privilege escalation events (sudo), and unauthorized access warnings using compiled regular expressions.",
+"functional_requirements": [
+"R1: Compile robust regex patterns for SSH failure, sudo usage, and unauthorized access.",
+"R2: Process line-by-line to match and extract timestamp, hostname, and event type.",
+"R3: Group extracted incidents by event category.",
+"R4: Count total occurrences per category.",
+"R5: Output a structured summary dictionary."
+],
+"input_specification": "A list of syslog strings.",
+"output_specification": "A dictionary with categories as keys and list of details + count as values.",
+"constraints": "Efficient regex compilation and matching.",
+"input_scales": {
+"small": "500 syslog lines",
+"medium": "50,000 syslog lines",
+"large": "2,000,000 syslog lines"
+},
+"computational_profile": "REGEX/PATTERN-intensive.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": ["Oct 10 13:55:36 server1 sshd[123]: Failed password for root from 192.168.1.50 port 22"], "expected": {"ssh_failures": {"count": 1, "events": [{"timestamp": "Oct 10 13:55:36", "host": "server1", "detail": "Failed password for root from 192.168.1.50"}]}, "sudo_usage": {"count": 0, "events": []}, "unauthorized": {"count": 0, "events": []}}},
+{"type": "boundary", "input": [], "expected": {"ssh_failures": {"count": 0, "events": []}, "sudo_usage": {"count": 0, "events": []}, "unauthorized": {"count": 0, "events": []}}},
+{"type": "empty/minimal", "input": ["random unrelated line"], "expected": {"ssh_failures": {"count": 0, "events": []}, "sudo_usage": {"count": 0, "events": []}, "unauthorized": {"count": 0, "events": []}}},
+{"type": "large", "input": ["Oct 10 13:55:36 s1 sshd[1]: Failed password for user from 10.0.0.1"] * 500, "expected": "matches 500 ssh failures"},
+{"type": "unusual valid input", "input": ["Oct 10 13:55:36 host-xyz sudo:   user : TTY=pts/0 ; PWD=/home ; USER=root ; COMMAND=/bin/bash"], "expected": {"ssh_failures": {"count": 0, "events": []}, "sudo_usage": {"count": 1, "events": [{"timestamp": "Oct 10 13:55:36", "host": "host-xyz", "detail": "COMMAND=/bin/bash"}]}, "unauthorized": {"count": 0, "events": []}}}
+],
+"hidden_test_specs": [
+{"type": "complex_regex_performance", "description": "Tests backtracking resilience on large malformed inputs."},
+{"type": "multiple_events_per_line", "description": "Handles logs with compound formats."},
+{"type": "hostname_variations", "description": "Tests FQDN vs short hostnames."},
+{"type": "empty_categories", "description": "Ensures zero counts are properly initialized."},
+{"type": "case_insensitivity", "description": "Handles minor variations in syslog keyword casing."}
+]
+},
+"reference_solution": {
+"algorithm": "Pre-compile regex patterns, iterate and match, aggregate into category buckets.",
+"complexity": "Time: O(N * L) where N is lines, L is average line length. Space: O(N).",
+"code": "import re\n\nSSH_FAIL = re.compile(r'^([A-Z][a-z]{2}\s+\d+\s+\d+:\d+:\d+)\s+(\S+)\s+sshd\[\d+\]:\s+Failed password for (?:invalid user )?(\S+) from (\S+)')\nSUDO_USE = re.compile(r'^([A-Z][a-z]{2}\s+\d+\s+\d+:\d+:\d+)\s+(\S+)\s+sudo:\s+\S+\s*:\s+([^;]+)')\nUNAUTH = re.compile(r'^([A-Z][a-z]{2}\s+\d+\s+\d+:\d+:\d+)\s+(\S+)\s+.*(?:Unauthorized|Access denied).*')\n\ndef extract_security_incidents(syslog_lines):\n    res = {\n        'ssh_failures': {'count': 0, 'events': []},\n        'sudo_usage': {'count': 0, 'events': []},\n        'unauthorized': {'count': 0, 'events': []}\n    }\n    for line in syslog_lines:\n        m1 = SSH_FAIL.match(line)\n        if m1:\n            ts, host, user, ip = m1.groups()\n            res['ssh_failures']['count'] += 1\n            res['ssh_failures']['events'].append({'timestamp': ts, 'host': host, 'detail': f'Failed password for {user} from {ip}'})\n            continue\n        m2 = SUDO_USE.match(line)\n        if m2:\n            ts, host, cmd = m2.groups()\n            res['sudo_usage']['count'] += 1\n            res['sudo_usage']['events'].append({'timestamp': ts, 'host': host, 'detail': cmd.strip()})\n            continue\n        m3 = UNAUTH.match(line)\n        if m3:\n            ts, host = m3.groups()\n            res['unauthorized']['count'] += 1\n            res['unauthorized']['events'].append({'timestamp': ts, 'host': host, 'detail': line.strip()})\n    return res"
+},
+"requirement_matrix": {
+"R1": "Compile regex patterns",
+"R2": "Extract timestamp, host, event",
+"R3": "Group by category",
+"R4": "Count occurrences",
+"R5": "Output structured summary"
+},
+"interactions": {
+"one_shot": "Implement security incident extractor meeting R1-R5.",
+"bug_fix": "Fix regex failure when invalid user prefix is present in SSH logs.",
+"feature_addition": "Add extraction of source IP addresses for unauthorized access warnings.",
+"edge_case": "Handle unusual hostnames containing dots and hyphens correctly.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement base syslog security extractor for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Fix invalid user regex matching.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Add source IP extraction for unauthorized events.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Support FQDN and hyphenated hostnames.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Correct event counts and structured extraction matching input events.",
+"static_analysis_targets": ["regex_complexity", "maintainability"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-004",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "original_realistic",
+"source_inspiration": "Corpus analysis and concordance generation",
+"title": "Large Text Document Concordance and Word Frequency Indexer",
+"difficulty": "Easy",
+"language": "Python",
+"problem_description": "Process a large multi-line text document, tokenize words while ignoring punctuation and case, compute frequencies, and build a concordance index mapping words to line numbers.",
+"functional_requirements": [
+"R1: Tokenize text into words, removing punctuation and normalizing to lowercase.",
+"R2: Exclude a provided set of stop words.",
+"R3: Compute total frequency for each unique word.",
+"R4: Build a concordance mapping each word to a sorted list of line numbers where it appears.",
+"R5: Return a dictionary containing frequencies and concordance indexes."
+],
+"input_specification": "A list of text strings (lines) and a set of stop words.",
+"output_specification": "A dict with 'frequencies' and 'concordance' keys.",
+"constraints": "Memory-friendly line-by-line processing.",
+"input_scales": {
+"small": "10 lines of text",
+"medium": "1,000 lines of text",
+"large": "100,000 lines of text"
+},
+"computational_profile": "CPU-intensive tokenization and hashing.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": (["Hello world, hello Python."], {"hello"}), "expected": {"frequencies": {"world": 1, "python": 1}, "concordance": {"world": [1], "python": [1]}}},
+{"type": "boundary", "input": ([], set()), "expected": {"frequencies": {}, "concordance": {}}},
+{"type": "empty/minimal", "input": (["..."], {"the"}), "expected": {"frequencies": {}, "concordance": {}}},
+{"type": "large", "input": (["Data science and data engineering."] * 100, {"and"}), "expected": {"frequencies": {"data": 200, "science": 100, "engineering": 100}, "concordance": {"data": list(range(1, 101)), "science": list(range(1, 101)), "engineering": list(range(1, 101))}}},
+{"type": "unusual valid input", "input": (["123 456 test."], set()), "expected": {"frequencies": {"123": 1, "456": 1, "test": 1}, "concordance": {"123": [1], "456": [1], "test": [1]}}}
+],
+"hidden_test_specs": [
+{"type": "heavy_punctuation", "description": "Tests string translation tables on heavily punctuated text."},
+{"type": "duplicate_line_occurrences", "description": "Ensures line numbers are unique per word per line."},
+{"type": "numeric_tokens", "description": "Verifies handling of numbers mixed with words."},
+{"type": "empty_stop_words", "description": "Works correctly with empty stop word set."},
+{"type": "unicode_normalization", "description": "Handles accented characters properly."}
+]
+},
+"reference_solution": {
+"algorithm": "Translate punctuation, split words, filter stopwords, build frequency and line index dictionaries.",
+"complexity": "Time: O(L * W) where L is lines, W is words per line. Space: O(V) where V is vocabulary size.",
+"code": "import string\n\ndef build_concordance(lines, stop_words):\n    freqs = {}\n    concordance = {}\n    translator = str.maketrans('', '', string.punctuation)\n    for line_idx, line in enumerate(lines, 1):\n        cleaned = line.translate(translator).lower()\n        words = cleaned.split()\n        seen_in_line = set()\n        for w in words:\n            if w and w not in stop_words:\n                freqs[w] = freqs.get(w, 0) + 1\n                if w not in seen_in_line:\n                    seen_in_line.add(w)\n                    if w not in concordance:\n                        concordance[w] = []\n                    concordance[w].append(line_idx)\n    return {'frequencies': freqs, 'concordance': concordance}"
+},
+"requirement_matrix": {
+"R1": "Tokenize and normalize words",
+"R2": "Exclude stop words",
+"R3": "Compute word frequencies",
+"R4": "Build concordance line index",
+"R5": "Return structured dictionary"
+},
+"interactions": {
+"one_shot": "Implement concordance indexer satisfying R1-R5.",
+"bug_fix": "Fix bug where duplicate word occurrences on the same line duplicate line numbers in concordance.",
+"feature_addition": "Add parameter to include word positions (character offsets) within lines.",
+"edge_case": "Handle lines consisting solely of punctuation and whitespace.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement base text concordance indexer for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Ensure line numbers are unique per word per line.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Add character offset tracking.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle purely punctuation lines gracefully.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Accurate frequencies and unique sorted line numbers in concordance.",
+"static_analysis_targets": ["string_efficiency", "code_clarity"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-005",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "benchmark_inspired",
+"source_inspiration": "Log deduplication and noise reduction utilities",
+"title": "Duplicate Line Detection and Removal with Similarity Hashing",
+"difficulty": "Medium",
+"language": "Python",
+"problem_description": "Process a stream of log records, detect exact duplicates as well as near-duplicates (e.g., varying only by timestamp or dynamic ID), and remove redundancies while preserving the first occurrence order.",
+"functional_requirements": [
+"R1: Normalize log lines by stripping whitespace and replacing dynamic patterns (like UUIDs or timestamps) with a placeholder.",
+"R2: Detect exact and normalized duplicates.",
+"R3: Preserve the original order of the first unique occurrences.",
+"R4: Count how many duplicate instances were removed.",
+"R5: Return a dictionary containing the deduplicated lines and the removal count."
+],
+"input_specification": "A list of log strings.",
+"output_specification": "A dict with keys 'deduplicated_lines' (list) and 'removed_count' (int).",
+"constraints": "O(N) time complexity using hash sets for normalization.",
+"input_scales": {
+"small": "100 log lines",
+"medium": "10,000 log lines",
+"large": "1,000,000 log lines"
+},
+"computational_profile": "MEMORY-intensive hash set operations and REGEX.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": ["Error at 12:00:10: Connection timeout", "Error at 12:01:15: Connection timeout"], "expected": {"deduplicated_lines": ["Error at 12:00:10: Connection timeout"], "removed_count": 1}},
+{"type": "boundary", "input": [], "expected": {"deduplicated_lines": [], "removed_count": 0}},
+{"type": "empty/minimal", "input": ["   ", ""], "expected": {"deduplicated_lines": ["   "], "removed_count": 1}},
+{"type": "large", "input": ["User logged in ID-123"] * 1000, "expected": {"deduplicated_lines": ["User logged in ID-123"], "removed_count": 999}},
+{"type": "unusual valid input", "input": ["GUID 123e4567-e89b-12d3-a456-426614174000 failed", "GUID 987f6543-e21a-34c5-b654-123456789abc failed"], "expected": {"deduplicated_lines": ["GUID 123e4567-e89b-12d3-a456-426614174000 failed"], "removed_count": 1}}
+],
+"hidden_test_specs": [
+{"type": "uuid_masking", "description": "Tests masking of standard UUID patterns."},
+{"type": "timestamp_masking", "description": "Tests masking of ISO and syslog timestamps."},
+{"type": "order_preservation", "description": "Ensures original line order is strictly maintained."},
+{"type": "no_duplicates", "description": "Returns identical list and zero count when all lines are unique."},
+{"type": "memory_scale", "description": "Evaluates memory footprint on 1M lines."}
+]
+},
+"reference_solution": {
+"algorithm": "Regex substitute dynamic elements, track seen normalized strings in a set, filter list.",
+"complexity": "Time: O(N) where N is number of lines. Space: O(N).",
+"code": "import re\n\nDYNAMIC_PATTERNS = re.compile(r'\b(?:\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b')\n\ndef deduplicate_logs(lines):\n    seen = set()\n    deduped = []\n    removed = 0\n    for line in lines:\n        norm = DYNAMIC_PATTERNS.sub('', line.strip())\n        if norm in seen:\n            removed += 1\n        else:\n            seen.add(norm)\n            deduped.append(line)\n    return {'deduplicated_lines': deduped, 'removed_count': removed}"
+},
+"requirement_matrix": {
+"R1": "Normalize dynamic log patterns",
+"R2": "Detect duplicates",
+"R3": "Preserve order of first occurrence",
+"R4": "Count removed records",
+"R5": "Return structured dict"
+},
+"interactions": {
+"one_shot": "Implement log deduplication satisfying R1-R5.",
+"bug_fix": "Fix regex to avoid masking static hexadecimal IDs that are not UUIDs.",
+"feature_addition": "Add option to return removal statistics per normalized signature.",
+"edge_case": "Handle whitespace-only and empty log lines correctly.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement base deduplication for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Refine UUID regex to avoid false positives on hex codes.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Add signature statistics breakdown.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle empty and whitespace-only lines.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Correct deduplication count and retained line order.",
+"static_analysis_targets": ["regex_precision", "memory_efficiency"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-006",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "original_realistic",
+"source_inspiration": "CSV log sanitization and imputation pipelines",
+"title": "CSV Log Normalizer and Missing Value Imputer",
+"difficulty": "Easy",
+"language": "Python",
+"problem_description": "Process CSV-formatted log data, clean column headers, normalize missing or null fields, impute missing numeric values with column medians, and output clean records.",
+"functional_requirements": [
+"R1: Parse CSV string data into headers and rows.",
+"R2: Normalize header names (lowercase, replace spaces with underscores).",
+"R3: Identify missing or null values (empty strings, 'NULL', 'N/A') and replace with None.",
+"R4: Impute missing numeric column values with the median of valid values in that column.",
+"R5: Return the cleaned data as a list of dictionaries."
+],
+"input_specification": "A multiline CSV string.",
+"output_specification": "A list of dictionaries representing cleaned rows.",
+"constraints": "Pure Python standard library csv module.",
+"input_scales": {
+"small": "10 rows",
+"medium": "1,000 rows",
+"large": "50,000 rows"
+},
+"computational_profile": "I/O-intensive string parsing and CPU-bound median calculation.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": "id,value\n1,10\n2,NULL\n3,30", "expected": [{"id": "1", "value": 10.0}, {"id": "2", "value": 20.0}, {"id": "3", "value": 30.0}]},
+{"type": "boundary", "input": "col1\n", "expected": []},
+{"type": "empty/minimal", "input": "a,b\n,", "expected": [{"a": None, "b": None}]},
+{"type": "large", "input": "num\n" + "\n".join([str(i) if i%2==0 else "N/A" for i in range(100)]), "expected": "imputed median values"},
+{"type": "unusual valid input", "input": "User Name,Login Count\nAlice,5\nBob,", "expected": [{"user_name": "Alice", "login_count": 5.0}, {"user_name": "Bob", "login_count": 5.0}]}
+],
+"hidden_test_specs": [
+{"type": "all_missing_column", "description": "Handles columns where all numeric entries are missing."},
+{"type": "non_numeric_columns", "description": "Ignores median imputation on purely text columns."},
+{"type": "csv_quoting", "description": "Handles quoted CSV fields correctly."},
+{"type": "even_median_count", "description": "Calculates correct median when valid count is even."},
+{"type": "custom_null_tokens", "description": "Recognizes various null representations."}
+]
+},
+"reference_solution": {
+"algorithm": "Use csv.DictReader, clean headers, convert numeric fields, compute medians, impute missing.",
+"complexity": "Time: O(R * C) where R is rows, C is columns. Space: O(R * C).",
+"code": "import csv\nimport io\n\ndef normalize_and_impute_csv(csv_str):\n    f = io.StringIO(csv_str.strip())\n    reader = csv.reader(f)\n    rows = list(reader)\n    if not rows:\n        return []\n    raw_headers = rows[0]\n    headers = [h.strip().lower().replace(' ', '*') for h in raw_headers]\n    data_rows = rows[1:]\n    \n    parsed_rows = []\n    for r in data_rows:\n        row_dict = {}\n        for h, val in zip(headers, r):\n            v = val.strip()\n            if v in ('', 'NULL', 'N/A', 'nan', 'None'):\n                row_dict[h] = None\n            else:\n                try:\n                    row_dict[h] = float(v) if '.' in v or 'e' in v.lower() else int(v)\n                except ValueError:\n                    row_dict[h] = v\n        parsed_rows.append(row_dict)\n        \n    if not parsed_rows:\n        return []\n        \n    # Impute numeric columns\n    for h in headers:\n        numeric_vals = [r[h] for r in parsed_rows if isinstance(r[h], (int, float))]\n        if numeric_vals:\n            numeric_vals.sort()\n            mid = len(numeric_vals) // 2\n            median = (numeric_vals[mid] if len(numeric_vals) % 2 != 0 else (numeric_vals[mid-1] + numeric_vals[mid]) / 2)\n            for r in parsed_rows:\n                if r[h] is None:\n                    r[h] = median\n    return parsed_rows"
+},
+"requirement_matrix": {
+"R1": "Parse CSV string",
+"R2": "Normalize headers",
+"R3": "Identify and replace nulls",
+"R4": "Impute numeric medians",
+"R5": "Return dict list"
+},
+"interactions": {
+"one_shot": "Implement CSV normalizer and imputer meeting R1-R5.",
+"bug_fix": "Fix error when converting integer strings to float during median imputation.",
+"feature_addition": "Add option to return imputed count statistics per column.",
+"edge_case": "Handle CSV input containing columns with entirely missing values.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement CSV parser and imputer for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Fix type casting bugs in imputation.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Add imputation statistics report.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle entirely missing columns gracefully.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Clean headers, correct null detection, and accurate median imputation.",
+"static_analysis_targets": ["csv_module_usage", "type_safety"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-007",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "benchmark_inspired",
+"source_inspiration": "Sliding window metrics anomaly detection in streaming logs",
+"title": "Sliding Window Log Anomaly Detector",
+"difficulty": "Hard",
+"language": "Python",
+"problem_description": "Analyze a chronological log stream to detect error bursts using a fixed-size time or event sliding window. Flag windows where error frequency exceeds a threshold.",
+"functional_requirements": [
+"R1: Parse log entries with timestamps and severity levels.",
+"R2: Implement a sliding window of size W (number of records or time duration).",
+"R3: Calculate error density within each window.",
+"R4: Flag anomaly windows exceeding error density threshold T.",
+"R5: Return a list of anomaly alert records with start time, end time, and error count."
+],
+"input_specification": "A list of dicts {'timestamp': datetime, 'level': str}, window size int, and threshold float.",
+"output_specification": "A list of anomaly alert dicts.",
+"constraints": "Optimized sliding window traversal.",
+"input_scales": {
+"small": "100 log records",
+"medium": "10,000 log records",
+"large": "1,000,000 log records"
+},
+"computational_profile": "CPU-intensive sliding window iteration.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": ([{'timestamp': 1, 'level': 'INFO'}, {'timestamp': 2, 'level': 'ERROR'}, {'timestamp': 3, 'level': 'ERROR'}], 2, 0.5), "expected": [{'start_time': 1, 'end_time': 3, 'error_count': 2}]},
+{"type": "boundary", "input": ([], 5, 0.5), "expected": []},
+{"type": "empty/minimal", "input": ([{'timestamp': 1, 'level': 'INFO'}], 5, 0.5), "expected": []},
+{"type": "large", "input": ([{'timestamp': i, 'level': 'ERROR'} for i in range(100)], 10, 0.8), "expected": "multiple alerts"},
+{"type": "unusual valid input", "input": ([{'timestamp': 10, 'level': 'ERROR'}], 1, 0.0), "expected": [{'start_time': 10, 'end_time': 10, 'error_count': 1}]}
+],
+"hidden_test_specs": [
+{"type": "deque_sliding_efficiency", "description": "Tests deque performance on 1M records."},
+{"type": "overlapping_windows", "description": "Handles contiguous alert windows correctly."},
+{"type": "zero_threshold", "description": "Flags all error-containing windows when threshold is zero."},
+{"type": "mixed_severity", "description": "Filters correctly across INFO, WARN, ERROR, FATAL."},
+{"type": "unsorted_input_guard", "description": "Handles or warns on unsorted timestamps."}
+]
+},
+"reference_solution": {
+"algorithm": "Use collections.deque for efficient O(1) sliding window updates.",
+"complexity": "Time: O(N) where N is number of records. Space: O(W) where W is window size.",
+"code": "from collections import deque\n\ndef detect_error_bursts(records, window_size, threshold):\n    if not records or window_size <= 0:\n        return []\n    \n    window = deque()\n    alerts = []\n    error_count = 0\n    \n    for rec in records:\n        window.append(rec)\n        if rec['level'].upper() in ('ERROR', 'FATAL'):\n            error_count += 1\n            \n        if len(window) > window_size:\n            removed = window.popleft()\n            if removed['level'].upper() in ('ERROR', 'FATAL'):\n                error_count -= 1\n                \n        if len(window) == window_size:\n            density = error_count / window_size\n            if density >= threshold:\n                alerts.append({\n                    'start_time': window[0]['timestamp'],\n                    'end_time': window[-1]['timestamp'],\n                    'error_count': error_count\n                })\n    return alerts"
+},
+"requirement_matrix": {
+"R1": "Parse timestamp and level",
+"R2": "Implement sliding window",
+"R3": "Calculate error density",
+"R4": "Flag threshold exceedances",
+"R5": "Return alert records list"
+},
+"interactions": {
+"one_shot": "Implement sliding window anomaly detector satisfying R1-R5.",
+"bug_fix": "Fix off-by-one error in window size check resulting in early evaluation.",
+"feature_addition": "Add de-duplication of overlapping anomaly alert intervals.",
+"edge_case": "Handle window size larger than total record count.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement sliding window detector for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Fix window size boundary logic.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Deduplicate overlapping alert intervals.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle window size exceeding total records.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Accurate window error density calculation and alert generation.",
+"static_analysis_targets": ["algorithm_efficiency", "deque_usage"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-008",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "original_realistic",
+"source_inspiration": "Structured JSON log monitoring and error code auditing",
+"title": "Structured JSON-Lines Error Code Counter and Report Generator",
+"difficulty": "Easy",
+"language": "Python",
+"problem_description": "Process a list of JSON-lines strings representing application events, extract error codes from error-level events, aggregate frequencies, and generate a summary report dictionary.",
+"functional_requirements": [
+"R1: Parse JSON-lines strings into Python dictionaries.",
+"R2: Filter events where level is 'ERROR' or 'FATAL'.",
+"R3: Extract 'error_code' field from filtered events.",
+"R4: Count frequency of each unique error code.",
+"R5: Return a dictionary sorted by frequency descending with total processed count."
+],
+"input_specification": "A list of JSON string lines.",
+"output_specification": "A dict with 'total_processed', 'error_events_count', and 'error_code_frequencies'.",
+"constraints": "Robust error handling for missing keys and invalid JSON.",
+"input_scales": {
+"small": "100 lines",
+"medium": "10,000 lines",
+"large": "500,000 lines"
+},
+"computational_profile": "I/O-intensive parsing and CPU-bound aggregation.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": ['{"level": "ERROR", "error_code": "E500"}', '{"level": "INFO", "error_code": "E200"}'], "expected": {"total_processed": 2, "error_events_count": 1, "error_code_frequencies": {"E500": 1}}},
+{"type": "boundary", "input": [], "expected": {"total_processed": 0, "error_events_count": 0, "error_code_frequencies": {}}},
+{"type": "empty/minimal", "input": ['invalid json'], "expected": {"total_processed": 0, "error_events_count": 0, "error_code_frequencies": {}}},
+{"type": "large", "input": ['{"level": "ERROR", "error_code": "ERR_TIMEOUT"}'] * 100, "expected": {"total_processed": 100, "error_events_count": 100, "error_code_frequencies": {"ERR_TIMEOUT": 100}}},
+{"type": "unusual valid input", "input": ['{"level": "error", "error_code": 404}'], "expected": {"total_processed": 1, "error_events_count": 1, "error_code_frequencies": {"404": 1}}}
+],
+"hidden_test_specs": [
+{"type": "case_insensitive_level", "description": "Handles 'error', 'Error', 'ERROR'."},
+{"type": "numeric_error_codes", "description": "Casts integer error codes to strings."},
+{"type": "missing_error_code_key", "description": "Handles error events missing the 'error_code' field."},
+{"type": "malformed_json_resilience", "description": "Skipping corrupt JSON lines without crashing."},
+{"type": "sorting_verification", "description": "Orders error frequencies descending."}
+]
+},
+"reference_solution": {
+"algorithm": "Iterate lines, parse json, check level and extract code, aggregate using Counter, sort.",
+"complexity": "Time: O(N log K) where N is lines, K is unique error codes. Space: O(K).",
+"code": "import json\nfrom collections import Counter\n\ndef generate_error_report(json_lines):\n    total = 0\n    err_count = 0\n    counter = Counter()\n    \n    for line in json_lines:\n        try:\n            obj = json.loads(line)\n            total += 1\n            level = str(obj.get('level', '')).upper()\n            if level in ('ERROR', 'FATAL'):\n                err_count += 1\n                code = obj.get('error_code')\n                if code is not None:\n                    counter[str(code)] += 1\n        except json.JSONDecodeError:\n            continue\n            \n    sorted_freqs = dict(sorted(counter.items(), key=lambda x: x[1], reverse=True))\n    return {\n        'total_processed': total,\n        'error_events_count': err_count,\n        'error_code_frequencies': sorted_freqs\n    }"
+},
+"requirement_matrix": {
+"R1": "Parse JSON-lines",
+"R2": "Filter ERROR/FATAL",
+"R3": "Extract error_code",
+"R4": "Count frequencies",
+"R5": "Return sorted report dict"
+},
+"interactions": {
+"one_shot": "Implement JSON-lines error report generator meeting R1-R5.",
+"bug_fix": "Fix handling of integer error codes so they are correctly aggregated as strings.",
+"feature_addition": "Add timestamp range extraction (earliest and latest event time) to the report.",
+"edge_case": "Handle log records missing the level field without throwing KeyError.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement JSON error reporter for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Fix integer error code aggregation.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Add earliest and latest timestamps.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle missing level fields gracefully.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Accurate counts, filtering, and sorted error code frequencies.",
+"static_analysis_targets": ["json_parsing", "dict_sorting"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-009",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "benchmark_inspired",
+"source_inspiration": "Email header analysis and thread reconstruction tools",
+"title": "Email Header Parser and Thread Reconstruction Tool",
+"difficulty": "Medium",
+"language": "Python",
+"problem_description": "Parse raw multi-line email headers, extract standard fields (From, To, Subject, Date, Message-ID, In-Reply-To), and reconstruct conversation thread relationships.",
+"functional_requirements": [
+"R1: Parse raw email header blocks supporting folded (multiline) header values.",
+"R2: Extract From, To, Subject, Date, Message-ID, and In-Reply-To fields.",
+"R3: Clean and normalize email addresses and subject lines (stripping Re:, Fwd: prefixes).",
+"R4: Build parent-child relationships using Message-ID and In-Reply-To.",
+"R5: Return a structured list of email objects with threading metadata."
+],
+"input_specification": "A list of raw email header text blocks.",
+"output_specification": "A list of parsed email dictionaries with thread links.",
+"constraints": "Pure Python email/header parsing.",
+"input_scales": {
+"small": "10 emails",
+"medium": "1,000 emails",
+"large": "50,000 emails"
+},
+"computational_profile": "REGEX/PATTERN-intensive and CPU-bound parsing.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": ["From: alice@example.com\nTo: bob@example.com\nSubject: Re: Project Update\nMessage-ID: \nIn-Reply-To: "], "expected": [{"from": "alice@example.com", "to": "bob@example.com", "subject": "Project Update", "message_id": "", "in_reply_to": "", "normalized_subject": "project update"}]},
+{"type": "boundary", "input": [], "expected": []},
+{"type": "empty/minimal", "input": ["Subject: Test"], "expected": [{"from": None, "to": None, "subject": "Test", "message_id": None, "in_reply_to": None, "normalized_subject": "test"}]},
+{"type": "large", "input": [f"Subject: Msg {i}\nMessage-ID: <id{i}>" for i in range(100)], "expected": "100 parsed emails"},
+{"type": "unusual valid input", "input": ["Subject:   FWD: Urgent!  \nFrom: [admin@test.org](mailto:admin@test.org)"], "expected": [{"from": "admin@test.org", "to": None, "subject": "Urgent!", "message_id": None, "in_reply_to": None, "normalized_subject": "urgent!"}]}
+],
+"hidden_test_specs": [
+{"type": "folded_headers", "description": "Tests handling of multiline folded header fields."},
+{"type": "prefix_stripping", "description": "Strips multiple nested Re: and Fwd: prefixes."},
+{"type": "missing_fields", "description": "Handles emails missing standard headers."},
+{"type": "email_angle_brackets", "description": "Extracts clean email address from inside angle brackets."},
+{"type": "thread_tree_depth", "description": "Builds correct reply hierarchies."}
+]
+},
+"reference_solution": {
+"algorithm": "Parse unfolding lines, extract regex fields, clean prefixes, build thread map.",
+"complexity": "Time: O(N) where N is number of header lines. Space: O(N).",
+"code": "import re\n\ndef parse_email_headers(header_blocks):\n    results = []\n    re_prefix = re.compile(r'^(?:Re|Fwd|FWD|FW):\s*', re.IGNORECASE)\n    \n    for block in header_blocks:\n        # Unfold multiline headers\n        unfolded = re.sub(r'\r?\n[ \t]+', ' ', block)\n        lines = unfolded.splitlines()\n        \n        header_dict = {'from': None, 'to': None, 'subject': None, 'message_id': None, 'in_reply_to': None}\n        \n        for line in lines:\n            if ':' in line:\n                key, val = line.split(':', 1)\n                k = key.strip().lower()\n                v = val.strip()\n                if k == 'from':\n                    m = re.search(r'<([^>]+)>', v)\n                    header_dict['from'] = m.group(1) if m else v\n                elif k == 'to':\n                    m = re.search(r'<([^>]+)>', v)\n                    header_dict['to'] = m.group(1) if m else v\n                elif k == 'subject':\n                    subj = v\n                    while True:\n                        new_subj = re_prefix.sub('', subj)\n                        if new_subj == subj:\n                            break\n                        subj = new_subj\n                    header_dict['subject'] = subj.strip()\n                    header_dict['normalized_subject'] = subj.strip().lower()\n                elif k == 'message-id':\n                    header_dict['message_id'] = v\n                elif k == 'in-reply-to':\n                    header_dict['in_reply_to'] = v\n                    \n        if 'normalized_subject' not in header_dict:\n            header_dict['subject'] = None\n            header_dict['normalized_subject'] = None\n            \n        results.append(header_dict)\n    return results"
+},
+"requirement_matrix": {
+"R1": "Parse unfolded headers",
+"R2": "Extract standard fields",
+"R3": "Clean email and subject",
+"R4": "Build thread relationships",
+"R5": "Return structured list"
+},
+"interactions": {
+"one_shot": "Implement email header parser meeting R1-R5.",
+"bug_fix": "Fix recursive prefix stripping loop for multiple nested Re: Fwd: prefixes.",
+"feature_addition": "Add thread depth calculation based on In-Reply-To chains.",
+"edge_case": "Handle headers with malformed colon separators or missing values.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement email parser for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Fix prefix stripping loop bug.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Add thread depth calculation.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle malformed colon separators.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Accurate extraction of cleaned email headers and thread metadata.",
+"static_analysis_targets": ["regex_robustness", "string_manipulation"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-010",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "benchmark_inspired",
+"source_inspiration": "Bioinformatics FASTA sequence statistics and nucleotide composition analysis",
+"title": "Long-Record Genomic FASTA Sequence Statistics Calculator",
+"difficulty": "Medium",
+"language": "Python",
+"problem_description": "Process multi-line FASTA format genomic sequence files, compute nucleotide counts (A, C, G, T, N), GC-content percentage, and sequence length statistics.",
+"functional_requirements": [
+"R1: Parse FASTA headers (starting with '>') and concatenate multiline sequences.",
+"R2: Compute total length for each sequence.",
+"R3: Calculate individual nucleotide frequencies (A, C, G, T) and unknown (N).",
+"R4: Compute GC-content percentage for each sequence.",
+"R5: Return a list of sequence statistics dictionaries."
+],
+"input_specification": "A multiline FASTA format string.",
+"output_specification": "A list of dictionaries containing sequence id, length, gc_content, and nucleotide counts.",
+"constraints": "Memory-efficient streaming or chunked processing of long FASTA sequences.",
+"input_scales": {
+"small": "3 short sequences",
+"medium": "50 medium sequences",
+"large": "10,000 long sequences"
+},
+"computational_profile": "MEMORY-intensive and CPU-bound string counting.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": ">seq1\nATCGATCG\n>seq2\nGGCCAAAA", "expected": [{"id": "seq1", "length": 8, "gc_content": 50.0, "counts": {"a": 2, "c": 2, "g": 2, "t": 2, "n": 0}}, {"id": "seq2", "length": 8, "gc_content": 75.0, "counts": {"a": 4, "c": 2, "g": 2, "t": 0, "n": 0}}]},
+{"type": "boundary", "input": "", "expected": []},
+{"type": "empty/minimal", "input": ">empty\n", "expected": [{"id": "empty", "length": 0, "gc_content": 0.0, "counts": {"a": 0, "c": 0, "g": 0, "t": 0, "n": 0}}]},
+{"type": "large", "input": ">s1\n" + "ACGT" * 1000, "expected": "GC content 50%"},
+{"type": "unusual valid input", "input": ">seq_mixed\natcgNNcg", "expected": [{"id": "seq_mixed", "length": 8, "gc_content": 50.0, "counts": {"a": 2, "c": 2, "g": 2, "t": 1, "n": 1}}]}
+],
+"hidden_test_specs": [
+{"type": "multiline_concatenation", "description": "Tests correct joining of fragmented sequence lines."},
+{"type": "case_insensitivity", "description": "Handles lowercase and uppercase nucleotide letters."},
+{"type": "zero_length_sequence", "description": "Prevents division by zero in GC calculation."},
+{"type": "ambiguous_nucleotides", "description": "Counts 'N' and other IUPAC codes correctly."},
+{"type": "whitespace_handling", "description": "Strips internal and trailing whitespace in sequences."}
+]
+},
+"reference_solution": {
+"algorithm": "Iterate lines, parse headers, accumulate sequence chunks, compute stats on final string.",
+"complexity": "Time: O(S) where S is total sequence characters. Space: O(S).",
+"code": "def calculate_fasta_stats(fasta_str):\n    lines = fasta_str.strip().splitlines()\n    results = []\n    current_id = None\n    current_seq_chunks = []\n    \n    for line in lines:\n        line = line.strip()\n        if not line:\n            continue\n        if line.startswith('>'):\n            if current_id is not None:\n                seq = ''.join(current_seq_chunks).lower()\n                results.append(*compute_single_seq(current_id, seq))\n            current_id = line[1:].split()[0]\n            current_seq_chunks = []\n        else:\n            current_seq_chunks.append(line)\n            \n    if current_id is not None:\n        seq = ''.join(current_seq_chunks).lower()\n        results.append(*compute_single_seq(current_id, seq))\n        \n    return results\n\ndef *compute_single_seq(seq_id, seq):\n    length = len(seq)\n    counts = {\n        'a': seq.count('a'),\n        'c': seq.count('c'),\n        'g': seq.count('g'),\n        't': seq.count('t'),\n        'n': seq.count('n')\n    }\n    gc_bases = counts['c'] + counts['g']\n    gc_content = (gc_bases / length * 100.0) if length > 0 else 0.0\n    return {\n        'id': seq_id,\n        'length': length,\n        'gc_content': round(gc_content, 2),\n        'counts': counts\n    }"
+},
+"requirement_matrix": {
+"R1": "Parse FASTA headers and chunks",
+"R2": "Compute sequence length",
+"R3": "Calculate nucleotide counts",
+"R4": "Compute GC percentage",
+"R5": "Return statistics list"
+},
+"interactions": {
+"one_shot": "Implement FASTA stats calculator meeting R1-R5.",
+"bug_fix": "Fix division by zero when encountering zero-length sequences.",
+"feature_addition": "Add support for additional IUPAC ambiguity codes (R, Y, K, M).",
+"edge_case": "Handle files with no trailing newline or extra whitespace.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement FASTA statistics tool for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Fix zero-length division error.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Support IUPAC ambiguity codes.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle trailing whitespace and missing newlines.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Accurate lengths, GC content, and nucleotide counts.",
+"static_analysis_targets": ["memory_efficiency", "string_operations"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-011",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "benchmark_inspired",
+"source_inspiration": "Database query performance log analyzer",
+"title": "SQL Query Log Parser for Slow-Query Identification",
+"difficulty": "Medium",
+"language": "Python",
+"problem_description": "Parse database slow-query logs to extract query execution times, affected rows, and query text, then aggregate and filter queries exceeding a latency threshold.",
+"functional_requirements": [
+"R1: Parse log blocks containing Query_time, Rows_examined, and SQL statement text.",
+"R2: Extract execution time as float and rows examined as integer.",
+"R3: Filter queries where execution time exceeds threshold T.",
+"R4: Group and aggregate slow queries by normalized signature (ignoring literal values).",
+"R5: Return a sorted list of slow query summaries."
+],
+"input_specification": "A list of log blocks or multiline text, and float threshold T.",
+"output_specification": "A list of aggregated slow query dictionaries.",
+"constraints": "Pure Python regex and string normalization.",
+"input_scales": {
+"small": "50 log blocks",
+"medium": "5,000 log blocks",
+"large": "200,000 log blocks"
+},
+"computational_profile": "REGEX/PATTERN-intensive and CPU-bound aggregation.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": (["# Query_time: 5.231100 Lock_time: 0.000000 Rows_sent: 10 Rows_examined: 1000\nSELECT * FROM users WHERE id = 5;"], 2.0), "expected": [{"normalized_query": "select * from users where id = ?", "total_time": 5.2311, "max_time": 5.2311, "count": 1}]},
+{"type": "boundary", "input": ([], 1.0), "expected": []},
+{"type": "empty/minimal", "input": (["# Query_time: 0.1"], 1.0), "expected": []},
+{"type": "large", "input": (["# Query_time: 3.5\nSELECT * FROM t;"] * 10, 1.0), "expected": "aggregated slow queries"},
+{"type": "unusual valid input", "input": (["# Query_time: 10.0\ninsert into logs values ('test');"], 5.0), "expected": [{"normalized_query": "insert into logs values (?)", "total_time": 10.0, "max_time": 10.0, "count": 1}]}
+],
+"hidden_test_specs": [
+{"type": "sql_normalization", "description": "Masks numeric and string literals in SQL queries."},
+{"type": "threshold_filtering", "description": "Strictly excludes queries below threshold."},
+{"type": "aggregation_accuracy", "description": "Accurately sums total time and tracks max time."},
+{"type": "multiline_queries", "description": "Handles complex multi-line SQL statements."},
+{"type": "missing_metrics", "description": "Handles malformed header blocks gracefully."}
+]
+},
+"reference_solution": {
+"algorithm": "Regex parse query time and statement, normalize literals, aggregate in hash map, sort.",
+"complexity": "Time: O(N log K) where N is log blocks, K is unique query signatures. Space: O(K).",
+"code": "import re\n\nTIME_PATTERN = re.compile(r'#\s+Query_time:\s+([\d.]+)')\nSQL_LITERAL_MASK = re.compile(r"'[^']*'|\b\d+\b")\n\ndef parse_slow_queries(log_blocks, threshold):\n    aggregated = {}\n    for block in log_blocks:\n        m = TIME_PATTERN.search(block)\n        if m:\n            q_time = float(m.group(1))\n            if q_time >= threshold:\n                lines = [l.strip() for l in block.splitlines() if not l.startswith('#') and l.strip()]\n                raw_sql = ' '.join(lines)\n                if not raw_sql:\n                    continue\n                norm_sql = SQL_LITERAL_MASK.sub('?', raw_sql).lower()\n                \n                if norm_sql not in aggregated:\n                    aggregated[norm_sql] = {'total_time': 0.0, 'max_time': 0.0, 'count': 0}\n                aggregated[norm_sql]['total_time'] += q_time\n                aggregated[norm_sql]['max_time'] = max(aggregated[norm_sql]['max_time'], q_time)\n                aggregated[norm_sql]['count'] += 1\n                \n    results = []\n    for q, stats in aggregated.items():\n        results.append({\n            'normalized_query': q,\n            'total_time': round(stats['total_time'], 4),\n            'max_time': round(stats['max_time'], 4),\n            'count': stats['count']\n        })\n    results.sort(key=lambda x: x['total_time'], reverse=True)\n    return results"
+},
+"requirement_matrix": {
+"R1": "Parse query time and SQL text",
+"R2": "Extract float execution time",
+"R3": "Filter by threshold T",
+"R4": "Normalize and aggregate queries",
+"R5": "Return sorted summary list"
+},
+"interactions": {
+"one_shot": "Implement SQL slow-query log parser meeting R1-R5.",
+"bug_fix": "Fix SQL normalization regex to handle floating-point literals correctly.",
+"feature_addition": "Add average execution time calculation per query signature.",
+"edge_case": "Handle log blocks with comments or empty SQL statements.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement SQL slow query parser for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Fix literal masking for floats.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Add average execution time metric.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle comment-only log blocks.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Accurate query time filtering, literal normalization, and aggregation.",
+"static_analysis_targets": ["regex_accuracy", "aggregation_logic"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-012",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "original_realistic",
+"source_inspiration": "CLI log table formatting and text alignment utilities",
+"title": "Multi-Column Log Table Formatter and Aligner",
+"difficulty": "Easy",
+"language": "Python",
+"problem_description": "Take unstructured or semi-structured log records and format them into a neatly aligned ASCII table with customizable column padding, alignment, and maximum width limits.",
+"functional_requirements": [
+"R1: Accept a list of dictionaries representing log rows and a list of column headers.",
+"R2: Calculate maximum column widths based on content and header length.",
+"R3: Support text alignment (left, right, center) per column.",
+"R4: Generate ASCII table borders and separator rows.",
+"R5: Return the formatted table as a single multi-line string."
+],
+"input_specification": "List of dicts, list of column names, and optional alignment dict.",
+"output_specification": "A multiline ASCII table string.",
+"constraints": "Pure Python string formatting.",
+"input_scales": {
+"small": "5 rows, 3 columns",
+"medium": "500 rows, 5 columns",
+"large": "10,000 rows, 6 columns"
+},
+"computational_profile": "CPU-intensive string formatting and alignment.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": ([{"level": "INFO", "msg": "ok"}], ["level", "msg"]), "expected": "+-------+-----+\n| level | msg |\n+-------+-----+\n| INFO  | ok  |\n+-------+-----+"},
+{"type": "boundary", "input": ([], ["col1"]), "expected": "+------+\n| col1 |\n+------+\n+------+"},
+{"type": "empty/minimal", "input": ([{}], ["a"]), "expected": "+---+\n| a |\n+---+\n|   |\n+---+"},
+{"type": "large", "input": ([{"id": i} for i in range(100)], ["id"]), "expected": "100 row table"},
+{"type": "unusual valid input", "input": ([{"data": "very_long_string_exceeding_normal"}], ["data"]), "expected": "properly padded table"}
+],
+"hidden_test_specs": [
+{"type": "custom_alignment", "description": "Tests right and center text alignment specifications."},
+{"type": "missing_keys", "description": "Handles rows missing specified column keys gracefully."},
+{"type": "long_headers", "description": "Ensures column widths accommodate long header names."},
+{"type": "empty_rows", "description": "Renders empty row structures correctly."},
+{"type": "unicode_characters", "description": "Handles unicode string padding width accurately."}
+]
+},
+"reference_solution": {
+"algorithm": "Determine max widths per column, build separator borders, format each row.",
+"complexity": "Time: O(R * C) where R is rows, C is columns. Space: O(R * C).",
+"code": "def format_log_table(rows, columns, alignments=None):\n    if alignments is None:\n        alignments = {col: 'left' for col in columns}\n        \n    # Calculate column widths\n    widths = {col: len(str(col)) for col in columns}\n    for r in rows:\n        for col in columns:\n            val = str(r.get(col, ''))\n            widths[col] = max(widths[col], len(val))\n            \n    # Build separator\n    sep = '+' + '+'.join(['-' * (widths[col] + 2) for col in columns]) + '+'\n    \n    # Build header\n    header_cells = []\n    for col in columns:\n        w = widths[col]\n        header_cells.append(f' {str(col):<{w}} ')\n    header_row = '|' + '|'.join(header_cells) + '|'\n    \n    table_lines = [sep, header_row, sep]\n    \n    for r in rows:\n        row_cells = []\n        for col in columns:\n            val = str(r.get(col, ''))\n            w = widths[col]\n            align = alignments.get(col, 'left')\n            if align == 'right':\n                row_cells.append(f' {val:>{w}} ')\n            elif align == 'center':\n                row_cells.append(f' {val:^{w}} ')\n            else:\n                row_cells.append(f' {val:<{w}} ')\n        table_lines.append('|' + '|'.join(row_cells) + '|')\n        \n    table_lines.append(sep)\n    return '\n'.join(table_lines)"
+},
+"requirement_matrix": {
+"R1": "Accept rows and headers",
+"R2": "Calculate max widths",
+"R3": "Support alignments",
+"R4": "Generate borders and separators",
+"R5": "Return ASCII table string"
+},
+"interactions": {
+"one_shot": "Implement log table formatter meeting R1-R5.",
+"bug_fix": "Fix string padding alignment logic for center and right alignments.",
+"feature_addition": "Add support for truncating columns exceeding a maximum width limit.",
+"edge_case": "Handle missing column keys in input rows without raising KeyError.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement ASCII table formatter for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Fix alignment formatting bugs.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Add column width truncation feature.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle missing keys in rows gracefully.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Correctly formatted ASCII table matching width and alignment specs.",
+"static_analysis_targets": ["string_formatting", "code_robustness"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-013",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "original_realistic",
+"source_inspiration": "Streaming log analysis and context window extraction",
+"title": "Streaming Log Keyword Search and Context Window Extractor",
+"difficulty": "Medium",
+"language": "Python",
+"problem_description": "Search through a large log stream for keyword matches and extract surrounding context lines (N lines before and after each match) while handling overlapping context windows.",
+"functional_requirements": [
+"R1: Scan a list of log lines for a target keyword (case-insensitive option).",
+"R2: Extract N lines of preceding context and N lines of following context for each match.",
+"R3: Merge overlapping context windows into continuous block intervals.",
+"R4: Include match line index metadata for each extracted block.",
+"R5: Return a list of context blocks."
+],
+"input_specification": "A list of strings, target keyword string, context window size N, and boolean case_insensitive.",
+"output_specification": "A list of dictionaries with start_idx, end_idx, match_indices, and lines.",
+"constraints": "Efficient index management and deduplication of overlapping windows.",
+"input_scales": {
+"small": "100 log lines",
+"medium": "10,000 log lines",
+"large": "1,000,000 log lines"
+},
+"computational_profile": "I/O-intensive search and MEMORY-bound context slicing.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": (["line1", "error occurs", "line3"], "error", 1, True), "expected": [{"start_idx": 0, "end_idx": 2, "match_indices": [1], "lines": ["line1", "error occurs", "line3"]}]},
+{"type": "boundary", "input": ([], "test", 2, False), "expected": []},
+{"type": "empty/minimal", "input": (["hello world"], "missing", 1, False), "expected": []},
+{"type": "large", "input": (["ok"] * 500 + ["fail"] + ["ok"] * 500, "fail", 2, True), "expected": "extracted context block"},
+{"type": "unusual valid input", "input": (["FAIL", "other", "FAIL"], "fail", 0, True), "expected": [{"start_idx": 0, "end_idx": 0, "match_indices": [0], "lines": ["FAIL"]}, {"start_idx": 2, "end_idx": 2, "match_indices": [2], "lines": ["FAIL"]}]}
+],
+"hidden_test_specs": [
+{"type": "overlapping_windows_merge", "description": "Tests merging of adjacent or overlapping context blocks."},
+{"type": "boundary_indices", "description": "Handles matches at the very beginning or end of the log list."},
+{"type": "multiple_keywords", "description": "Tests multiple matches within a single window span."},
+{"type": "zero_context", "description": "Works correctly when N=0."},
+{"type": "case_sensitivity", "description": "Respects case_insensitive flag correctly."}
+]
+},
+"reference_solution": {
+"algorithm": "Scan lines, collect match indices, build intervals [max(0, i-N), min(len-1, i+N)], merge overlapping intervals.",
+"complexity": "Time: O(L * M) where L is lines, M is keyword search length. Space: O(L).",
+"code": "def extract_log_context(lines, keyword, context_size=2, case_insensitive=True):\n    if not lines or not keyword:\n        return []\n        \n    kw = keyword.lower() if case_insensitive else keyword\n    match_indices = []\n    \n    for idx, line in enumerate(lines):\n        target_line = line.lower() if case_insensitive else line\n        if kw in target_line:\n            match_indices.append(idx)\n            \n    if not match_indices:\n        return []\n        \n    # Build intervals\n    intervals = []\n    for m_idx in match_indices:\n        start = max(0, m_idx - context_size)\n        end = min(len(lines) - 1, m_idx + context_size)\n        intervals.append((start, end, m_idx))\n        \n    # Merge overlapping intervals\n    merged = []\n    curr_start, curr_end, curr_matches = intervals[0][0], intervals[0][1], [intervals[0][2]]\n    \n    for start, end, m_idx in intervals[1:]:\n        if start <= curr_end + 1:\n            curr_end = max(curr_end, end)\n            curr_matches.append(m_idx)\n        else:\n            merged.append({\n                'start_idx': curr_start,\n                'end_idx': curr_end,\n                'match_indices': curr_matches,\n                'lines': lines[curr_start:curr_end+1]\n            })\n            curr_start, curr_end, curr_matches = start, end, [m_idx]\n            \n    merged.append({\n        'start_idx': curr_start,\n        'end_idx': curr_end,\n        'match_indices': curr_matches,\n        'lines': lines[curr_start:curr_end+1]\n    })\n    \n    return merged"
+},
+"requirement_matrix": {
+"R1": "Scan lines for keyword",
+"R2": "Extract N lines context",
+"R3": "Merge overlapping windows",
+"R4": "Include match index metadata",
+"R5": "Return context blocks list"
+},
+"interactions": {
+"one_shot": "Implement streaming log context extractor meeting R1-R5.",
+"bug_fix": "Fix interval merging logic when adjacent matches share boundary lines.",
+"feature_addition": "Add regex search support alongside literal keyword search.",
+"edge_case": "Handle log streams where matches occur on the first and last lines.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement log context extractor for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Fix interval merging overlap logic.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Support regex keyword search.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle first and last line edge cases.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Accurate context extraction and interval merging without duplicate lines.",
+"static_analysis_targets": ["interval_merging", "efficiency"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-014",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "benchmark_inspired",
+"source_inspiration": "Web session tracking and HTTP request path analysis",
+"title": "HTTP Request Session Reconstructor and Path Analyzer",
+"difficulty": "Hard",
+"language": "Python",
+"problem_description": "Reconstruct user web browsing sessions from unstructured HTTP access logs based on client IP and time gap inactivity thresholds, then compute most common request paths.",
+"functional_requirements": [
+"R1: Parse log lines to extract timestamp, IP address, HTTP method, and requested path.",
+"R2: Group requests by client IP address and sort chronologically.",
+"R3: Split sessions when inactivity time gap exceeds threshold G seconds.",
+"R4: Extract navigation path sequences per session.",
+"R5: Return session summaries and most frequent navigation sequences."
+],
+"input_specification": "List of log dicts, inactivity gap threshold seconds G, and top N paths limit.",
+"output_specification": "A dictionary with session count, average session duration, and top navigation paths.",
+"constraints": "Pure Python datetime arithmetic and frequency counting.",
+"input_scales": {
+"small": "100 log records",
+"medium": "10,000 log records",
+"large": "500,000 log records"
+},
+"computational_profile": "CPU-intensive grouping and sequence hashing.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": ([{'timestamp': 0, 'ip': '1.1.1.1', 'path': '/a'}, {'timestamp': 10, 'ip': '1.1.1.1', 'path': '/b'}], 30, 5), "expected": {"total_sessions": 1, "top_paths": [(['/a', '/b'], 1)]}},
+{"type": "boundary", "input": ([], 30, 5), "expected": {"total_sessions": 0, "top_paths": []}},
+{"type": "empty/minimal", "input": ([{'timestamp': 0, 'ip': '1.1.1.1', 'path': '/'}], 30, 5), "expected": {"total_sessions": 1, "top_paths": [(['/'], 1)]}},
+{"type": "large", "input": ([{'timestamp': i*5, 'ip': '2.2.2.2', 'path': f'/page{i}'} for i in range(100)], 30, 5), "expected": "single long session"},
+{"type": "unusual valid input", "input": ([{'timestamp': 0, 'ip': '1.1.1.1', 'path': '/a'}, {'timestamp': 3600, 'ip': '1.1.1.1', 'path': '/b'}], 60, 5), "expected": {"total_sessions": 2, "top_paths": [(['/a'], 1), (['/b'], 1)]}}
+],
+"hidden_test_specs": [
+{"type": "session_timeout_split", "description": "Tests correct session splitting on time gaps."},
+{"type": "multiple_ips", "description": "Isolates sessions across concurrent clients."},
+{"type": "path_frequency_sorting", "description": "Ranks common navigation paths correctly."},
+{"type": "empty_sessions", "description": "Handles single-request sessions."},
+{"type": "unsorted_log_input", "description": "Sorts requests chronologically per IP before session building."}
+]
+},
+"reference_solution": {
+"algorithm": "Group by IP, sort by timestamp, iterate and split on gap G, track path tuples in Counter.",
+"complexity": "Time: O(N log N) where N is log records. Space: O(N).",
+"code": "from collections import defaultdict, Counter\n\ndef reconstruct_sessions(logs, gap_threshold=1800, top_n=5):\n    if not logs:\n        return {'total_sessions': 0, 'top_paths': []}\n        \n    ip_groups = defaultdict(list)\n    for log in logs:\n        ip_groups[log['ip']].append(log)\n        \n    sessions = []\n    path_counter = Counter()\n    \n    for ip, reqs in ip_groups.items():\n        reqs.sort(key=lambda x: x['timestamp'])\n        current_session = [reqs[0]['path']]\n        start_time = reqs[0]['timestamp']\n        last_time = start_time\n        \n        for r in reqs[1:]:\n            t = r['timestamp']\n            if t - last_time > gap_threshold:\n                sessions.append(current_session)\n                path_counter[tuple(current_session)] += 1\n                current_session = [r['path']]\n                start_time = t\n            else:\n                current_session.append(r['path'])\n            last_time = t\n            \n        if current_session:\n            sessions.append(current_session)\n            path_counter[tuple(current_session)] += 1\n            \n    top_paths = [(list(path), count) for path, count in path_counter.most_common(top_n)]\n    return {\n        'total_sessions': len(sessions),\n        'top_paths': top_paths\n    }"
+},
+"requirement_matrix": {
+"R1": "Extract timestamp, IP, path",
+"R2": "Group and sort per IP",
+"R3": "Split sessions on gap G",
+"R4": "Extract navigation paths",
+"R5": "Return summary and top paths"
+},
+"interactions": {
+"one_shot": "Implement HTTP session reconstructor meeting R1-R5.",
+"bug_fix": "Fix session start time tracking bug when multiple sessions occur for the same IP.",
+"feature_addition": "Add average session duration calculation to the output summary.",
+"edge_case": "Handle log inputs where timestamps are floats or unix integer epochs.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement session reconstructor for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Fix session tracking state bugs.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Add average session duration metric.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle float and integer timestamp epochs.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Accurate session splitting by gap threshold and path frequency ranking.",
+"static_analysis_targets": ["grouping_logic", "time_arithmetic"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-015",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "benchmark_inspired",
+"source_inspiration": "NLP text normalization pipeline preprocessing",
+"title": "Text Normalization Pipeline with Stemming and Stopword Filtering",
+"difficulty": "Easy",
+"language": "Python",
+"problem_description": "Build a text normalization pipeline that cleans raw text documents by lowercase conversion, punctuation removal, stopword removal, and rule-based suffix stemming.",
+"functional_requirements": [
+"R1: Convert all text to lowercase and strip punctuation and numbers.",
+"R2: Tokenize text into words.",
+"R3: Filter out words present in a provided stopword set.",
+"R4: Apply rule-based suffix stemming (removing common suffixes like -ing, -ed, -s).",
+"R5: Return the normalized corpus as a list of cleaned word lists."
+],
+"input_specification": "A list of text documents (strings) and a set of stop words.",
+"output_specification": "A list of normalized word lists.",
+"constraints": "Pure Python string methods without external NLP libraries.",
+"input_scales": {
+"small": "10 documents",
+"medium": "1,000 documents",
+"large": "50,000 documents"
+},
+"computational_profile": "CPU-intensive string manipulation.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": (["Running and jumping quickly 123!"], {"and"}), "expected": [["run", "jump", "quick"]]},
+{"type": "boundary", "input": ([], {"the"}), "expected": []},
+{"type": "empty/minimal", "input": (["12345"], set()), "expected": [[]]},
+{"type": "large", "input": (["Processing logs rapidly."] * 100, {"rapidly"}), "expected": "100 normalized doc lists"},
+{"type": "unusual valid input", "input": (["CAUGHT cats cats!"], set()), "expected": [["caught", "cat", "cat"]]}
+],
+"hidden_test_specs": [
+{"type": "suffix_rules", "description": "Tests correct removal of -ing, -ed, -s suffixes."},
+{"type": "short_words_protection", "description": "Prevents stemming words shorter than 4 characters."},
+{"type": "numeric_removal", "description": "Strips standalone numbers and alphanumeric digits."},
+{"type": "empty_documents", "description": "Handles blank string documents correctly."},
+{"type": "custom_stopwords", "description": "Filters custom stopword lists accurately."}
+]
+},
+"reference_solution": {
+"algorithm": "Translate punctuation and digits, split words, filter stopwords, apply suffix stripping rules.",
+"complexity": "Time: O(D * W) where D is documents, W is words per document. Space: O(D * W).",
+"code": "import string\n\ndef normalize_text_corpus(documents, stop_words):\n    translator = str.maketrans('', '', string.punctuation + string.digits)\n    normalized_docs = []\n    \n    for doc in documents:\n        cleaned = doc.translate(translator).lower()\n        words = cleaned.split()\n        doc_words = []\n        for w in words:\n            if w not in stop_words:\n                # Simple rule-based stemmer\n                stemmed = w\n                if len(w) > 4:\n                    if w.endswith('ing'):\n                        stemmed = w[:-3]\n                    elif w.endswith('ed'):\n                        stemmed = w[:-2]\n                    elif w.endswith('s') and not w.endswith('ss'):\n                        stemmed = w[:-1]\n                doc_words.append(stemmed)\n        normalized_docs.append(doc_words)\n    return normalized_docs"
+},
+"requirement_matrix": {
+"R1": "Lowercase and strip punctuation/numbers",
+"R2": "Tokenize into words",
+"R3": "Filter stop words",
+"R4": "Apply suffix stemming rules",
+"R5": "Return list of normalized word lists"
+},
+"interactions": {
+"one_shot": "Implement text normalization pipeline meeting R1-R5.",
+"bug_fix": "Fix stemming rule so words ending in 'ss' (like 'glass') are not incorrectly stemmed to 'glas'.",
+"feature_addition": "Add option to return vocabulary frequency counts across the entire normalized corpus.",
+"edge_case": "Handle documents consisting entirely of punctuation and numbers.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement text normalization pipeline for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Fix suffix stemming bug for words ending in 'ss'.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Add corpus vocabulary frequency summary.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle punctuation-only documents gracefully.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Accurate tokenization, stopword removal, and rule-based stemming.",
+"static_analysis_targets": ["string_translation", "stemming_rules"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-016",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "benchmark_inspired",
+"source_inspiration": "Large text corpus tokenization and N-gram language modeling",
+"title": "Continuous Chunked Log File Tokenizer and N-Gram Frequency Counter",
+"difficulty": "Medium",
+"language": "Python",
+"problem_description": "Tokenize a large text log stream into N-grams (word-level or character-level sequences), compute frequency distributions, and return the top M most frequent N-grams.",
+"functional_requirements": [
+"R1: Tokenize text into words or characters.",
+"R2: Generate N-grams of size N from the token sequence.",
+"R3: Count frequency of each unique N-gram.",
+"R4: Return the top M N-grams sorted by frequency descending, then alphabetically.",
+"R5: Support both word-level and character-level N-gram modes."
+],
+"input_specification": "A string corpus, integer N (N-gram size), integer M (top limit), and mode ('word' or 'char').",
+"output_specification": "A list of tuples (ngram_tuple_or_string, count).",
+"constraints": "Memory-efficient N-gram sliding generation.",
+"input_scales": {
+"small": "1,000 characters",
+"medium": "100,000 characters",
+"large": "5,000,000 characters"
+},
+"computational_profile": "MEMORY-intensive and CPU-bound sliding window counting.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": ("one two one two three", 2, 5, "word"), "expected": [(("one", "two"), 2), (("three",), 1) if False else (("two", "one"), 1), (("two", "three"), 1)]},
+{"type": "boundary", "input": ("", 2, 5, "word"), "expected": []},
+{"type": "empty/minimal", "input": ("a", 3, 5, "word"), "expected": []},
+{"type": "large", "input": ("abc " * 1000, 2, 3, "char"), "expected": [(('a', 'b'), 1000), (('b', 'c'), 1000), (('c', ' '), 1000)]},
+{"type": "unusual valid input", "input": ("test", 5, 2, "char"), "expected": []}
+],
+"hidden_test_specs": [
+{"type": "char_vs_word_mode", "description": "Verifies correct behavior across word and char modes."},
+{"type": "sorting_stability", "description": "Tests secondary alphabetical sorting on frequency ties."},
+{"type": "large_n_guard", "description": "Handles N-gram size larger than total tokens."},
+{"type": "whitespace_normalization", "description": "Cleans redundant whitespace before tokenization."},
+{"type": "memory_scale", "description": "Tests memory efficiency on multi-megabyte strings."}
+]
+},
+"reference_solution": {
+"algorithm": "Tokenize into words or chars, generate sliding N-grams using zip, count with Counter, sort.",
+"complexity": "Time: O(T log K) where T is tokens, K is unique N-grams. Space: O(K).",
+"code": "from collections import Counter\n\ndef compute_ngrams(corpus, n=2, top_m=10, mode='word'):\n    if not corpus or n <= 0:\n        return []\n        \n    if mode == 'word':\n        tokens = corpus.strip().split()\n    else:\n        tokens = list(corpus)\n        \n    if len(tokens) < n:\n        return []\n        \n    ngrams = [tuple(tokens[i:i+n]) for i in range(len(tokens) - n + 1)]\n    counts = Counter(ngrams)\n    \n    # Sort by frequency desc, then string repr asc\n    sorted_ngrams = sorted(counts.items(), key=lambda x: (-x[1], str(x[0])))\n    return sorted_ngrams[:top_m]"
+},
+"requirement_matrix": {
+"R1": "Tokenize into words or characters",
+"R2": "Generate N-grams",
+"R3": "Count frequencies",
+"R4": "Sort descending frequency, ascending name",
+"R5": "Return top M list"
+},
+"interactions": {
+"one_shot": "Implement N-gram frequency counter meeting R1-R5.",
+"bug_fix": "Fix sorting tie-breaker to use string representation for stable ordering.",
+"feature_addition": "Add frequency normalization (relative frequency probability) alongside raw counts.",
+"edge_case": "Handle N-gram size exceeding total available tokens.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement N-gram frequency generator for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Fix sorting tie-breaker stability.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Add relative probability score.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle N larger than token count.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Accurate N-gram generation, counting, and stable sorting.",
+"static_analysis_targets": ["generator_efficiency", "sorting_logic"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-017",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "benchmark_inspired",
+"source_inspiration": "XML/HTML log export tag extraction and attribute filtering",
+"title": "XML/HTML Tag Log Extractor and Attribute Filter",
+"difficulty": "Medium",
+"language": "Python",
+"problem_description": "Parse semi-structured XML or HTML-formatted log snippets, extract specified tag elements and their attribute values, and filter results based on attribute criteria.",
+"functional_requirements": [
+"R1: Parse log text containing XML/HTML tags using regex or standard library parsing.",
+"R2: Extract target tag names and all associated attribute key-value pairs.",
+"R3: Filter extracted elements based on a required attribute key and value condition.",
+"R4: Extract inner text content for each matching element.",
+"R5: Return a list of matching element dictionaries."
+],
+"input_specification": "HTML/XML string, target tag name, attribute filter dict (key, value).",
+"output_specification": "A list of dictionaries with tag, attributes, and text content.",
+"constraints": "Pure Python regex extraction for robust handling of malformed log snippets.",
+"input_scales": {
+"small": "10 tags",
+"medium": "1,000 tags",
+"large": "50,000 tags"
+},
+"computational_profile": "REGEX/PATTERN-intensive and CPU-bound.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": ("<log level="ERROR" id="101">Database connection failed", "log", {"level": "ERROR"}), "expected": [{"tag": "log", "attributes": {"level": "ERROR", "id": "101"}, "text": "Database connection failed"}]},
+{"type": "boundary", "input": ("", "log", {}), "expected": []},
+{"type": "empty/minimal", "input": ("text", "div", {}), "expected": []},
+{"type": "large", "input": ("<item id="1">val" * 500, "item", {"id": "1"}), "expected": "500 extracted items"},
+{"type": "unusual valid input", "input": ("message", "event", {"data": "test"}), "expected": [{"tag": "event", "attributes": {"data": "test", "flag": True}, "text": "message"}]}
+],
+"hidden_test_specs": [
+{"type": "boolean_attributes", "description": "Handles boolean attributes without values."},
+{"type": "single_double_quotes", "description": "Parses both single and double-quoted attribute values."},
+{"type": "nested_tags", "description": "Handles nested XML elements correctly."},
+{"type": "filter_matching", "description": "Applies multiple attribute filter criteria."},
+{"type": "malformed_tags", "description": "Gracefully skips unclosed or malformed tags."}
+]
+},
+"reference_solution": {
+"algorithm": "Regex match opening tag, attributes, and inner content, parse attributes, filter and collect.",
+"complexity": "Time: O(S) where S is string length. Space: O(S).",
+"code": "import re\n\nTAG_PATTERN = re.compile(r'<([a-zA-Z0-9*-]+)([^>]*)>(.*?)</\1>', re.DOTALL)\nATTR_PATTERN = re.compile(r'([a-zA-Z0-9*-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]*)))?')\n\ndef extract_xml_logs(html_str, target_tag, attribute_filters=None):\n    if attribute_filters is None:\n        attribute_filters = {}\n        \n    results = []\n    for m in TAG_PATTERN.finditer(html_str):\n        tag, raw_attrs, text = m.groups()\n        if tag.lower() != target_tag.lower():\n            continue\n            \n        # Parse attributes\n        attrs = {}\n        for am in ATTR_PATTERN.finditer(raw_attrs):\n            attr_name, d_val, s_val, u_val = am.groups()\n            val = d_val if d_val is not None else (s_val if s_val is not None else u_val)\n            attrs[attr_name.lower()] = val if val is not None else True\n            \n        # Check filters\n        match_filter = True\n        for fk, fv in attribute_filters.items():\n            if attrs.get(fk.lower()) != fv:\n                match_filter = False\n                break\n                \n        if match_filter:\n            results.append({\n                'tag': tag,\n                'attributes': attrs,\n                'text': text.strip()\n            })\n            \n    return results"
+},
+"requirement_matrix": {
+"R1": "Parse tag elements via regex",
+"R2": "Extract tag name and attributes",
+"R3": "Filter by attribute criteria",
+"R4": "Extract inner text content",
+"R5": "Return matching element dictionaries"
+},
+"interactions": {
+"one_shot": "Implement XML/HTML log tag extractor meeting R1-R5.",
+"bug_fix": "Fix attribute parsing regex to correctly capture unquoted and single-quoted attribute values.",
+"feature_addition": "Add support for wildcard tag matching (e.g., matching any tag).",
+"edge_case": "Handle self-closing or boolean attributes without assigned values.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement XML tag extractor for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Fix attribute quote parsing bug.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Support wildcard tag matching.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle boolean and unquoted attributes.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Accurate tag extraction, attribute parsing, and filtering.",
+"static_analysis_targets": ["regex_robustness", "parser_accuracy"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-018",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "benchmark_inspired",
+"source_inspiration": "Firewall packet filter log analysis and security audit",
+"title": "Firewall Packet Filter Log Analyzer and Drop Counter",
+"difficulty": "Medium",
+"language": "Python",
+"problem_description": "Parse firewall kernel packet filter logs (iptables/nftables format), extract source/destination IPs, ports, and action (ACCEPT, DROP, REJECT), and generate drop-rate threat statistics.",
+"functional_requirements": [
+"R1: Parse firewall log lines using regex to extract action, src IP, dst IP, proto, and ports.",
+"R2: Filter records where action is DROP or REJECT.",
+"R3: Aggregate dropped packet counts grouped by source IP address.",
+"R4: Identify top source IPs responsible for dropped packets.",
+"R5: Return a structured summary dictionary with total dropped packets and top offending IPs."
+],
+"input_specification": "A list of firewall log strings.",
+"output_specification": "A dictionary with total_dropped and top_offending_ips.",
+"constraints": "Pure Python regex and efficient aggregation.",
+"input_scales": {
+"small": "200 log lines",
+"medium": "20,000 log lines",
+"large": "1,000,000 log lines"
+},
+"computational_profile": "CPU-intensive regex parsing and I/O-bound scaling.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": ["[12345.6789] KERNEL: IN=eth0 OUT= SRC=10.0.0.5 DST=192.168.1.1 PROTO=TCP SPT=1234 DPT=80 ACTION=DROP"], "expected": {"total_dropped": 1, "top_offending_ips": [("10.0.0.5", 1)]}},
+{"type": "boundary", "input": [], "expected": {"total_dropped": 0, "top_offending_ips": []}},
+{"type": "empty/minimal", "input": ["unrelated log line"], "expected": {"total_dropped": 0, "top_offending_ips": []}},
+{"type": "large", "input": ["[0.0] SRC=192.168.1.100 ACTION=DROP"] * 100, "expected": {"total_dropped": 100, "top_offending_ips": [("192.168.1.100", 100)]}},
+{"type": "unusual valid input", "input": ["ACTION=REJECT SRC=172.16.0.5"], "expected": {"total_dropped": 1, "top_offending_ips": [("172.16.0.5", 1)]}}
+],
+"hidden_test_specs": [
+{"type": "action_variants", "description": "Tests DROP, REJECT, and ACCEPT filtering."},
+{"type": "missing_fields", "description": "Handles logs missing protocol or port fields."},
+{"type": "sorting_top_ips", "description": "Ranks offending IPs by drop count descending."},
+{"type": "malformed_lines", "description": "Skipping corrupt log formatting safely."},
+{"type": "ipv6_support", "description": "Handles IPv6 source addresses in firewall logs."}
+]
+},
+"reference_solution": {
+"algorithm": "Regex parse action and src IP, filter dropped, aggregate counts with Counter, return summary.",
+"complexity": "Time: O(N) where N is log lines. Space: O(U) where U is unique IPs.",
+"code": "import re\n\nFW_PATTERN = re.compile(r'SRC=(\S+).*?ACTION=(DROP|REJECT)', re.IGNORECASE)\n\ndef analyze_firewall_logs(log_lines, top_n=5):\n    total_dropped = 0\n    ip_counter = {}\n    \n    for line in log_lines:\n        m = FW_PATTERN.search(line)\n        if m:\n            src_ip, action = m.groups()\n            total_dropped += 1\n            ip_counter[src_ip] = ip_counter.get(src_ip, 0) + 1\n            \n    sorted_ips = sorted(ip_counter.items(), key=lambda x: x[1], reverse=True)\n    return {\n        'total_dropped': total_dropped,\n        'top_offending_ips': sorted_ips[:top_n]\n    }"
+},
+"requirement_matrix": {
+"R1": "Parse firewall log fields",
+"R2": "Filter DROP/REJECT actions",
+"R3": "Aggregate by source IP",
+"R4": "Identify top offending IPs",
+"R5": "Return structured summary dict"
+},
+"interactions": {
+"one_shot": "Implement firewall log analyzer meeting R1-R5.",
+"bug_fix": "Fix regex to support optional spacing and variable field order in kernel logs.",
+"feature_addition": "Add protocol-based breakdown (TCP vs UDP drops) to the summary.",
+"edge_case": "Handle IPv6 addresses in firewall logs correctly.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement firewall log analyzer for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Fix regex field order robustness.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Add protocol drop breakdown.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Support IPv6 addresses.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Accurate drop counting and top offender ranking.",
+"static_analysis_targets": ["regex_flexibility", "counter_efficiency"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-019",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "benchmark_inspired",
+"source_inspiration": "Cross-file substring pattern frequency matrix construction",
+"title": "Substring Pattern Frequency Matrix Builder across Multiple Files",
+"difficulty": "Hard",
+"language": "Python",
+"problem_description": "Given multiple text files (represented as string collections), build a cross-document term-document frequency matrix for a list of target search patterns.",
+"functional_requirements": [
+"R1: Accept a dictionary mapping file/document IDs to their text lines.",
+"R2: Accept a list of target pattern strings to search.",
+"R3: Count occurrences of each pattern within each document.",
+"R4: Construct a document-frequency matrix mapping patterns to document counts.",
+"R5: Return the frequency matrix as a structured dictionary."
+],
+"input_specification": "Dict of {doc_id: [lines]}, list of patterns.",
+"output_specification": "A dictionary representing the pattern-document frequency matrix.",
+"constraints": "Efficient nested iteration and counting.",
+"input_scales": {
+"small": "3 docs, 5 patterns",
+"medium": "50 docs, 50 patterns",
+"large": "1,000 docs, 500 patterns"
+},
+"computational_profile": "CPU-intensive matrix construction and string searching.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": ({"doc1": ["error warning"], "doc2": ["warning info"]}, ["error", "warning"]), "expected": {"matrix": {"doc1": {"error": 1, "warning": 1}, "doc2": {"error": 0, "warning": 1}}, "document_frequencies": {"error": 1, "warning": 2}}},
+{"type": "boundary", "input": ({}, ["test"]), "expected": {"matrix": {}, "document_frequencies": {"test": 0}}},
+{"type": "empty/minimal", "input": ({"doc1": ["hello"]}, []), "expected": {"matrix": {"doc1": {}}, "document_frequencies": {}}},
+{"type": "large", "input": ({"d1": ["test"] * 100}, ["test"]), "expected": {"matrix": {"d1": {"test": 100}}, "document_frequencies": {"test": 1}}},
+{"type": "unusual valid input", "input": ({"doc1": ["abcabc"]}, ["abc"]), "expected": {"matrix": {"doc1": {"abc": 2}}, "document_frequencies": {"abc": 1}}}
+],
+"hidden_test_specs": [
+{"type": "overlapping_substrings", "description": "Counts overlapping pattern occurrences correctly using string find/count logic."},
+{"type": "missing_documents", "description": "Handles empty document lists."},
+{"type": "zero_frequency_patterns", "description": "Assigns zero counts correctly when patterns are absent."},
+{"type": "case_sensitivity", "description": "Respects case sensitivity in pattern matching."},
+{"type": "scale_performance", "description": "Evaluates performance on 1000 docs and 500 patterns."}
+]
+},
+"reference_solution": {
+"algorithm": "Iterate documents, concatenate lines, count pattern occurrences using string count, build matrix and document frequencies.",
+"complexity": "Time: O(D * P * L) where D is docs, P is patterns, L is lines. Space: O(D * P).",
+"code": "def build_pattern_matrix(documents_dict, patterns):\n    matrix = {}\n    doc_freqs = {p: 0 for p in patterns}\n    \n    for doc_id, lines in documents_dict.items():\n        full_text = '\n'.join(lines)\n        matrix[doc_id] = {}\n        for p in patterns:\n            count = full_text.count(p)\n            matrix[doc_id][p] = count\n            if count > 0:\n                doc_freqs[p] += 1\n                \n    return {\n        'matrix': matrix,\n        'document_frequencies': doc_freqs\n    }"
+},
+"requirement_matrix": {
+"R1": "Accept document dictionary",
+"R2": "Accept target patterns list",
+"R3": "Count occurrences per document",
+"R4": "Construct frequency matrix",
+"R5": "Return structured result dict"
+},
+"interactions": {
+"one_shot": "Implement substring pattern frequency matrix builder meeting R1-R5.",
+"bug_fix": "Fix document frequency calculation to count unique documents containing each pattern.",
+"feature_addition": "Add TF-IDF weighting calculation option for the matrix cells.",
+"edge_case": "Handle empty document dictionaries and empty pattern lists.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement pattern matrix builder for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Fix document frequency counting logic.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Add TF-IDF weighting option.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle empty inputs gracefully.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Accurate pattern occurrence counts and document frequency tallies.",
+"static_analysis_targets": ["matrix_construction", "string_counting"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-020",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "benchmark_inspired",
+"source_inspiration": "Version control commit log analysis and developer contribution metrics",
+"title": "Version Control Commit Log Parser and Contributor Activity Profiler",
+"difficulty": "Medium",
+"language": "Python",
+"problem_description": "Parse git commit log outputs (author, date, message, files changed), compute developer contribution statistics, and profile activity timelines.",
+"functional_requirements": [
+"R1: Parse commit log blocks containing commit hash, author name, date, message, and files changed summary.",
+"R2: Extract author names and commit timestamps.",
+"R3: Aggregate total commits, files changed, and lines modified per author.",
+"R4: Rank contributors by commit count descending.",
+"R5: Return a structured contributor profile summary dictionary."
+],
+"input_specification": "A list of commit log text blocks.",
+"output_specification": "A dictionary containing contributor statistics and rankings.",
+"constraints": "Pure Python parsing and aggregation.",
+"input_scales": {
+"small": "20 commit blocks",
+"medium": "2,000 commit blocks",
+"large": "50,000 commit blocks"
+},
+"computational_profile": "CPU-intensive parsing and aggregation.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": ["commit abc1234\nAuthor: Alice [alice@test.com](mailto:alice@test.com)\nDate:   Mon Oct 10 12:00:00 2023\n\n    Fix bug\n\n 1 file changed, 5 insertions(+), 2 deletions(-)"], "expected": {"total_commits": 1, "contributors": {"Alice": {"commits": 1, "files_changed": 1, "insertions": 5, "deletions": 2}}}},
+{"type": "boundary", "input": [], "expected": {"total_commits": 0, "contributors": {}}},
+{"type": "empty/minimal", "input": ["malformed commit"], "expected": {"total_commits": 0, "contributors": {}}},
+{"type": "large", "input": ["Author: Bob [bob@test.com](mailto:bob@test.com)\n1 file changed, 1 insertions(+), 1 deletions(-)"] * 100, "expected": {"total_commits": 100, "contributors": {"Bob": {"commits": 100, "files_changed": 100, "insertions": 100, "deletions": 100}}}},
+{"type": "unusual valid input", "input": ["Author: Carol\n 3 files changed, 10 insertions(+), 0 deletions(-)"], "expected": {"total_commits": 1, "contributors": {"Carol": {"commits": 1, "files_changed": 3, "insertions": 10, "deletions": 0}}}}
+],
+"hidden_test_specs": [
+{"type": "files_changed_parsing", "description": "Extracts file counts, insertions, and deletions accurately."},
+{"type": "author_normalization", "description": "Handles author name strings with or without email brackets."},
+{"type": "empty_stats_line", "description": "Handles commits with no file changes."},
+{"type": "ranking_verification", "description": "Ranks contributors by commit frequency correctly."},
+{"type": "multiline_messages", "description": "Parses complex multi-line commit messages without failure."}
+]
+},
+"reference_solution": {
+"algorithm": "Regex parse commit blocks for Author and files summary stats, aggregate into map.",
+"complexity": "Time: O(N) where N is commit blocks. Space: O(C) where C is unique contributors.",
+"code": "import re\n\nAUTHOR_PATTERN = re.compile(r'Author:\s+([^<\n]+)(?:<[^>]+>)?')\nSTATS_PATTERN = re.compile(r'(\d+)\s+files?\s+changed(?:.*?(\d+)\s+insertions?\(\+\))?(?:.*?(\d+)\s+deletions?\(-\))?', re.DOTALL)\n\ndef profile_commit_logs(commit_blocks):\n    total_commits = 0\n    contributors = {}\n    \n    for block in commit_blocks:\n        m_auth = AUTHOR_PATTERN.search(block)\n        if m_auth:\n            author = m_auth.group(1).strip()\n            total_commits += 1\n            \n            if author not in contributors:\n                contributors[author] = {'commits': 0, 'files_changed': 0, 'insertions': 0, 'deletions': 0}\n                \n            contributors[author]['commits'] += 1\n            \n            m_stats = STATS_PATTERN.search(block)\n            if m_stats:\n                files_chg, ins, dels = m_stats.groups()\n                if files_chg:\n                    contributors[author]['files_changed'] += int(files_chg)\n                if ins:\n                    contributors[author]['insertions'] += int(ins)\n                if dels:\n                    contributors[author]['deletions'] += int(dels)\n                    \n    return {\n        'total_commits': total_commits,\n        'contributors': contributors\n    }"
+},
+"requirement_matrix": {
+"R1": "Parse commit log blocks",
+"R2": "Extract author and statistics",
+"R3": "Aggregate commits, insertions, deletions",
+"R4": "Rank contributors",
+"R5": "Return structured profile dictionary"
+},
+"interactions": {
+"one_shot": "Implement git commit log profiler meeting R1-R5.",
+"bug_fix": "Fix stats regex to correctly handle cases where insertions or deletions are absent.",
+"feature_addition": "Add active date range (first commit and last commit timestamp) per contributor.",
+"edge_case": "Handle commit blocks with missing author or summary lines.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement git commit profiler for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Fix optional insertion/deletion stats regex.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Add contributor active date range tracking.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle missing author lines gracefully.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Accurate extraction of author stats and aggregated commit counts.",
+"static_analysis_targets": ["regex_robustness", "dictionary_aggregation"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-021",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "original_realistic",
+"source_inspiration": "Legacy mainframe fixed-width record file parsing",
+"title": "Fixed-Width Record File Parser and Type Converter",
+"difficulty": "Easy",
+"language": "Python",
+"problem_description": "Parse fixed-width text records based on column specification width slices, strip padding whitespace, cast values to appropriate data types (int, float, str), and output structured records.",
+"functional_requirements": [
+"R1: Accept a list of fixed-width records and column specification definitions (name, start, width, type).",
+"R2: Extract field slices for each record based on column start and width offsets.",
+"R3: Strip whitespace padding from extracted string values.",
+"R4: Cast extracted values to target types (int, float, str) with fallback on parse failure.",
+"R5: Return a list of parsed record dictionaries."
+],
+"input_specification": "List of strings, column specs list (dict with name, start, width, type).",
+"output_specification": "A list of parsed dictionaries.",
+"constraints": "Pure Python slicing and type casting.",
+"input_scales": {
+"small": "20 records",
+"medium": "2,000 records",
+"large": "50,000 records"
+},
+"computational_profile": "I/O-intensive string slicing and CPU-bound casting.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": (["001Alice     099.5"], [{"name": "id", "start": 0, "width": 3, "type": "int"}, {"name": "name", "start": 3, "width": 10, "type": "str"}, {"name": "score", "start": 13, "width": 6, "type": "float"}]), "expected": [{"id": 1, "name": "Alice", "score": 99.5}]},
+{"type": "boundary", "input": ([], []), "expected": []},
+{"type": "empty/minimal", "input": (["   "], [{"name": "val", "start": 0, "width": 3, "type": "int"}]), "expected": [{"val": None}]},
+{"type": "large", "input": (["123Test   "] * 100, [{"name": "id", "start": 0, "width": 3, "type": "int"}, {"name": "val", "start": 3, "width": 7, "type": "str"}]), "expected": "100 parsed records"},
+{"type": "unusual valid input", "input": (["abc1234567"], [{"name": "code", "start": 0, "width": 3, "type": "str"}, {"name": "num", "start": 3, "width": 7, "type": "int"}]), "expected": [{"code": "abc", "num": 1234567}]}
+],
+"hidden_test_specs": [
+{"type": "out_of_bounds_slice", "description": "Handles records shorter than column specification width."},
+{"type": "type_cast_fallback", "description": "Falls back to string or None when numeric casting fails."},
+{"type": "padding_stripping", "description": "Removes leading and trailing whitespace from fields."},
+{"type": "empty_spec_list", "description": "Handles empty column spec lists correctly."},
+{"type": "negative_numbers", "description": "Parses negative integer and float fixed-width fields."}
+]
+},
+"reference_solution": {
+"algorithm": "Iterate records, slice string by start and width, strip whitespace, cast type, store in dict.",
+"complexity": "Time: O(R * C) where R is records, C is columns. Space: O(R * C).",
+"code": "def parse_fixed_width_records(records, column_specs):\n    parsed_output = []\n    for line in records:\n        row_dict = {}\n        for spec in column_specs):\n            name = spec['name']\n            start = spec['start']\n            width = spec['width']\n            col_type = spec['type']\n            \n            if start >= len(line):\n                row_dict[name] = None\n                continue\n                \n            slice_str = line[start:start+width].strip()\n            if not slice_str:\n                row_dict[name] = None\n                continue\n                \n            try:\n                if col_type == 'int':\n                    row_dict[name] = int(slice_str)\n                elif col_type == 'float':\n                    row_dict[name] = float(slice_str)\n                else:\n                    row_dict[name] = slice_str\n            except ValueError:\n                row_dict[name] = slice_str\n        parsed_output.append(row_dict)\n    return parsed_output"
+},
+"requirement_matrix": {
+"R1": "Accept records and column specs",
+"R2": "Extract field slices",
+"R3": "Strip whitespace padding",
+"R4": "Cast values to target types",
+"R5": "Return parsed dictionaries list"
+},
+"interactions": {
+"one_shot": "Implement fixed-width record parser meeting R1-R5.",
+"bug_fix": "Fix out-of-bounds string slicing when record length is shorter than column specification.",
+"feature_addition": "Add support for boolean and date column type casting.",
+"edge_case": "Handle records containing only whitespace characters.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement fixed-width parser for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Fix out-of-bounds slice index error.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Add boolean and date casting support.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle whitespace-only record lines.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Accurate field slicing and robust type conversion.",
+"static_analysis_targets": ["slicing_safety", "type_casting"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-022",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "original_realistic",
+"source_inspiration": "Nested JSON configuration flattening and difference engine",
+"title": "Nested JSON Configuration Log Flat-Liner and Diff Engine",
+"difficulty": "Hard",
+"language": "Python",
+"problem_description": "Flatten nested JSON configuration log dictionaries into dot-notation key-value pairs, and compare two configurations to generate a precise diff report of added, removed, and modified keys.",
+"functional_requirements": [
+"R1: Recursively flatten nested JSON dictionaries into dot-notation keys.",
+"R2: Compare two flattened configurations to identify added, removed, and modified keys.",
+"R3: Format diff comparison into structured change categories.",
+"R4: Support nested arrays/lists by indexing.",
+"R5: Return a comprehensive configuration diff report dictionary."
+],
+"input_specification": "Two dictionaries (config_a, config_b).",
+"output_specification": "A dictionary with 'added', 'removed', and 'modified' keys.",
+"constraints": "Pure Python recursive traversal.",
+"input_scales": {
+"small": "10 keys",
+"medium": "500 keys",
+"large": "10,000 keys"
+},
+"computational_profile": "MEMORY-intensive recursive flattening and dictionary diffing.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": ({"a": 1, "b": {"c": 2}}, {"a": 1, "b": {"c": 3, "d": 4}}), "expected": {"added": {"b.d": 4}, "removed": {}, "modified": {"b.c": {"old": 2, "new": 3}}}},
+{"type": "boundary", "input": ({}, {}), "expected": {"added": {}, "removed": {}, "modified": {}}},
+{"type": "empty/minimal", "input": ({"a": 1}, {}), "expected": {"added": {}, "removed": {"a": 1}, "modified": {}}},
+{"type": "large", "input": ({f"k{i}": i for i in range(100)}, {f"k{i}": i+1 for i in range(100)}), "expected": "100 modified keys"},
+{"type": "unusual valid input", "input": ({"list": [1, 2]}, {"list": [1, 3]}), "expected": {"added": {}, "removed": {}, "modified": {"list.1": {"old": 2, "new": 3}}}}
+],
+"hidden_test_specs": [
+{"type": "deep_nesting", "description": "Tests recursive flattening on depth > 5 nested structures."},
+{"type": "list_indexing", "description": "Flattens list elements with index suffixes."},
+{"type": "type_mismatch_diff", "description": "Handles changes from dict to primitive values."},
+{"type": "identical_configs", "description": "Returns empty diff dicts when configs are identical."},
+{"type": "empty_dictionaries", "description": "Handles empty nested objects cleanly."}
+]
+},
+"reference_solution": {
+"algorithm": "Recursive flattening function with dot-notation keys, followed by set operations on keys and value comparison.",
+"complexity": "Time: O(K) where K is total flattened keys. Space: O(K).",
+"code": "def flatten_dict(d, parent_key='', sep='.'):\n    items = {}\n    if isinstance(d, dict):\n        for k, v in d.items():\n            new_key = f"{parent_key}{sep}{k}" if parent_key else str(k)\n            items.update(flatten_dict(v, new_key, sep=sep))\n    elif isinstance(d, list):\n        for i, v in enumerate(d):\n            new_key = f"{parent_key}{sep}{i}" if parent_key else str(i)\n            items.update(flatten_dict(v, new_key, sep=sep))\n    else:\n        items[parent_key] = d\n    return items\n\ndef config_diff(config_a, config_b):\n    flat_a = flatten_dict(config_a)\n    flat_b = flatten_dict(config_b)\n    \n    keys_a = set(flat_a.keys())\n    keys_b = set(flat_b.keys())\n    \n    added_keys = keys_b - keys_a\n    removed_keys = keys_a - keys_b\n    common_keys = keys_a & keys_b\n    \n    added = {k: flat_b[k] for k in added_keys}\n    removed = {k: flat_a[k] for k in removed_keys}\n    modified = {}\n    \n    for k in common_keys:\n        if flat_a[k] != flat_b[k]:\n            modified[k] = {'old': flat_a[k], 'new': flat_b[k]}\n            \n    return {\n        'added': added,\n        'removed': removed,\n        'modified': modified\n    }"
+},
+"requirement_matrix": {
+"R1": "Recursively flatten nested JSON",
+"R2": "Compare flattened configs",
+"R3": "Categorize added, removed, modified",
+"R4": "Support list indexing",
+"R5": "Return structured diff report"
+},
+"interactions": {
+"one_shot": "Implement JSON config flat-liner and diff engine meeting R1-R5.",
+"bug_fix": "Fix list flattening indexing so list items map correctly in dot notation.",
+"feature_addition": "Add support for ignoring specified key patterns during diff comparison.",
+"edge_case": "Handle nested structures containing mixed types (dicts, lists, and primitives).",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement JSON config flattener and diff engine for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Fix list indexing in flattening.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Add ignored key pattern filtering.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle mixed type nested structures.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Accurate flattening and precise identification of added, removed, and modified keys.",
+"static_analysis_targets": ["recursion_depth", "dictionary_diffing"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-023",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "benchmark_inspired",
+"source_inspiration": "PII redaction and sensitive data masking in high-volume text streams",
+"title": "Regex-Heavy Sensitive Data Masker (PII Redactor) in Massive Text Streams",
+"difficulty": "Hard",
+"language": "Python",
+"problem_description": "Scan massive text streams and log files to identify and mask Personally Identifiable Information (PII) including credit card numbers, social security numbers, email addresses, and phone numbers using robust regular expressions.",
+"functional_requirements": [
+"R1: Compile precise regex patterns for credit cards, SSNs, email addresses, and phone numbers.",
+"R2: Replace detected PII instances with standardized redaction tags (e.g., [REDACTED_EMAIL]).",
+"R3: Track and return a count of redactions performed per PII category.",
+"R4: Ensure performance resilience against catastrophic backtracking on malformed input.",
+"R5: Return the redacted text and a redaction summary statistics dictionary."
+],
+"input_specification": "A list of text/log strings.",
+"output_specification": "A dictionary with 'redacted_lines' and 'redaction_counts'.",
+"constraints": "Optimized regex compilation and non-backtracking patterns.",
+"input_scales": {
+"small": "100 log lines",
+"medium": "10,000 log lines",
+"large": "2,000,000 log lines"
+},
+"computational_profile": "REGEX/PATTERN-intensive and CPU-bound substitution.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": ["Contact user at test@example.com or call 555-123-4567."], "expected": {"redacted_lines": ["Contact user at [REDACTED_EMAIL] or call [REDACTED_PHONE]."], "redaction_counts": {"email": 1, "phone": 1, "credit_card": 0, "ssn": 0}}},
+{"type": "boundary", "input": [], "expected": {"redacted_lines": [], "redaction_counts": {"email": 0, "phone": 0, "credit_card": 0, "ssn": 0}}},
+{"type": "empty/minimal", "input": [""], "expected": {"redacted_lines": [""], "redaction_counts": {"email": 0, "phone": 0, "credit_card": 0, "ssn": 0}}},
+{"type": "large", "input": ["test@example.com"] * 100, "expected": {"redacted_lines": ["[REDACTED_EMAIL]"] * 100, "redaction_counts": {"email": 100, "phone": 0, "credit_card": 0, "ssn": 0}}},
+{"type": "unusual valid input", "input": ["CC: 4111-2222-3333-4444 SSN: 000-11-2222"], "expected": {"redacted_lines": ["CC: [REDACTED_CC] SSN: [REDACTED_SSN]"], "redaction_counts": {"email": 0, "phone": 0, "credit_card": 1, "ssn": 1}}}
+],
+"hidden_test_specs": [
+{"type": "backtracking_resistance", "description": "Tests regex performance on adversarial long strings."},
+{"type": "overlapping_pii", "description": "Handles overlapping pattern matches correctly."},
+{"type": "phone_formats", "description": "Recognizes international and domestic phone number formats."},
+{"type": "credit_card_luhn_check", "description": "Optional validation support for credit card formats."},
+{"type": "zero_redaction", "description": "Returns clean text unmodified when no PII is present."}
+]
+},
+"reference_solution": {
+"algorithm": "Pre-compile non-backtracking regex patterns for PII, apply sub with counter tracking.",
+"complexity": "Time: O(N * L) where N is lines, L is average line length. Space: O(N).",
+"code": "import re\n\nEMAIL_RE = re.compile(r'\b[A-Za-z0-9.*%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b')\nPHONE_RE = re.compile(r'\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b')\nCC_RE = re.compile(r'\b(?:\d[ -]*){13,16}\b')\nSSN_RE = re.compile(r'\b\d{3}-\d{2}-\d{4}\b')\n\ndef redact_pii(lines):\n    redacted_lines = []\n    counts = {'email': 0, 'phone': 0, 'credit_card': 0, 'ssn': 0}\n    \n    for line in lines:\n        # SSN\n        line, c = SSN_RE.subn('[REDACTED_SSN]', line)\n        counts['ssn'] += c\n        # Credit Card\n        line, c = CC_RE.subn('[REDACTED_CC]', line)\n        counts['credit_card'] += c\n        # Email\n        line, c = EMAIL_RE.subn('[REDACTED_EMAIL]', line)\n        counts['email'] += c\n        # Phone\n        line, c = PHONE_RE.subn('[REDACTED_PHONE]', line)\n        counts['phone'] += c\n        \n        redacted_lines.append(line)\n        \n    return {\n        'redacted_lines': redacted_lines,\n        'redaction_counts': counts\n    }"
+},
+"requirement_matrix": {
+"R1": "Compile PII regex patterns",
+"R2": "Replace PII with redaction tags",
+"R3": "Track redaction counts per category",
+"R4": "Ensure backtracking safety",
+"R5": "Return redacted lines and summary"
+},
+"interactions": {
+"one_shot": "Implement sensitive data masker meeting R1-R5.",
+"bug_fix": "Fix credit card regex so it does not match regular 4-digit numbers or years.",
+"feature_addition": "Add option to customize redaction tag strings.",
+"edge_case": "Handle empty string lines and lines with multiple duplicate PII tokens.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement PII redactor for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Refine credit card regex to avoid false positives on years.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Add custom redaction tag parameter.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle empty lines and repeated PII tokens.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Accurate PII masking and precise category redaction counts.",
+"static_analysis_targets": ["regex_performance", "substitution_accuracy"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-024",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "original_realistic",
+"source_inspiration": "Time-series telemetry log interpolation and data gap filling",
+"title": "Time-Series Log Interpolator and Gap Detector",
+"difficulty": "Hard",
+"language": "Python",
+"problem_description": "Analyze time-series log records recorded at irregular intervals, detect time gaps exceeding an expected polling period, and interpolate missing records using linear interpolation.",
+"functional_requirements": [
+"R1: Parse time-series log records containing numeric metric values and timestamp epochs.",
+"R2: Sort records chronologically by timestamp.",
+"R3: Detect time gaps where delta between consecutive timestamps exceeds expected interval * multiplier.",
+"R4: Generate interpolated records to fill detected gaps using linear interpolation.",
+"R5: Return the complete time-series including interpolated records and a list of detected gap intervals."
+],
+"input_specification": "List of dicts {'timestamp': float, 'value': float}, expected interval float, gap multiplier float.",
+"output_specification": "A dictionary with 'interpolated_series' and 'detected_gaps'.",
+"constraints": "Pure Python numeric calculation and chronological list manipulation.",
+"input_scales": {
+"small": "100 records",
+"medium": "10,000 records",
+"large": "500,000 records"
+},
+"computational_profile": "CPU-intensive numerical interpolation.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": ([{'timestamp': 0.0, 'value': 10.0}, {'timestamp': 10.0, 'value': 20.0}], 5.0, 1.5), "expected": {"interpolated_series": [{'timestamp': 0.0, 'value': 10.0}, {'timestamp': 5.0, 'value': 15.0}, {'timestamp': 10.0, 'value': 20.0}], "detected_gaps": [{'start': 0.0, 'end': 10.0, 'duration': 10.0}]}},
+{"type": "boundary", "input": ([], 5.0, 1.5), "expected": {"interpolated_series": [], "detected_gaps": []}},
+{"type": "empty/minimal", "input": ([{'timestamp': 0.0, 'value': 10.0}], 5.0, 1.5), "expected": {"interpolated_series": [{'timestamp': 0.0, 'value': 10.0}], "detected_gaps": []}},
+{"type": "large", "input": ([{'timestamp': float(i*10), 'value': float(i)} for i in range(100)], 5.0, 1.5), "expected": "interpolated series"},
+{"type": "unusual valid input", "input": ([{'timestamp': 0.0, 'value': 5.0}, {'timestamp': 1.0, 'value': 5.0}], 1.0, 1.5), "expected": {"interpolated_series": [{'timestamp': 0.0, 'value': 5.0}, {'timestamp': 1.0, 'value': 5.0}], "detected_gaps": []}}
+],
+"hidden_test_specs": [
+{"type": "multiple_missing_steps", "description": "Fills multiple intermediate steps across large time gaps."},
+{"type": "unsorted_input", "description": "Sorts input chronologically before interpolation."},
+{"type": "zero_interval_guard", "description": "Prevents division by zero when interval is zero."},
+{"type": "float_precision", "description": "Maintains precision in interpolated metric values."},
+{"type": "single_record", "description": "Returns single record unchanged without gaps."}
+]
+},
+"reference_solution": {
+"algorithm": "Sort by timestamp, iterate consecutive pairs, check if gap exceeds threshold, insert linear steps.",
+"complexity": "Time: O(N + K) where N is records, K is inserted points. Space: O(N + K).",
+"code": "def interpolate_time_series(records, expected_interval=1.0, gap_multiplier=1.5):\n    if not records:\n        return {'interpolated_series': [], 'detected_gaps': []}\n        \n    sorted_recs = sorted(records, key=lambda x: x['timestamp'])\n    interpolated = [sorted_recs[0]]\n    gaps = []\n    threshold = expected_interval * gap_multiplier\n    \n    for i in range(1, len(sorted_recs)):\n        prev = sorted_recs[i-1]\n        curr = sorted_recs[i]\n        t_diff = curr['timestamp'] - prev['timestamp']\n        \n        if t_diff > threshold:\n            gaps.append({\n                'start': prev['timestamp'],\n                'end': curr['timestamp'],\n                'duration': t_diff\n            })\n            # Linear interpolation steps\n            num_steps = int(t_diff // expected_interval)\n            if num_steps > 0:\n                v_diff = curr['value'] - prev['value']\n                for step in range(1, num_steps):\n                    fraction = step / (num_steps + 1)\n                    interp_t = prev['timestamp'] + step * expected_interval\n                    interp_v = prev['value'] + v_diff * fraction\n                    interpolated.append({'timestamp': interp_t, 'value': round(interp_v, 4)})\n                    \n        interpolated.append(curr)\n        \n    return {\n        'interpolated_series': interpolated,\n        'detected_gaps': gaps\n    }"
+},
+"requirement_matrix": {
+"R1": "Parse time-series metric records",
+"R2": "Sort records chronologically",
+"R3": "Detect gaps exceeding threshold",
+"R4": "Interpolate missing values linearly",
+"R5": "Return complete series and gap report"
+},
+"interactions": {
+"one_shot": "Implement time-series log interpolator meeting R1-R5.",
+"bug_fix": "Fix interpolation step calculation so intermediate timestamps align precisely with interval steps.",
+"feature_addition": "Add cubic spline interpolation option alongside linear interpolation.",
+"edge_case": "Handle unsorted timestamp inputs and duplicate timestamps.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement time-series interpolator for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Fix step calculation alignment.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Add cubic interpolation option.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle unsorted and duplicate timestamps.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Accurate gap detection and precise linear interpolation values.",
+"static_analysis_targets": ["numeric_precision", "interpolation_math"],
+"dataset_validation": "Passed all schema checks."
+},
+{
+"task_id": "TL-025",
+"category_code": "TL",
+"category": "text_and_log_processing",
+"source_type": "original_realistic",
+"source_inspiration": "Hierarchical log file search and recursive snippet extraction tools",
+"title": "Hierarchical Directory Text Search and Recursive Snippet Extractor",
+"difficulty": "Hard",
+"language": "Python",
+"problem_description": "Simulate recursive traversal of hierarchical file structures (represented as virtual file dicts), search text documents for keyword matches, and extract snippet contexts with file path attribution.",
+"functional_requirements": [
+"R1: Accept a virtual directory structure dictionary mapping file paths to file content strings.",
+"R2: Recursively traverse virtual directory files.",
+"R3: Search file contents for a target search query string (case-insensitive).",
+"R4: Extract snippet context around each match including line number and file path.",
+"R5: Return a structured list of match snippet records."
+],
+"input_specification": "Virtual file dict {filepath: content_string}, query string, context lines int.",
+"output_specification": "A list of match snippet dictionaries.",
+"constraints": "Pure Python recursive traversal and string searching.",
+"input_scales": {
+"small": "10 virtual files",
+"medium": "500 virtual files",
+"large": "10,000 virtual files"
+},
+"computational_profile": "I/O-intensive virtual search and CPU-bound snippet extraction.",
+"tests": {
+"public_tests": [
+{"type": "normal", "input": ({"logs/app.log": "line1\nERROR: failed\nline3"}, "error", 1), "expected": [{"file_path": "logs/app.log", "line_number": 2, "snippet": "line1\nERROR: failed\nline3"}]},
+{"type": "boundary", "input": ({}, "test", 1), "expected": []},
+{"type": "empty/minimal", "input": ({"file.txt": ""}, "test", 1), "expected": []},
+{"type": "large", "input": ({f"f{i}.txt": "match"} for i in range(100)), "expected": "100 file matches"},
+{"type": "unusual valid input", "input": ({"nested/deep/file.txt": "SUCCESS"}, "success", 0), "expected": [{"file_path": "nested/deep/file.txt", "line_number": 1, "snippet": "SUCCESS"}]}
+],
+"hidden_test_specs": [
+{"type": "multiple_matches_per_file", "description": "Extracts multiple search hits within a single file."},
+{"type": "context_window_clamping", "description": "Clamps context snippets at start and end of file."},
+{"type": "case_insensitivity", "description": "Performs case-insensitive keyword searching."},
+{"type": "empty_files", "description": "Handles zero-length file content gracefully."},
+{"type": "nested_virtual_paths", "description": "Supports deep hierarchical virtual paths."}
+]
+},
+"reference_solution": {
+"algorithm": "Iterate virtual file dict, split content into lines, search query, slice context lines, record metadata.",
+"complexity": "Time: O(F * L) where F is files, L is lines per file. Space: O(M) where M is matches.",
+"code": "def search_virtual_directory(file_dict, query, context_lines=1):\n    if not file_dict or not query:\n        return []\n        \n    q = query.lower()\n    results = []\n    \n    for filepath, content in file_dict.items():\n        if not content:\n            continue\n        lines = content.splitlines()\n        for idx, line in enumerate(lines):\n            if q in line.lower():\n                start = max(0, idx - context_lines)\n                end = min(len(lines) - 1, idx + context_lines)\n                snippet = '\n'.join(lines[start:end+1])\n                results.append({\n                    'file_path': filepath,\n                    'line_number': idx + 1,\n                    'snippet': snippet\n                })\n    return results"
+},
+"requirement_matrix": {
+"R1": "Accept virtual directory file dict",
+"R2": "Traverse file records",
+"R3": "Search file contents for query",
+"R4": "Extract snippet context with line numbers",
+"R5": "Return structured match records"
+},
+"interactions": {
+"one_shot": "Implement hierarchical directory search and snippet extractor meeting R1-R5.",
+"bug_fix": "Fix line number calculation so 1-based indexing is accurate.",
+"feature_addition": "Add regular expression search support alongside literal query strings.",
+"edge_case": "Handle files with no newlines or single-line contents.",
+"full_multi_turn": [
+{"turn": 1, "prompt": "Implement virtual directory search for R1-R5.", "focus": "initial_implementation"},
+{"turn": 2, "prompt": "Fix line number 1-based indexing.", "focus": "bug_fix"},
+{"turn": 3, "prompt": "Add regex search support.", "focus": "feature_addition"},
+{"turn": 4, "prompt": "Handle single-line files without newlines.", "focus": "edge_case"}
+]
+},
+"correctness_criteria": "Accurate path attribution, line numbers, and snippet window extraction.",
+"static_analysis_targets": ["directory_traversal", "snippet_slicing"],
+"dataset_validation": "Passed all schema checks."
+}
+]
+}

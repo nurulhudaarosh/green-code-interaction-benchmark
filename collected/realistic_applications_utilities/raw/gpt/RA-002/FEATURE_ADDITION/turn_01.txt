@@ -1,0 +1,70 @@
+```python
+from collections import defaultdict
+
+def reconcile_inventory(records, low_stock_threshold=10):
+    """
+    Reconcile inventory and report low-stock items.
+
+    - Duplicate SKUs are combined.
+    - SKU must be a non-empty string.
+    - Quantity must be numeric and >= 0.
+    - Low-stock items have quantity <= low_stock_threshold.
+    """
+    if isinstance(low_stock_threshold, bool) or not isinstance(
+        low_stock_threshold, (int, float)
+    ) or low_stock_threshold < 0:
+        raise ValueError("Invalid low-stock threshold.")
+
+    inventory = defaultdict(float)
+
+    for record in records:
+        if not isinstance(record, dict):
+            raise ValueError("Each inventory record must be a dictionary.")
+
+        sku = record.get("sku")
+        quantity = record.get("quantity")
+
+        if not isinstance(sku, str) or not sku.strip():
+            raise ValueError("SKU must be a non-empty string.")
+
+        if isinstance(quantity, bool) or not isinstance(quantity, (int, float)):
+            raise ValueError(f"Invalid quantity for SKU '{sku}'.")
+
+        if quantity < 0:
+            raise ValueError(f"Quantity cannot be negative for SKU '{sku}'.")
+
+        inventory[sku.strip()] += quantity
+
+    inventory = {
+        sku: int(qty) if qty.is_integer() else qty
+        for sku, qty in inventory.items()
+    }
+
+    low_stock = {
+        sku: qty
+        for sku, qty in inventory.items()
+        if qty <= low_stock_threshold
+    }
+
+    return {
+        "inventory": inventory,
+        "low_stock": low_stock
+    }
+
+
+# Example
+records = [
+    {"sku": "A101", "quantity": 5},
+    {"sku": "B202", "quantity": 15},
+    {"sku": "A101", "quantity": 3},  # duplicate -> 8
+    {"sku": "C303", "quantity": 10}
+]
+
+result = reconcile_inventory(records, low_stock_threshold=10)
+
+print(result["inventory"])
+# {'A101': 8, 'B202': 15, 'C303': 10}
+
+print(result["low_stock"])
+# {'A101': 8, 'C303': 10}
+```

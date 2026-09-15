@@ -1,0 +1,83 @@
+```python
+import csv
+import math
+from collections import defaultdict
+from typing import Dict, List, Tuple
+
+def analyze_transactions(transactions: List[Tuple[str, float, str]]) -> List[Dict]:
+    """
+    Analyzes transactions ordered by timestamp per account.
+    
+    Args:
+        transactions: List of tuples (account_id, amount, timestamp)
+        
+    Returns:
+        List of dictionaries containing analysis per transaction in deterministic order.
+    """
+    # Group transactions by account_id
+    grouped_txs = defaultdict(list)
+    for idx, (account_id, amount, timestamp) in enumerate(transactions):
+        grouped_txs[account_id].append((timestamp, idx, amount))
+
+    # Process each account, sorting by timestamp, then original insertion order
+    results = []
+    for account_id in sorted(grouped_txs.keys()):
+        acc_txs = sorted(grouped_txs[account_id], key=lambda x: (x[0], x[1]))
+        
+        history = []
+        for timestamp, original_idx, amount in acc_txs:
+            if len(history) == 0:
+                mean = 0.0
+                std_dev = 0.0
+                flagged = False
+            else:
+                n = len(history)
+                mean = sum(history) / n
+                variance = sum((x - mean) ** 2 for x in history) / n
+                std_dev = math.sqrt(variance)
+                
+                # Zero-deviation rule: flag if amount > mean when std_dev == 0
+                if std_dev == 0.0:
+                    flagged = amount > mean
+                else:
+                    flagged = amount > (mean + 3 * std_dev)
+            
+            results.append({
+                "original_index": original_idx,
+                "account_id": account_id,
+                "timestamp": timestamp,
+                "amount": amount,
+                "window_size": len(history),
+                "mean": mean,
+                "std_dev": std_dev,
+                "flagged": flagged
+            })
+            
+            # Update rolling window of 5 immediately preceding amounts
+            history.append(amount)
+            if len(history) > 5:
+                history.pop(0)
+
+    # Sort results deterministically by account_id, timestamp, original_index
+    results.sort(key=lambda x: (x["account_id"], x["timestamp"], x["original_index"]))
+    return results
+
+
+if __name__ == "__main__":
+    sample_data = [
+        ("ACC1", 100.0, "2026-01-01T10:00:00"),
+        ("ACC1", 100.0, "2026-01-01T10:05:00"),
+        ("ACC1", 100.0, "2026-01-01T10:10:00"),
+        ("ACC1", 105.0, "2026-01-01T10:15:00"),  # Flagged under zero-dev rule if prev were identical
+        ("ACC1", 500.0, "2026-01-01T10:20:00"),  # High spike
+        ("ACC2", 50.0, "2026-01-01T09:00:00"),
+    ]
+
+    output = analyze_transactions(sample_data)
+
+    print(f"{'Account':<8} {'Timestamp':<20} {'Amount':<8} {'Mean':<8} {'StdDev':<8} {'Flagged'}")
+    print("-" * 65)
+    for r in output:
+        print(f"{r['account_id']:<8} {r['timestamp']:<20} {r['amount']:<8.2f} {r['mean']:<8.2f} {r['std_dev']:<8.2f} {r['flagged']}")
+
+```

@@ -1,0 +1,93 @@
+import csv
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+from typing import Dict, Any, Tuple, Optional
+
+
+def parse_timestamp(ts_str: str) -> datetime:
+    """Parse ISO 8601 / common timestamp formats with support for optional Z."""
+    clean_ts = ts_str.strip()
+    if clean_ts.endswith("Z"):
+        clean_ts = clean_ts[:-1] + "+00:00"
+    return datetime.fromisoformat(clean_ts)
+
+
+def process_customer_events(
+    input_csv_path: str,
+    output_csv_path: str,
+    customer_col: str = "customer_id",
+    timestamp_col: str = "timestamp",
+    status_col: str = "status",
+    amount_col: str = "amount"
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Processes customer event records from a CSV file offline:
+      1. Deduplicates (customer_id, timestamp) pairs by keeping the last occurrence.
+      2. Retains only the chronologically latest record for each customer.
+      3. Aggregates count and total amount grouped by status for retained records.
+      4. Writes the retained records deterministically sorted by customer_id to output CSV.
+    
+    Returns:
+        Dict containing status aggregations: {status: {"count": int, "total_amount": Decimal}}
+    """
+    # Step 1: Deduplicate identical (customer_id, timestamp) pairs by keeping the last occurrence
+    deduped_events: Dict[Tuple[str, str], Dict[str, str]] = {}
+    fieldnames = []
+
+    with open(input_csv_path, mode="r", encoding="utf-8", newline="") as infile:
+        reader = csv.DictReader(infile)
+        fieldnames = reader.fieldnames or []
+        for row in reader:
+            cust_id = row[customer_col].strip()
+            raw_ts = row[timestamp_col].strip()
+            deduped_events[(cust_id, raw_ts)] = row
+
+    # Step 2: Select the chronologically latest record per customer
+    # Using an insertion-index tie-breaker to preserve stability in case of identical parsed timestamps
+    latest_by_customer: Dict[str, Tuple[datetime, int, Dict[str, str]]] = {}
+
+    for idx, ((cust_id, _), row) in enumerate(deduped_events.items()):
+        parsed_ts = parse_timestamp(row[timestamp_col])
+        if cust_id not in latest_by_customer:
+            latest_by_customer[cust_id] = (parsed_ts, idx, row)
+        else:
+            prev_ts, prev_idx, _ = latest_by_customer[cust_id]
+            if (parsed_ts > prev_ts) or (parsed_ts == prev_ts and idx > prev_idx):
+                latest_by_customer[cust_id] = (parsed_ts, idx, row)
+
+    # Step 3: Aggregate count and total amount by status across retained records
+    status_summary: Dict[str, Dict[str, Any]] = {}
+
+    for cust_id, (_, _, row) in latest_by_customer.items():
+        status = row.get(status_col, "UNKNOWN").strip()
+        raw_amt = row.get(amount_col, "0").strip()
+        try:
+            amt = Decimal(raw_amt)
+        except InvalidOperation:
+            amt = Decimal("0.00")
+
+        if status not in status_summary:
+            status_summary[status] = {"count": 0, "total_amount": Decimal("0.00")}
+
+        status_summary[status]["count"] += 1
+        status_summary[status]["total_amount"] += amt
+
+    # Step 4: Write output deterministically sorted by customer_id
+    sorted_customers = sorted(latest_by_customer.keys())
+
+    with open(output_csv_path, mode="w", encoding="utf-8", newline="") as outfile:
+        writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for cust_id in sorted_customers:
+            _, _, row = latest_by_customer[cust_id]
+            writer.writerow(row)
+
+    return status_summary
+
+
+if __name__ == "__main__":
+    # Example usage:
+    # summary = process_customer_events("events_input.csv", "retained_events_output.csv")
+    # for status, metrics in sorted(summary.items()):
+    #     print(f"Status: {status:12} | Count: {metrics['count']:<5} | Total: {metrics['total_amount']}")
+    pass

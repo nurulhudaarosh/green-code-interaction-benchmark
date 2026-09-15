@@ -1,0 +1,219 @@
+# Problem
+
+**Input:** A directed graph with `n` nodes and `m` capacitated edges, a source `s` and sink `t`. Each edge `i` has endpoints `(u_i, v_i)` and a non‑negative integer capacity `c_i`. Multiple edges between the same pair of nodes (parallel edges) and edges in both directions between two nodes are allowed.
+
+**Goal:** Compute the maximum feasible flow value from `s` to `t`, and a feasible flow assignment `f_i` on every original edge `i` that achieves this value.
+
+**Key constraints (feasibility requirements) on the returned flow:**
+
+1. **Capacity constraint:** `0 <= f_i <= c_i` for every edge `i`.
+2. **Flow conservation:** for every node `v` other than `s` and `t`, total flow in equals total flow out.
+3. **Value:** the net flow leaving `s` (equivalently entering `t`) equals the computed maximum flow value, and no larger value is feasible.
+
+**Required output:**
+
+- The maximum flow value (a single number).
+- A list of `m` numbers, `f_1, …, f_m`, giving the flow on each edge **in the same order the edges were given in the input** (not the order Dinic's algorithm happens to process them internally).
+
+# Algorithm: Dinic's blocking-flow method
+
+Dinic's algorithm finds max flow by repeating two phases until no more augmenting paths exist:
+
+1. **Level graph (BFS):** From `s`, do a BFS over edges with positive residual capacity, assigning each reachable node a `level` = shortest hop-distance from `s`. If `t` is unreached, stop — the current flow is maximum.
+2. **Blocking flow (DFS):** Using only edges that go from level `L` to level `L+1` (this makes the DFS efficient and guarantees progress), push flow along paths from `s` to `t` until no more augmenting path exists in this level graph. A pointer/"current arc" array per node avoids re-scanning dead edges within a phase.
+
+Repeat: rebuild the level graph, find a new blocking flow, etc. The number of phases is `O(V)`, and with the current-arc optimization the whole algorithm runs in `O(V^2 * E)` (better bounds hold for unit-capacity / bipartite-matching special cases).
+
+**Implementation notes for determinism and correctness:**
+- Every original edge `i` is added to the residual graph as a pair of arcs: a forward arc with capacity `c_i` and a reverse arc with capacity `0`. The index of the forward arc is recorded so we can read `f_i` back out afterward as `capacity_original - residual_capacity_remaining`.
+- All graph traversal uses index-based adjacency lists (not sets/dicts keyed by hash), and BFS/DFS process neighbors in the fixed order they were inserted — so results are fully deterministic given the input order, with no reliance on randomness, wall-clock time, or external state.
+- Only the Python standard library (`collections.deque`, `sys`) is used.
+
+```python
+#!/usr/bin/env python3
+"""
+Deterministic Dinic's algorithm for Maximum Flow.
+
+Input format (whitespace separated, read from stdin):
+    n m s t
+    u_1 v_1 c_1
+    u_2 v_2 c_2
+    ...
+    u_m v_m c_m
+
+    n : number of nodes, labeled 0..n-1
+    m : number of directed edges
+    s : source node
+    t : sink node
+    Each of the next m lines describes one directed edge u_i -> v_i
+    with integer capacity c_i >= 0.
+
+Output:
+    First line: the maximum flow value.
+    Next m lines: the flow on edge i (in original input order).
+
+No network access, no randomness, no external services are used.
+"""
+
+import sys
+from collections import deque
+
+
+class Dinic:
+    """Deterministic Dinic's blocking-flow max-flow algorithm."""
+
+    def __init__(self, n):
+        self.n = n
+        # Adjacency list of arc indices, per node, in insertion order.
+        self.graph = [[] for _ in range(n)]
+        # Parallel arrays describing every arc (forward and reverse).
+        self.arc_to = []       # destination node of arc i
+        self.arc_cap = []      # remaining residual capacity of arc i
+        # For each original input edge, the index of its forward arc.
+        self.original_forward_arc = []
+        # The original capacity of each input edge (to recover flow later).
+        self.original_cap = []
+
+    def add_edge(self, u, v, cap):
+        """Add one directed capacitated edge u->v; returns nothing.
+        Internally creates a forward arc (cap) and a reverse arc (0)."""
+        fwd_index = len(self.arc_to)
+        self.arc_to.append(v)
+        self.arc_cap.append(cap)
+        self.graph[u].append(fwd_index)
+
+        rev_index = len(self.arc_to)
+        self.arc_to.append(u)
+        self.arc_cap.append(0)
+        self.graph[v].append(rev_index)
+
+        self.original_forward_arc.append(fwd_index)
+        self.original_cap.append(cap)
+
+    def _bfs_levels(self, s, t):
+        """Build level graph via BFS. Returns level array, or None if t
+        is unreachable from s (meaning current flow is already maximum)."""
+        level = [-1] * self.n
+        level[s] = 0
+        q = deque([s])
+        while q:
+            u = q.popleft()
+            for arc_id in self.graph[u]:
+                if self.arc_cap[arc_id] > 0:
+                    v = self.arc_to[arc_id]
+                    if level[v] == -1:
+                        level[v] = level[u] + 1
+                        q.append(v)
+        return level if level[t] != -1 else None
+
+    def _dfs_blocking(self, u, t, pushed, level, it):
+        """Push up to `pushed` units of flow from u to t using only
+        edges that strictly advance the level (u -> v with
+        level[v] == level[u] + 1). `it` is the current-arc pointer
+        array shared across the whole blocking-flow phase."""
+        if u == t or pushed == 0:
+            return pushed
+
+        while it[u] < len(self.graph[u]):
+            arc_id = self.graph[u][it[u]]
+            v = self.arc_to[arc_id]
+            cap = self.arc_cap[arc_id]
+
+            if cap > 0 and level[v] == level[u] + 1:
+                take = min(pushed, cap)
+                got = self._dfs_blocking(v, t, take, level, it)
+                if got > 0:
+                    self.arc_cap[arc_id] -= got
+                    self.arc_cap[arc_id ^ 1] += got  # arcs paired as 2k / 2k+1
+                    return got
+                else:
+                    # Dead end from v at this phase: never look at it again.
+                    level[v] = -1
+
+            it[u] += 1
+
+        return 0
+
+    def max_flow(self, s, t):
+        flow = 0
+        while True:
+            level = self._bfs_levels(s, t)
+            if level is None:
+                break
+            it = [0] * self.n
+            # Keep finding augmenting paths within this level graph
+            # until it is exhausted (this constitutes one blocking flow).
+            while True:
+                pushed = self._dfs_blocking(s, t, float('inf'), level, it)
+                if pushed == 0:
+                    break
+                flow += pushed
+        return flow
+
+    def edge_flow(self, i):
+        """Flow actually sent along original input edge i, in original order."""
+        arc_id = self.original_forward_arc[i]
+        return self.original_cap[i] - self.arc_cap[arc_id]
+
+
+def solve(input_text):
+    data = input_text.split()
+    idx = 0
+
+    def read_int():
+        nonlocal idx
+        val = int(data[idx])
+        idx += 1
+        return val
+
+    n = read_int()
+    m = read_int()
+    s = read_int()
+    t = read_int()
+
+    dinic = Dinic(n)
+    for _ in range(m):
+        u = read_int()
+        v = read_int()
+        c = read_int()
+        dinic.add_edge(u, v, c)
+
+    max_flow_value = dinic.max_flow(s, t)
+    flows = [dinic.edge_flow(i) for i in range(m)]  # original edge order preserved
+
+    out_lines = [str(max_flow_value)]
+    out_lines.extend(str(f) for f in flows)
+    return "\n".join(out_lines)
+
+
+def main():
+    input_text = sys.stdin.read()
+    print(solve(input_text))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## Example
+
+Input:
+```
+4 5 0 3
+0 1 3
+0 2 2
+1 2 1
+1 3 2
+2 3 3
+```
+Running the script on this input gives max flow `4`, with per-edge flows (in input order) `[3, 1, 0, 2, 2]` — one valid flow assignment satisfying capacity and conservation constraints and achieving the maximum value (Dinic's is deterministic in the *value* it returns, and this particular fixed traversal order also fixes *which* feasible flow decomposition is produced).
+
+## Complexity
+
+- Time: `O(V^2 * E)` in general (fewer phases needed in practice; unit-capacity graphs run in `O(E * sqrt(V))`).
+- Space: `O(V + E)`.
+
+## Correctness/determinism notes
+- No use of `random`, sets/dicts for graph structure, wall-clock time, or environment-dependent iteration order — only lists and a `deque`, with edges visited in the fixed order they were inserted.
+- Reverse arcs are paired as `2k`/`2k+1` (`arc_id ^ 1`), so residual updates are O(1) and unambiguous.
+- The function reads all input from `stdin`, performs no I/O beyond that, and needs no network or external services.

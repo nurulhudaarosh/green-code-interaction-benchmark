@@ -1,0 +1,90 @@
+### Problem Analysis
+
+The task is to solve the classic 0/1 Knapsack Problem. Given a set of indivisible items—each having a specific weight and value—and a knapsack with a maximum weight capacity, the goal is to choose a subset of items that maximizes the total value without exceeding the capacity.
+
+* **Constraints:**
+* Items are indivisible (each item can be taken at most once, $0$ or $1$).
+* Weights and values are non-negative.
+* Knapsack capacity $W$ is a non-negative integer.
+* Total weight of selected items must be $\le W$.
+
+
+* **Required Output:**
+* A list of original 0-based indices corresponding to the selected items that yield the maximum total value.
+* In case of ties (multiple subsets yielding the same maximum value), the output must be the lexicographically smallest list of indices.
+
+
+
+### Algorithmic Approach
+
+We use dynamic programming (DP) with descending capacity updates to solve the 0/1 Knapsack problem efficiently.
+
+1. **State Definition:** Let `dp[w]` store the maximum value obtainable with a capacity of `w`, along with the list of selected item indices that achieves this value.
+2. **Descending Capacity Updates:** Iterating backwards through capacities (from `capacity` down to `weight`) ensures that each item is used at most once per state transition.
+3. **Deterministic Tie-Breaking:** When comparing two choices for a given capacity (keeping the current choice vs. including the current item), we prioritize:
+* Higher total value.
+* Lexicographically smaller list of item indices if the total values are equal.
+
+
+
+### Python Implementation
+
+```python
+def knapsack_01(weights: list[int], values: list[int], capacity: int) -> list[int]:
+    """
+    Solves the 0/1 Knapsack problem deterministically.
+    
+    Returns the list of original indices of selected items that maximize 
+    total value within the given capacity. Ties are broken by choosing 
+    the lexicographically smallest list of indices.
+    """
+    n = len(weights)
+    
+    # dp[w] stores a tuple: (max_value, sorted_list_of_selected_indices)
+    dp = [(0, []) for _ in range(capacity + 1)]
+    
+    for i in range(n):
+        w_i, v_i = weights[i], values[i]
+        
+        # Traverse capacities in reverse to ensure 0/1 item usage
+        for w in range(capacity, w_i - 1, -1):
+            prev_val, prev_indices = dp[w - w_i]
+            cand_val = prev_val + v_i
+            cand_indices = prev_indices + [i]
+            
+            curr_val, curr_indices = dp[w]
+            
+            # Update DP table if candidate provides higher value,
+            # or equal value with a lexicographically smaller index list
+            if cand_val > curr_val:
+                dp[w] = (cand_val, cand_indices)
+            elif cand_val == curr_val:
+                if cand_indices < curr_indices:
+                    dp[w] = (cand_val, cand_indices)
+
+    # Find the maximum value achieved across all capacities w <= capacity
+    best_val = -1
+    best_indices = []
+    
+    for w in range(capacity + 1):
+        val, indices = dp[w]
+        if val > best_val:
+            best_val = val
+            best_indices = indices
+        elif val == best_val and val > 0:
+            if indices < best_indices:
+                best_indices = indices
+                
+    return best_indices
+
+
+# Example Usage
+if __name__ == "__main__":
+    weights = [2, 3, 4, 5]
+    values = [3, 4, 5, 6]
+    capacity = 5
+    
+    selected_indices = knapsack_01(weights, values, capacity)
+    print(f"Selected Item Indices: {selected_indices}")
+
+```

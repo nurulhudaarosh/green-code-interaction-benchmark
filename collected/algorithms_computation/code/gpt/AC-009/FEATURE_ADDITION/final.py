@@ -1,0 +1,127 @@
+from typing import List, Dict, Any
+
+
+def minimum_coin_construction(
+    coins: List[int],
+    target: int,
+    include_operation_summary: bool = False
+) -> Dict[str, Any]:
+    """
+    Find a minimum-number coin combination for the target.
+
+    Coins may be reused unlimited times.
+
+    Returns:
+        {
+            "count": minimum number of coins,
+            "coins": deterministic minimum-coin combination
+        }
+
+    If impossible:
+        {
+            "count": -1,
+            "coins": []
+        }
+
+    If include_operation_summary=True, an additional field is returned:
+        "operation_summary": {
+            "dp_decisions": number of DP transitions examined
+        }
+
+    Tie-breaking:
+        For equal-count solutions, the coin encountered later in the
+        deterministic sorted order is not allowed to silently override
+        the earlier choice. We keep the first minimum found.
+    """
+
+    if target < 0:
+        raise ValueError("target must be non-negative")
+
+    if any(c <= 0 for c in coins):
+        raise ValueError("all coin denominations must be positive")
+
+    # Remove duplicates and sort for deterministic behavior.
+    denominations = sorted(set(coins))
+
+    # dp[amount] = minimum number of coins needed.
+    INF = target + 1
+    dp = [INF] * (target + 1)
+    choice = [-1] * (target + 1)
+
+    dp[0] = 0
+    dp_decisions = 0
+
+    # One-dimensional unbounded coin-change DP.
+    for amount in range(1, target + 1):
+        for coin in denominations:
+            if coin > amount:
+                break
+
+            dp_decisions += 1
+
+            candidate = dp[amount - coin] + 1
+
+            # Strictly better only.
+            # Keeping the first solution makes reconstruction deterministic.
+            if candidate < dp[amount]:
+                dp[amount] = candidate
+                choice[amount] = coin
+
+    # Impossible target.
+    if dp[target] == INF:
+        result = {
+            "count": -1,
+            "coins": []
+        }
+    else:
+        # Reconstruct the selected coins.
+        selected = []
+        amount = target
+
+        while amount > 0:
+            coin = choice[amount]
+
+            if coin == -1:
+                # Defensive check; should never happen for a reachable target.
+                return {
+                    "count": -1,
+                    "coins": []
+                }
+
+            selected.append(coin)
+            amount -= coin
+
+        result = {
+            "count": dp[target],
+            "coins": selected
+        }
+
+    # Optional feature: preserve the original output when disabled.
+    if include_operation_summary:
+        result["operation_summary"] = {
+            "dp_decisions": dp_decisions
+        }
+
+    return result
+
+
+# ---------------------------------------------------------
+# Examples
+# ---------------------------------------------------------
+
+if __name__ == "__main__":
+    # Original output: no operation_summary field.
+    print(minimum_coin_construction([1, 3, 4], 6))
+
+    # New output: operation_summary is explicitly requested.
+    print(minimum_coin_construction(
+        [1, 3, 4],
+        6,
+        include_operation_summary=True
+    ))
+
+    # Impossible target.
+    print(minimum_coin_construction([2, 4], 7))
+
+    # Zero target.
+    print(minimum_coin_construction([1, 3, 4], 0))

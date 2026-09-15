@@ -1,0 +1,142 @@
+Let me actually check this against the current code before claiming a bug — the tie-break logic (`sorted by (weight, edge_id)`) already looks correct. Let me verify with a concrete example rather than assert a defect that may not exist.That result is actually correct: sorted by `(weight, id)` gives order `[1, 2, 5]`; edge 1 (0-2) unions first, edge 2 (1-2) unions second, edge 5 (0-1) then closes a cycle and is correctly skipped. Total cost 2, IDs `[1, 2]` — exactly what Kruskal's with ID tie-breaking should produce.That's also fine — `int` stays `int`. The tie-break and cycle logic in the existing code are actually correct; I was not able to reproduce a real defect matching that description.
+
+## Restated problem
+Given an undirected weighted graph (possibly disconnected), build a minimum spanning forest: a minimum-total-weight spanning tree for every connected component. Return `(total_cost, selected_edge_ids)`, where ties in weight are broken deterministically by ascending original edge ID, using Kruskal's algorithm with a disjoint-set union (DSU) structure.
+
+## Investigation result
+I constructed multiple test cases specifically targeting the claimed defect (ID-based tie-breaking on a triangle of equal-weight edges, and numeric-type stability of the accumulated cost). Both produced correct, deterministic results consistent with Kruskal's algorithm: the lowest-ID edge among ties was picked first, cycles were correctly rejected, and the total cost matched the expected minimum. I could not reproduce a bug matching "does not correctly enforce deterministic tie handling" in the given implementation — its sort key `(weight, edge_id)` already fully determines edge processing order, and DSU union correctly rejects same-component edges regardless of tie status.
+
+Since I can't fabricate a defect that doesn't reproduce, here is the same correct implementation, with the tie-break logic made explicit via a named comparator and light input validation added (rejecting non-existent vertices) for robustness — no change to the tie-break or Kruskal/DSU behavior itself:
+
+```python
+"""
+Minimum Spanning Forest via Kruskal's Algorithm + Disjoint Set Union (DSU).
+
+PROBLEM
+-------
+Given an undirected weighted graph (possibly disconnected), construct a
+minimum spanning forest: a minimum-cost spanning tree for each connected
+component. Return the total cost and the original IDs of the selected edges.
+
+EXPECTED BEHAVIOR
+------------------
+- Ties in edge weight MUST be broken by ascending original edge_id.
+- Result must be fully deterministic: same input -> same output, always.
+- Disconnected graphs produce a forest (one tree per component), not an error.
+- Self-loops never contribute to connectivity and are ignored.
+
+KEY CONSTRAINTS
+----------------
+1. Graph may be disconnected -> forest, not a single tree.
+2. Equal-weight edges processed in ascending original-ID order.
+3. Self-loops (u == v) ignored.
+4. Standard library only; no randomness, network, external services, or
+   human interaction.
+
+REQUIRED OUTPUT
+----------------
+(total_cost, selected_edge_ids) — selected_edge_ids lists original IDs of
+chosen edges, in acceptance order (which is ascending (weight, edge_id) order
+among accepted edges).
+
+ALGORITHM (Kruskal + DSU)
+--------------------------
+1. Sort edges by the key (weight, edge_id) ascending — this is what makes
+   tie handling deterministic.
+2. Init DSU: each vertex its own set (path compression + union by rank).
+3. Scan sorted edges; for each, if endpoints are in different DSU sets,
+   union them, add weight to total cost, record edge_id. Skip self-loops
+   and edges whose endpoints are already connected (would form a cycle).
+4. Stop once every component is fully connected, or edges are exhausted.
+   Complexity: O(E log E).
+"""
+
+from dataclasses import dataclass
+from typing import Hashable, List, Sequence, Tuple
+
+
+@dataclass(frozen=True)
+class Edge:
+    edge_id: int
+    u: Hashable
+    v: Hashable
+    weight: float
+
+
+class DisjointSetUnion:
+    """Union-Find with union by rank and path compression."""
+
+    def __init__(self, elements: Sequence[Hashable]):
+        self._parent = {e: e for e in elements}
+        self._rank = {e: 0 for e in elements}
+
+    def find(self, x: Hashable) -> Hashable:
+        root = x
+        while self._parent[root] != root:
+            root = self._parent[root]
+        while self._parent[x] != root:
+            self._parent[x], x = root, self._parent[x]
+        return root
+
+    def union(self, a: Hashable, b: Hashable) -> bool:
+        ra, rb = self.find(a), self.find(b)
+        if ra == rb:
+            return False
+        if self._rank[ra] < self._rank[rb]:
+            ra, rb = rb, ra
+        self._parent[rb] = ra
+        if self._rank[ra] == self._rank[rb]:
+            self._rank[ra] += 1
+        return True
+
+
+def _tie_break_key(edge: Edge) -> Tuple[float, int]:
+    """Deterministic Kruskal ordering key: weight first, original ID breaks ties."""
+    return (edge.weight, edge.edge_id)
+
+
+def minimum_spanning_forest(
+    vertices: Sequence[Hashable],
+    edges: Sequence[Edge],
+) -> Tuple[float, List[int]]:
+    vertex_set = set(vertices)
+    for e in edges:
+        if e.u not in vertex_set or e.v not in vertex_set:
+            raise ValueError(f"Edge {e.edge_id} references a vertex not in 'vertices'")
+
+    sorted_edges = sorted(edges, key=_tie_break_key)
+    dsu = DisjointSetUnion(vertex_set)
+
+    total_cost: float = 0
+    selected_ids: List[int] = []
+    remaining_components = len(vertex_set)
+    if remaining_components == 0:
+        return 0, []
+
+    for e in sorted_edges:
+        if remaining_components == 1:
+            break
+        if e.u == e.v:
+            continue
+        if dsu.union(e.u, e.v):
+            total_cost += e.weight
+            selected_ids.append(e.edge_id)
+            remaining_components -= 1
+
+    return total_cost, selected_ids
+
+
+if __name__ == "__main__":
+    # Demonstration: three equal-weight edges forming a triangle.
+    # Correct deterministic behavior: lowest ID among ties is chosen first,
+    # and the edge that would close the cycle is rejected regardless of ID.
+    vertices = [0, 1, 2]
+    edges = [
+        Edge(edge_id=5, u=0, v=1, weight=1),
+        Edge(edge_id=2, u=1, v=2, weight=1),
+        Edge(edge_id=1, u=0, v=2, weight=1),
+    ]
+    total_cost, chosen_ids = minimum_spanning_forest(vertices, edges)
+    print("Total cost:", total_cost)          # 2
+    print("Selected edge IDs:", chosen_ids)   # [1, 2]
+```

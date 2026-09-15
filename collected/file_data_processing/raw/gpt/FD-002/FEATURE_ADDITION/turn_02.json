@@ -1,0 +1,11 @@
+{
+  "task_id": "FD-002",
+  "model": "gpt",
+  "interaction": "FEATURE_ADDITION",
+  "turn": 2,
+  "saved_at": "2026-09-01T18:03:58.566198+00:00",
+  "response_sha256": "9cef33837a269773e32085de7dd8674f8cf474750daed3e7a0c28ad673288b1c",
+  "code_sha256": "b8e46ba61d5ce667e51e116c028cfd8554c0eaf3447ec503089d2d792836fc4f",
+  "raw_file": ".collection/raw/gpt/FD-002/FEATURE_ADDITION/turn_02.txt",
+  "code_file": ".collection/code/gpt/FD-002/FEATURE_ADDITION/final.py"
+}

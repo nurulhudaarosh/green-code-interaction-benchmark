@@ -1,0 +1,270 @@
+```python
+"""
+Shortest Path from Single Source in Directed Graph with Non-negative Weights
+===========================================================================
+Problem:
+    Given a directed graph with n vertices (0 to n-1) and m edges, each with
+    non-negative integer weight, and a source vertex s, compute the shortest
+    distance from s to every other vertex. If a vertex is unreachable from s,
+    its distance should be -1.
+
+    ADDITIONAL FEATURE: Return an optional `operation_summary` field containing
+    a deterministic summary of the computation. When the feature is not requested,
+    the original fields remain unchanged.
+
+Constraints:
+    - 1 ≤ n ≤ 10^5
+    - 0 ≤ m ≤ 2*10^5
+    - 0 ≤ weight ≤ 10^9
+    - Graph may contain multiple edges and self-loops.
+    - All weights are non-negative.
+
+Required Original Output:
+    A list `dist` of length n where dist[i] is the shortest distance from s to i,
+    or -1 if i is unreachable.
+
+New Optional Output:
+    An `operation_summary` dictionary containing:
+        - 'vertices_processed': number of vertices popped from priority queue
+        - 'edges_relaxed': number of edges examined/relaxed attempts
+        - 'distance_updates': number of times a distance was improved
+        - 'heap_operations': total push + pop operations on heap
+
+Algorithm:
+    Dijkstra's algorithm using adjacency lists and a binary heap (via heapq).
+    Time complexity: O((n + m) log n)
+    Space complexity: O(n + m)
+
+Implementation:
+    - `shortest_path(n, edges, s, return_summary=False)` expects:
+        n: int
+        edges: List[Tuple[int, int, int]]  # (u, v, w) meaning edge u -> v with weight w
+        s: int
+        return_summary: bool (default False) - if True, returns (dist, summary)
+                      if False, returns dist only (backward compatible)
+    - Returns:
+        If return_summary is False: List[int] of length n
+        If return_summary is True: Tuple[List[int], Dict[str, int]]
+"""
+
+import heapq
+from typing import List, Tuple, Dict, Union
+
+def shortest_path(
+    n: int, 
+    edges: List[Tuple[int, int, int]], 
+    s: int,
+    return_summary: bool = False
+) -> Union[List[int], Tuple[List[int], Dict[str, int]]]:
+    """
+    Computes shortest distances from source s to all vertices in a directed graph.
+    Optionally returns an operation summary.
+
+    Args:
+        n: number of vertices (0..n-1)
+        edges: list of (u, v, w) where edge u -> v has weight w (w >= 0)
+        s: source vertex
+        return_summary: if True, return (dist, summary) tuple; else return dist only
+
+    Returns:
+        If return_summary is False:
+            dist: list of length n where dist[i] is shortest distance from s to i,
+                  or -1 if unreachable.
+        If return_summary is True:
+            (dist, summary) where summary is a dict with operation counts.
+    """
+    # Initialize counters
+    vertices_processed = 0
+    edges_relaxed = 0
+    distance_updates = 0
+    heap_operations = 0  # pushes + pops
+
+    # Build adjacency list
+    adj = [[] for _ in range(n)]
+    for u, v, w in edges:
+        # Only add edge if weight is non-negative (already guaranteed but safe)
+        if w >= 0:
+            adj[u].append((v, w))
+        # If negative weights were allowed, we'd need Bellman-Ford,
+        # but problem states non-negative.
+
+    # Initialize distances
+    INF = 10**30  # larger than any possible path (max weight 1e9 * 1e5 edges = 1e14)
+    dist = [INF] * n
+    dist[s] = 0
+
+    # Priority queue: (distance, vertex)
+    pq = [(0, s)]
+    heap_operations += 1  # initial push
+
+    while pq:
+        d, u = heapq.heappop(pq)
+        heap_operations += 1
+        vertices_processed += 1
+
+        # If this is an outdated entry, skip it
+        if d != dist[u]:
+            continue
+
+        # Relax edges from u
+        for v, w in adj[u]:
+            edges_relaxed += 1
+            nd = d + w
+            if nd < dist[v]:
+                dist[v] = nd
+                distance_updates += 1
+                heapq.heappush(pq, (nd, v))
+                heap_operations += 1
+
+    # Convert INF to -1 for unreachable vertices
+    result_dist = [-1 if d == INF else d for d in dist]
+
+    # Return based on flag
+    if return_summary:
+        summary = {
+            'vertices_processed': vertices_processed,
+            'edges_relaxed': edges_relaxed,
+            'distance_updates': distance_updates,
+            'heap_operations': heap_operations
+        }
+        return result_dist, summary
+    
+    return result_dist
+
+
+# Example usage and test cases (self-contained)
+if __name__ == "__main__":
+    # Helper to run tests
+    def run_test(test_num, n, edges, s, expected_dist, expected_summary=None):
+        print(f"\n=== Test {test_num} ===")
+        
+        # Test without summary (original behavior)
+        result = shortest_path(n, edges, s, return_summary=False)
+        print(f"Without summary: {result}")
+        assert result == expected_dist, f"Expected {expected_dist}, got {result}"
+        print("✓ Original output matches")
+        
+        # Test with summary
+        result_dist, summary = shortest_path(n, edges, s, return_summary=True)
+        print(f"With summary - dist: {result_dist}")
+        print(f"Summary: {summary}")
+        assert result_dist == expected_dist, f"Expected {expected_dist}, got {result_dist}"
+        
+        if expected_summary:
+            # Verify counts are reasonable (not exact due to implementation details)
+            assert summary['vertices_processed'] >= 0
+            assert summary['edges_relaxed'] >= 0
+            assert summary['distance_updates'] >= 0
+            assert summary['heap_operations'] >= 0
+            print("✓ Summary fields are valid")
+        
+        print(f"✓ Test {test_num} passed")
+
+    # Test 1: Simple graph
+    # 0 -> 1 (5), 1 -> 2 (3), 0 -> 2 (10)
+    n1 = 3
+    edges1 = [(0, 1, 5), (1, 2, 3), (0, 2, 10)]
+    s1 = 0
+    expected1 = [0, 5, 8]  # 0->2 via 1 is shorter
+    run_test(1, n1, edges1, s1, expected1)
+
+    # Test 2: Disconnected vertex
+    # 0 -> 1 (2), vertex 2 isolated
+    n2 = 3
+    edges2 = [(0, 1, 2)]
+    s2 = 0
+    expected2 = [0, 2, -1]
+    run_test(2, n2, edges2, s2, expected2)
+
+    # Test 3: Multiple edges and self-loop
+    # 0 -> 1 (2), 0 -> 1 (5), 1 -> 1 (1), 1 -> 2 (3)
+    n3 = 3
+    edges3 = [(0, 1, 2), (0, 1, 5), (1, 1, 1), (1, 2, 3)]
+    s3 = 0
+    expected3 = [0, 2, 5]
+    run_test(3, n3, edges3, s3, expected3)
+
+    # Test 4: Zero-weight edges
+    # 0 -> 1 (0), 1 -> 2 (0)
+    n4 = 3
+    edges4 = [(0, 1, 0), (1, 2, 0)]
+    s4 = 0
+    expected4 = [0, 0, 0]
+    run_test(4, n4, edges4, s4, expected4)
+
+    # Test 5: Larger graph
+    n5 = 5
+    edges5 = [
+        (0, 1, 10),
+        (0, 2, 3),
+        (1, 2, 1),
+        (1, 3, 2),
+        (2, 1, 4),
+        (2, 3, 8),
+        (2, 4, 2),
+        (3, 4, 7),
+        (4, 3, 9),
+    ]
+    s5 = 0
+    expected5 = [0, 7, 3, 9, 5]  # 0->2->4 is 5, 0->2->1->3 is 3+4+2=9
+    run_test(5, n5, edges5, s5, expected5)
+
+    # Test 6: Single vertex
+    n6 = 1
+    edges6 = []
+    s6 = 0
+    expected6 = [0]
+    run_test(6, n6, edges6, s6, expected6)
+
+    # Test 7: Verify summary counts with deterministic behavior
+    n7 = 4
+    edges7 = [
+        (0, 1, 1),
+        (0, 2, 4),
+        (1, 2, 2),
+        (1, 3, 5),
+        (2, 3, 1),
+    ]
+    s7 = 0
+    expected7 = [0, 1, 3, 4]
+    result_dist7, summary7 = shortest_path(n7, edges7, s7, return_summary=True)
+    print(f"\n=== Test 7 (Summary verification) ===")
+    print(f"Dist: {result_dist7}")
+    print(f"Summary: {summary7}")
+    assert result_dist7 == expected7
+    # Verify specific counts for this graph
+    # vertices_processed: should be 4 (all vertices reachable)
+    # edges_relaxed: should be 5 (all edges examined)
+    # distance_updates: 0->1 (1), 0->2 (4->3 via 1), 1->3 (6->4 via 2), 2->3 (4->4 no update)
+    # Actually: 0->1 (update), 0->2 (update), 1->2 (update), 1->3 (update), 2->3 (update from 6 to 4)
+    # So distance_updates = 5
+    # heap_operations: initial push + 5 pushes for updates + 4 pops = 10
+    assert summary7['vertices_processed'] == 4
+    assert summary7['edges_relaxed'] == 5
+    assert summary7['distance_updates'] == 5
+    assert summary7['heap_operations'] == 10  # 1 initial push + 5 push updates + 4 pops
+    print("✓ Summary counts match expected deterministic values")
+
+    print("\n" + "="*50)
+    print("All tests passed successfully!")
+    print("="*50)
+    
+    # Demonstrate backward compatibility
+    print("\n=== Backward Compatibility Demo ===")
+    n_demo = 3
+    edges_demo = [(0, 1, 2), (1, 2, 3)]
+    s_demo = 0
+    
+    # Original usage (no summary)
+    dist_only = shortest_path(n_demo, edges_demo, s_demo)
+    print(f"Original usage (returns list only): {dist_only}")
+    print(f"Type: {type(dist_only)}")
+    
+    # New usage (with summary)
+    dist_with_summary, summary = shortest_path(n_demo, edges_demo, s_demo, return_summary=True)
+    print(f"New usage (returns tuple): {dist_with_summary}")
+    print(f"Summary: {summary}")
+    print(f"Type: {type(dist_with_summary)}")
+    
+    print("\n✓ All functionality working correctly")
+```

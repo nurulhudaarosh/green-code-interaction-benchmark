@@ -1,0 +1,93 @@
+### Problem & Expected Behavior
+
+The **Interval Conflict Analyzer** takes a collection of half-open intervals $[start, end)$ representing meetings. It must return:
+
+1. `max_active`: The maximum count of simultaneously active meetings.
+2. `peak_starts`: A sorted list of distinct timestamps at which the concurrency count transitions up to `max_active`.
+
+**Boundary & Event Handling Rules:**
+
+* Intervals are half-open $[start, end)$. If one meeting ends at time $T$ and another starts at time $T$, the active meeting count at $T$ decreases by 1 before it increases by 1.
+* Using a sweep-line algorithm over discrete events `(timestamp, event_type)`:
+* End events at timestamp $T$ **must** be processed before start events at timestamp $T$.
+* All events occurring at the exact same timestamp $T$ must be processed and accumulated **together** before evaluating peak transitions for that timestamp $T$.
+
+
+
+---
+
+### Defect Analysis & Minimal Reproduction
+
+In the previous implementation, event updates were evaluated **individually event-by-event** during the loop. When multiple start events shared the same timestamp $T$ (e.g., two meetings both starting at time 2), the condition `current_active == max_active` triggered multiple times at the same timestamp. This produced duplicate timestamps in `peak_starts`.
+
+#### Defect Demonstration Code
+
+
+
+### Corrected Implementation
+
+To fix this deterministically, all `+1` and `-1` deltas occurring at the **exact same timestamp $T$** are combined into a single total net change $\Delta_{net}$ for timestamp $T$. A peak transition is recorded at time $T$ if and only if the total count after processing timestamp $T$ equals `max_active` and the net change at $T$ was positive ($\Delta_{net} > 0$).
+
+```python
+def find_max_simultaneous_meetings(intervals: list[tuple[int, int]]) -> tuple[int, list[int]]:
+    """
+    Finds the maximum number of simultaneously active meetings and the sorted times 
+    at which that maximum begins.
+    
+    :param intervals: List of tuples representing half-open meeting intervals [start, end)
+    :return: A tuple containing (max_active_meetings, sorted_peak_start_times)
+    """
+    if not intervals:
+        return 0, []
+
+    # 1. Generate start (+1) and end (-1) events
+    events = []
+    for start, end in intervals:
+        events.append((start, 1))
+        events.append((end, -1))
+
+    # 2. Sort events: time ascending; end events (-1) before start events (+1) at same timestamp
+    events.sort(key=lambda x: (x[0], x[1]))
+
+    # 3. Group deltas by timestamp to ensure atomic batch updates per timestamp
+    aggregated_events = []
+    for time, delta in events:
+        if aggregated_events and aggregated_events[-1][0] == time:
+            aggregated_events[-1] = (time, aggregated_events[-1][1] + delta)
+        else:
+            aggregated_events.append((time, delta))
+
+    # 4. Sweep-line over aggregated timestamps
+    max_active = 0
+    current_active = 0
+    peak_starts = []
+
+    for time, net_delta in aggregated_events:
+        prev_active = current_active
+        current_active += net_delta
+
+        if current_active > max_active:
+            max_active = current_active
+            peak_starts = [time]
+        elif current_active == max_active and net_delta > 0 and prev_active < max_active:
+            peak_starts.append(time)
+
+    return max_active, peak_starts
+
+
+if __name__ == "__main__":
+    # Test case verifying deterministic behavior without duplicates:
+    # Intervals with simultaneous starts and half-open boundary overlaps at time 4
+    intervals = [
+        (1, 4),  # ends at 4
+        (4, 8),  # starts at 4 (end at 4 occurs before start at 4 -> active count at 4 is 2)
+        (2, 6),  # active (2..6)
+        (2, 7),  # active (2..7)
+        (5, 7),  # starts at 5
+    ]
+    
+    max_active, peak_starts = find_max_simultaneous_meetings(intervals)
+    print(f"Max active meetings: {max_active}")
+    print(f"Peak starts at: {peak_starts}")
+
+```

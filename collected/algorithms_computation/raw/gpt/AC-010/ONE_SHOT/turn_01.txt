@@ -1,0 +1,197 @@
+## Problem understanding
+
+Given matrix dimensions `p0, p1, ..., pn`, there are `n` matrices:
+
+* `A1` has dimensions `p0 × p1`
+* `A2` has dimensions `p1 × p2`
+* ...
+* `An` has dimensions `p(n-1) × pn`
+
+The goal is to find:
+
+1. The **minimum number of scalar multiplications** needed to multiply all matrices.
+2. A corresponding **parenthesization**.
+3. If multiple splits have the same minimum cost, choose the **smallest split index `k`**.
+
+### Key constraints
+
+* `len(p) >= 2` for at least one matrix.
+* Matrix dimensions are positive integers.
+* Matrices can be multiplied in any valid parenthesization.
+* The algorithm must be deterministic.
+* Tie-breaking: for equal costs, choose the smallest split index.
+
+### Required output
+
+Return the minimum cost and the optimal parenthesization.
+
+### Algorithm
+
+Use **interval dynamic programming**:
+
+* `dp[i][j]` = minimum cost of multiplying matrices `Ai...Aj`.
+* Try every possible split `k` between `i` and `j`.
+* Cost of splitting at `k`:
+
+`dp[i][k] + dp[k+1][j] + p[i-1] * p[k] * p[j]`
+
+* Keep the split with the smallest cost.
+* On equal cost, keep the smaller `k`.
+* Reconstruct the parenthesization using the stored split indices.
+
+```python
+from typing import List, Tuple
+
+
+def matrix_chain_order(p: List[int]) -> Tuple[int, str]:
+    """
+    Find the minimum scalar multiplication cost and an optimal
+    parenthesization for a chain of matrices.
+
+    Given p = [p0, p1, ..., pn]:
+        A1 = p0 x p1
+        A2 = p1 x p2
+        ...
+        An = p(n-1) x pn
+
+    Equal-cost choices use the smallest split index.
+
+    Returns:
+        (minimum_cost, parenthesization)
+
+    Examples:
+        p = [10, 20, 30]
+        -> (6000, "(A1A2)")
+
+        p = [40, 20, 30, 10, 30]
+        -> minimum cost and deterministic parenthesization
+    """
+    if not isinstance(p, list):
+        raise TypeError("p must be a list of positive integers")
+
+    if len(p) < 2:
+        raise ValueError("p must contain at least two dimensions")
+
+    if any(not isinstance(x, int) or isinstance(x, bool) or x <= 0 for x in p):
+        raise ValueError("all matrix dimensions must be positive integers")
+
+    n = len(p) - 1
+
+    # dp[i][j] = minimum cost for matrices Ai ... Aj
+    # split[i][j] = optimal split index k
+    dp = [[0] * (n + 1) for _ in range(n + 1)]
+    split = [[None] * (n + 1) for _ in range(n + 1)]
+
+    # length is the number of matrices in the interval.
+    for length in range(2, n + 1):
+        for i in range(1, n - length + 2):
+            j = i + length - 1
+
+            best_cost = None
+            best_k = None
+
+            # Try every possible split.
+            # Iterating k from small to large naturally enforces
+            # the smallest-split-index tie-breaking rule.
+            for k in range(i, j):
+                cost = (
+                    dp[i][k]
+                    + dp[k + 1][j]
+                    + p[i - 1] * p[k] * p[j]
+                )
+
+                if best_cost is None or cost < best_cost:
+                    best_cost = cost
+                    best_k = k
+                elif cost == best_cost and k < best_k:
+                    best_k = k
+
+            dp[i][j] = best_cost
+            split[i][j] = best_k
+
+    def build_parenthesization(i: int, j: int) -> str:
+        if i == j:
+            return f"A{i}"
+
+        k = split[i][j]
+
+        left = build_parenthesization(i, k)
+        right = build_parenthesization(k + 1, j)
+
+        return f"({left}{right})"
+
+    return dp[1][n], build_parenthesization(1, n)
+
+
+# ---------------------------------------------------------
+# Tests
+# ---------------------------------------------------------
+
+def run_tests() -> None:
+    # One matrix: no multiplication is needed.
+    assert matrix_chain_order([10, 20]) == (0, "A1")
+
+    # Two matrices:
+    # (10 x 20) * (20 x 30) = 6000 scalar multiplications.
+    assert matrix_chain_order([10, 20, 30]) == (6000, "(A1A2)")
+
+    # Classic matrix-chain example.
+    cost, order = matrix_chain_order(
+        [30, 35, 15, 5, 10, 20, 25]
+    )
+    assert cost == 15125
+    assert order == "((A1(A2A3))((A4A5)A6))"
+
+    # Equal-cost split choices.
+    # For [10, 10, 10, 10], both possible 3-matrix
+    # parenthesizations have the same cost.
+    # The smallest split index must be selected.
+    cost, order = matrix_chain_order([10, 10, 10, 10])
+    assert cost == 2000
+    assert order == "(A1(A2A3))"
+
+    # Invalid inputs.
+    try:
+        matrix_chain_order([])
+        assert False
+    except ValueError:
+        pass
+
+    try:
+        matrix_chain_order([10])
+        assert False
+    except ValueError:
+        pass
+
+    try:
+        matrix_chain_order([10, 0, 20])
+        assert False
+    except ValueError:
+        pass
+
+    try:
+        matrix_chain_order([10, -5, 20])
+        assert False
+    except ValueError:
+        pass
+
+
+if __name__ == "__main__":
+    run_tests()
+
+    examples = [
+        [10, 20],
+        [10, 20, 30],
+        [30, 35, 15, 5, 10, 20, 25],
+        [10, 10, 10, 10],
+    ]
+
+    for dimensions in examples:
+        cost, parenthesization = matrix_chain_order(dimensions)
+        print(f"Dimensions: {dimensions}")
+        print(f"Minimum cost: {cost}")
+        print(f"Parenthesization: {parenthesization}")
+        print()
+```
+
+**Complexity:** `O(n³)` time and `O(n²)` space, where `n = len(p) - 1`.

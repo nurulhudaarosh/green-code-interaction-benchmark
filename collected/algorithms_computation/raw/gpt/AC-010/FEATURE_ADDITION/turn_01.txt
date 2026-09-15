@@ -1,0 +1,175 @@
+## Problem
+
+Given matrix dimensions `p0, p1, ..., pn`, there are `n` matrices:
+
+* `A1` has dimension `p0 × p1`
+* `A2` has dimension `p1 × p2`
+* ...
+* `An` has dimension `p(n-1) × pn`
+
+The goal is to find:
+
+1. **Minimum scalar multiplication cost** needed to multiply all matrices.
+2. **A parenthesization** that achieves this minimum cost.
+3. If multiple parenthesizations have the same minimum cost, choose the one with the **smallest split index `k`**.
+
+### Key constraints
+
+* `p` contains at least two dimensions for a non-empty matrix chain.
+* Matrix dimensions must be positive integers.
+* Matrix multiplication order can change the cost, but **cannot change the final matrix dimensions**.
+* Matrices can be multiplied only in their given sequence.
+* Tie-breaking must be deterministic: choose the **smallest `k`** when costs are equal.
+* Use only Python's **standard library**.
+* No network, APIs, external services, randomness, or human interaction.
+
+### Required output
+
+Return:
+
+
+
+where:
+
+* `cost` is the minimum number of scalar multiplications.
+* `parenthesization` is a deterministic string such as:
+
+  ```text
+  ((A1A2)A3)
+  ```
+
+## Algorithm
+
+Use **interval dynamic programming**.
+
+Let:
+
+```text
+dp[i][j] = minimum cost to multiply Ai ... Aj
+```
+
+For every interval `[i, j]`, try every possible split:
+
+```text
+Ai...Ak   ×   A(k+1)...Aj
+```
+
+The cost is:
+
+```text
+dp[i][k] + dp[k+1][j] + p[i-1] * p[k] * p[j]
+```
+
+If a smaller cost is found, update the answer. If the cost is equal, **do not update** because `k` is examined from smallest to largest, so the first equal-cost solution already uses the smallest split index.
+
+```python
+from typing import Sequence, Tuple
+
+
+def matrix_chain_order(p: Sequence[int]) -> Tuple[int, str]:
+    """
+    Find the minimum scalar multiplication cost and deterministic
+    parenthesization for a matrix chain.
+
+    Given p = [p0, p1, ..., pn]:
+        A1 = p0 x p1
+        A2 = p1 x p2
+        ...
+        An = p(n-1) x pn
+
+    Returns:
+        (minimum_cost, parenthesization)
+
+    Tie-breaking:
+        If multiple splits have the same minimum cost, the smallest
+        split index k is chosen.
+    """
+
+    if len(p) < 2:
+        raise ValueError("p must contain at least two dimensions")
+
+    if any(not isinstance(x, int) or isinstance(x, bool) or x <= 0 for x in p):
+        raise ValueError("all matrix dimensions must be positive integers")
+
+    n = len(p) - 1
+
+    # One matrix requires no multiplication.
+    if n == 1:
+        return 0, "A1"
+
+    # dp[i][j] = minimum cost for Ai ... Aj
+    dp = [[0] * (n + 1) for _ in range(n + 1)]
+
+    # split[i][j] = split position k producing the optimal cost
+    split = [[0] * (n + 1) for _ in range(n + 1)]
+
+    # Build intervals from shorter to longer.
+    for length in range(2, n + 1):
+        for i in range(1, n - length + 2):
+            j = i + length - 1
+
+            best_cost = None
+            best_k = None
+
+            # k increases from i to j-1.
+            # Therefore, on equal cost, the first one is the
+            # smallest split index.
+            for k in range(i, j):
+                cost = (
+                    dp[i][k]
+                    + dp[k + 1][j]
+                    + p[i - 1] * p[k] * p[j]
+                )
+
+                if best_cost is None or cost < best_cost:
+                    best_cost = cost
+                    best_k = k
+
+            dp[i][j] = best_cost
+            split[i][j] = best_k
+
+    def build_parenthesization(i: int, j: int) -> str:
+        if i == j:
+            return f"A{i}"
+
+        k = split[i][j]
+
+        left = build_parenthesization(i, k)
+        right = build_parenthesization(k + 1, j)
+
+        return f"({left}{right})"
+
+    return dp[1][n], build_parenthesization(1, n)
+
+
+# Example
+if __name__ == "__main__":
+    dimensions = [40, 20, 30, 10, 30]
+
+    cost, parenthesization = matrix_chain_order(dimensions)
+
+    print("Minimum cost:", cost)
+    print("Parenthesization:", parenthesization)
+```
+
+### Example result
+
+For:
+
+
+
+the output is:
+
+```text
+Minimum cost: 26000
+Parenthesization: ((A1(A2A3))A4)
+```
+
+### Complexity
+
+For `n` matrices:
+
+* **Time:** `O(n³)`
+* **Space:** `O(n²)`
+
+The solution is deterministic because every interval is processed in a fixed order and every split `k` is considered from smallest to largest.

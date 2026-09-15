@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""
+CSV Sales Aggregator
+=====================
+Reads a sales CSV, validates rows, aggregates total units and revenue
+by (region, category), computes the weighted average unit price, and
+writes the sorted results to an output CSV.
+
+Expected input columns (header row required, case-insensitive):
+    region, category, units, unit_price
+
+A row is considered INVALID (and skipped) if:
+    - region or category is missing/blank
+    - units is not a valid integer, or units <= 0
+    - unit_price is not a valid number, or unit_price <= 0
+
+Output columns:
+    region, category, total_units, total_revenue,
+    weighted_avg_unit_price
+
+Usage:
+    python sales_aggregator.py input.csv output.csv
+"""
+
+import csv
+import sys
+from collections import defaultdict
+
+
+def is_valid_units(value):
+    """Return int(value) if value is a valid positive integer, else None."""
+    try:
+        units = int(str(value).strip())
+    except (ValueError, TypeError):
+        return None
+    return units if units > 0 else None
+
+
+def is_valid_price(value):
+    """Return float(value) if value is a valid positive number, else None."""
+    try:
+        price = float(str(value).strip())
+    except (ValueError, TypeError):
+        return None
+    return price if price > 0 else None
+
+
+def normalize_header(fieldnames):
+    """Map lowercase/stripped header names -> original column names."""
+    return {name.strip().lower(): name for name in fieldnames if name}
+
+
+def aggregate_sales(input_path):
+    """
+    Read and validate rows from the input CSV, then aggregate totals by
+    (region, category).
+    """
+    required_cols = ("region", "category", "units", "unit_price")
+    aggregates = defaultdict(lambda: {"total_units": 0, "total_revenue": 0.0})
+    stats = {"valid_rows": 0, "invalid_rows": 0, "total_rows": 0}
+
+    with open(input_path, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+
+        if reader.fieldnames is None:
+            raise ValueError("Input CSV appears to be empty (no header row).")
+
+        header_map = normalize_header(reader.fieldnames)
+        missing = [c for c in required_cols if c not in header_map]
+        if missing:
+            raise ValueError(f"Missing required column(s): {', '.join(missing)}")
+
+        for row in reader:
+            stats["total_rows"] += 1
+
+            region = (row.get(header_map["region"]) or "").strip()
+            category = (row.get(header_map["category"]) or "").strip()
+            raw_units = row.get(header_map["units"])
+            raw_price = row.get(header_map["unit_price"])
+
+            units = is_valid_units(raw_units)
+            price = is_valid_price(raw_price)
+
+            if not region or not category or units is None or price is None:
+                stats["invalid_rows"] += 1
+                continue
+
+            key = (region, category)
+            aggregates[key]["total_units"] += units
+            aggregates[key]["total_revenue"] += units * price
+            stats["valid_rows"] += 1
+
+    return aggregates, stats
+
+
+def build_results(aggregates):
+    """Convert raw aggregates into sorted result rows with weighted avg price."""
+    results = []
+    for (region, category), totals in aggregates.items():
+        total_units = totals["total_units"]
+        total_revenue = totals["total_revenue"]
+        weighted_avg_price = total_revenue / total_units if total_units else 0.0
+
+        results.append({
+            "region": region,
+            "category": category,
+            "total_units": total_units,
+            "total_revenue": round(total_revenue, 2),
+            "weighted_avg_unit_price": round(weighted_avg_price, 2),
+        })
+
+    results.sort(key=lambda r: (r["region"], r["category"]))
+    return results
+
+
+def write_results(results, output_path):
+    fieldnames = [
+        "region", "category", "total_units",
+        "total_revenue", "weighted_avg_unit_price",
+    ]
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(results)
+
+
+def main():
+    if len(sys.argv) != 3:
+        print("Usage: python sales_aggregator.py <input_csv> <output_csv>")
+        sys.exit(1)
+
+    input_path, output_path = sys.argv[1], sys.argv[2]
+
+    try:
+        aggregates, stats = aggregate_sales(input_path)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+    results = build_results(aggregates)
+    write_results(results, output_path)
+
+    print(f"Processed {stats['total_rows']} row(s): "
+          f"{stats['valid_rows']} valid, {stats['invalid_rows']} invalid.")
+    print(f"Wrote {len(results)} aggregated row(s) to '{output_path}'.")
+
+
+if __name__ == "__main__":
+    main()

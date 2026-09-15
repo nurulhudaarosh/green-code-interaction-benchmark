@@ -1,0 +1,63 @@
+```python
+from PIL import Image
+
+def compute_ahash(image_path, hash_size=8):
+    """
+    Compute the average hash (aHash) of an image.
+
+    Steps:
+      1. Load image and convert to grayscale.
+      2. Resize to (hash_size x hash_size) pixels.
+      3. Compute the mean pixel value.
+      4. Build a bit for each pixel: 1 if pixel >= mean, else 0.
+      5. Pack bits into a single integer.
+
+    Returns:
+        int: an integer whose lowest (hash_size*hash_size) bits encode the hash.
+    """
+    with Image.open(image_path) as img:
+        # Grayscale + shrink to hash_size x hash_size
+        img = img.convert("L").resize(
+            (hash_size, hash_size), Image.Resampling.LANCZOS
+        )
+        pixels = list(img.getdata())
+
+    avg = sum(pixels) / len(pixels)
+
+    # Build the hash: bit i is 1 if pixels[i] >= avg
+    bits = 0
+    for pixel in pixels:
+        bits <<= 1
+        if pixel >= avg:
+            bits |= 1
+
+    return bits
+
+
+def hamming_distance(hash_a, hash_b):
+    """
+    Compute the Hamming distance between two hashes.
+
+    Works on integer hashes (as produced by compute_ahash) or equal-length
+    strings of bits/hex — integers are converted directly, strings are
+    parsed as binary.
+
+    Returns:
+        int: number of differing bits (0 = identical, higher = more different).
+    """
+    if isinstance(hash_a, str):
+        hash_a = int(hash_a, 2)
+    if isinstance(hash_b, str):
+        hash_b = int(hash_b, 2)
+
+    xor_result = hash_a ^ hash_b
+    return bin(xor_result).count("1")
+```
+
+
+**Notes on the algorithm:**
+- **Grayscale conversion** removes color information so only luminance/structure matters.
+- **Resizing to a small fixed size** (default 8×8 = 64 pixels) throws away high-frequency detail, making the hash robust to minor edits, compression artifacts, and small resizes.
+- **Average thresholding** (as opposed to using the median, like dHash/pHash variants) makes this the "classic" aHash — simple and fast, though a bit more sensitive to gamma/brightness shifts than pHash.
+- The resulting hash is a single Python `int`; two images are considered visually similar if `hamming_distance(h1, h2)` is small (commonly a threshold of ≤5–10 out of 64 bits is used for "likely duplicate").
+- If you need a hex string instead of an int, use `format(compute_ahash(path), '016x')` (for hash_size=8, 64 bits → 16 hex chars).

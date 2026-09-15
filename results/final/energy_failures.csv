@@ -1,0 +1,80 @@
+category,task_id,model,condition,file,reason,detail
+algorithms_computation,AC-001,claude,BUG_FIX,algorithms_computation/code/claude/AC-001/BUG_FIX/final.py,NOT_PYTHON,"model prose / truncated file, not valid Python"
+algorithms_computation,AC-001,claude,EDGE_CASE,algorithms_computation/code/claude/AC-001/EDGE_CASE/final.py,NOT_PYTHON,"model prose / truncated file, not valid Python"
+algorithms_computation,AC-001,claude,FEATURE_ADDITION,algorithms_computation/code/claude/AC-001/FEATURE_ADDITION/final.py,NOT_PYTHON,"model prose / truncated file, not valid Python"
+algorithms_computation,AC-001,claude,FULL_MULTI_TURN,algorithms_computation/code/claude/AC-001/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-001,claude,ONE_SHOT,algorithms_computation/code/claude/AC-001/ONE_SHOT/code.py,NOT_PYTHON,"model prose / truncated file, not valid Python"
+algorithms_computation,AC-001,gpt,EDGE_CASE,algorithms_computation/code/gpt/AC-001/EDGE_CASE/final.py,NOT_PYTHON,"model prose / truncated file, not valid Python"
+algorithms_computation,AC-001,gpt,FEATURE_ADDITION,algorithms_computation/code/gpt/AC-001/FEATURE_ADDITION/final.py,NOT_PYTHON,"model prose / truncated file, not valid Python"
+algorithms_computation,AC-001,gpt,FULL_MULTI_TURN,algorithms_computation/code/gpt/AC-001/FULL_MULTI_TURN/final.py,NOT_PYTHON,"model prose / truncated file, not valid Python"
+algorithms_computation,AC-002,claude,FULL_MULTI_TURN,algorithms_computation/code/claude/AC-002/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-003,deepseek,FEATURE_ADDITION,algorithms_computation/code/deepseek/AC-003/FEATURE_ADDITION/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-003,gemini,FULL_MULTI_TURN,algorithms_computation/code/gemini/AC-003/FULL_MULTI_TURN/final.py,RUNTIME_BUG,NameError: name 'single_source_route_analyzer' is not defined
+algorithms_computation,AC-004,claude,FEATURE_ADDITION,algorithms_computation/code/claude/AC-004/FEATURE_ADDITION/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-004,deepseek,FULL_MULTI_TURN,algorithms_computation/code/deepseek/AC-004/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-004,gpt,EDGE_CASE,algorithms_computation/code/gpt/AC-004/EDGE_CASE/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-004,gpt,FEATURE_ADDITION,algorithms_computation/code/gpt/AC-004/FEATURE_ADDITION/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-004,gpt,FULL_MULTI_TURN,algorithms_computation/code/gpt/AC-004/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-005,gemini,FULL_MULTI_TURN,algorithms_computation/code/gemini/AC-005/FULL_MULTI_TURN/final.py,RUNTIME_BUG,NameError: name 'lexicographically_smallest_lis_indices' is not defined
+algorithms_computation,AC-006,deepseek,FULL_MULTI_TURN,algorithms_computation/code/deepseek/AC-006/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-006,gpt,BUG_FIX,algorithms_computation/code/gpt/AC-006/BUG_FIX/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-007,claude,EDGE_CASE,algorithms_computation/code/claude/AC-007/EDGE_CASE/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-008,gemini,FULL_MULTI_TURN,algorithms_computation/code/gemini/AC-008/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-008,gpt,EDGE_CASE,algorithms_computation/code/gpt/AC-008/EDGE_CASE/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-009,claude,BUG_FIX,algorithms_computation/code/claude/AC-009/BUG_FIX/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-009,deepseek,FULL_MULTI_TURN,algorithms_computation/code/deepseek/AC-009/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-009,gemini,EDGE_CASE,algorithms_computation/code/gemini/AC-009/EDGE_CASE/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-009,gpt,EDGE_CASE,algorithms_computation/code/gpt/AC-009/EDGE_CASE/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-009,gpt,FULL_MULTI_TURN,algorithms_computation/code/gpt/AC-009/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-010,claude,EDGE_CASE,algorithms_computation/code/claude/AC-010/EDGE_CASE/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-010,claude,FULL_MULTI_TURN,algorithms_computation/code/claude/AC-010/FULL_MULTI_TURN/final.py,RUNTIME_BUG,ValueError: Need at least one matrix (len(p) >= 2).
+algorithms_computation,AC-010,gemini,FULL_MULTI_TURN,algorithms_computation/code/gemini/AC-010/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-010,gpt,EDGE_CASE,algorithms_computation/code/gpt/AC-010/EDGE_CASE/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-010,gpt,FULL_MULTI_TURN,algorithms_computation/code/gpt/AC-010/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-011,claude,EDGE_CASE,algorithms_computation/code/claude/AC-011/EDGE_CASE/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-011,claude,FULL_MULTI_TURN,algorithms_computation/code/claude/AC-011/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-011,gemini,FULL_MULTI_TURN,algorithms_computation/code/gemini/AC-011/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-011,gpt,FULL_MULTI_TURN,algorithms_computation/code/gpt/AC-011/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-012,claude,FULL_MULTI_TURN,algorithms_computation/code/claude/AC-012/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-012,deepseek,FULL_MULTI_TURN,algorithms_computation/code/deepseek/AC-012/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-012,gpt,EDGE_CASE,algorithms_computation/code/gpt/AC-012/EDGE_CASE/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-013,deepseek,EDGE_CASE,algorithms_computation/code/deepseek/AC-013/EDGE_CASE/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-013,deepseek,FULL_MULTI_TURN,algorithms_computation/code/deepseek/AC-013/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-013,gpt,FULL_MULTI_TURN,algorithms_computation/code/gpt/AC-013/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-013,gpt,ONE_SHOT,algorithms_computation/code/gpt/AC-013/ONE_SHOT/code.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-014,claude,FULL_MULTI_TURN,algorithms_computation/code/claude/AC-014/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-014,deepseek,FULL_MULTI_TURN,algorithms_computation/code/deepseek/AC-014/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-014,gpt,BUG_FIX,algorithms_computation/code/gpt/AC-014/BUG_FIX/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-014,gpt,FEATURE_ADDITION,algorithms_computation/code/gpt/AC-014/FEATURE_ADDITION/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-014,gpt,FULL_MULTI_TURN,algorithms_computation/code/gpt/AC-014/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-015,gpt,BUG_FIX,algorithms_computation/code/gpt/AC-015/BUG_FIX/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+file_data_processing,FD-001,deepseek,EDGE_CASE,file_data_processing/code/deepseek/FD-001/EDGE_CASE/final.py,SILENT_RC1,no message (schema mismatch / no-op)
+file_data_processing,FD-001,deepseek,FEATURE_ADDITION,file_data_processing/code/deepseek/FD-001/FEATURE_ADDITION/final.py,OTHER,Usage: python customer_event_utility.py input.csv output.csv
+file_data_processing,FD-001,gpt,EDGE_CASE,file_data_processing/code/gpt/FD-001/EDGE_CASE/final.py,CLI_ARGS,prog.py: error: the following arguments are required: input
+file_data_processing,FD-002,claude,BUG_FIX,file_data_processing/code/claude/FD-002/BUG_FIX/final.py,RUNTIME_BUG,NameError: name 'lines' is not defined
+file_data_processing,FD-004,gemini,EDGE_CASE,file_data_processing/code/gemini/FD-004/EDGE_CASE/final.py,RUNTIME_BUG,KeyError: 'Warehouse'
+file_data_processing,FD-004,gemini,FEATURE_ADDITION,file_data_processing/code/gemini/FD-004/FEATURE_ADDITION/final.py,RUNTIME_BUG,"ValueError: Missing required columns {'Warehouse', 'Quantity', 'Product_ID'} in file: inventory_old.csv"
+file_data_processing,FD-005,gpt,FULL_MULTI_TURN,file_data_processing/code/gpt/FD-005/FULL_MULTI_TURN/final.py,SILENT_RC1,no message (schema mismatch / no-op)
+file_data_processing,FD-007,claude,FEATURE_ADDITION,file_data_processing/code/claude/FD-007/FEATURE_ADDITION/final.py,RUNTIME_BUG,ValueError: Invalid isoformat string: '32'
+file_data_processing,FD-007,deepseek,FEATURE_ADDITION,file_data_processing/code/deepseek/FD-007/FEATURE_ADDITION/final.py,SILENT_RC1,no message (schema mismatch / no-op)
+file_data_processing,FD-007,gpt,BUG_FIX,file_data_processing/code/gpt/FD-007/BUG_FIX/final.py,RUNTIME_BUG,ValueError: Invalid isoformat string: '32'
+file_data_processing,FD-007,gpt,EDGE_CASE,file_data_processing/code/gpt/FD-007/EDGE_CASE/final.py,RUNTIME_BUG,KeyError: 'user_id'
+file_data_processing,FD-007,gpt,FEATURE_ADDITION,file_data_processing/code/gpt/FD-007/FEATURE_ADDITION/final.py,RUNTIME_BUG,ValueError: Invalid isoformat string: '32'
+file_data_processing,FD-007,gpt,FULL_MULTI_TURN,file_data_processing/code/gpt/FD-007/FULL_MULTI_TURN/final.py,RUNTIME_BUG,KeyError: 'user_id'
+file_data_processing,FD-007,gpt,ONE_SHOT,file_data_processing/code/gpt/FD-007/ONE_SHOT/code.py,RUNTIME_BUG,ValueError: Invalid isoformat string: '32'
+file_data_processing,FD-008,deepseek,ONE_SHOT,file_data_processing/code/deepseek/FD-008/ONE_SHOT/code.py,SILENT_RC1,no message (schema mismatch / no-op)
+file_data_processing,FD-009,claude,BUG_FIX,file_data_processing/code/claude/FD-009/BUG_FIX/final.py,SILENT_RC1,no message (schema mismatch / no-op)
+file_data_processing,FD-009,claude,FULL_MULTI_TURN,file_data_processing/code/claude/FD-009/FULL_MULTI_TURN/final.py,SILENT_RC1,no message (schema mismatch / no-op)
+file_data_processing,FD-009,deepseek,BUG_FIX,file_data_processing/code/deepseek/FD-009/BUG_FIX/final.py,OTHER,Usage: python analyzer.py <input.csv> <output.csv>
+file_data_processing,FD-009,deepseek,EDGE_CASE,file_data_processing/code/deepseek/FD-009/EDGE_CASE/final.py,RUNTIME_BUG,ValueError: CSV missing required columns: ['sequence']
+file_data_processing,FD-009,deepseek,ONE_SHOT,file_data_processing/code/deepseek/FD-009/ONE_SHOT/code.py,SILENT_RC1,no message (schema mismatch / no-op)
+file_data_processing,FD-009,gpt,EDGE_CASE,file_data_processing/code/gpt/FD-009/EDGE_CASE/final.py,SILENT_RC1,no message (schema mismatch / no-op)
+file_data_processing,FD-009,gpt,FULL_MULTI_TURN,file_data_processing/code/gpt/FD-009/FULL_MULTI_TURN/final.py,SILENT_RC1,no message (schema mismatch / no-op)
+image_media_processing,IM-002,gemini,FEATURE_ADDITION,image_media_processing/code/gemini/IM-002/FEATURE_ADDITION/final.py,NOT_PYTHON,"model prose / truncated file, not valid Python"
+image_media_processing,IM-003,deepseek,BUG_FIX,image_media_processing/code/deepseek/IM-003/BUG_FIX/final.py,SILENT_RC1,no message (schema mismatch / no-op)
+image_media_processing,IM-003,deepseek,ONE_SHOT,image_media_processing/code/deepseek/IM-003/ONE_SHOT/code.py,SILENT_RC1,no message (schema mismatch / no-op)
+image_media_processing,IM-004,deepseek,FULL_MULTI_TURN,image_media_processing/code/deepseek/IM-004/FULL_MULTI_TURN/final.py,MISSING_DEP,needs module pytest
+realistic_applications_utilities,RA-001,deepseek,BUG_FIX,realistic_applications_utilities/code/deepseek/RA-001/BUG_FIX/final.py,RUNTIME_BUG,EOFError: EOF when reading a line
+realistic_applications_utilities,RA-001,gpt,FULL_MULTI_TURN,realistic_applications_utilities/code/gpt/RA-001/FULL_MULTI_TURN/final.py,RUNTIME_BUG,NameError: name 'records' is not defined
+realistic_applications_utilities,RA-002,deepseek,ONE_SHOT,realistic_applications_utilities/code/deepseek/RA-002/ONE_SHOT/code.py,RUNTIME_BUG,ValueError: No cycle count for SKU002
+realistic_applications_utilities,RA-002,gemini,FEATURE_ADDITION,realistic_applications_utilities/code/gemini/RA-002/FEATURE_ADDITION/final.py,RUNTIME_BUG,sqlite3.OperationalError: no such table: inventory

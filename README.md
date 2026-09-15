@@ -163,6 +163,25 @@ python3 scripts/measure_progress.py status     # ledger progress table
 python3 scripts/measure_progress.py queue --redo-failed -o q.jsonl
 python3 runner/measure_unit.py --unit-file q.json   # measure one unit by hand
 
+# 4b. Fix a failing unit yourself (no re-download ever clobbers it):
+#     1. edit collected/<category>/code/<model>/<task>/<INT>/*.py   (your fix)
+#     2. re-run the pipeline — ingest prints "KEPT ... local modification(s)",
+#        the sha256 change makes the queue re-measure it, the fix gets measured.
+#     3. to go back to the member's version: delete your edited collected file.
+
+# 5. Drive sync is add-only — each file is fetched from Drive AT MOST ONCE:
+#     - Results/state are kept in results/file_ledger.jsonl and
+#       inbox/.sync_state.json, so re-running never re-requests a file
+#       already saved or measured.  Members only add NEW files.
+#     - If a Drive file fails (Google "many accesses" quota), it is
+#       scheduled with exponential backoff (15m → 30m → 1h … 24h) and
+#       skipped on the next passes until the quota resets — no spam.
+#     - Per pass at most 500 new files are fetched (--) so big folders
+#       make progress in chunks with a natural gap between files.
+#     - Inspect: python3 scripts/sync_drive.py --ledger [N]
+#     - Optional: delete cookies.txt so the broken session is skipped
+#       (the anonymous fallback is used automatically).
+
 # 5. Analysis (also run automatically at the end of every pipeline pass)
 python3 analysis/aggregate.py                  # -> results/processed/metrics.csv
 python3 analysis/energy_analysis.py            # -> delta_energy.csv, energy_summary.json

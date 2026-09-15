@@ -18,6 +18,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(REPO / "scripts"))
+from sync_drive import load_ledger, save_ledger, record_measured  # noqa: E402
 
 from measurement.rapl import RaplEnergy  # noqa: E402
 from measurement.system import machine_info  # noqa: E402
@@ -54,10 +56,15 @@ def driver_cmd(code, task_file, category):
             "--category", category]
 
 
+def log(msg):
+    print(msg, flush=True)
+
+
 def measure_unit(unit):
     category, tid = unit["category"], unit["task_id"]
     code = REPO / unit["rel"]
     task = dataset_task(category, tid)
+    label = f"{tid}/{unit['model']}/{unit['interaction']}"
     result = {
         "unit": {k: unit[k] for k in ("category", "task_id", "model", "interaction", "file")},
         "measured_at": datetime.now(timezone.utc).isoformat(),
@@ -124,10 +131,15 @@ def measure_unit(unit):
             if median(energy) and median(wall) else None
         ),
     }
-    status = "measured" if payload.get("correct") else "error"
+    # Energy-first: a program that RAN on the workload is measured even
+    # when its output differs from the reference; `correct` records the
+    # correctness verdict separately for analysis-time filtering.
+    ran = bool(payload.get("ran"))
+    status = "measured" if ran else "error"
     out = result | {
         "status": status,
         "correct": payload.get("correct"),
+        "ran": ran,
         "inputs": payload.get("inputs"),
         "scales": payload.get("scales"),
         "candidate_runtime_ms": payload.get("candidate_runtime_ms"),
@@ -135,6 +147,8 @@ def measure_unit(unit):
         "metrics": metrics,
         "driver_errors": payload.get("errors", []),
     }
+    if not ran:
+        out["reason"] = "program_did_not_run (entry missing or errored)"
     return status, out
 
 
@@ -153,15 +167,21 @@ def main():
     name = f"{unit['task_id']}__{unit['model']}__{unit['interaction']}.json"
     metrics_path = raw_dir / name
     metrics_path.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
-
     subprocess.run(
-        [sys.executable, str(REPO / "scripts" / "measure_progress.py"), "record",
-         unit["rel"], "--status", status,
+        [sys.executable, str(REPO / "scripts" / "measure_progress.py"),
+         "record", unit["rel"], "--status", status,
          "--metrics", str(metrics_path.relative_to(REPO)),
          "--note", str(out.get("reason", "")), "--if-changed"],
         check=True,
     )
-    print(json.dumps({"status": status, "unit": unit["rel"], "metrics": str(metrics_path)}))
+    ledger = load_ledger()
+    task_key = f"{unit['category']}|{unit['model']}|" \
+        f"{unit['interaction']}|{unit['task_id']}"
+    record_measured(ledger, unit["rel"], sha=unit.get("sha256"),
+                    task_key=task_key)
+    save_ledger(ledger)
+    print(json.dumps({"status": status, "unit": unit["rel"],
+                      "metrics": str(metrics_path)}))
     return 0
 
 

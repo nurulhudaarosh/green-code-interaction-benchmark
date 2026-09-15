@@ -1,0 +1,170 @@
+```python
+Maximum concurrent meetings (sweep-line over half-open intervals [start, end)).
+
+PROBLEM
+-------
+Given a list of meeting intervals [start, end) (end is exclusive — a meeting
+that ends at time T does not overlap with one that starts at time T), find:
+  1. The maximum number of meetings that are simultaneously active at any
+     instant.
+  2. The sorted list of distinct time points at which that maximum count is
+     first reached (i.e., every timestamp where the active count rises to
+     equal the global maximum).
+
+KEY CONSTRAINTS
+----------------
+- Intervals are half-open: [start, end). A meeting is "active" on [start, end)
+  and not active at or after 'end'.
+- Because intervals are half-open, at a timestamp T where one meeting ends and
+  another starts, they do NOT overlap. This means, when sweeping events at the
+  same timestamp, all "end" events must be processed (i.e., counted as
+  decrements) BEFORE any "start" events (increments) at that same timestamp.
+- start < end is assumed for each meeting (zero/negative-length meetings are
+  invalid and rejected).
+- No use of randomness, network, external APIs, or human interaction —
+  purely deterministic, standard-library computation.
+
+REQUIRED OUTPUT
+----------------
+A tuple: (max_concurrent_count, sorted_list_of_timestamps_where_that_max_begins)
+
+ALGORITHM (sweep line)
+-----------------------
+1. Convert each interval (s, e) into two events: a start event at time s and
+   an end event at time e.
+2. Sort all events by (time, kind), where "end" events are given a kind that
+   sorts before "start" events at the same timestamp. This enforces the
+   half-open semantics: same-instant ends are processed first.
+3. Sweep through events in this order, maintaining a running `count` of
+   active meetings. Process all events sharing the same timestamp together
+   (all decrements for ends, then all increments for starts), then record
+   the resulting count at that timestamp.
+4. Track the global maximum count seen across the entire sweep.
+5. Any timestamp whose post-processing count equals that global maximum is a
+   time at which the maximum is "active/begins". Collect and sort those
+   timestamps (they come out sorted naturally from the sweep, but we sort
+   defensively).
+
+Complexity: O(n log n) time for sorting 2n events, O(n) space.
+```
+
+from typing import List, Tuple
+
+
+def max_concurrent_meetings(
+    intervals: List[Tuple[float, float]]
+) -> Tuple[int, List[float]]:
+    """
+    Compute the maximum number of simultaneously active half-open meeting
+    intervals [start, end), and the sorted timestamps at which that maximum
+    is achieved.
+
+    Parameters
+    ----------
+    intervals : list of (start, end) tuples/lists, with start < end.
+
+    Returns
+    -------
+    (max_count, times) where:
+      - max_count is the maximum number of concurrently active meetings
+        (0 if `intervals` is empty).
+      - times is a sorted list of distinct timestamps at which the active
+        count equals max_count (empty if `intervals` is empty).
+
+    Raises
+    ------
+    ValueError if any interval has start >= end, or an interval is not a
+    2-element sequence.
+    """
+    if not intervals:
+        return 0, []
+
+    # Event kind: 0 = end (processed first at a given timestamp),
+    #             1 = start (processed second at a given timestamp).
+    END, START = 0, 1
+
+    events: List[Tuple[float, int]] = []
+    for interval in intervals:
+        if len(interval) != 2:
+            raise ValueError(f"Invalid interval (need 2 elements): {interval!r}")
+        start, end = interval
+        if not (start < end):
+            raise ValueError(
+                f"Invalid interval: start must be < end, got start={start}, end={end}"
+            )
+        events.append((start, START))
+        events.append((end, END))
+
+    # Sort by (time, kind): END(0) before START(1) at equal times.
+    events.sort(key=lambda ev: (ev[0], ev[1]))
+
+    count = 0
+    max_count = 0
+    time_at_count: List[Tuple[float, int]] = []  # (timestamp, count-after-processing)
+
+    n = len(events)
+    i = 0
+    while i < n:
+        t = events[i][0]
+        j = i
+        # Process every event sharing this exact timestamp together.
+        while j < n and events[j][0] == t:
+            if events[j][1] == END:
+                count -= 1
+            else:
+                count += 1
+            j += 1
+        time_at_count.append((t, count))
+        if count > max_count:
+            max_count = count
+        i = j
+
+    # Timestamps where the count equals the (now-known) global maximum.
+    max_times = sorted(t for (t, c) in time_at_count if c == max_count)
+
+    return max_count, max_times
+
+
+def _run_examples() -> None:
+    """Deterministic self-checks / usage demonstration."""
+
+    # Example 1: three overlapping meetings, peak of 2 at two separate times.
+    meetings_1 = [(0, 10), (5, 15), (12, 20)]
+    result_1 = max_concurrent_meetings(meetings_1)
+    print("Example 1 intervals:", meetings_1)
+    print("  -> max concurrent =", result_1[0], "| begins at times =", result_1[1])
+    assert result_1 == (2, [5, 12]), result_1
+
+    # Example 2: half-open semantics — a meeting ending at 10 and one starting
+    # at 10 do NOT overlap.
+    meetings_2 = [(0, 10), (10, 20)]
+    result_2 = max_concurrent_meetings(meetings_2)
+    print("Example 2 intervals:", meetings_2)
+    print("  -> max concurrent =", result_2[0], "| begins at times =", result_2[1])
+    assert result_2 == (1, [0, 10]), result_2
+
+    # Example 3: all meetings overlap at once.
+    meetings_3 = [(1, 5), (2, 6), (3, 7), (4, 8)]
+    result_3 = max_concurrent_meetings(meetings_3)
+    print("Example 3 intervals:", meetings_3)
+    print("  -> max concurrent =", result_3[0], "| begins at times =", result_3[1])
+    assert result_3 == (4, [4]), result_3
+
+    # Example 4: empty input.
+    result_4 = max_concurrent_meetings([])
+    print("Example 4 intervals: []")
+    print("  -> max concurrent =", result_4[0], "| begins at times =", result_4[1])
+    assert result_4 == (0, []), result_4
+
+    # Example 5: max reached at multiple disjoint peak times.
+    meetings_5 = [(0, 5), (1, 4), (10, 15), (11, 14)]
+    result_5 = max_concurrent_meetings(meetings_5)
+    print("Example 5 intervals:", meetings_5)
+    print("  -> max concurrent =", result_5[0], "| begins at times =", result_5[1])
+    assert result_5 == (2, [1, 11]), result_5
+
+    print("\nAll deterministic self-checks passed.")
+
+
+if __name__ == "__main__":
+    _run_examples()

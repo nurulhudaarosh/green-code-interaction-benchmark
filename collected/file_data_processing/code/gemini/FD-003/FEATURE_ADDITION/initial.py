@@ -1,0 +1,106 @@
+import csv
+import io
+from collections import defaultdict
+from typing import Dict, List, Tuple
+
+
+def aggregate_sales(input_csv: str) -> str:
+    """Aggregates sales data by Region and Category.
+
+    Validates numeric values, ignores invalid rows, calculates aggregated totals
+    and weighted average unit prices, and returns CSV formatted text sorted by
+    Region and Category.
+    """
+    # Dictionary structure: (region, category) -> [total_units, total_revenue]
+    aggregated_data: Dict[Tuple[str, str], List[float]] = defaultdict(
+        lambda: [0.0, 0.0]
+    )
+
+    reader = csv.DictReader(input_csv.strip().splitlines())
+
+    for row in reader:
+        region = row.get("Region", "").strip()
+        category = row.get("Category", "").strip()
+        units_raw = row.get("Units", "").strip()
+        price_raw = row.get("UnitPrice", "").strip()
+
+        # Check for missing non-numeric required fields
+        if not region or not category:
+            continue
+
+        # Validate numeric types and bounds (units and price must be non-negative numbers)
+        try:
+            units = float(units_raw)
+            unit_price = float(price_raw)
+
+            if units < 0 or unit_price < 0:
+                continue
+        except (ValueError, TypeError):
+            # Ignore invalid/corrupted numeric rows
+            continue
+
+        revenue = units * unit_price
+
+        # Accumulate totals
+        key = (region, category)
+        aggregated_data[key][0] += units
+        aggregated_data[key][1] += revenue
+
+    # Sort output data by Region (ascending), then Category (ascending)
+    sorted_keys = sorted(aggregated_data.keys(), key=lambda x: (x[0], x[1]))
+
+    # Prepare CSV output in memory
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Write header
+    writer.writerow(
+        [
+            "Region",
+            "Category",
+            "TotalUnits",
+            "TotalRevenue",
+            "WeightedAvgUnitPrice",
+        ]
+    )
+
+    # Calculate metrics and write rows
+    for region, category in sorted_keys:
+        total_units, total_revenue = aggregated_data[(region, category)]
+
+        # Calculate weighted average unit price: Total Revenue / Total Units
+        weighted_avg_price = (
+            (total_revenue / total_units) if total_units > 0 else 0.0
+        )
+
+        writer.writerow(
+            [
+                region,
+                category,
+                int(total_units)
+                if total_units.is_integer()
+                else round(total_units, 2),
+                round(total_revenue, 2),
+                round(weighted_avg_price, 2),
+            ]
+        )
+
+    return output.getvalue()
+
+
+# Example Usage & Verification
+if __name__ == "__main__":
+    sample_csv_input = """Region,Category,Units,UnitPrice
+North,Electronics,10,100.00
+North,Electronics,5,150.00
+South,Furniture,invalid,50.00
+North,Clothing,-3,20.00
+South,Furniture,2,50.00
+North,Electronics,bad_val,100.00
+South,Furniture,4,60.00
+South,Clothing,15,30.00
+"""
+
+    print("--- Aggregated Output CSV ---")
+    result_csv = aggregate_sales(sample_csv_input)
+    print(result_csv)

@@ -1,0 +1,205 @@
+## Problem Restatement
+
+**Matrix Chain Planner**: Given matrix dimensions p[0..n], where matrix i (1-indexed) has dimensions p[i-1] × p[i], find:
+1. Minimum scalar multiplication cost to multiply all n matrices
+2. Optimal parenthesization string using 1-indexed matrix names (M1, M2, ...)
+3. **Deterministic tie-handling**: When multiple splits yield the same cost, choose the **smallest split index k** (where split is at position k: matrices i..k and k+1..j)
+
+**Existing Output Requirements**:
+- Return the minimum scalar multiplication cost
+- Return the parenthesization string
+- Format: `"{cost}\n{parenthesization}\n"`
+
+**New Feature** (when requested):
+- Return an additional `operation_summary` field containing a deterministic summary of the computation
+- For this task, report the **number of major computational decisions/operations** made by the algorithm
+- This includes: number of subproblems computed, number of split evaluations, and total comparisons
+
+## Implementation
+
+```python
+def matrix_chain_order(p, return_summary=False):
+    """
+    Find optimal parenthesization for matrix chain multiplication.
+    
+    Args:
+        p: List of dimensions where matrix i has dimensions p[i-1] × p[i]
+        return_summary: If True, return additional operation summary
+        
+    Returns:
+        tuple: (minimum_cost, parenthesization_string, [operation_summary])
+    """
+    n = len(p) - 1  # number of matrices
+    
+    if n == 0:
+        if return_summary:
+            return 0, "", {"subproblems": 0, "split_evaluations": 0, "comparisons": 0}
+        return 0, ""
+    if n == 1:
+        if return_summary:
+            return 0, "M1", {"subproblems": 0, "split_evaluations": 0, "comparisons": 0}
+        return 0, "M1"
+    
+    # dp[i][j] = minimum cost to multiply matrices i..j (1-indexed)
+    dp = [[0] * (n + 1) for _ in range(n + 1)]
+    split = [[0] * (n + 1) for _ in range(n + 1)]
+    
+    # Statistics for summary
+    subproblems_computed = 0
+    split_evaluations = 0
+    comparisons_performed = 0
+    
+    # length of chain to consider
+    for length in range(2, n + 1):
+        for i in range(1, n - length + 2):
+            j = i + length - 1
+            dp[i][j] = float('inf')
+            subproblems_computed += 1
+            
+            # Try all possible split positions
+            for k in range(i, j):
+                cost = dp[i][k] + dp[k+1][j] + p[i-1] * p[k] * p[j]
+                split_evaluations += 1
+                comparisons_performed += 1  # For cost < dp[i][j] comparison
+                
+                # Choose smaller cost, or if equal, choose smaller k
+                if cost < dp[i][j]:
+                    dp[i][j] = cost
+                    split[i][j] = k
+                    comparisons_performed += 1  # For the assignment decision
+                elif cost == dp[i][j] and k < split[i][j]:
+                    split[i][j] = k
+                    comparisons_performed += 2  # For equality and k < split comparisons
+                else:
+                    comparisons_performed += 1  # For the final else condition
+    
+    # Build parenthesization string
+    def build_parenthesization(i, j):
+        if i == j:
+            return f"M{i}"
+        k = split[i][j]
+        left = build_parenthesization(i, k)
+        right = build_parenthesization(k+1, j)
+        return f"({left}{right})"
+    
+    min_cost = dp[1][n]
+    parenthesization = build_parenthesization(1, n)
+    
+    if return_summary:
+        operation_summary = {
+            "subproblems_computed": subproblems_computed,
+            "split_evaluations": split_evaluations,
+            "comparisons_performed": comparisons_performed,
+            "total_operations": subproblems_computed + split_evaluations + comparisons_performed
+        }
+        return min_cost, parenthesization, operation_summary
+    
+    return min_cost, parenthesization
+
+
+def matrix_chain_multiply(p, include_summary=False):
+    """
+    Wrapper function that returns the formatted output.
+    
+    Args:
+        p: List of dimensions
+        include_summary: If True, include operation summary in output
+        
+    Returns:
+        str: Formatted output string (with optional summary)
+    """
+    if len(p) < 2:
+        if include_summary:
+            return "0\n\nSummary: No operations needed (0 matrices)\n"
+        return "0\n"
+    
+    if include_summary:
+        cost, paren, summary = matrix_chain_order(p, return_summary=True)
+        summary_str = f"\nOperation Summary:\n"
+        summary_str += f"  - Subproblems computed: {summary['subproblems_computed']}\n"
+        summary_str += f"  - Split evaluations: {summary['split_evaluations']}\n"
+        summary_str += f"  - Comparisons performed: {summary['comparisons_performed']}\n"
+        summary_str += f"  - Total operations: {summary['total_operations']}\n"
+        return f"{cost}\n{paren}{summary_str}"
+    else:
+        cost, paren = matrix_chain_order(p, return_summary=False)
+        return f"{cost}\n{paren}\n"
+
+
+# Test cases to verify correctness
+if __name__ == "__main__":
+    print("=" * 80)
+    print("MATRIX CHAIN PLANNER - WITH OPERATION SUMMARY")
+    print("=" * 80)
+    
+    # Test 1: Equal costs case with summary
+    p1 = [2, 2, 3, 3]
+    print("\nTest 1 - Equal costs (should choose k=1):")
+    print(matrix_chain_multiply(p1, include_summary=True))
+    print("-" * 80)
+    
+    # Test 2: Classic example with summary
+    p2 = [10, 100, 5, 50]
+    print("\nTest 2 - Classic example:")
+    print(matrix_chain_multiply(p2, include_summary=True))
+    print("-" * 80)
+    
+    # Test 3: Without summary (original behavior)
+    p3 = [30, 35, 15, 5, 10, 20, 25]
+    print("\nTest 3 - Without summary (original format):")
+    print(matrix_chain_multiply(p3, include_summary=False))
+    print("-" * 80)
+    
+    # Test 4: Single matrix with summary
+    p4 = [10, 20]
+    print("\nTest 4 - Single matrix with summary:")
+    print(matrix_chain_multiply(p4, include_summary=True))
+    print("-" * 80)
+    
+    # Test 5: 4 matrices with summary
+    p5 = [5, 4, 6, 2, 7]
+    print("\nTest 5 - 4 matrices with summary:")
+    print(matrix_chain_multiply(p5, include_summary=True))
+    print("-" * 80)
+    
+    # Test 6: Textbook example with summary
+    p6 = [30, 35, 15, 5, 10, 20, 25]
+    print("\nTest 6 - Textbook example with summary:")
+    print(matrix_chain_multiply(p6, include_summary=True))
+    print("-" * 80)
+    
+    # Test 7: Empty input with summary
+    p7 = []
+    print("\nTest 7 - Empty input with summary:")
+    print(matrix_chain_multiply(p7, include_summary=True))
+    print("-" * 80)
+    
+    # Test 8: Compare with and without summary for same input
+    p8 = [5, 10, 3, 12, 5, 50, 6]
+    print("\nTest 8 - Same input, different output formats:")
+    print("Without summary (original):")
+    print(matrix_chain_multiply(p8, include_summary=False))
+    print("\nWith summary (new feature):")
+    print(matrix_chain_multiply(p8, include_summary=True))
+    print("-" * 80)
+```
+
+## Key Features Maintained
+
+1. **Original outputs unchanged**: When `include_summary=False`, the output format remains exactly as before: `"{cost}\n{parenthesization}\n"`
+
+2. **Deterministic tie-handling preserved**: The algorithm still chooses the smallest split index k when multiple splits yield the same cost
+
+3. **Interval DP unchanged**: The core algorithm using interval dynamic programming over all matrix-chain ranges remains the same
+
+4. **New feature is optional**: The operation summary is only included when explicitly requested via the `include_summary` parameter
+
+## Operation Summary Details
+
+The `operation_summary` field reports:
+- **Subproblems computed**: Number of DP subproblems (i,j) that were evaluated
+- **Split evaluations**: Total number of split positions evaluated across all subproblems
+- **Comparisons performed**: Number of comparison operations during the DP computation
+- **Total operations**: Sum of all the above
+
+This provides a useful deterministic measure of the algorithm's computational effort for any given input.

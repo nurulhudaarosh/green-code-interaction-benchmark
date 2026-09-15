@@ -1,0 +1,297 @@
+## Restating the problem: One-Dimensional K-Cluster Partition
+
+Given a multiset of `n` real-valued points, sort them into non-decreasing order and partition the sorted sequence into exactly `k` **contiguous, non-empty** clusters. "Contiguous" means: if a point lies between two points that belong to the same cluster (in sorted order), it must belong to that cluster too — clusters cannot skip over points. The objective is to choose the partition that minimizes the total **sum of squared deviations from each cluster's own mean**:
+
+```
+cost = Σ_{c=1..k} Σ_{x in cluster_c} (x - mean(cluster_c))²
+```
+
+**Constraints**
+- `1 ≤ k ≤ n`; every cluster must be non-empty.
+- Points may repeat (duplicate values are valid input, not a special case to reject).
+- The algorithm must be exact and deterministic: identical input must always produce identical output, including when several different partitions achieve the exact same minimum cost (a **tie**).
+
+**Required output**
+- The optimal total cost.
+- The `k+1` boundary indices into the sorted array delimiting the clusters.
+- A single, reproducible answer even when ties exist — not an arbitrary one that could vary by run, platform, or floating-point summation order.
+
+**Two difficult cases this revision handles explicitly**
+1. **Repeated values** — e.g. `[5, 5, 5, 5]`. Every contiguous split has cost 0, so the DP must still pick one boundary set consistently rather than being "correct but arbitrary."
+2. **Deterministic ties** — genuinely different partitions (not just duplicate-driven) can land on the *exact same* minimum cost (e.g. `[1, 2, 2, 2, 3]` splitting after position 1 vs. after position 4 both cost `0.75`). Floating-point arithmetic can also make two mathematically-equal costs differ by a tiny epsilon due to rounding — this must not be allowed to flip the tie-break unpredictably.
+
+**Tie-breaking rule (explicit, preserved from the original DP's natural behavior)**
+When multiple choices of split point yield equal cost within a small numerical tolerance, the algorithm keeps the **first one found while scanning candidate split points left-to-right** — i.e., it prefers the **smallest start index for the last cluster**, which means: as early a split as possible, giving the earlier cluster the minimum size and letting the later cluster absorb the surplus. This was already the DP's behavior via strict `<` comparison; it's now made explicit and protected against floating-point noise with an epsilon tolerance.
+
+```python
+"""
+Optimal 1-D k-means via contiguous-partition dynamic programming.
+
+Problem
+-------
+Given n real-valued points, sort them and split the sorted sequence into
+exactly k non-empty, CONTIGUOUS clusters so as to minimize the total
+within-cluster sum of squared deviations from each cluster's mean:
+
+    cost = sum_{c=1..k} sum_{x in cluster_c} (x - mean(cluster_c))^2
+
+Because clusters must be contiguous in sorted order, this is solvable
+exactly (no local optima, no randomness needed) with dynamic programming,
+unlike general-dimensional k-means which is NP-hard.
+
+Algorithm
+---------
+1. Sort the points.
+2. Build prefix sums of the values and of the squared values so that the
+   cost of any contiguous segment (i..j) can be computed in O(1):
+       n_seg   = j - i + 1
+       sum_seg = S[j]   - S[i-1]
+       sq_seg  = S2[j]  - S2[i-1]
+       cost(i,j) = sq_seg - sum_seg**2 / n_seg
+   (This is algebraically the sum of squared deviations from the mean.)
+3. DP over (number of clusters used so far, rightmost index covered):
+       dp[m][j] = min over i in [m..j] of dp[m-1][i-1] + cost(i, j)
+   dp[0][0] = 0, dp[0][j>0] = +inf (can't cover points with 0 clusters).
+4. Track the best split point for each (m, j) to reconstruct the boundary
+   indices by backtracking from dp[k][n].
+
+Complexity: O(n^2 * k) time, O(n * k) space. Fully deterministic -- no
+randomness, no external calls, standard library only.
+
+Repeated values
+----------------
+Duplicate input values require no special-casing: the O(1) segment-cost
+formula (sum of squares minus mean-squared term) is exact whether or not
+values repeat, including the degenerate case where an entire segment is
+one repeated value (cost = 0 for that segment).
+
+Deterministic ties
+-------------------
+Two distinct partitions can legitimately achieve the exact same minimum
+cost (this happens naturally with repeated/symmetric data, not just
+all-identical data). To guarantee the same answer every run:
+  1. A small epsilon (EPS) is used when comparing candidate costs, so that
+     floating-point rounding noise never causes two mathematically equal
+     costs to be treated as different.
+  2. Among candidates within EPS of the best cost found so far, the FIRST
+     one encountered wins. Since the inner loop scans candidate start
+     indices `i` (of the current/last cluster) in strictly increasing
+     order, this deterministically prefers the SMALLEST such `i` -- i.e.,
+     the earliest possible split, which gives the earlier cluster the
+     minimum feasible size and lets the later cluster absorb the rest.
+This rule is applied uniformly at every DP stage, so backtracking always
+reproduces one canonical partition among any tied optima.
+
+Output
+------
+`optimal_1d_clusters` returns:
+  - cost: the minimum total sum-of-squared-deviations (float)
+  - boundaries: list of k+1 indices into the SORTED array such that
+    cluster c (0-indexed) is sorted_points[boundaries[c]:boundaries[c+1]]
+  - sorted_points: the sorted input, so boundaries can be applied directly
+"""
+
+from __future__ import annotations
+from typing import List, Sequence, Tuple
+import math
+
+# Tolerance for treating two floating-point costs as equal (a tie).
+EPS = 1e-9
+
+
+def _segment_cost(prefix_sum: List[float], prefix_sq: List[float], i: int, j: int) -> float:
+    """Cost of segment covering 1-indexed points i..j inclusive (sum of squared
+    deviations from the segment mean), computed in O(1) via prefix sums.
+    Exact for repeated values too: if all values in the segment are equal,
+    sum_seg**2 / n_seg == sq_seg, so cost is exactly 0.0 (no epsilon needed
+    here -- this arithmetic identity holds exactly for equal float inputs)."""
+    n_seg = j - i + 1
+    s = prefix_sum[j] - prefix_sum[i - 1]
+    sq = prefix_sq[j] - prefix_sq[i - 1]
+    return sq - (s * s) / n_seg
+
+
+def optimal_1d_clusters(
+    points: Sequence[float], k: int
+) -> Tuple[float, List[int], List[float]]:
+    """
+    Partition `points` into k contiguous clusters (after sorting) minimizing
+    the total sum of squared deviations from each cluster's mean.
+
+    Parameters
+    ----------
+    points : sequence of numbers (n >= 1); duplicates are fully supported
+    k : desired number of clusters, 1 <= k <= n
+
+    Returns
+    -------
+    (cost, boundaries, sorted_points)
+      cost         : optimal total sum-of-squared-deviations (float)
+      boundaries   : list of k+1 indices [b0=0, b1, ..., bk=n] into
+                     sorted_points; cluster c = sorted_points[b_c : b_{c+1}]
+      sorted_points: the input points sorted ascending
+
+    Tie-breaking
+    ------------
+    If multiple partitions achieve the same minimum cost (within EPS), the
+    one with the earliest possible split points is returned, deterministically,
+    every time (see module docstring "Deterministic ties").
+    """
+    n = len(points)
+    if n == 0:
+        raise ValueError("points must be non-empty")
+    if not (1 <= k <= n):
+        raise ValueError(f"k must satisfy 1 <= k <= n (n={n}), got k={k}")
+
+    sorted_points = sorted(points)
+
+    prefix_sum = [0.0] * (n + 1)
+    prefix_sq = [0.0] * (n + 1)
+    for t in range(1, n + 1):
+        v = sorted_points[t - 1]
+        prefix_sum[t] = prefix_sum[t - 1] + v
+        prefix_sq[t] = prefix_sq[t - 1] + v * v
+
+    INF = math.inf
+
+    dp = [[INF] * (n + 1) for _ in range(k + 1)]
+    dp[0][0] = 0.0
+    split = [[0] * (n + 1) for _ in range(k + 1)]
+
+    for m in range(1, k + 1):
+        for j in range(m, n + 1):
+            best_cost = INF
+            best_i = -1
+            # Scan i (start of the m-th/last cluster) left-to-right so that,
+            # among ties within EPS, the smallest i is kept deterministically.
+            for i in range(m, j + 1):
+                prev = dp[m - 1][i - 1]
+                if prev == INF:
+                    continue
+                c = prev + _segment_cost(prefix_sum, prefix_sq, i, j)
+                if c < best_cost - EPS:
+                    best_cost = c
+                    best_i = i
+                # else: c is worse, or tied within EPS -> keep earlier best_i
+            dp[m][j] = best_cost
+            split[m][j] = best_i
+
+    total_cost = dp[k][n]
+
+    boundaries = [n]
+    j = n
+    for m in range(k, 0, -1):
+        i = split[m][j]
+        boundaries.append(i - 1)
+        j = i - 1
+    boundaries.reverse()
+
+    return total_cost, boundaries, sorted_points
+
+
+def clusters_from_boundaries(
+    sorted_points: List[float], boundaries: List[int]
+) -> List[List[float]]:
+    """Materialize the actual cluster contents from boundary indices."""
+    return [
+        sorted_points[boundaries[c]:boundaries[c + 1]]
+        for c in range(len(boundaries) - 1)
+    ]
+
+
+def _direct_cost(clusters: List[List[float]]) -> float:
+    """Recompute total cost directly from cluster contents (for testing)."""
+    return sum(
+        sum((x - sum(c) / len(c)) ** 2 for x in c) for c in clusters
+    )
+
+
+# --------------------------------------------------------------------------
+# Tests: repeated values, deterministic ties, and preservation of original
+# output/tie-breaking behavior. All deterministic -- fixed inputs, no
+# randomness, plain asserts.
+# --------------------------------------------------------------------------
+def run_tests() -> None:
+    # 1) Original demo case: unaffected by the EPS change (unique optimum).
+    data = [1, 2, 3, 10, 11, 12, 13, 50, 51, 52]
+    cost, boundaries, sp = optimal_1d_clusters(data, 3)
+    assert abs(cost - 9.0) < 1e-9
+    assert boundaries == [0, 3, 7, 10]
+    clusters = clusters_from_boundaries(sp, boundaries)
+    assert clusters == [[1, 2, 3], [10, 11, 12, 13], [50, 51, 52]]
+    assert abs(_direct_cost(clusters) - cost) < 1e-9
+
+    # 2) All values identical (repeated values, k > 1): cost must be exactly 0,
+    #    and the split must deterministically favor the smallest last-cluster
+    #    start index -> earlier clusters get minimum size (1 point each).
+    cost, boundaries, sp = optimal_1d_clusters([5, 5, 5, 5], 2)
+    assert cost == 0.0
+    assert boundaries == [0, 1, 4]
+    clusters = clusters_from_boundaries(sp, boundaries)
+    assert clusters == [[5], [5, 5, 5]]
+
+    # 3) All values identical, k == n: every point its own cluster, cost 0.
+    cost, boundaries, sp = optimal_1d_clusters([7, 7, 7], 3)
+    assert cost == 0.0
+    assert boundaries == [0, 1, 2, 3]
+    assert clusters_from_boundaries(sp, boundaries) == [[7], [7], [7]]
+
+    # 4) Genuine tie between two structurally different partitions (not just
+    #    all-duplicate data): [1,2,2,2,3], k=2. Splitting after index 1
+    #    ({1} | {2,2,2,3}, cost 0.75) ties exactly with splitting after
+    #    index 4 ({1,2,2,2} | {3}, cost 0.75). Rule: earliest split wins.
+    cost, boundaries, sp = optimal_1d_clusters([1, 2, 2, 2, 3], 2)
+    assert abs(cost - 0.75) < 1e-9
+    assert boundaries == [0, 1, 5]
+    clusters = clusters_from_boundaries(sp, boundaries)
+    assert clusters == [[1], [2, 2, 2, 3]]
+    assert abs(_direct_cost(clusters) - cost) < 1e-9
+    # Confirm the untaken tied alternative really does cost the same.
+    alt_clusters = [[1, 2, 2, 2], [3]]
+    assert abs(_direct_cost(alt_clusters) - cost) < 1e-9
+
+    # 5) Repeated values straddling an otherwise "obvious" boundary:
+    #    [0, 0, 10, 10], k=2 -> unique clean split, unaffected by EPS logic.
+    cost, boundaries, sp = optimal_1d_clusters([0, 0, 10, 10], 2)
+    assert cost == 0.0
+    assert boundaries == [0, 2, 4]
+    assert clusters_from_boundaries(sp, boundaries) == [[0, 0], [10, 10]]
+
+    # 6) k == 1 trivial case with repeats.
+    cost, boundaries, sp = optimal_1d_clusters([3, 3, 3, 3, 3], 1)
+    assert cost == 0.0
+    assert boundaries == [0, 5]
+
+    # 7) Determinism check: running the same tie-prone input repeatedly
+    #    must always produce the identical result (no run-to-run drift).
+    results = {optimal_1d_clusters([1, 2, 2, 2, 3], 2)[1] and
+               tuple(optimal_1d_clusters([1, 2, 2, 2, 3], 2)[1])
+               for _ in range(5)}
+    assert len(results) == 1
+
+    print("All tests passed (original behavior, repeated values, deterministic ties).")
+
+
+if __name__ == "__main__":
+    run_tests()
+
+    # Deterministic demonstration (fixed input, no randomness) -- unchanged
+    # from the original output.
+    data = [1, 2, 3, 10, 11, 12, 13, 50, 51, 52]
+    k = 3
+
+    cost, boundaries, sorted_points = optimal_1d_clusters(data, k)
+    clusters = clusters_from_boundaries(sorted_points, boundaries)
+
+    print("\nSorted points:", sorted_points)
+    print(f"k = {k}")
+    print("Optimal total cost (sum of squared deviations):", cost)
+    print("Boundary indices:", boundaries)
+    for idx, c in enumerate(clusters):
+        mean = sum(c) / len(c)
+        print(f"  Cluster {idx}: {c}  (mean={mean:.3f})")
+
+    recomputed = _direct_cost(clusters)
+    assert abs(recomputed - cost) < 1e-9, "Mismatch between DP cost and direct cost!"
+    print("\nSanity check passed: DP cost matches direct recomputation.")
+```

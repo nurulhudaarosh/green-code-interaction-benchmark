@@ -1,0 +1,120 @@
+## Problem
+
+Given a set of packages and prerequisite pairs `(a, b)` meaning "a depends on b" (b must be built before a), produce:
+1. A deterministic valid build order (topological order) of all packages.
+2. The number of dependency levels (the longest chain of prerequisites, i.e., the length of the longest path in the DAG, counted in levels).
+
+If a cycle exists among the dependencies, no valid build order exists, so the function must return an empty list and `-1` for levels.
+
+**Key constraints:**
+- Input may contain packages with no dependencies (isolated nodes) — they must still appear in the output.
+- The order must be deterministic — when multiple packages are simultaneously buildable, ties must be broken consistently (e.g., alphabetically), not arbitrarily.
+- Must detect cycles reliably (a cycle means not all packages can be output).
+- No randomness, network access, or external dependencies — pure standard library only.
+
+**Required output:** `(build_order: List[str], levels: int)` — `levels` is the count of distinct "depth" tiers in the DAG (1 for packages with no prerequisites), or `-1` if a cycle is detected, with `build_order` being `[]` in that case.
+
+**Algorithm:** Kahn's algorithm for topological sorting, using a min-heap (via `heapq`) instead of a plain queue/set for the "zero in-degree" frontier, so that at each step the lexicographically smallest available package is chosen — guaranteeing determinism. Simultaneously, track each node's "depth" as `1 + max(depth of prerequisites)` (or `1` if none), updating it as nodes are processed; the final level count is the maximum depth seen. If the number of processed nodes is less than the total number of packages, a cycle exists.
+
+```python
+"""
+Deterministic package build-order resolver.
+
+Given a list of packages and prerequisite pairs (a, b) meaning
+"package a depends on package b" (b must be built before a),
+compute:
+  1. A deterministic valid build order (topological sort).
+  2. The number of dependency levels (longest prerequisite chain).
+
+If a cycle exists, returns ([], -1).
+
+Standard library only. No randomness, no network, no external services.
+"""
+
+import heapq
+from collections import defaultdict
+from typing import List, Tuple, Dict, Set
+
+
+def build_order(packages: List[str], prerequisites: List[Tuple[str, str]]) -> Tuple[List[str], int]:
+    """
+    Args:
+        packages: list of all package names (may include isolated packages).
+        prerequisites: list of (package, prerequisite) tuples meaning
+                        `package` depends on `prerequisite`.
+
+    Returns:
+        (order, levels):
+            order  - deterministic list of packages in valid build order,
+                     or [] if a cycle is detected.
+            levels - number of dependency levels (max chain length),
+                     or -1 if a cycle is detected.
+    """
+    # Normalize: ensure every referenced package is known.
+    all_packages: Set[str] = set(packages)
+    for a, b in prerequisites:
+        all_packages.add(a)
+        all_packages.add(b)
+
+    graph: Dict[str, Set[str]] = defaultdict(set)   # prereq -> dependents
+    in_degree: Dict[str, int] = {p: 0 for p in all_packages}
+
+    for pkg, prereq in prerequisites:
+        if pkg not in graph[prereq]:
+            graph[prereq].add(pkg)
+            in_degree[pkg] += 1
+
+    # depth[p] = 1 + max(depth of all prerequisites of p); 1 if no prerequisites.
+    depth: Dict[str, int] = {p: 1 for p in all_packages}
+
+    # Min-heap keyed on package name for deterministic tie-breaking.
+    heap = [p for p, deg in in_degree.items() if deg == 0]
+    heapq.heapify(heap)
+
+    order: List[str] = []
+
+    while heap:
+        current = heapq.heappop(heap)
+        order.append(current)
+
+        # Process dependents in sorted order for determinism when
+        # multiple become available at once (heap already guarantees
+        # final pop order, but we push deterministically too).
+        for dependent in sorted(graph[current]):
+            depth[dependent] = max(depth[dependent], depth[current] + 1)
+            in_degree[dependent] -= 1
+            if in_degree[dependent] == 0:
+                heapq.heappush(heap, dependent)
+
+    if len(order) != len(all_packages):
+        # Not all packages could be ordered -> cycle exists.
+        return [], -1
+
+    levels = max(depth.values()) if order else 0
+    return order, levels
+
+
+def _demo() -> None:
+    packages = ["a", "b", "c", "d", "e"]
+    # a depends on b and c; b depends on d; c depends on d; e has no deps.
+    prerequisites = [
+        ("a", "b"),
+        ("a", "c"),
+        ("b", "d"),
+        ("c", "d"),
+    ]
+    order, levels = build_order(packages, prerequisites)
+    print("Build order:", order)
+    print("Levels:", levels)
+
+    # Cycle example: x -> y -> z -> x
+    cyclic_packages = ["x", "y", "z"]
+    cyclic_prereqs = [("x", "y"), ("y", "z"), ("z", "x")]
+    order2, levels2 = build_order(cyclic_packages, cyclic_prereqs)
+    print("Cyclic build order:", order2)
+    print("Cyclic levels:", levels2)
+
+
+if __name__ == "__main__":
+    _demo()
+```

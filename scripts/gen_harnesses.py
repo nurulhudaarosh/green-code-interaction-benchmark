@@ -333,13 +333,43 @@ def run(module, inp):
 
 
 def sigs_of(code):
-    return re.findall(r"^def (\w+)\(([^)]*)\)", code, re.M)
+    """Top-level function signatures with balanced-paren parameter lists
+    (regex [^)]* breaks on tuple defaults like pad_color=(0, 0, 0))."""
+    out = []
+    for m in re.finditer(r"^def\s+(\w+)\s*\(", code, re.M):
+        name = m.group(1)
+        i = m.end()
+        depth, j, n = 1, i, len(code)
+        while j < n and depth:
+            c = code[j]
+            if c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+            j += 1
+        if depth == 0:
+            out.append((name, code[i:j - 1]))
+    return out
 
 
 def params_of(raw):
-    """Return [(name, default_repr_or_None), ...]."""
+    """Return [(name, default_repr_or_None), ...], splitting parameters on
+    top-level commas only (defaults may contain tuples/calls)."""
+    parts, buf, depth = [], "", 0
+    for c in raw:
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+        if c == "," and depth == 0:
+            parts.append(buf)
+            buf = ""
+        else:
+            buf += c
+    if buf.strip():
+        parts.append(buf)
     out = []
-    for p in raw.split(","):
+    for p in parts:
         p = p.strip()
         default = None
         if "=" in p:
@@ -518,23 +548,503 @@ def build_source(task):
 
 
 def selftest(task, src):
+    import signal
+
+    def _timeout(signum, frame):
+        raise TimeoutError("selftest exceeded 60s")
+
     ns = {"__name__": "harness"}
+    old = None
     try:
+        old = signal.signal(signal.SIGALRM, _timeout)
+        signal.alarm(60)
         exec(compile(src, "<harness>", "exec"), ns)
         ref = {}
         exec(compile(task["reference_solution"]["code"], "<ref>", "exec"), ref)
         inp = ns["make_input"]("small", random.Random(1234))
         out = ns["run"](ref, inp)
         json.dumps(out, default=str)
-        vals = list(out.values())
-        errs = [v for v in vals if isinstance(v, dict) and "__error__" in v]
+        errs = _find_errors(out)
         if errs:
-            return False, f"reference error {errs[0]['__error__']}"
-        if all(v is None for v in vals):
+            return False, f"reference error {errs[0]}"
+        if all(v is None for v in out.values()):
             return False, "no non-None outputs"
         return True, ""
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"
+    finally:
+        signal.alarm(0)
+        if old is not None:
+            signal.signal(signal.SIGALRM, old)
+
+
+def _find_errors(v, depth=0):
+    """Recursively collect {"__error__": ...} dicts (incl. inside lists)."""
+    if depth > 5:
+        return []
+    if isinstance(v, dict):
+        if "__error__" in v:
+            return [v["__error__"]]
+        out = []
+        for x in v.values():
+            out += _find_errors(x, depth + 1)
+        return out
+    if isinstance(v, (list, tuple)):
+        out = []
+        for x in v:
+            out += _find_errors(x, depth + 1)
+        return out
+    return []
+
+
+# --------------------------------------------------------------------------
+# public-test-templated harnesses (much more robust than heuristics)
+# --------------------------------------------------------------------------
+
+HARNESS_IMPORTS = '''
+import sys as _sys
+try:
+    from runner.harness_utils import resolve_entry, adapt_call, jsonable
+except ImportError:  # loaded as a standalone file
+    import os as _os
+    _here = _os.path.dirname(_os.path.abspath(_sys.argv[0])) if _sys.argv else "."
+    for _up in range(4):
+        if _os.path.isdir(_os.path.join(_here, "runner")):
+            _sys.path.insert(0, _here)
+            break
+        _here = _os.path.dirname(_here)
+    from runner.harness_utils import resolve_entry, adapt_call, jsonable
+'''
+
+TEMPLATE_RUNTIME = HARNESS_IMPORTS + '''
+
+SCALES = ["small", "medium", "large"]
+TEMPLATE = __TEMPLATE__
+PARAMS = __PARAMS__
+
+
+def _scale(v, n, depth=0):
+    """Tile the dominant list of the template up to length n so the
+    workload grows with the scale; everything else is kept as-is."""
+    if isinstance(v, list) and v:
+        return [v[i % len(v)] for i in range(n)]
+    if isinstance(v, dict) and depth < 4:
+        lists = [k for k, x in v.items() if isinstance(x, list) and x]
+        if lists:
+            big = max(lists, key=lambda k: len(v[k]))
+            return {k: (_scale(x, n, depth + 1) if k == big else x)
+                    for k, x in v.items()}
+        dicts = [k for k, x in v.items() if isinstance(x, dict)]
+        if dicts:
+            k = dicts[0]
+            return {kk: (_scale(x, n, depth + 1) if kk == k else x)
+                    for kk, x in v.items()}
+    return v
+
+
+def make_input(scale, rng):
+    n = {"small": 300, "medium": 4000, "large": 15000}.get(scale, 300)
+    return {p: _scale(v, n) for p, v in TEMPLATE.items()}
+
+
+def run(module, inp):
+    out = {}
+    for fname, params in [(PARAMS[0], PARAMS[1])]:
+        fn = resolve_entry(module, fname, len(params))
+        if fn is None:
+            out[fname] = None
+            continue
+        call = [inp[p] for p in params]
+        try:
+            out[fname] = jsonable(adapt_call(fn, call))
+        except Exception as e:
+            out[fname] = {"__error__": f"{type(e).__name__}: {e}"}
+    return out
+'''
+
+
+def template_of(task):
+    """Best public-test input (the intended input shape). Prefers the
+    largest non-empty input — the most representative of a normal
+    workload — over boundary/empty cases."""
+    tests = (task.get("tests") or {}).get("public_tests") or []
+    best, best_size = None, -1
+    for t in tests:
+        if not isinstance(t, dict):
+            continue
+        inp = t.get("input")
+        if inp in (None, [], {}, ""):
+            continue
+        try:
+            size = len(json.dumps(inp, default=str))
+        except (TypeError, ValueError):
+            size = 0
+        if size > best_size:
+            best, best_size = inp, size
+    return best
+
+
+def _default_type(default_repr):
+    """Best-effort type of a default value given its repr string."""
+    import ast as _ast
+    try:
+        v = _ast.literal_eval(default_repr)
+    except (ValueError, SyntaxError):
+        return None
+    return type(v)
+
+
+def _type_ok(value, default_repr):
+    """True if value could sensibly sit in a parameter whose default is
+    default_repr (str vs list etc.)."""
+    dt = _default_type(default_repr)
+    if dt is None:
+        return True
+    vt = type(value)
+    if dt is float and vt is int:
+        return True
+    return vt is dt
+
+
+def map_template(inp, param_names, param_defaults=None):
+    """Map a public-test input onto the function parameters.
+
+    Returns {param: value} or None. Handles: dict keyed by param names,
+    whole-input for the single non-default param, list positional args
+    (validated against the defaulted params' types), single scalar.
+    """
+    names = list(param_names)
+    defaults = list(param_defaults) if param_defaults is not None \
+        else [None] * len(names)
+    non_default = [n for n, d in zip(names, defaults) if d is None]
+    if isinstance(inp, dict):
+        if set(inp.keys()) & set(names):
+            if set(inp.keys()) <= set(names):
+                return {n: inp[n] for n in names if n in inp}
+            return None
+        if len(non_default) == 1:
+            return {non_default[0]: inp}
+        if len(names) == 1:
+            return {names[0]: inp}
+        return None
+    if isinstance(inp, list) and len(inp) == len(names) and len(names) > 1:
+        # positional over ALL params only when every defaulted param's
+        # value type matches its default (guards against a list-of-lists
+        # that is really one aggregate argument)
+        if all(_type_ok(v, d) for v, d in zip(inp, defaults) if d is not None):
+            return dict(zip(names, inp))
+        if len(non_default) == 1:
+            return {non_default[0]: inp}
+        return None
+    if len(non_default) == 1:
+        return {non_default[0]: inp}
+    if isinstance(inp, list) and len(inp) == len(non_default):
+        return dict(zip(non_default, inp))
+    if len(names) == 1:
+        return {names[0]: inp}
+    return None
+
+
+def build_templated_source(task, sigs):
+    """Harness whose inputs come from the task's own public tests,
+    scaled per size. Only for single-function references."""
+    if len(sigs) != 1:
+        return None
+    tmpl = template_of(task)
+    if tmpl is None:
+        return None
+    fname, raw = sigs[0]
+    pairs = params_of(raw)
+    params = [p for p, _ in pairs]
+    defaults = [d for _, d in pairs]
+    mapped = map_template(tmpl, params, defaults)
+    if mapped is None:
+        return None
+    try:
+        body = json.dumps(mapped, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return None
+    header = (f'"""AUTO-GENERATED templated harness for {task["task_id"]} '
+              f'(see scripts/gen_harnesses.py).\n\n'
+              f'Inputs are the task public tests, tiled up per scale.\n"""\n')
+    src = (header
+           + TEMPLATE_RUNTIME.replace("__TEMPLATE__", body)
+           .replace("__PARAMS__", repr((fname, [p for p in mapped]))))
+    return src
+
+
+# --------------------------------------------------------------------------
+# file-system harnesses (input_dir/output_dir style tasks, e.g. IM/FD)
+# --------------------------------------------------------------------------
+
+FILE_RUNTIME = HARNESS_IMPORTS + '''
+import hashlib, os as _os, shutil as _sh
+import tempfile as _tf
+
+SCALES = ["small", "medium", "large"]
+_N = {"small": 24, "medium": 120, "large": 400}
+SPEC = __SPEC__          # (fname, [(kind, value)]) kind: in|out|file|outpath|const
+MODE = __MODE__          # "images" | "txt"
+_prev_dir = None
+
+
+def _noise_img(rng, w=48, h=32):
+    from PIL import Image
+    img = Image.new("RGB", (w, h))
+    px = img.load()
+    for y in range(h):
+        for x in range(w):
+            px[x, y] = (rng.randint(0, 255), rng.randint(0, 255),
+                        rng.randint(0, 255))
+    return img
+
+
+def _fill_images(dirpath, n, rng):
+    n_png = max(1, int(n * 0.8))
+    n_jpg = max(1, n - n_png)
+    for i in range(n_png):
+        _noise_img(rng).save(_os.path.join(dirpath, f"img_{i:04d}.png"))
+    for i in range(n_jpg):
+        _noise_img(rng).save(_os.path.join(dirpath, f"photo_{i:04d}.jpg"),
+                             quality=88)
+    for name in ("r.png", "g.png", "b.png", "wm.png"):
+        _noise_img(rng).save(_os.path.join(dirpath, name))
+    with open(_os.path.join(dirpath, "notes.txt"), "w") as f:
+        f.write("not an image\\n")
+
+
+def _fill_txt(dirpath, n, rng):
+    pool = ["alpha beta gamma", "delta epsilon zeta", "eta theta iota",
+            "kappa lambda mu"]
+    for i in range(n):
+        c = pool[i % len(pool)] + (" extra" if i % 3 == 0 else "")
+        sub = _os.path.join(dirpath, f"d{i % 3}")
+        _os.makedirs(sub, exist_ok=True)
+        with open(_os.path.join(sub, f"f{i:04d}.txt"), "w") as f:
+            f.write(c + "\\n")
+        if i % 5 == 0:
+            with open(_os.path.join(sub, f"f{i:04d}.md"), "w") as f:
+                f.write("markdown ignored\\n")
+
+
+def make_input(scale, rng):
+    global _prev_dir
+    if _prev_dir and _os.path.isdir(_prev_dir):
+        _sh.rmtree(_prev_dir, ignore_errors=True)
+    d = _tf.mkdtemp(prefix="gcb_in_")
+    n = _N.get(scale, 24)
+    if MODE == "txt":
+        _fill_txt(d, n, rng)
+    else:
+        _fill_images(d, n, rng)
+    _prev_dir = d
+    return {"__indir__": d}
+
+
+def run(module, inp):
+    work = _tf.mkdtemp(prefix="gcb_run_")
+    try:
+        ind = _os.path.join(work, "in")
+        _sh.copytree(inp["__indir__"], ind)
+        out = _os.path.join(work, "out")
+        _os.makedirs(out, exist_ok=True)
+        fname = SPEC[0]
+        fn = resolve_entry(module, fname, len(SPEC[1]))
+        if fn is None:
+            return {fname: None}
+        args = []
+        for kind, val in SPEC[1]:
+            if kind == "in":
+                args.append(ind)
+            elif kind == "out":
+                args.append(out)
+            elif kind == "file":
+                args.append(_os.path.join(ind, val))
+            elif kind == "outpath":
+                args.append(_os.path.join(out, val))
+            else:
+                args.append(val)
+        try:
+            ret = fn(*args)
+        except Exception as e:
+            return {fname: {"__error__": f"{type(e).__name__}: {e}"}}
+        listing = []
+        for root, _, fs in _os.walk(out):
+            for f in sorted(fs):
+                p = _os.path.join(root, f)
+                rel = _os.path.relpath(p, out)
+                h = hashlib.sha256(open(p, "rb").read()).hexdigest()[:16]
+                listing.append([rel, h])
+        return {fname: [jsonable(ret), sorted(listing)]}
+    finally:
+        _sh.rmtree(work, ignore_errors=True)
+'''
+
+DIR_PARAMS = ("input_dir", "root", "cache_dir", "archive_dir")
+OUT_PARAMS = ("output_dir",)
+FILE_PARAMS = {"image_path": "img_0000.png", "input_path": "img_0000.png",
+               "watermark_path": "wm.png", "r_path": "r.png",
+               "g_path": "g.png", "b_path": "b.png"}
+OUTPATH_DEFAULT = "result.png"
+
+FILE_CONSTS = {
+    "target_size": (64, 48), "crop_size": (32, 24), "thumb_size": (64, 48),
+    "widths": [32, 64, 128], "radius": 2, "angle_degrees": 30, "quality": 85,
+    "kernel_size": 3, "hash_size": 8, "max_hamming": 5, "threshold": 0.2,
+    "opacity": 0.5, "position": "bottom-right", "margin": 10,
+    "patch_size": (8, 8), "stride": (4, 4), "max_dim": 128,
+    "target_format": "PNG", "columns": 4, "pad_color": (0, 0, 0),
+    "chunk_size": 65536, "tags": {"title": "Test Image", "author": "bench"},
+}
+
+
+def build_file_source(task, sigs):
+    """Auto harness for tasks whose main function reads files/dirs."""
+    main = None
+    for fname, raw in sigs:
+        if fname.startswith("_"):
+            continue
+        params = params_of(raw)
+        pnames = [p for p, _ in params]
+        if (any(p in DIR_PARAMS for p in pnames)
+                or any(p in FILE_PARAMS for p in pnames)
+                or "output_path" in pnames):
+            main = (fname, params)
+            break
+    if main is None:
+        return None
+    fname, params = main
+    mode = "txt" if any(p == "root" for p, _ in params) else "images"
+    spec_args = []
+    for p, default in params:
+        if p in DIR_PARAMS:
+            spec_args.append(("in", None))
+        elif p in OUT_PARAMS:
+            spec_args.append(("out", None))
+        elif p in FILE_PARAMS:
+            spec_args.append(("file", FILE_PARAMS[p]))
+        elif p == "output_path":
+            spec_args.append(("outpath", OUTPATH_DEFAULT))
+        elif default is not None:
+            try:
+                import ast as _ast
+                spec_args.append(("const", _ast.literal_eval(default)))
+            except (ValueError, SyntaxError):
+                return None
+        elif p in FILE_CONSTS:
+            spec_args.append(("const", FILE_CONSTS[p]))
+        else:
+            return None
+    header = (f'"""AUTO-GENERATED file harness for {task["task_id"]} '
+              f'(see scripts/gen_harnesses.py).\n\n'
+              f'Main function: {fname}; input files are generated per '
+              f'scale.\n"""\n')
+    return (header + FILE_RUNTIME
+            .replace("__SPEC__", repr((fname, spec_args)))
+            .replace("__MODE__", repr(mode)))
+
+
+# --------------------------------------------------------------------------
+# manual templates (tasks without usable public tests)
+# --------------------------------------------------------------------------
+
+MANUAL_RUNTIME = HARNESS_IMPORTS + '''
+
+SCALES = ["small", "medium", "large"]
+SCALE_LENS = __SCALE_LENS__
+FUNCS = __FUNCS__
+
+
+def make_input(scale, rng):
+    return {"n": SCALE_LENS.get(scale, 300)}
+
+
+def _resolve(av, n, tile, raws):
+    """Resolve one arg value: chain refs, square matrices, tiling.
+    Lists of plain numbers are config values and are never tiled."""
+    if isinstance(av, dict):
+        if "__out__" in av:
+            base = raws.get(av["__out__"])
+            return base[av["pick"]] if ("pick" in av and base is not None) else base
+        if "__square__" in av:
+            b = av["__square__"]
+            k = len(b)
+            return [[b[i % k][j % k] for j in range(n)] for i in range(n)]
+        return {k: _resolve(x, n, False, raws) for k, x in av.items()}
+    if isinstance(av, list) and av and tile and not isinstance(av[0], (int, float)):
+        return [av[i % len(av)] for i in range(n)]
+    return av
+
+
+def run(module, inp):
+    n = inp["n"]
+    outs = {}
+    raws = {}
+    for spec in FUNCS:
+        fname = spec["name"]
+        fn = resolve_entry(module, fname, len(spec["args"]))
+        if fn is None:
+            outs[fname] = None
+            continue
+        tile_any = set(spec.get("tile", [])) or None
+        args = []
+        for pname, av in spec["args"].items():
+            do_tile = (tile_any is None) or (pname in tile_any)
+            args.append(_resolve(av, n, do_tile, raws))
+        try:
+            raw = adapt_call(fn, args)
+            raws[fname] = raw
+            outs[fname] = jsonable(raw)
+        except Exception as e:
+            raws[fname] = None
+            outs[fname] = {"__error__": f"{type(e).__name__}: {e}"}
+    return outs
+'''
+
+MANUAL_TEMPLATES = REPO / "scripts" / "manual_harness_templates.json"
+
+
+def load_manual_templates():
+    try:
+        return json.loads(MANUAL_TEMPLATES.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def build_manual_source(task, sigs):
+    entry = load_manual_templates().get(task["task_id"])
+    if not entry:
+        return None
+    scale_lens = entry.get("scale_lens", {"small": 300, "medium": 4000,
+                                          "large": 15000})
+    header = (f'"""AUTO-GENERATED manual-template harness for '
+              f'{task["task_id"]} (scripts/manual_harness_templates.json)."""\n')
+    return (header + MANUAL_RUNTIME
+            .replace("__SCALE_LENS__", repr(scale_lens))
+            .replace("__FUNCS__", repr(entry["funcs"])))
+
+
+def candidates(task):
+    """Harness sources in priority order: public-test template, manual
+    template, file harness, then heuristics."""
+    out = []
+    code = task.get("reference_solution", {}).get("code") or ""
+    sigs = sigs_of(code)
+    if not sigs:
+        return out
+    t = build_templated_source(task, sigs)
+    if t:
+        out.append(t)
+    m = build_manual_source(task, sigs)
+    if m:
+        out.append(m)
+    f = build_file_source(task, sigs)
+    if f:
+        out.append(f)
+    h = build_source(task)
+    if h:
+        out.append(h)
+    return out
 
 
 def main():
@@ -560,13 +1070,20 @@ def main():
             if hp.is_file() and not args.force:
                 stats["exists"] += 1
                 continue
-            src = build_source(task)
-            if src is None:
+            srcs = candidates(task)
+            if not srcs:
                 stats["failed"].append((tid, cat, "no_reference_signatures"))
                 continue
-            ok, err = selftest(task, src)
-            if not ok:
-                stats["failed"].append((tid, cat, f"selftest: {err}"))
+            kept = None
+            why = "no candidates"
+            for src in srcs:
+                ok, err = selftest(task, src)
+                if ok:
+                    kept = src
+                    break
+                why = f"selftest: {err}"
+            if kept is None:
+                stats["failed"].append((tid, cat, why))
                 continue
             hdir.mkdir(parents=True, exist_ok=True)
             hp.write_text(src, encoding="utf-8")

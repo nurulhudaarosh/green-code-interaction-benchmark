@@ -1,0 +1,66 @@
+import hashlib
+import os
+import re
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+
+def get_normalized_hash(filepath: Path) -> str:
+    """Reads file, case-folds, collapses all whitespace to single spaces, and hashes with SHA-256."""
+    with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+        content = f.read()
+
+    # Normalize case and turn all sequences of whitespace into a single space
+    normalized_content = re.sub(r"\s+", " ", content.casefold()).strip()
+
+    return hashlib.sha256(normalized_content.encode("utf-8")).hexdigest()
+
+
+def find_duplicate_text_files(root_dir: str) -> dict[str, list[str]]:
+    """Recursively finds duplicate .txt files, filtering for groups >= 2 files with deterministic sorting."""
+    hashes = defaultdict(list)
+
+    # Walk directory deterministically by sorting dirnames and filenames
+    for root, dirs, files in os.walk(root_dir):
+        dirs.sort()
+        for filename in sorted(files):
+            if not filename.lower().endswith(".txt"):
+                continue
+
+            file_path = Path(root) / filename
+
+            # Ignore symlinks and non-regular files
+            if file_path.is_symlink() or not file_path.is_file():
+                continue
+
+            try:
+                digest = get_normalized_hash(file_path)
+                hashes[digest].append(str(file_path.resolve()))
+            except (PermissionError, OSError) as e:
+                print(f"Skipping unreadable file {file_path}: {e}", file=sys.stderr)
+
+    # Filter strictly for groups with at least 2 files, sorting both keys (hashes) and values (file paths)
+    deterministic_duplicates = {}
+    for digest, paths in sorted(hashes.items(), key=lambda item: item[0]):
+        if len(paths) >= 2:
+            deterministic_duplicates[digest] = sorted(paths)
+
+    return deterministic_duplicates
+
+
+if __name__ == "__main__":
+    target_directory = sys.argv[1] if len(sys.argv) > 1 else "."
+    print(f"Scanning directory: {os.path.abspath(target_directory)}\n")
+
+    duplicate_groups = find_duplicate_text_files(target_directory)
+
+    if not duplicate_groups:
+        print("No duplicate text files found.")
+    else:
+        print(f"Found {len(duplicate_groups)} duplicate group(s):\n")
+        for i, (digest, paths) in enumerate(duplicate_groups.items(), start=1):
+            print(f"Group {i} (SHA-256: {digest[:12]}...):")
+            for path in paths:
+                print(f"  - {path}")
+            print()

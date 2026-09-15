@@ -1,0 +1,285 @@
+I'll restate the problem clearly and then enhance the solution to handle edge cases robustly, including the smallest permitted inputs and cases where no combination exists.
+
+## Problem Restatement
+
+**Minimum Coin Construction (Unbounded Coin Change)**
+
+Given:
+- A list of coin denominations `coins` (positive integers)
+- A target amount `target` (non-negative integer)
+
+Find:
+- The **minimum number of coins** needed to sum to `target`
+- The **actual combination** of coins that achieves this minimum
+
+Rules:
+- Coins may be reused unlimited times (unbounded)
+- If it's impossible to form `target`, return `(-1, [])`
+- The solution must be **deterministic** (same input always gives same output)
+- Tie-breaking: When multiple combinations achieve the same minimum coin count, choose the one that uses coins in the order they first appear in the `coins` list during DP reconstruction
+
+## Enhanced Implementation with Edge Case Handling
+
+```python
+def coin_change(coins, target):
+    """
+    Returns (min_coins, combination) for unbounded coin change.
+    If impossible: returns (-1, [])
+    
+    Deterministic tie-breaking: prefers coins that appear earlier in the coins list
+    when multiple combinations have the same minimum count.
+    """
+    # --- Edge case: target is negative (not permitted by problem statement, but safe) ---
+    if target < 0:
+        return -1, []
+    
+    # --- Edge case: empty coin list ---
+    if not coins:
+        return -1, [] if target > 0 else (0, [])
+    
+    # --- Edge case: target is zero (smallest permitted input) ---
+    if target == 0:
+        return 0, []
+    
+    # --- Filter out coins that are larger than target (can never be used) ---
+    # This is optional but improves efficiency and handles disconnected structures
+    filtered_coins = [c for c in coins if c <= target]
+    if not filtered_coins:
+        return -1, []
+    
+    # --- DP initialization ---
+    # dp[amount] = minimum coins to make amount
+    dp = [float('inf')] * (target + 1)
+    dp[0] = 0
+    
+    # used_coin[amount] = the coin denomination used to achieve dp[amount]
+    used_coin = [-1] * (target + 1)
+    
+    # --- Unbounded DP: amount outer loop, coins inner loop ---
+    # This ordering ensures we can reuse coins and gives deterministic reconstruction
+    for amount in range(1, target + 1):
+        for coin in filtered_coins:  # Iterate in original order for determinism
+            if amount >= coin:
+                candidate = dp[amount - coin] + 1
+                # Strictly less ensures deterministic tie-breaking:
+                # first coin that achieves the minimum is chosen
+                if candidate < dp[amount]:
+                    dp[amount] = candidate
+                    used_coin[amount] = coin
+    
+    # --- Check if target is reachable ---
+    if dp[target] == float('inf'):
+        return -1, []
+    
+    # --- Reconstruction (deterministic) ---
+    combination = []
+    remaining = target
+    while remaining > 0:
+        coin = used_coin[remaining]
+        if coin == -1:  # Safety check, should not happen if dp is finite
+            return -1, []
+        combination.append(coin)
+        remaining -= coin
+    
+    # Reverse because we built from target down to 0
+    combination.reverse()
+    
+    return dp[target], combination
+
+
+# --- Comprehensive Test Suite ---
+
+def run_tests():
+    """Test all edge cases and valid scenarios."""
+    
+    test_cases = [
+        # Basic cases
+        {
+            "name": "Standard case",
+            "coins": [1, 2, 5],
+            "target": 11,
+            "expected_count": 3,
+            # Multiple valid combos: [5,5,1] or [5,2,2,2] (4 coins) or [2,2,2,2,2,1] (6)
+            # Our DP will choose [1,5,5] because coin 1 is first
+        },
+        
+        # Smallest permitted inputs
+        {
+            "name": "Target = 0 (smallest)",
+            "coins": [1, 2, 5],
+            "target": 0,
+            "expected_count": 0,
+        },
+        {
+            "name": "Single coin, target equals coin",
+            "coins": [5],
+            "target": 5,
+            "expected_count": 1,
+        },
+        {
+            "name": "Single coin, target = 0",
+            "coins": [5],
+            "target": 0,
+            "expected_count": 0,
+        },
+        
+        # Empty/disconnected structures
+        {
+            "name": "Empty coin list, target > 0",
+            "coins": [],
+            "target": 10,
+            "expected_count": -1,
+        },
+        {
+            "name": "Empty coin list, target = 0",
+            "coins": [],
+            "target": 0,
+            "expected_count": 0,
+        },
+        {
+            "name": "Coin larger than target (disconnected)",
+            "coins": [10],
+            "target": 5,
+            "expected_count": -1,
+        },
+        {
+            "name": "All coins larger than target",
+            "coins": [10, 20, 30],
+            "target": 15,
+            "expected_count": -1,
+        },
+        {
+            "name": "Some coins larger than target",
+            "coins": [10, 1, 20],
+            "target": 15,
+            "expected_count": 15,  # 15 ones
+        },
+        
+        # Impossible cases
+        {
+            "name": "Impossible with even coins only",
+            "coins": [2, 4, 6],
+            "target": 3,
+            "expected_count": -1,
+        },
+        {
+            "name": "Impossible with disconnected denominations",
+            "coins": [3, 7],
+            "target": 11,
+            "expected_count": -1,  # 3*? + 7*? = 11 => 3+?8 no, 7+?4 no, 3*? no
+        },
+        
+        # Valid cases with tie-breaking
+        {
+            "name": "Tie-breaking: multiple min combos",
+            "coins": [1, 3, 4],
+            "target": 6,
+            "expected_count": 2,  # [3,3] uses 2 coins, also [1,?] no, 4+?2 no
+            # Actually [1,1,4] = 3 coins, [1,1,1,3] = 4, so [3,3] is unique min
+        },
+        {
+            "name": "Tie-breaking: [2,3] vs [1,4]",
+            "coins": [1, 2, 3, 4],
+            "target": 5,
+            "expected_count": 2,  # [1,4] and [2,3] both work
+            # Our DP will choose coin 1 first (since it appears first)
+            # So combination should be [1,4]
+        },
+        {
+            "name": "Coin reuse (unbounded)",
+            "coins": [2, 3],
+            "target": 8,
+            "expected_count": 3,  # [2,3,3] or [2,2,2,2] (4 coins) => min is 3
+        },
+    ]
+    
+    print("=" * 70)
+    print("MINIMUM COIN CONSTRUCTION - TEST RESULTS")
+    print("=" * 70)
+    
+    passed = 0
+    failed = 0
+    
+    for test in test_cases:
+        coins = test["coins"]
+        target = test["target"]
+        expected_count = test["expected_count"]
+        
+        count, combo = coin_change(coins, target)
+        
+        # Verify combination sum (if valid)
+        combo_valid = True
+        if count >= 0:
+            if sum(combo) != target:
+                combo_valid = False
+            if len(combo) != count:
+                combo_valid = False
+            # Verify all coins are from the original list
+            if not all(c in coins for c in combo):
+                combo_valid = False
+        
+        # Check result
+        if count == expected_count and combo_valid:
+            status = "✓ PASS"
+            passed += 1
+        else:
+            status = "✗ FAIL"
+            failed += 1
+        
+        print(f"\n{status} | {test['name']}")
+        print(f"  coins={coins}, target={target}")
+        print(f"  Expected count: {expected_count}")
+        print(f"  Got: count={count}, combo={combo}")
+        if count >= 0:
+            print(f"  Sum: {sum(combo)} {'✓' if sum(combo) == target else '✗'}")
+            print(f"  Length: {len(combo)} {'✓' if len(combo) == count else '✗'}")
+    
+    print("\n" + "=" * 70)
+    print(f"SUMMARY: {passed} passed, {failed} failed")
+    print("=" * 70)
+    
+    # Additional deterministic test
+    print("\n" + "=" * 70)
+    print("DETERMINISM TEST (multiple runs with same input)")
+    print("=" * 70)
+    
+    test_coins = [1, 2, 3, 4]
+    test_target = 5
+    results = []
+    for i in range(5):
+        count, combo = coin_change(test_coins, test_target)
+        results.append((count, tuple(combo)))
+    
+    if all(r == results[0] for r in results):
+        print(f"✓ Deterministic: All 5 runs returned {results[0]}")
+    else:
+        print(f"✗ Non-deterministic: Results varied {set(results)}")
+    
+    return passed, failed
+
+
+if __name__ == "__main__":
+    run_tests()
+```
+
+## Key Edge Cases Handled
+
+1. **Smallest permitted input**: `target = 0` returns `(0, [])` regardless of coins
+2. **Empty coin list**: Returns `(-1, [])` for `target > 0`, `(0, [])` for `target = 0`
+3. **Coins larger than target**: Filtered out (they can never contribute to a sum ≤ target)
+4. **All coins larger than target**: Returns `(-1, [])`
+5. **Impossible combinations**: Returns `(-1, [])`
+6. **Tie-breaking**: Uses strict `<` in DP update, so the first coin that achieves the minimum is always chosen (deterministic)
+
+## Output Example
+
+The test suite will produce output showing:
+- Each test case with expected vs actual results
+- Verification of coin sum and length
+- A determinism test showing the same result across multiple runs
+
+The implementation is:
+- **Deterministic**: Same input always yields same combination due to strict comparison and ordered iteration
+- **Efficient**: O(target × len(coins)) time, O(target) space
+- **Robust**: Handles all edge cases gracefully
+- **Self-contained**: Uses only Python standard library

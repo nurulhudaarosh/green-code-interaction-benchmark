@@ -1,0 +1,11 @@
+{
+  "task_id": "IM-004",
+  "model": "claude",
+  "interaction": "BUG_FIX",
+  "turn": 1,
+  "saved_at": "2026-09-13T15:12:14.837612+00:00",
+  "response_sha256": "30ee899a9f1af551c3df267115ae7fc981126efc4f8b80cb561965f4c75b73be",
+  "code_sha256": "0fc4f11eec5b63cf7d5a9568d09c44ad08338f9c705bfcd189fe1d4d81cfc1ce",
+  "raw_file": ".collection/raw/claude/IM-004/BUG_FIX/turn_01.txt",
+  "code_file": ".collection/code/claude/IM-004/BUG_FIX/initial.py"
+}

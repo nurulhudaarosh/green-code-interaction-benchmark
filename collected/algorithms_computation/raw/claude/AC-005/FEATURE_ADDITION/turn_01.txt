@@ -1,0 +1,129 @@
+## Problem restatement
+
+**Input:** an integer sequence `a[0..n-1]`.
+
+**Goal:** find a subsequence `a[i1], a[i2], ..., a[ik]` with `i1 < i2 < ... < ik` such that:
+
+1. It is **strictly increasing**: `a[i1] < a[i2] < ... < a[ik]`.
+2. `k` is **maximum** possible (the LIS length).
+3. Among *all* index sequences `(i1,...,ik)` achieving that maximum length, the index sequence itself must be **lexicographically smallest** (compare `i1` first, then `i2`, etc.).
+
+**Key constraints**
+
+- Values can repeat and can be negative; "strictly increasing" refers to values, not indices (indices are automatically increasing since it's a subsequence).
+- We must return **original indices**, not values, and the notion of "lexicographically smallest" applies to that index tuple.
+- The algorithm must be the classic **O(n²) DP** (no O(n log n) patience-sorting trick), with explicit tie-breaking machinery — not just "any" longest increasing subsequence.
+- Must be deterministic: same input → same output every run, no randomness, no external I/O/services.
+
+**Required output:** the list of 0-based indices `[i1, ..., ik]` (and, for convenience, the corresponding values) forming the optimal answer.
+
+## Algorithm
+
+1. **Suffix-length DP (O(n²)):** compute `suf[i]` = length of the longest strictly increasing subsequence that can **start** at index `i` (using only indices `≥ i`).
+   `suf[i] = 1 + max(suf[j] for j > i if a[j] > a[i])`, or `1` if no such `j`.
+2. **Answer length:** `L = max(suf)` (0 if the array is empty).
+3. **Greedy lexicographically-smallest reconstruction:** walk left to right. Maintain `remaining` (how many more elements are needed) and `prev_val` (value of the last chosen element, `-inf` initially) and `start` (leftmost index still eligible). At each step scan indices from `start` upward and pick the **first** index `j` such that:
+   - `a[j] > prev_val`, and
+   - `suf[j] == remaining` (i.e., choosing `j` still allows completing the remaining length).
+   Picking the smallest such `j` at each step is exactly what makes the *index tuple* lexicographically smallest, because indices only increase from left to right, so greedily minimizing each successive index is optimal (a classical exchange argument: any optimal sequence with a later first-pick index is lexicographically larger, and the suffix-length check guarantees feasibility isn't sacrificed).
+4. Repeat until `remaining == 0`.
+
+This is O(n²) total (O(n²) for the DP table, O(n) picks each doing an O(n) scan in the worst case).
+
+```python
+"""
+Lexicographically-smallest longest strictly increasing subsequence (by index).
+
+Standard library only. No network access, no randomness, no I/O beyond the
+built-in demonstration in __main__. Deterministic: identical input always
+produces identical output.
+"""
+
+from typing import List, Tuple
+
+
+def longest_increasing_subsequence_indices(a: List[int]) -> Tuple[List[int], List[int]]:
+    """
+    Given an integer sequence `a`, return (indices, values) where `indices`
+    is the lexicographically smallest list of original indices i1<i2<...<ik
+    such that a[i1]<a[i2]<...<a[ik] is a longest strictly increasing
+    subsequence of `a`.
+
+    "Lexicographically smallest" compares the index tuples themselves
+    (i1 first, then i2, ...), among all index tuples achieving the maximum
+    possible length k.
+
+    Runs in O(n^2) time using an explicit DP table plus a deterministic
+    greedy tie-breaking pass. Empty input returns ([], []).
+    """
+    n = len(a)
+    if n == 0:
+        return [], []
+
+    # suf[i] = length of the longest strictly increasing subsequence that
+    # can start at index i (restricted to indices >= i).
+    suf = [1] * n
+    for i in range(n - 1, -1, -1):
+        best = 1
+        for j in range(i + 1, n):
+            if a[j] > a[i] and suf[j] + 1 > best:
+                best = suf[j] + 1
+        suf[i] = best
+
+    max_len = max(suf)
+
+    # Greedy left-to-right reconstruction of the lexicographically smallest
+    # index tuple among all optimal (max_len) strictly increasing subsequences.
+    result_indices: List[int] = []
+    remaining = max_len
+    start = 0
+    prev_val = None  # None acts as -infinity for the first pick
+
+    while remaining > 0:
+        chosen = -1
+        for j in range(start, n):
+            if suf[j] != remaining:
+                continue
+            if prev_val is not None and a[j] <= prev_val:
+                continue
+            chosen = j
+            break
+        # chosen is guaranteed to be found because suf[] and max_len are
+        # consistent by construction of the DP.
+        result_indices.append(chosen)
+        prev_val = a[chosen]
+        start = chosen + 1
+        remaining -= 1
+
+    result_values = [a[i] for i in result_indices]
+    return result_indices, result_values
+
+
+def _run_demo() -> None:
+    test_cases = [
+        [],
+        [5],
+        [1, 2, 3, 4, 5],
+        [5, 4, 3, 2, 1],
+        [3, 10, 2, 1, 20],
+        [10, 9, 2, 5, 3, 7, 101, 18],
+        [2, 2, 2, 2],
+        [1, 3, 6, 7, 9, 4, 10, 5, 6],
+        [0, 1, 0, 3, 2, 3],
+        [-5, -1, -2, 0, 4, 3, 5],
+    ]
+
+    for a in test_cases:
+        indices, values = longest_increasing_subsequence_indices(a)
+        print(f"a       = {a}")
+        print(f"indices = {indices}")
+        print(f"values  = {values}")
+        print(f"length  = {len(indices)}")
+        print("-" * 40)
+
+
+if __name__ == "__main__":
+    _run_demo()
+```
+
+Example: for `[0, 1, 0, 3, 2, 3]`, the max length is 3, achievable by indices `[0,1,3]` (values `0,1,3`), `[0,1,4,5]`... actually `[0,1,4,5]` is length 4 (`0,1,2,3`), which is longer — the DP/greedy pass will find that automatically and pick the smallest valid index tuple among all length-4 candidates.

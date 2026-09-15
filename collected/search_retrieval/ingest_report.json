@@ -1,6 +1,6 @@
 {
   "source_zip": "search_retrieval",
-  "ingested_at": "2026-09-14T15:25:49.359472+00:00",
+  "ingested_at": "2026-09-14T19:54:25.199173+00:00",
   "category": "search_retrieval",
   "dataset_version": "candidate-1.0",
   "notebooks": [
@@ -1212,6 +1212,9 @@
   "syntax_errors": [],
   "manifest_mismatches": [],
   "extra_files": [],
+  "local_modifications": [
+    "gpt/SR-001/ONE_SHOT/code.py"
+  ],
   "units_done": 0,
   "units_total": 500,
   "dataset_updated": false

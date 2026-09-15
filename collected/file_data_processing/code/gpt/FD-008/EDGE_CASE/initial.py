@@ -1,0 +1,34 @@
+import os
+import sys
+import re
+import hashlib
+
+root = sys.argv[1] if len(sys.argv) > 1 else "."
+
+groups = {}
+
+for folder, dirs, files in os.walk(root, followlinks=False):
+    dirs[:] = sorted(d for d in dirs if not os.path.islink(os.path.join(folder, d)))
+
+    for name in sorted(files):
+        path = os.path.join(folder, name)
+
+        if not name.lower().endswith(".txt") or os.path.islink(path) or not os.path.isfile(path):
+            continue
+
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+
+            text = re.sub(r"\s+", " ", text.casefold()).strip()
+            digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            groups.setdefault(digest, []).append(os.path.abspath(path))
+        except OSError:
+            continue
+
+duplicates = [sorted(paths) for paths in groups.values() if len(paths) >= 2]
+duplicates.sort(key=lambda group: group[0])
+
+for group in duplicates:
+    print("\n".join(group))
+    print()

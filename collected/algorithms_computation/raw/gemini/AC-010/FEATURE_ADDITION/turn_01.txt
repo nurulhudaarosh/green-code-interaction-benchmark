@@ -1,0 +1,98 @@
+### Problem Identification & Analysis
+
+The problem asks for the optimal way to parenthesize a sequence of matrices $M_1, M_2, \dots, M_n$ where matrix $M_i$ has dimensions $p_{i-1} \times p_i$, such that the total number of scalar multiplications is minimized. If multiple split points yield the same minimal cost, ties are broken by picking the smallest split index $k$.
+
+---
+
+### Constraints & Output Requirements
+
+* **Key Constraints:**
+* Dynamic programming state must process subproblems in increasing order of chain length $L$ ($2 \le L \le n$).
+* Tie-breaking rule: Strictly prefer the smallest split index $k$ when cost is equal.
+* Implementation must use only the Python standard library with zero external dependencies or non-deterministic calls.
+
+
+* **Required Output:**
+* Minimum total scalar multiplication cost (integer).
+* Optimal parenthesization as a fully parenthesized string representation (e.g., `((A1 A2) A3)`).
+
+
+
+---
+
+### Algorithm Description
+
+We use **Interval Dynamic Programming** (Matrix Chain Multiplication):
+
+1. **State Definition:** Let $m[i][j]$ be the minimum scalar multiplication cost to compute matrix product $M_i \dots M_j$. Let $s[i][j]$ store the optimal split point $k$ ($i \le k < j$).
+2. **Base Cases:** $m[i][i] = 0$ for all $1 \le i \le n$.
+3. **Recurrence Relation:** For chain length $L = 2 \dots n$:
+
+$$m[i][j] = \min_{i \le k < j} \left( m[i][k] + m[k+1][j] + p_{i-1} \cdot p_k \cdot p_j \right)$$
+
+
+
+If a strict minimum cost is found (or on equal cost, favoring the smaller $k$), update $m[i][j]$ and record $s[i][j] = k$.
+4. **Reconstruction:** Recursively traverse the split matrix $s[i][j]$ to construct the formatted string.
+
+---
+
+### Python Solution
+
+```python
+def matrix_chain_order(p):
+    """
+    Computes the minimum scalar multiplication cost and optimal parenthesization.
+    
+    :param p: List of dimensions where matrix M_i has dimension p[i-1] x p[i].
+    :return: Tuple (min_cost, parenthesized_expression_string)
+    """
+    n = len(p) - 1
+    if n <= 0:
+        return 0, ""
+    if n == 1:
+        return 0, "A1"
+
+    # m[i][j] stores the minimum multiplication cost for M_i...M_j
+    # s[i][j] stores the split index k that achieves this minimum cost
+    # Using 1-based indexing for convenience
+    m = [[0] * (n + 1) for _ in range(n + 1)]
+    s = [[0] * (n + 1) for _ in range(n + 1)]
+
+    # L is the chain length
+    for L in range(2, n + 1):
+        for i in range(1, n - L + 2):
+            j = i + L - 1
+            m[i][j] = float('inf')
+            
+            for k in range(i, j):
+                cost = m[i][k] + m[k + 1][j] + p[i - 1] * p[k] * p[j]
+                
+                # Dynamic Programming update: strictly smaller cost updates best.
+                # Since k loops in increasing order, using '<' automatically breaks
+                # ties in favor of the smallest split index k.
+                if cost < m[i][j]:
+                    m[i][j] = cost
+                    s[i][j] = k
+
+    def construct_parenthesization(i, j):
+        if i == j:
+            return f"A{i}"
+        k = s[i][j]
+        left = construct_parenthesization(i, k)
+        right = construct_parenthesization(k + 1, j)
+        return f"({left} {right})"
+
+    min_cost = m[1][n]
+    expression = construct_parenthesization(1, n)
+    return min_cost, expression
+
+
+if __name__ == "__main__":
+    # Example dimensions for matrices A1 (10x30), A2 (30x5), A3 (5x60)
+    dimensions = [10, 30, 5, 60]
+    cost, expr = matrix_chain_order(dimensions)
+    print(f"Minimum Scalar Multiplications: {cost}")
+    print(f"Optimal Parenthesization: {expr}")
+
+```

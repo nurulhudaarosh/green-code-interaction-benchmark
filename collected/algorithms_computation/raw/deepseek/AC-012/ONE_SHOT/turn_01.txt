@@ -1,0 +1,98 @@
+Certainly! Here's a detailed explanation of the problem and approach, followed by a deterministic Python solution that uses standard library only.
+
+---
+
+## Problem Understanding
+
+**Input:** Two strings, `A` and `B`.
+
+**Output:**  
+1. The length of their Longest Common Subsequence (LCS).  
+2. One LCS string constructed deterministically.
+
+---
+
+## Constraints and Requirements
+
+- Use a quadratic dynamic programming approach to compute the LCS length.
+- During reconstruction of the LCS, if there is a tie in DP values (two choices lead to the same LCS length), **prefer advancing (moving forward) in the first string** (`A`) over the second string (`B`) to ensure determinism.
+- No randomness or external packages; use only Python standard library.
+- The solution should work efficiently for strings of usual reasonable lengths in quadratic time, which is O(len(A) * len(B)).
+
+---
+
+## Algorithm Description
+
+1. **DP table construction:**
+
+   - Create a 2D list `dp` of size `(len(A)+1) x (len(B)+1)`.
+   - `dp[i][j]` will store the length of the LCS of `A[0:i]` and `B[0:j]`.
+   - Fill `dp` using:
+     - If `A[i-1] == B[j-1]` then `dp[i][j] = dp[i-1][j-1] + 1`.
+     - Else `dp[i][j] = max(dp[i-1][j], dp[i][j-1])`.
+
+2. **Reconstruction with deterministic tie-breaking:**
+
+   - Start from `dp[len(A)][len(B)]` and move backwards.
+   - When `A[i-1] == B[j-1]`, that character is part of LCS; move diagonally to `(i-1, j-1)`.
+   - Otherwise, if `dp[i-1][j] == dp[i][j-1]`, **prefer moving up (reducing `i`)**, i.e., advancing in the first string.
+   - Else move where the bigger dp value is.
+
+3. The collected characters during this backward traversal form the LCS.
+
+---
+
+## Python Implementation
+
+```python
+def lcs_with_deterministic_reconstruction(A: str, B: str):
+    n, m = len(A), len(B)
+    dp = [[0]*(m+1) for _ in range(n+1)]
+
+    # Fill dp table
+    for i in range(1, n+1):
+        for j in range(1, m+1):
+            if A[i-1] == B[j-1]:
+                dp[i][j] = dp[i-1][j-1] + 1
+            else:
+                dp[i][j] = max(dp[i-1][j], dp[i][j-1])
+
+    # Reconstruct LCS deterministically
+    i, j = n, m
+    lcs_chars = []
+    while i > 0 and j > 0:
+        if A[i-1] == B[j-1]:
+            lcs_chars.append(A[i-1])
+            i -= 1
+            j -= 1
+        else:
+            if dp[i-1][j] == dp[i][j-1]:
+                # Tie - prefer advancing in A (reduce i)
+                i -= 1
+            elif dp[i-1][j] > dp[i][j-1]:
+                i -= 1
+            else:
+                j -= 1
+
+    lcs_chars.reverse()
+    return dp[n][m], ''.join(lcs_chars)
+
+
+# Example usage:
+if __name__ == "__main__":
+    A = "ABCD"
+    B = "ABDC"
+    length, lcs = lcs_with_deterministic_reconstruction(A, B)
+    print(f"LCS length: {length}")
+    print(f"LCS string: {lcs}")
+```
+
+---
+
+This solution:
+
+- Calculates the LCS length and stores it in `dp[n][m]`.
+- Reconstructs the LCS string based on the DP table using the preference rule on ties.
+- Runs in time O(n*m) and space O(n*m).
+
+If you want, I can explain or improve it further!

@@ -1,0 +1,104 @@
+class RectangleStatisticsEngine:
+    def __init__(self, matrix: list[list[int]]):
+        """Preprocesses the R x C matrix into a 2D prefix-sum table."""
+        if not matrix or not matrix[0]:
+            raise ValueError("Matrix must be non-empty.")
+
+        self.R = len(matrix)
+        self.C = len(matrix[0])
+        self.matrix = matrix
+
+        # Construct (R+1) x (C+1) prefix sum table
+        self.prefix = [[0] * (self.C + 1) for _ in range(self.R + 1)]
+        for r in range(self.R):
+            row_sum = 0
+            for c in range(self.C):
+                row_sum += matrix[r][c]
+                self.prefix[r + 1][c + 1] = self.prefix[r][c + 1] + row_sum
+
+    def query(
+        self, 
+        r1: int, 
+        c1: int, 
+        r2: int, 
+        c2: int, 
+        include_summary: bool = False
+    ) -> tuple[int, int, int] | dict:
+        """
+        Answers inclusive rectangle query for region (r1, c1) to (r2, c2).
+        
+        If include_summary is False:
+            Returns (sum, min, max)
+        If include_summary is True:
+            Returns a dictionary containing 'sum', 'min', 'max', and 'operation_summary'.
+        """
+        if not (0 <= r1 <= r2 < self.R and 0 <= c1 <= c2 < self.C):
+            raise IndexError("Rectangle coordinates are out of matrix bounds.")
+
+        # 1. Compute 2D Prefix Sum (4 table access decisions)
+        rect_sum = (
+            self.prefix[r2 + 1][c2 + 1]
+            - self.prefix[r1][c2 + 1]
+            - self.prefix[r2 + 1][c1]
+            + self.prefix[r1][c1]
+        )
+
+        # 2. Direct scan for Extrema (Min/Max)
+        rect_min = float('inf')
+        rect_max = float('-inf')
+        
+        rows_scanned = r2 - r1 + 1
+        cols_scanned = c2 - c1 + 1
+        elements_evaluated = rows_scanned * cols_scanned
+
+        for r in range(r1, r2 + 1):
+            row_slice = self.matrix[r][c1:c2 + 1]
+            row_min = min(row_slice)
+            row_max = max(row_slice)
+            if row_min < rect_min:
+                rect_min = row_min
+            if row_max > rect_max:
+                rect_max = row_max
+
+        # Maintain backward compatibility if summary is not requested
+        if not include_summary:
+            return rect_sum, int(rect_min), int(rect_max)
+
+        # Build operation summary dictionary
+        prefix_lookups = 4
+        total_ops = prefix_lookups + rows_scanned + elements_evaluated
+
+        return {
+            "sum": rect_sum,
+            "min": int(rect_min),
+            "max": int(rect_max),
+            "operation_summary": {
+                "prefix_table_lookups": prefix_lookups,
+                "row_slices_created": rows_scanned,
+                "elements_evaluated": elements_evaluated,
+                "total_major_operations": total_ops
+            }
+        }
+
+
+# Example Usage & Verification
+if __name__ == "__main__":
+    grid = [
+        [3,  1,  4,  1,  5],
+        [9,  2,  6,  5,  3],
+        [5,  8,  9,  7,  9],
+        [8,  4,  6,  2,  6]
+    ]
+
+    engine = RectangleStatisticsEngine(grid)
+    r1, c1, r2, c2 = 1, 1, 2, 3
+
+    # 1. Standard Query (Original Requirements Intact)
+    original_result = engine.query(r1, c1, r2, c2)
+    print("Default Query Output (Tuple):", original_result)
+
+    # 2. Enhanced Query (With operation_summary)
+    enhanced_result = engine.query(r1, c1, r2, c2, include_summary=True)
+    print("\nEnhanced Query Output (Dict with Summary):")
+    for key, value in enhanced_result.items():
+        print(f"  {key}: {value}")

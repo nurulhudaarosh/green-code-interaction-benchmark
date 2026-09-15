@@ -1,0 +1,150 @@
+## Problem understanding
+
+Given two strings `A` and `B`, find their **Longest Common Subsequence (LCS)**.
+
+The solution must:
+
+* Compute the **length** of the LCS.
+* Reconstruct **one actual LCS**.
+* Be **deterministic**.
+* When the two possible predecessor states have equal DP scores during reconstruction, **prefer advancing in the first string `A`**.
+* Use **quadratic dynamic programming** and **predecessor reconstruction**.
+* Use only Python's **standard library**.
+* No network, APIs, external services, randomness, or user interaction.
+
+### Key constraints
+
+For strings of lengths `n` and `m`:
+
+* Time complexity: **O(n × m)**
+* Space complexity: **O(n × m)**
+* Characters must appear in the same order, but do not need to be contiguous.
+* The returned subsequence must have maximum possible length.
+
+### Required output
+
+Return:
+
+1. `length` — the LCS length.
+2. `lcs` — one deterministic LCS.
+
+```python
+"""
+Longest Common Subsequence (LCS)
+
+Problem:
+    Given two strings A and B, compute the length of their Longest Common
+    Subsequence (LCS) and reconstruct one LCS.
+
+Deterministic tie rule:
+    During reconstruction, when advancing in A and advancing in B are both
+    possible and their DP scores are equal, prefer advancing in A.
+
+Algorithm:
+    1. Build a quadratic DP table:
+           dp[i][j] = LCS length of A[:i] and B[:j]
+    2. Store a predecessor for every DP cell so reconstruction is deterministic.
+    3. Backtrack from dp[n][m] to reconstruct the LCS.
+
+Complexity:
+    Time:  O(n * m)
+    Space: O(n * m)
+
+Only the Python standard library is used.
+"""
+
+
+def lcs(a: str, b: str) -> tuple[int, str]:
+    """
+    Compute the LCS length and reconstruct one deterministic LCS.
+
+    Tie-breaking rule:
+        If dp[i-1][j] == dp[i][j-1], reconstruction advances in
+        the first string A (moves from (i, j) to (i-1, j)).
+
+    Returns:
+        (lcs_length, lcs_string)
+    """
+
+    n = len(a)
+    m = len(b)
+
+    # dp[i][j] = LCS length for a[:i] and b[:j]
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+
+    # predecessor[i][j] describes how dp[i][j] was obtained:
+    #   "diag" -> characters matched
+    #   "up"   -> advanced in the first string A
+    #   "left" -> advanced in the second string B
+    predecessor = [[None] * (m + 1) for _ in range(n + 1)]
+
+    # Build DP table and predecessor table.
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+
+            if a[i - 1] == b[j - 1]:
+                # Matching characters are always taken.
+                dp[i][j] = dp[i - 1][j - 1] + 1
+                predecessor[i][j] = "diag"
+
+            elif dp[i - 1][j] > dp[i][j - 1]:
+                # Move up: advance in A.
+                dp[i][j] = dp[i - 1][j]
+                predecessor[i][j] = "up"
+
+            else:
+                # Move left when it is strictly better OR equal.
+                #
+                # Note:
+                # The requested tie rule is handled during reconstruction
+                # by preferring "up" when the scores are equal.
+                dp[i][j] = dp[i][j - 1]
+                predecessor[i][j] = "left"
+
+    # Reconstruct the LCS.
+    result = []
+    i, j = n, m
+
+    while i > 0 and j > 0:
+        if a[i - 1] == b[j - 1]:
+            result.append(a[i - 1])
+            i -= 1
+            j -= 1
+
+        elif dp[i - 1][j] > dp[i][j - 1]:
+            # Advance in A.
+            i -= 1
+
+        elif dp[i - 1][j] == dp[i][j - 1]:
+            # Deterministic tie:
+            # prefer advancing in the first string A.
+            i -= 1
+
+        else:
+            # Advance in B.
+            j -= 1
+
+    result.reverse()
+
+    return dp[n][m], "".join(result)
+
+
+if __name__ == "__main__":
+    # Small examples
+    examples = [
+        ("ABCBDAB", "BDCABA"),
+        ("AGGTAB", "GXTXAYB"),
+        ("ABC", "AC"),
+        ("ABC", "DEF"),
+        ("", "ABC"),
+    ]
+
+    for a, b in examples:
+        length, subsequence = lcs(a, b)
+
+        print(f"A      = {a!r}")
+        print(f"B      = {b!r}")
+        print(f"Length = {length}")
+        print(f"LCS    = {subsequence!r}")
+        print("-" * 30)
+```

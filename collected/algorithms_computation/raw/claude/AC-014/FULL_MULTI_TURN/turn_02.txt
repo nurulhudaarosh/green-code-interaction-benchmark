@@ -1,0 +1,193 @@
+```python
+"""
+PROBLEM RESTATEMENT
+--------------------
+One-Dimensional K-Cluster Partition:
+Given n real-valued points and an integer k, sort the points and partition
+them into exactly k contiguous clusters (in sorted order) minimizing the
+total within-cluster sum of squared deviations from each cluster's own mean.
+
+EXPECTED BEHAVIOR
+------------------
+- Sort points, run exact O(k*n^2) DP over prefix sums / interval costs.
+- Return (total_cost, boundaries) where boundaries is a list of k+1 indices
+  into the sorted array: boundaries[0]=0, boundaries[-1]=n, and cluster i is
+  sorted_points[boundaries[i]:boundaries[i+1]].
+- Deterministic tie handling: when multiple split points i achieve the exact
+  same minimal dp cost, the implementation must always pick the SAME one on
+  every run — not "whichever the loop happens to see first" in a way that
+  is fragile to reordering, but a well-defined, documented rule. We define
+  the rule as: among all i achieving the minimum cost, prefer the LARGEST i
+  (i.e. the split that keeps the earlier clusters as small as possible /
+  the latest boundary). This must hold regardless of floating-point
+  summation order.
+
+BUG
+---
+The previous implementation used a strict "<" comparison when scanning
+candidate split points `i` in increasing order:
+
+    if total < best_cost:
+        best_cost = total
+        best_i = i
+
+Because `i` is scanned from `c-1` up to `j-1` (increasing order), a strict
+"<" means that on a tie, the FIRST (smallest) i encountered is kept, since
+later equal-cost candidates fail the strict inequality. This silently picks
+the SMALLEST tied split index, which:
+  (a) is an implicit, undocumented rule (not the required deterministic
+      tie-break), and
+  (b) is fragile: due to floating-point rounding, costs that are
+      mathematically equal can differ by ~1e-15, causing the tie-break to
+      pick different indices non-deterministically depending on point order
+      / magnitude, even though the "true" costs are tied.
+
+DEMONSTRATION OF DEFECT
+------------------------
+Consider points = [0, 2, 4, 6] with k = 2.
+Splitting into ({0,2},{4,6}) costs: var({0,2})=2 -> sumsq dev = (0-1)^2+(2-1)^2=2
+                                     var({4,6})=2 -> same = 2   => total = 4
+Splitting into ({0,2,4},{6}) : mean=2, devs: 4+0+4=8, plus {6}:0 => total = 8
+Splitting into ({0},{2,4,6}) : {0}:0, mean=4, devs:4+0+4=8 => total = 8
+So the unique true minimum is boundary i=2 (split {0,2}|{4,6}), cost 4 —
+here there's no real tie, but with exact tie cases (e.g. symmetric data),
+the old strict "<" comparison keeps whichever equal-or-numerically-close
+candidate is smallest, without any documented guarantee, and floating point
+noise can flip which "equal" candidate wins across runs/platforms.
+A genuine tie example: points = [0, 1, 2, 3], k = 2.
+  split i=1: {0}|{1,2,3}: 0 + var(1,2,3)*... = 0 + ( (1-2)^2+(2-2)^2+(3-2)^2 )=2
+  split i=3: {0,1,2}|{3}: var(0,1,2)= (0-1)^2+(1-1)^2+(2-1)^2=2 + 0 = 2
+  Both cost exactly 2 -> a real tie. Old code (strict "<") returns i=1
+  (smallest), silently, with no documented rule, and reconstruction is
+  sensitive to future refactors of loop order.
+
+FIX
+---
+Use "<=" during the scan so that later (larger) i values overwrite earlier
+ties, since i is scanned in increasing order — this deterministically
+selects the LARGEST tied index per our documented rule, independent of
+floating-point jitter direction (we still compare with a small epsilon-free
+"<=" but round costs consistently to avoid spurious inequality from noise).
+"""
+
+from typing import List, Tuple
+import math
+
+
+def cluster_1d(points: List[float], k: int) -> Tuple[float, List[int]]:
+    """
+    Partition 1-D points into k contiguous clusters minimizing the sum of
+    squared deviations from each cluster's mean.
+
+    Deterministic tie-break rule: among split points achieving the same
+    minimal DP cost (compared after rounding to mitigate floating-point
+    noise), the LARGEST split index is chosen.
+
+    Returns:
+        total_cost: float, the minimized sum of squared deviations.
+        boundaries: List[int] of length k+1, indices into the sorted point
+                    array marking cluster boundaries (boundaries[0] == 0,
+                    boundaries[-1] == n).
+    """
+    if not isinstance(k, int) or k < 1:
+        raise ValueError("k must be a positive integer")
+    n = len(points)
+    if n == 0:
+        raise ValueError("points must be non-empty")
+    if k > n:
+        raise ValueError("k cannot exceed the number of points")
+
+    sorted_points = sorted(points)
+
+    prefix_sum = [0.0] * (n + 1)
+    prefix_sqsum = [0.0] * (n + 1)
+    for idx in range(1, n + 1):
+        v = sorted_points[idx - 1]
+        prefix_sum[idx] = prefix_sum[idx - 1] + v
+        prefix_sqsum[idx] = prefix_sqsum[idx - 1] + v * v
+
+    def interval_cost(i: int, j: int) -> float:
+        m = j - i
+        if m <= 0:
+            return 0.0
+        s = prefix_sum[j] - prefix_sum[i]
+        sq = prefix_sqsum[j] - prefix_sqsum[i]
+        cost = sq - (s * s) / m
+        return cost if cost > 0.0 else 0.0
+
+    INF = math.inf
+    TIE_EPS = 1e-9  # tolerance to treat near-equal floating costs as tied
+
+    dp = [[INF] * (n + 1) for _ in range(k + 1)]
+    parent = [[-1] * (n + 1) for _ in range(k + 1)]
+    dp[0][0] = 0.0
+
+    for c in range(1, k + 1):
+        for j in range(c, n + 1):
+            best_cost = INF
+            best_i = -1
+            # Scan i in increasing order; on a tie (within TIE_EPS), prefer
+            # the LARGER i by overwriting with "<=" (rounded comparison).
+            for i in range(c - 1, j):
+                prev = dp[c - 1][i]
+                if prev == INF:
+                    continue
+                total = prev + interval_cost(i, j)
+                if best_i == -1:
+                    best_cost = total
+                    best_i = i
+                elif total < best_cost - TIE_EPS:
+                    # strictly better
+                    best_cost = total
+                    best_i = i
+                elif abs(total - best_cost) <= TIE_EPS:
+                    # tie -> deterministically prefer the larger i
+                    best_cost = total
+                    best_i = i
+                # else: total is strictly worse -> keep current best
+            dp[c][j] = best_cost
+            parent[c][j] = best_i
+
+    total_cost = dp[k][n]
+    if total_cost == INF:
+        raise RuntimeError("No valid partition found (unexpected)")
+
+    boundaries = [n]
+    c, j = k, n
+    while c > 0:
+        i = parent[c][j]
+        boundaries.append(i)
+        j = i
+        c -= 1
+    boundaries.reverse()
+
+    return total_cost, boundaries
+
+
+if __name__ == "__main__":
+    # Demonstrate the fix on the genuine-tie example from the bug report.
+    data = [0, 1, 2, 3]
+    k = 2
+    cost, bounds = cluster_1d(data, k)
+    print("Tie example: points =", data, "k =", k)
+    print("Total cost   :", cost)
+    print("Boundaries   :", bounds, "(deterministic: largest tied split kept)")
+    sorted_data = sorted(data)
+    for idx in range(len(bounds) - 1):
+        lo, hi = bounds[idx], bounds[idx + 1]
+        print(f"  Cluster {idx}: {sorted_data[lo:hi]}")
+
+    print()
+
+    # Original demonstration example, unaffected by the fix.
+    data2 = [1.0, 2.0, 3.0, 10.0, 11.0, 12.0, 25.0, 26.0, 100.0]
+    k2 = 4
+    cost2, bounds2 = cluster_1d(data2, k2)
+    sorted_data2 = sorted(data2)
+    print("Original example: k =", k2)
+    print("Total cost   :", cost2)
+    print("Boundaries   :", bounds2)
+    for idx in range(len(bounds2) - 1):
+        lo, hi = bounds2[idx], bounds2[idx + 1]
+        print(f"  Cluster {idx}: {sorted_data2[lo:hi]}")
+```

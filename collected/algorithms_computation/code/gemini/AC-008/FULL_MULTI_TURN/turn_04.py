@@ -1,0 +1,134 @@
+class FenwickTree:
+    def __init__(self, arr: list[int]):
+        """Initializes Fenwick tree from a 0-indexed array in O(N) time."""
+        self.n = len(arr)
+        self.arr = list(arr)
+        self.tree = [0] * (self.n + 1)
+        self.op_count = 0  # Operational counter for deterministic summary
+
+        for i in range(1, self.n + 1):
+            self.tree[i] += self.arr[i - 1]
+            parent = i + (i & (-i))
+            if parent <= self.n:
+                self.tree[parent] += self.tree[i]
+                self.op_count += 1
+
+    def update(self, index: int, val: int) -> int:
+        """
+        Sets value at 0-based index to val.
+        Returns number of tree node updates performed (tree traversal steps).
+        """
+        if not (0 <= index < self.n):
+            raise IndexError("Index out of bounds")
+
+        delta = val - self.arr[index]
+        self.arr[index] = val
+
+        idx = index + 1
+        steps = 0
+        while idx <= self.n:
+            self.tree[idx] += delta
+            self.op_count += 1
+            steps += 1
+            idx += idx & (-idx)
+        return steps
+
+    def _prefix_sum(self, idx: int) -> tuple[int, int]:
+        """
+        Calculates sum from 1 to 1-based index idx.
+        Returns (sum_value, traversal_steps).
+        """
+        idx = min(idx, self.n)
+        s = 0
+        steps = 0
+        while idx > 0:
+            s += self.tree[idx]
+            self.op_count += 1
+            steps += 1
+            idx -= idx & (-idx)
+        return s, steps
+
+    def sum_range(self, left: int, right: int) -> int:
+        """
+        Returns inclusive range sum from 0-based indices [left, right].
+        Deterministically returns 0 for empty or inverted ranges (left > right).
+        """
+        if left > right or left >= self.n or right < 0:
+            return 0
+
+        left = max(0, left)
+        right = min(self.n - 1, right)
+
+        s_right, _ = self._prefix_sum(right + 1)
+        s_left, _ = self._prefix_sum(left)
+        return s_right - s_left
+
+
+def process_queries(
+    arr: list[int], queries: list[tuple], include_summary: bool = False
+) -> list[int] | dict:
+    """Processes array operations with optional operational summary."""
+    bit = FenwickTree(arr)
+    results = []
+
+    for op in queries:
+        if op[0] == "update":
+            bit.update(op[1], op[2])
+        elif op[0] == "query":
+            results.append(bit.sum_range(op[1], op[2]))
+
+    if include_summary:
+        return {
+            "results": results,
+            "operation_summary": {
+                "total_major_operations": bit.op_count,
+                "array_size": len(arr),
+                "query_count": len(results),
+            },
+        }
+
+    return results
+
+
+# --- WORST-CASE & EDGE CASE TEST SUITE ---
+def run_tests():
+    import math
+
+    # Test 1: Power of 2 Worst-Case Traversal Depth
+    # N = 1024 (2^10). Worst update at index 0 (1-based index 1) -> 10 steps
+    # Worst query at index N-1 (1-based index N) -> 1 step for prefix(1024), 10 steps for prefix(1023)
+    k = 10
+    n = 1 << k  # 1024
+    arr = [1] * n
+    bit = FenwickTree(arr)
+
+    # Worst-case update traversal (index 0 -> 1-based 1 updates 1, 2, 4, 8 ... 1024)
+    update_steps = bit.update(0, 99)
+    assert update_steps == k + 1, f"Expected {k + 1} update steps, got {update_steps}"
+
+    # Worst-case prefix query traversal (0 to 1022 inclusive -> prefix(1023) has 10 set bits)
+    _, worst_prefix_steps = bit._prefix_sum(n - 1)
+    assert worst_prefix_steps == k, f"Expected {k} steps for 2^k - 1, got {worst_prefix_steps}"
+
+    # Test 2: Inverted & Boundary Range Queries
+    ops = [
+        ("query", 50, 10),    # Inverted range -> 0
+        ("query", -10, 5),    # Clamped lower bound -> [0, 5] sum
+        ("query", 1020, 2000) # Clamped upper bound -> [1020, 1023] sum
+    ]
+    res = process_queries(arr, ops)
+    assert res[0] == 0, "Inverted range must yield 0"
+    assert res[1] == 104, "Clamped range [-10, 5] failed"  # index 0 is 99, indices 1..5 are 1
+    assert res[2] == 4, "Clamped upper range failed"
+
+    # Test 3: Backward Compatibility Output Structure
+    raw_res = process_queries([1, 2, 3], [("query", 0, 2)])
+    summary_res = process_queries([1, 2, 3], [("query", 0, 2)], include_summary=True)
+    assert isinstance(raw_res, list) and raw_res == [6]
+    assert isinstance(summary_res, dict) and summary_res["results"] == [6]
+
+    print("All worst-case and edge-case tests passed successfully!")
+
+
+if __name__ == "__main__":
+    run_tests()

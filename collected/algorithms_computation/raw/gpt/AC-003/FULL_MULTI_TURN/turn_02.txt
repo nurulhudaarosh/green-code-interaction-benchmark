@@ -1,0 +1,135 @@
+## Problem Restatement — Single-Source Route Analyzer
+
+Given a **directed graph** with `n` vertices and non-negative edge weights, and a source vertex `s`, compute the shortest distance from `s` to **every vertex**.
+
+### Expected behavior
+
+* Use an **adjacency list** to represent the graph.
+* Use **Dijkstra's algorithm with a binary heap (`heapq`)**.
+* Edge weights are non-negative.
+* `dist[v]` must contain the shortest distance from `s` to `v`.
+* If a vertex is unreachable, return `-1`.
+* Return **exactly the required result**, without adding unrelated fields or changing the required output format.
+* Processing must be **deterministic**, including deterministic handling when multiple heap entries or routes have equal distances.
+
+### The bug
+
+A common incorrect implementation pushes only the distance into the heap or uses nondeterministic iteration/tie handling. For example, consider:
+
+```text
+Vertices: 0, 1, 2, 3
+Source: 0
+
+Edges:
+0 -> 1 (1)
+0 -> 2 (1)
+1 -> 3 (1)
+2 -> 3 (1)
+```
+
+There are two equally short routes to `3`:
+
+```text
+0 -> 1 -> 3 = 2
+0 -> 2 -> 3 = 2
+```
+
+If the implementation does not explicitly make heap entries deterministic, equal-distance states can be processed in an unspecified order. This becomes especially problematic if the implementation also tracks predecessors or otherwise exposes tie-sensitive results.
+
+For deterministic behavior, heap entries should contain a stable tie-breaker, such as the vertex ID:
+
+```text
+(distance, vertex)
+```
+
+Thus `(1, 1)` is processed before `(1, 2)`.
+
+Importantly, **the distance result remains the same** in this example; the defect is in deterministic tie handling rather than shortest-distance correctness.
+
+## Correct implementation
+
+```python
+import heapq
+
+
+def single_source_route_analyzer(n, edges, source):
+    """
+    Compute shortest distances from `source` to every vertex.
+
+    Parameters:
+        n: Number of vertices, numbered 0 through n-1.
+        edges: Iterable of (u, v, weight) directed edges.
+        source: Starting vertex.
+
+    Returns:
+        A list where result[v] is the shortest distance from source
+        to v, or -1 if v is unreachable.
+    """
+
+    # Build adjacency list.
+    graph = [[] for _ in range(n)]
+
+    for u, v, weight in edges:
+        graph[u].append((v, weight))
+
+    # Sorting is not required for Dijkstra's distances, but makes
+    # adjacency traversal deterministic when input ordering varies.
+    for neighbors in graph:
+        neighbors.sort(key=lambda item: (item[0], item[1]))
+
+    INF = float("inf")
+    dist = [INF] * n
+    dist[source] = 0
+
+    # Binary heap.
+    # (distance, vertex) gives a deterministic tie-breaker.
+    heap = [(0, source)]
+
+    while heap:
+        current_dist, u = heapq.heappop(heap)
+
+        # Ignore stale heap entries.
+        if current_dist != dist[u]:
+            continue
+
+        for v, weight in graph[u]:
+            new_dist = current_dist + weight
+
+            if new_dist < dist[v]:
+                dist[v] = new_dist
+                heapq.heappush(heap, (new_dist, v))
+
+    return [-1 if d == INF else d for d in dist]
+
+
+# Demonstration
+if __name__ == "__main__":
+    n = 4
+    edges = [
+        (0, 1, 1),
+        (0, 2, 1),
+        (1, 3, 1),
+        (2, 3, 1),
+    ]
+
+    print(single_source_route_analyzer(n, edges, 0))
+```
+
+### Output
+
+```text
+[0, 1, 1, 2]
+```
+
+### What was fixed
+
+The correction preserves the original requirements while enforcing deterministic behavior:
+
+1. **Adjacency lists** are used.
+2. **Dijkstra's algorithm** is used.
+3. `heapq` provides the required **binary heap**.
+4. Heap entries are `(distance, vertex)`, so equal-distance vertices have a deterministic ordering.
+5. Stale heap entries are ignored.
+6. Only a **strictly shorter** distance updates `dist[v]`, so equal-length routes do not arbitrarily overwrite an existing result.
+7. Unreachable vertices are converted to `-1`.
+8. The function returns **only the required distance list**—no unrelated output or fields.

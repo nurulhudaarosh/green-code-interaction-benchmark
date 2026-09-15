@@ -1,0 +1,172 @@
+```python
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
+
+
+@dataclass
+class Transaction:
+    item_id: str
+    quantity: int  # Positive for additions/received, negative for sales/dispatches
+    timestamp: datetime
+
+
+@dataclass
+class AuditRecord:
+    item_id: str
+    physical_count: int
+    timestamp: datetime
+
+
+@dataclass
+class Discrepancy:
+    item_id: str
+    expected_qty: int
+    physical_count: int
+    discrepancy: int  # physical_count - expected_qty
+    status: str  # 'SURPLUS', 'DEFICIT', or 'BALANCED'
+
+
+class InventoryReconciler:
+    """Handles inventory ledger tracking, validation, deduplication, and physical count reconciliation."""
+
+    def __init__(self, initial_stock: Optional[Dict[str, int]] = None):
+        self.ledger: Dict[str, int] = defaultdict(int)
+        self.transaction_history: List[Transaction] = []
+
+        if initial_stock:
+            for item_id, qty in initial_stock.items():
+                clean_id = self._clean_item_id(item_id)
+                if clean_id and isinstance(qty, int) and qty >= 0:
+                    self.ledger[clean_id] = qty
+
+    @staticmethod
+    def _clean_item_id(item_id: Optional[str]) -> Optional[str]:
+        """Sanitizes and normalizes item identifiers."""
+        if not item_id or not isinstance(item_id, str):
+            return None
+        cleaned = item_id.strip().upper()
+        return cleaned if cleaned else None
+
+    def record_transaction(self, item_id: str, quantity: int, timestamp: Optional[datetime] = None) -> bool:
+        """Validates and records a stock movement."""
+        clean_id = self._clean_item_id(item_id)
+        if not clean_id or not isinstance(quantity, int):
+            return False  # Invalid record ignored
+
+        ts = timestamp or datetime.now()
+        self.ledger[clean_id] += quantity
+        self.transaction_history.append(Transaction(clean_id, quantity, ts))
+        return True
+
+    def sanitize_audit_records(self, audit_records: List[AuditRecord]) -> List[AuditRecord]:
+        """
+        Deduplicates and validates raw audit records.
+        - Drops records with invalid item_ids or non-integer/negative counts.
+        - Deduplicates multiple counts for the same item by taking the latest timestamp.
+        """
+        valid_records: List[AuditRecord] = []
+
+        # 1. Validation step
+        for record in audit_records:
+            clean_id = self._clean_item_id(record.item_id)
+            if (
+                clean_id
+                and isinstance(record.physical_count, int)
+                and record.physical_count >= 0
+                and isinstance(record.timestamp, datetime)
+            ):
+                valid_records.append(
+                    AuditRecord(
+                        item_id=clean_id,
+                        physical_count=record.physical_count,
+                        timestamp=record.timestamp,
+                    )
+                )
+
+        # 2. Deduplication step (Keep latest record per item_id)
+        deduped: Dict[str, AuditRecord] = {}
+        for record in valid_records:
+            existing = deduped.get(record.item_id)
+            if not existing or record.timestamp >= existing.timestamp:
+                deduped[record.item_id] = record
+
+        return list(deduped.values())
+
+    def reconcile(
+        self, audit_records: List[AuditRecord], auto_adjust: bool = False
+    ) -> Tuple[List[Discrepancy], Dict[str, int]]:
+        """
+        Cleans audit records and compares physical counts against system records.
+        
+        Args:
+            audit_records: Raw physical inventory count data (may contain invalid/duplicates).
+            auto_adjust: If True, updates system ledger to match physical count.
+            
+        Returns:
+            Tuple of (Discrepancy reports, Updated inventory ledger)
+        """
+        clean_audits = self.sanitize_audit_records(audit_records)
+        discrepancies: List[Discrepancy] = []
+
+        for record in clean_audits:
+            item_id = record.item_id
+            expected_qty = self.ledger.get(item_id, 0)
+            physical_qty = record.physical_count
+            diff = physical_qty - expected_qty
+
+            if diff > 0:
+                status = "SURPLUS"
+            elif diff < 0:
+                status = "DEFICIT"
+            else:
+                status = "BALANCED"
+
+            discrepancy_entry = Discrepancy(
+                item_id=item_id,
+                expected_qty=expected_qty,
+                physical_count=physical_qty,
+                discrepancy=diff,
+                status=status,
+            )
+            discrepancies.append(discrepancy_entry)
+
+            if auto_adjust and diff != 0:
+                self.record_transaction(
+                    item_id=item_id,
+                    quantity=diff,
+                    timestamp=record.timestamp,
+                )
+
+        return discrepancies, dict(self.ledger)
+
+
+# --- Verification Example ---
+if __name__ == "__main__":
+    t1 = datetime(2026, 9, 14, 10, 0)
+    t2 = datetime(2026, 9, 14, 10, 30)  # Later timestamp
+
+    reconciler = InventoryReconciler(initial_stock={"sku-100": 50, "SKU-200": 30, "   ": 10})
+
+    # Raw audit data with invalid IDs, negative counts, whitespace issues, and duplicate entries
+    raw_audit_records = [
+        AuditRecord(item_id="sku-100", physical_count=40, timestamp=t1),        # Initial count
+        AuditRecord(item_id="SKU-100", physical_count=42, timestamp=t2),        # Duplicate SKU-100 (LATER timestamp -> should override)
+        AuditRecord(item_id="", physical_count=10, timestamp=t1),               # Invalid ID (Empty)
+        AuditRecord(item_id=None, physical_count=5, timestamp=t1),              # Invalid ID (None)
+        AuditRecord(item_id="SKU-200", physical_count=-15, timestamp=t1),       # Invalid Count (Negative)
+        AuditRecord(item_id=" sku-300 ", physical_count=15, timestamp=t1),      # Unformatted ID (Needs trim/uppercase)
+    ]
+
+    reports, updated_stock = reconciler.reconcile(raw_audit_records, auto_adjust=True)
+
+    print(f"{'ITEM ID':<10} | {'EXPECTED':<8} | {'PHYSICAL':<8} | {'DIFF':<6} | {'STATUS'}")
+    print("-" * 50)
+    for r in reports:
+        print(f"{r.item_id:<10} | {r.expected_qty:<8} | {r.physical_count:<8} | {r.discrepancy:<+6} | {r.status}")
+
+    print("\nCleaned & Updated System Ledger:")
+    print(updated_stock)
+
+```

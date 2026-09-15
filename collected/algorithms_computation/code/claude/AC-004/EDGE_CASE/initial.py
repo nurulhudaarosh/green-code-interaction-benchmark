@@ -1,0 +1,258 @@
+"""
+Weighted Job Scheduling — Maximum Profit Non-Overlapping Jobs
+================================================================
+
+PROBLEM
+-------
+Given a list of jobs, each with a start time, finish time, and profit,
+select a subset of mutually non-overlapping jobs so that the total
+profit is maximized.
+
+COMPATIBILITY RULE
+-------------------
+Two jobs are compatible (non-overlapping) if one finishes at or before
+the other starts. Jobs that merely "touch" at endpoints (job A finishes
+exactly when job B starts) are considered compatible, i.e. the interval
+is treated as [start, finish) — a job occupies time up to but not
+including its finish instant.
+
+CONSTRAINTS
+-----------
+1. Each job has (start, finish, profit) with start < finish.
+2. Selected jobs must be pairwise compatible (no overlapping intervals,
+   except at touching endpoints).
+3. Ties in total profit between different subsets are broken
+   deterministically by preferring the subset whose sorted sequence of
+   original indices is lexicographically smallest.
+4. No randomness, no external I/O, no network access — pure standard
+   library, fully deterministic.
+
+REQUIRED OUTPUT
+----------------
+- The maximum achievable total profit (int/float).
+- The list of original job indices chosen to achieve that profit,
+  in a deterministic (lexicographically smallest among optimal) order.
+
+ALGORITHM
+---------
+1. Sort jobs by finish time (keeping track of original indices).
+2. For each job i (in finish-time order), binary-search for the latest
+   job that finishes at or before job i's start time (its "compatible
+   predecessor"), using the touching-endpoints rule.
+3. Dynamic programming over the finish-time-sorted order:
+       dp[i] = max(dp[i-1], profit[i] + dp[p(i)])
+   where p(i) is the compatible predecessor found via binary search.
+4. To guarantee the tie-breaking rule (lexicographically smallest index
+   sequence among equal-profit optimal solutions), when profit ties
+   occur we deterministically prefer the choice that leads to the
+   lexicographically smallest resulting index sequence. This is done
+   by a careful backtracking pass that, on ties, prefers the option
+   producing the smaller sequence of original indices.
+5. Reconstruct the chosen subset via backtracking through the dp table.
+
+COMPLEXITY
+----------
+- Sorting: O(n log n)
+- Binary search predecessors: O(n log n)
+- DP fill: O(n)
+- Reconstruction: O(n log n) in the worst case (due to tie handling)
+Overall: O(n log n)
+"""
+
+from bisect import bisect_right
+from dataclasses import dataclass
+from typing import List, Tuple
+
+
+@dataclass(frozen=True)
+class Job:
+    index: int      # original index
+    start: float
+    finish: float
+    profit: float
+
+
+def _find_predecessor(finish_times: List[float], start: float) -> int:
+    """
+    Binary search for the index (0-based, in the finish-time-sorted list)
+    of the last job whose finish time is <= start (touching endpoints
+    count as compatible). Returns -1 if none exists.
+    """
+    # bisect_right finds insertion point after all finish_times <= start
+    pos = bisect_right(finish_times, start)
+    return pos - 1
+
+
+def solve_job_scheduling(jobs: List[Tuple[int, float, float, float]]):
+    """
+    jobs: list of (original_index, start, finish, profit)
+
+    Returns (max_profit, selected_original_indices_sorted)
+    where selected_original_indices_sorted is the lexicographically
+    smallest sequence of original indices among all subsets achieving
+    max_profit and satisfying the non-overlap constraint.
+    """
+    if not jobs:
+        return 0, []
+
+    job_objs = [Job(idx, s, f, p) for (idx, s, f, p) in jobs]
+
+    # Sort by finish time; break ties by original index for determinism
+    job_objs.sort(key=lambda j: (j.finish, j.index))
+
+    n = len(job_objs)
+    finish_times = [j.finish for j in job_objs]
+    starts = [j.start for j in job_objs]
+    profits = [j.profit for j in job_objs]
+
+    # predecessor[i] = last index k < i (0-based) such that finish_times[k] <= starts[i]
+    predecessor = [_find_predecessor(finish_times[:i], starts[i]) for i in range(n)]
+    # Note: finish_times[:i] restricts search to jobs before i in sorted order,
+    # which is correct since predecessor must end before or at current start
+    # and come earlier in the finish-sorted list.
+
+    # dp[i] = max profit achievable using first i jobs (sorted order), 1-indexed
+    dp = [0.0] * (n + 1)
+    # take[i] = True if job i (0-based, sorted order) is included in the optimal
+    # solution for dp[i+1], used for reconstruction with deterministic tie-break.
+    take = [False] * n
+
+    for i in range(n):
+        exclude_profit = dp[i]
+        pred = predecessor[i]
+        include_profit = profits[i] + (dp[pred + 1] if pred >= 0 else 0.0)
+
+        if include_profit > exclude_profit:
+            dp[i + 1] = include_profit
+            take[i] = True
+        elif include_profit < exclude_profit:
+            dp[i + 1] = exclude_profit
+            take[i] = False
+        else:
+            # Tie in profit: decide deterministically later during
+            # reconstruction (need global lexicographic comparison).
+            # For now store both are possible; mark ambiguous via None
+            # sentinel by keeping dp same and deferring decision.
+            dp[i + 1] = exclude_profit
+            take[i] = None  # ambiguous, resolved during reconstruction
+
+    max_profit = dp[n]
+
+    # Reconstruction with deterministic tie-breaking:
+    # When ambiguous (take[i] is None), both "including job i" and
+    # "excluding job i" lead to the same total profit from this point
+    # onward relative to dp[i+1]. We must choose whichever leads to the
+    # lexicographically smallest sequence of ORIGINAL indices in the
+    # final sorted (ascending original-index) selected list.
+    #
+    # Strategy: reconstruct recursively from the end; at each ambiguous
+    # choice, compute both candidate full selections (as sets of
+    # original indices) restricted to positions [0..i], compare the
+    # resulting sorted original-index tuples, and pick the smaller one.
+    # Since n is finite and this recursion explores at most a linear
+    # chain with O(n) branching resolved greedily left-to-right is not
+    # safe for lexicographic correctness across the whole array, we do
+    # a full deterministic backward reconstruction using memoized
+    # "best resulting index tuple" per state.
+
+    memo = {}
+
+    def best_selection(i: int) -> Tuple[float, Tuple[int, ...]]:
+        """
+        Returns (profit, sorted_tuple_of_original_indices) representing
+        the optimal-profit, lexicographically-smallest selection using
+        jobs[0..i-1] (sorted order), matching dp[i].
+        """
+        if i == 0:
+            return (0.0, tuple())
+        if i in memo:
+            return memo[i]
+
+        idx0 = i - 1  # 0-based job under consideration
+        exclude_profit_full, exclude_seq = best_selection(i - 1)
+
+        pred = predecessor[idx0]
+        pred_profit, pred_seq = best_selection(pred + 1 if pred >= 0 else 0)
+        include_profit_full = profits[idx0] + pred_profit
+        include_seq = tuple(sorted(pred_seq + (job_objs[idx0].index,)))
+
+        if include_profit_full > exclude_profit_full:
+            result = (include_profit_full, include_seq)
+        elif include_profit_full < exclude_profit_full:
+            result = (exclude_profit_full, exclude_seq)
+        else:
+            # Tie: choose lexicographically smallest index tuple
+            result = min(
+                (include_profit_full, include_seq),
+                (exclude_profit_full, exclude_seq),
+                key=lambda t: (t[0] * -1, t[1]),  # same profit, compare seq
+            )
+            # Since profits are equal, just compare sequences directly:
+            result = (exclude_profit_full, min(include_seq, exclude_seq))
+
+        memo[i] = result
+        return result
+
+    final_profit, final_seq = best_selection(n)
+
+    assert abs(final_profit - max_profit) < 1e-9, "Profit mismatch during reconstruction"
+
+    return max_profit, list(final_seq)
+
+
+def _format_profit(p: float) -> str:
+    if float(p).is_integer():
+        return str(int(p))
+    return str(p)
+
+
+def main():
+    """
+    Deterministic demonstration / self-test using fixed, hard-coded
+    input data (no external input, no randomness).
+    """
+    # Example job set: (original_index, start, finish, profit)
+    jobs = [
+        (0, 1, 3, 50),
+        (1, 3, 5, 20),   # touches job 0 at time 3 -> compatible
+        (2, 0, 6, 100),
+        (3, 5, 7, 30),   # touches job 1 at time 5 -> compatible
+        (4, 6, 8, 40),   # touches job 3? job3 finish=7, job4 start=6 -> overlap, not touching
+        (5, 8, 9, 10),
+    ]
+
+    print("Input jobs (index, start, finish, profit):")
+    for j in jobs:
+        print(f"  {j}")
+
+    max_profit, selected = solve_job_scheduling(jobs)
+
+    print("\nResult:")
+    print(f"  Maximum total profit: {_format_profit(max_profit)}")
+    print(f"  Selected original job indices (sorted): {selected}")
+
+    print("\nSelected jobs detail:")
+    job_lookup = {j[0]: j for j in jobs}
+    for idx in selected:
+        print(f"  {job_lookup[idx]}")
+
+    # A couple more deterministic test cases to illustrate tie-handling.
+    print("\n--- Additional deterministic test cases ---")
+
+    tie_jobs = [
+        (0, 0, 2, 10),
+        (1, 2, 4, 10),   # touches job0, compatible; equal total profit path
+        (2, 0, 4, 20),   # overlaps both; same profit as taking 0+1 combined
+    ]
+    mp, sel = solve_job_scheduling(tie_jobs)
+    print(f"Tie test: max_profit={_format_profit(mp)}, selected={sel}")
+
+    empty_result = solve_job_scheduling([])
+    print(f"Empty input test: {empty_result}")
+
+    single_job = [(0, 1, 2, 99)]
+    print(f"Single job test: {solve_job_scheduling(single_job)}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,10 @@
+{
+  "source": "inbox/text_log_processing/dataset/dataset.json (Drive, member-TL)",
+  "note": "source JSON was corrupt (unescaped quotes, invalid escapes, python literals). Repaired with scripts/repair_dataset.py (public_tests stubbed - not used by pipeline). 4 reference solutions had genuine python syntax errors at source, fixed manually.",
+  "manual_fixes": {
+    "TL-001": "ip, *, b_str -> ip, _, b_str (3 regex groups, middle unused)",
+    "TL-010": "def *compute_single_seq -> def compute_single_seq; append(*f( -> append(f(",
+    "TL-017": "escaped inner single quotes in ATTR_PATTERN regex: '([^']*)' -> \\\"([^\\\"]*)\\\"...",
+    "TL-021": "for spec in column_specs): -> for spec in column_specs:"
+  }
+}

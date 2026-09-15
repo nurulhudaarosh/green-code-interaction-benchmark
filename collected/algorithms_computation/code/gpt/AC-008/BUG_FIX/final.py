@@ -1,0 +1,179 @@
+from typing import List, Sequence, Tuple, Union
+
+
+Operation = Union[
+    Tuple[str, int, int],  # ("update", index, new_value)
+    Tuple[str, int, int],  # ("query", left, right)
+]
+
+
+class FenwickTree:
+    """Fenwick tree for point additions and prefix sums."""
+
+    def __init__(self, values: Sequence[int]) -> None:
+        self.n = len(values)
+        self.tree = [0] * (self.n + 1)
+
+        # O(n) construction.
+        for i, value in enumerate(values, 1):
+            self.tree[i] += value
+            parent = i + (i & -i)
+
+            if parent <= self.n:
+                self.tree[parent] += self.tree[i]
+
+    def add(self, index: int, delta: int) -> None:
+        """Add delta to the 0-based array position index."""
+        if not 0 <= index < self.n:
+            raise IndexError("index out of range")
+
+        i = index + 1
+
+        while i <= self.n:
+            self.tree[i] += delta
+            i += i & -i
+
+    def prefix_sum(self, end: int) -> int:
+        """
+        Return the sum of values in [0, end).
+        """
+        if not 0 <= end <= self.n:
+            raise IndexError("prefix endpoint out of range")
+
+        total = 0
+        i = end
+
+        while i > 0:
+            total += self.tree[i]
+            i -= i & -i
+
+        return total
+
+    def range_sum(self, left: int, right: int) -> int:
+        """Return the inclusive sum of values in [left, right]."""
+        if not (0 <= left <= right < self.n):
+            raise IndexError("invalid range")
+
+        return (
+            self.prefix_sum(right + 1)
+            - self.prefix_sum(left)
+        )
+
+
+def mutable_range_sum_engine(
+    array: Sequence[int],
+    operations: Sequence[Operation],
+) -> List[int]:
+    """
+    Process mutable-array operations.
+
+    Operation formats:
+        ("update", index, new_value)
+        ("query", left, right)
+
+    Indices are 0-based.
+
+    Returns exactly the results of all queries,
+    in the order they were encountered.
+    """
+    values = list(array)
+    fenwick = FenwickTree(values)
+    results: List[int] = []
+
+    for operation in operations:
+        if len(operation) != 3:
+            raise ValueError("invalid operation")
+
+        operation_type, first, second = operation
+
+        if operation_type == "update":
+            index = first
+            new_value = second
+
+            if not 0 <= index < len(values):
+                raise IndexError("update index out of range")
+
+            # IMPORTANT:
+            # A replacement is not an addition.
+            # Only the difference must be applied to the Fenwick tree.
+            delta = new_value - values[index]
+
+            values[index] = new_value
+            fenwick.add(index, delta)
+
+        elif operation_type == "query":
+            left = first
+            right = second
+
+            if not (0 <= left <= right < len(values)):
+                raise IndexError("invalid query range")
+
+            results.append(fenwick.range_sum(left, right))
+
+        else:
+            raise ValueError(f"unknown operation: {operation_type}")
+
+    return results
+
+
+# ---------------------------------------------------------
+# Tests
+# ---------------------------------------------------------
+
+def run_tests() -> None:
+    # 1. Demonstrates the replacement-update bug.
+    array = [5, 10, 20]
+    operations = [
+        ("update", 1, 15),
+        ("query", 0, 2),
+    ]
+
+    assert mutable_range_sum_engine(array, operations) == [40]
+
+    # 2. Multiple updates to the same position.
+    array = [1, 2, 3]
+    operations = [
+        ("update", 1, 10),
+        ("update", 1, 20),
+        ("query", 0, 2),
+        ("update", 1, -5),
+        ("query", 1, 1),
+    ]
+
+    assert mutable_range_sum_engine(array, operations) == [24, -5]
+
+    # 3. Multiple queries without updates.
+    array = [2, 4, 6, 8]
+    operations = [
+        ("query", 0, 0),
+        ("query", 1, 2),
+        ("query", 0, 3),
+    ]
+
+    assert mutable_range_sum_engine(array, operations) == [2, 10, 20]
+
+    # 4. Negative values.
+    array = [-5, 10, -3, 7]
+    operations = [
+        ("query", 0, 3),
+        ("update", 2, -10),
+        ("query", 1, 3),
+    ]
+
+    assert mutable_range_sum_engine(array, operations) == [9, 7]
+
+    # 5. Single-element array.
+    array = [100]
+    operations = [
+        ("query", 0, 0),
+        ("update", 0, -50),
+        ("query", 0, 0),
+    ]
+
+    assert mutable_range_sum_engine(array, operations) == [100, -50]
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()

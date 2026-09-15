@@ -1,0 +1,122 @@
+### Problem Restatement & Expected Behavior
+
+**Problem:** Given an undirected, weighted graph (possibly disconnected), construct a **Minimum Spanning Forest (MSF)**.
+
+**Expected Behavior:**
+
+1. **Total Cost & Selected Edge IDs:** Return the total weight of the selected edges along with the exact original edge IDs forming the MSF.
+2. **Deterministic Tie Handling:** When processing edges with equal weights, tie-breaking must strictly process edges in ascending order of their original `edge_id`.
+3. **Kruskal's Algorithm with DSU:** Iteratively evaluate edges in sorted order and add an edge to the forest if and only if it connects two previously disconnected components.
+
+---
+
+### Bug Analysis & Defect Demonstration
+
+#### The Defect
+
+In the original implementation, after collecting the selected edge IDs in the order Kruskal's algorithm accepted them, the code ran:
+
+
+
+Sorting `selected_edge_ids` at the end **loses the deterministic algorithm execution sequence** (the exact order in which Kruskal's algorithm selected the edges).
+
+Furthermore, if the function contract requires returning the edge IDs in the exact selection sequence dictated by Kruskal's algorithm (as sorted by `(weight, edge_id)`), sorting `selected_edge_ids` numerically distorts the output sequence.
+
+#### Minimal Concrete Example Demonstrating the Issue
+
+Consider a graph with two edges of weight `10`:
+
+* Edge ID `5` connects nodes `0` and `1` (weight `10`).
+* Edge ID `2` connects nodes `1` and `2` (weight `10`).
+
+1. **Edge sorting sequence:** Edge `2` comes before Edge `5` because `(10, 2) < (10, 5)`.
+2. **Kruskal selection order:** Edge `2` is selected first, then Edge `5`.
+3. **Expected Selection Sequence:** `[2, 5]`
+4. **Defect Behavior:** Re-sorting `[2, 5]` at the end yields `[2, 5]`, but if Edge `5` had a smaller weight (e.g. `5`), or if an edge with a higher ID was selected *earlier* due to a lower weight (e.g., Edge `10` with weight `1` vs. Edge `2` with weight `10`), re-sorting by edge ID reorders the execution trace:
+
+
+
+---
+
+### Corrected Implementation
+
+The implementation below preserves the strict deterministic Kruskal selection sequence, uses a robust DSU structure with path compression and rank optimization, and guarantees exact deterministic execution.
+
+```python
+class DisjointSetUnion:
+    """Disjoint-Set Union (DSU) with path compression and rank optimization."""
+    def __init__(self, n: int):
+        self.parent = list(range(n))
+        self.rank = [0] * n
+
+    def find(self, i: int) -> int:
+        if self.parent[i] != i:
+            self.parent[i] = self.find(self.parent[i])  # Path compression
+        return self.parent[i]
+
+    def union(self, i: int, j: int) -> bool:
+        root_i = self.find(i)
+        root_j = self.find(j)
+        
+        if root_i != root_j:
+            # Union by rank
+            if self.rank[root_i] < self.rank[root_j]:
+                root_i, root_j = root_j, root_i
+            self.parent[root_j] = root_i
+            if self.rank[root_i] == self.rank[root_j]:
+                self.rank[root_i] += 1
+            return True
+        return False
+
+
+def minimum_spanning_forest(num_vertices: int, edges: list[tuple[int, int, int, int]]) -> tuple[int, list[int]]:
+    """
+    Computes the Minimum Spanning Forest (MSF) of an undirected weighted graph.
+
+    Parameters:
+        num_vertices (int): Total number of vertices (0-indexed).
+        edges (list of tuple): List of edges, where each edge is specified as 
+                              (edge_id, u, v, weight).
+
+    Returns:
+        tuple[int, list[int]]:
+            - total_cost (int): Total weight of the MSF.
+            - selected_edge_ids (list[int]): Edge IDs in the exact deterministic 
+              order selected by Kruskal's algorithm.
+    """
+    # Deterministic sort: Primary key = weight ascending, Secondary key = edge_id ascending
+    sorted_edges = sorted(edges, key=lambda x: (x[3], x[0]))
+
+    dsu = DisjointSetUnion(num_vertices)
+    total_cost = 0
+    selected_edge_ids = []
+
+    for edge_id, u, v, weight in sorted_edges:
+        if dsu.union(u, v):
+            total_cost += weight
+            selected_edge_ids.append(edge_id)
+
+    # Return edge IDs in exact Kruskal selection sequence without post-hoc re-sorting
+    return total_cost, selected_edge_ids
+
+
+# Demonstration of Deterministic Tie-Handling & Correct Selection Trace
+if __name__ == "__main__":
+    num_nodes = 4
+    # Equal-cost edges (weights 10) tie-broken strictly by edge_id:
+    # Tuple format: (edge_id, u, v, weight)
+    graph_edges = [
+        (99, 0, 1, 10),  # weight 10, ID 99
+        (12, 1, 2, 10),  # weight 10, ID 12 (should be evaluated before ID 99)
+        (5,  2, 3, 2),   # weight 2,  ID 5  (should be evaluated first)
+    ]
+
+    cost, msf_edges = minimum_spanning_forest(num_nodes, graph_edges)
+
+    print(f"Total MSF Cost: {cost}")
+    print(f"Selected Edge IDs (In Order): {msf_edges}")
+    # Output:
+    # Total MSF Cost: 22
+    # Selected Edge IDs (In Order): [5, 12, 99]
+
+```

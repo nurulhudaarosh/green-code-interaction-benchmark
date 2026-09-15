@@ -1,0 +1,202 @@
+```python
+"""
+Rectangle Statistics Engine
+============================
+
+PROBLEM RESTATEMENT:
+Given a 2D grid of numbers, support two kinds of axis-aligned rectangle
+queries (specified by top-left (r1, c1) and bottom-right (r2, c2), inclusive):
+
+  1. SUM  - the sum of all elements in the rectangle.
+  2. MIN/MAX (extrema) - the minimum or maximum element in the rectangle,
+     with deterministic tie handling: when multiple cells share the
+     extreme value, the result must consistently resolve to the value
+     found at the position encountered first in row-major (top-to-bottom,
+     left-to-right) scan order.
+
+EXPECTED BEHAVIOR:
+  - Preprocessing: build a 2D prefix-sum table once, in O(rows*cols),
+    so SUM queries are O(1).
+  - Querying:
+      * SUM queries use the prefix-sum table (O(1) per query).
+      * MIN/MAX queries use direct rectangle scanning (O(area) per query),
+        since no extrema structure is precomputed (mixed workload: cheap
+        sums, more expensive extrema).
+  - Every query must return EXACTLY the required result:
+      * SUM must be numerically exact (no off-by-one boundary errors).
+      * MIN/MAX must resolve ties deterministically (first occurrence in
+        row-major order), and must return both the value AND that
+        canonical position.
+
+BUG DEMONSTRATED BELOW:
+The buggy version below computes the prefix sum with an off-by-one error
+(it forgets the standard inclusion-exclusion correction), producing wrong
+SUM results, and it scans for MIN/MAX using arbitrary iteration order
+(e.g. via min()/max() with no explicit position tracking), so on ties it
+does not deterministically return the first row-major occurrence -
+different equally-valid implementations (or Python versions with
+different dict/list internals) could return different tied positions.
+"""
+
+from typing import List, Tuple
+
+
+# ---------------------------------------------------------------------------
+# BUGGY IMPLEMENTATION (for demonstration only)
+# ---------------------------------------------------------------------------
+class BuggyRectangleStats:
+    def __init__(self, grid: List[List[int]]):
+        self.grid = grid
+        rows, cols = len(grid), len(grid[0])
+        # BUG: prefix table built WITHOUT the inclusion-exclusion correction
+        # (missing "- prefix[r][c]" term), causing overcounting.
+        prefix = [[0] * (cols + 1) for _ in range(rows + 1)]
+        for r in range(rows):
+            for c in range(cols):
+                prefix[r + 1][c + 1] = (
+                    prefix[r][c + 1] + prefix[r + 1][c] + grid[r][c]
+                    # missing: - prefix[r][c]
+                )
+        self.prefix = prefix
+
+    def sum_query(self, r1, c1, r2, c2):
+        p = self.prefix
+        return p[r2 + 1][c2 + 1] - p[r1][c2 + 1] - p[r2 + 1][c1] + p[r1][c1]
+
+    def max_query(self, r1, c1, r2, c2):
+        # BUG: no deterministic tie handling - just returns the max value,
+        # not the canonical first-occurrence position, and uses max()
+        # over an unordered generator.
+        values = {
+            self.grid[r][c]
+            for r in range(r1, r2 + 1)
+            for c in range(c1, c2 + 1)
+        }
+        return max(values)  # position information lost entirely
+
+
+def demonstrate_bug():
+    grid = [
+        [1, 2, 3],
+        [4, 5, 3],
+        [7, 8, 9],
+    ]
+    buggy = BuggyRectangleStats(grid)
+
+    # SUM bug: rectangle (0,0)-(1,1) should be 1+2+4+5 = 12
+    wrong_sum = buggy.sum_query(0, 0, 1, 1)
+    print(f"[BUG] sum_query(0,0,1,1) = {wrong_sum} (expected 12)")
+
+    # MAX tie bug: rectangle (0,0)-(1,2) contains value 3 twice
+    # (grid[0][2]=3 and grid[1][2]=3). Deterministic rule says the
+    # first row-major occurrence (0,2) should be reported, but the
+    # buggy version returns only the value with no position at all.
+    wrong_max_val = buggy.max_query(0, 0, 1, 2)
+    print(f"[BUG] max_query(0,0,1,2) = {wrong_max_val} "
+          f"(value only, no canonical position; ties unresolved)")
+
+
+# ---------------------------------------------------------------------------
+# CORRECTED IMPLEMENTATION
+# ---------------------------------------------------------------------------
+class RectangleStatsEngine:
+    """
+    Preprocessing: O(rows*cols) 2D prefix-sum table (for SUM only).
+    Query:
+      - sum_query: O(1) via prefix-sum table, numerically exact.
+      - min_query / max_query: O(area) direct scan, deterministic tie
+        handling (first row-major occurrence wins), returning (value, (r, c)).
+    """
+
+    def __init__(self, grid: List[List[int]]):
+        if not grid or not grid[0]:
+            raise ValueError("grid must be non-empty")
+        self.grid = grid
+        rows, cols = len(grid), len(grid[0])
+
+        # Correct inclusion-exclusion prefix sum, size (rows+1) x (cols+1).
+        prefix = [[0] * (cols + 1) for _ in range(rows + 1)]
+        for r in range(rows):
+            row_sum = 0
+            for c in range(cols):
+                row_sum += grid[r][c]
+                prefix[r + 1][c + 1] = prefix[r][c + 1] + row_sum
+        self.prefix = prefix
+        self.rows = rows
+        self.cols = cols
+
+    def _validate(self, r1, c1, r2, c2):
+        if not (0 <= r1 <= r2 < self.rows and 0 <= c1 <= c2 < self.cols):
+            raise ValueError("invalid rectangle bounds")
+
+    def sum_query(self, r1: int, c1: int, r2: int, c2: int) -> int:
+        """O(1) exact sum over inclusive rectangle [r1..r2] x [c1..c2]."""
+        self._validate(r1, c1, r2, c2)
+        p = self.prefix
+        return p[r2 + 1][c2 + 1] - p[r1][c2 + 1] - p[r2 + 1][c1] + p[r1][c1]
+
+    def _extremum_query(self, r1, c1, r2, c2, want_max: bool) -> Tuple[int, Tuple[int, int]]:
+        """
+        Direct O(area) scan in strict row-major order.
+        Tie handling: the FIRST cell encountered in row-major order that
+        attains the extreme value is the canonical answer. Since we only
+        update on strict improvement (> for max, < for min), an
+        already-recorded earlier tie is never overwritten by a later one.
+        """
+        self._validate(r1, c1, r2, c2)
+        grid = self.grid
+        best_val = grid[r1][c1]
+        best_pos = (r1, c1)
+        for r in range(r1, r2 + 1):
+            for c in range(c1, c2 + 1):
+                v = grid[r][c]
+                if want_max:
+                    if v > best_val:
+                        best_val = v
+                        best_pos = (r, c)
+                else:
+                    if v < best_val:
+                        best_val = v
+                        best_pos = (r, c)
+        return best_val, best_pos
+
+    def max_query(self, r1: int, c1: int, r2: int, c2: int) -> Tuple[int, Tuple[int, int]]:
+        return self._extremum_query(r1, c1, r2, c2, want_max=True)
+
+    def min_query(self, r1: int, c1: int, r2: int, c2: int) -> Tuple[int, Tuple[int, int]]:
+        return self._extremum_query(r1, c1, r2, c2, want_max=False)
+
+
+def verify_fix():
+    grid = [
+        [1, 2, 3],
+        [4, 5, 3],
+        [7, 8, 9],
+    ]
+    fixed = RectangleStatsEngine(grid)
+
+    correct_sum = fixed.sum_query(0, 0, 1, 1)
+    assert correct_sum == 12, f"expected 12, got {correct_sum}"
+    print(f"[FIXED] sum_query(0,0,1,1) = {correct_sum} (correct)")
+
+    val, pos = fixed.max_query(0, 0, 1, 2)
+    assert (val, pos) == (5, (1, 1)), f"expected (5,(1,1)), got {(val, pos)}"
+    print(f"[FIXED] max_query(0,0,1,2) = value {val} at {pos} (correct)")
+
+    # Explicit tie test: two 3's at (0,2) and (1,2); first row-major wins
+    val2, pos2 = fixed.max_query(0, 2, 1, 2)
+    assert (val2, pos2) == (3, (0, 2)), f"expected (3,(0,2)), got {(val2, pos2)}"
+    print(f"[FIXED] max_query(0,2,1,2) tie -> value {val2} at {pos2} "
+          f"(deterministic first-occurrence, correct)")
+
+    full_sum = fixed.sum_query(0, 0, 2, 2)
+    assert full_sum == sum(sum(row) for row in grid)
+    print(f"[FIXED] full grid sum = {full_sum} (correct)")
+
+
+if __name__ == "__main__":
+    print("=== Demonstrating bug ===")
+    demonstrate_bug()
+    print("\n=== Verifying fix ===")
+    verify_fix()
+```

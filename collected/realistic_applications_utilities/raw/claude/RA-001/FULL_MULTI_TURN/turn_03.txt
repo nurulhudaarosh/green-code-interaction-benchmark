@@ -1,0 +1,189 @@
+```python
+import csv
+from collections import defaultdict
+from datetime import datetime
+
+
+class ExpenseAnalyzer:
+    def __init__(self):
+        self.expenses = []  # each item: {"date": "YYYY-MM-DD", "category": str, "amount": float, "description": str}
+        self.errors = []    # records of skipped/malformed rows: {"row": n, "reason": str, "data": raw}
+
+    def add_expense(self, date, category, amount, description="", row_num=None):
+        """Validates and adds a single expense. Returns True if added, False if rejected."""
+        raw = {"date": date, "category": category, "amount": amount, "description": description}
+
+        # --- Validate date ---
+        if not date or not str(date).strip():
+            self._log_error(row_num, "Missing date", raw)
+            return False
+        try:
+            parsed_date = datetime.strptime(str(date).strip(), "%Y-%m-%d")
+        except ValueError:
+            self._log_error(row_num, f"Invalid date format: '{date}' (expected YYYY-MM-DD)", raw)
+            return False
+
+        # --- Validate category ---
+        if not category or not str(category).strip():
+            self._log_error(row_num, "Missing category", raw)
+            return False
+        category = str(category).strip()
+
+        # --- Validate amount ---
+        if amount is None or str(amount).strip() == "":
+            self._log_error(row_num, "Missing amount", raw)
+            return False
+        try:
+            amount_val = float(str(amount).replace(",", "").replace("$", "").strip())
+        except (ValueError, TypeError):
+            self._log_error(row_num, f"Invalid amount: '{amount}' (not a number)", raw)
+            return False
+
+        if amount_val < 0:
+            self._log_error(row_num, f"Negative amount rejected: {amount_val}", raw)
+            return False
+
+        # --- All good ---
+        self.expenses.append({
+            "date": parsed_date.strftime("%Y-%m-%d"),
+            "category": category,
+            "amount": amount_val,
+            "description": str(description).strip() if description else ""
+        })
+        return True
+
+    def _log_error(self, row_num, reason, raw):
+        self.errors.append({"row": row_num, "reason": reason, "data": raw})
+
+    def load_from_csv(self, filepath):
+        """Expects columns: date, category, amount, description. Skips malformed rows instead of crashing."""
+        try:
+            with open(filepath, newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+
+                required_cols = {"date", "category", "amount"}
+                if reader.fieldnames is None or not required_cols.issubset(set(reader.fieldnames)):
+                    raise ValueError(
+                        f"CSV missing required columns. Found: {reader.fieldnames}, "
+                        f"required: {sorted(required_cols)}"
+                    )
+
+                for i, row in enumerate(reader, start=2):  # start=2: header is row 1
+                    self.add_expense(
+                        row.get("date"),
+                        row.get("category"),
+                        row.get("amount"),
+                        row.get("description", ""),
+                        row_num=i
+                    )
+        except FileNotFoundError:
+            raise FileNotFoundError(f"CSV file not found: {filepath}")
+        except csv.Error as e:
+            raise ValueError(f"CSV parsing error in {filepath}: {e}")
+
+    def filter_expenses(self, min_amount=None, max_amount=None, category=None):
+        """Returns expenses matching the given filters (all optional, combined with AND)."""
+        result = self.expenses
+        if min_amount is not None:
+            result = [e for e in result if e["amount"] >= min_amount]
+        if max_amount is not None:
+            result = [e for e in result if e["amount"] <= max_amount]
+        if category is not None:
+            result = [e for e in result if e["category"].lower() == category.lower()]
+        return result
+
+    def total_spent(self, min_amount=None):
+        expenses = self.filter_expenses(min_amount=min_amount)
+        return sum(e["amount"] for e in expenses)
+
+    def total_by_category(self, min_amount=None):
+        totals = defaultdict(float)
+        for e in self.filter_expenses(min_amount=min_amount):
+            totals[e["category"]] += e["amount"]
+        return dict(sorted(totals.items(), key=lambda x: -x[1]))
+
+    def total_by_month(self, min_amount=None):
+        totals = defaultdict(float)
+        for e in self.filter_expenses(min_amount=min_amount):
+            month_key = datetime.strptime(e["date"], "%Y-%m-%d").strftime("%Y-%m")
+            totals[month_key] += e["amount"]
+        return dict(sorted(totals.items()))
+
+    def top_expenses(self, n=5, min_amount=None):
+        expenses = self.filter_expenses(min_amount=min_amount)
+        return sorted(expenses, key=lambda x: -x["amount"])[:n]
+
+    def average_expense(self, min_amount=None):
+        expenses = self.filter_expenses(min_amount=min_amount)
+        return sum(e["amount"] for e in expenses) / len(expenses) if expenses else 0
+
+    def count_below_minimum(self, min_amount):
+        """Count and sum of expenses that fall below a given minimum (useful for spotting excluded small spend)."""
+        below = [e for e in self.expenses if e["amount"] < min_amount]
+        return {"count": len(below), "total": sum(e["amount"] for e in below)}
+
+    def print_summary(self, min_amount=None):
+        print("=" * 40)
+        print("EXPENSE SUMMARY")
+        if min_amount is not None:
+            print(f"(Filtered: amount >= ${min_amount:,.2f})")
+        print("=" * 40)
+
+        expenses = self.filter_expenses(min_amount=min_amount)
+
+        print(f"Total spent: ${self.total_spent(min_amount):,.2f}")
+        print(f"Number of valid transactions: {len(expenses)}")
+        print(f"Number of rejected/malformed rows: {len(self.errors)}")
+        print(f"Average transaction: ${self.average_expense(min_amount):,.2f}")
+
+        if min_amount is not None:
+            excluded = self.count_below_minimum(min_amount)
+            print(f"Excluded (below minimum): {excluded['count']} transactions, ${excluded['total']:,.2f}")
+
+        print("\nBy Category:")
+        for cat, amt in self.total_by_category(min_amount).items():
+            print(f"  {cat:<20} ${amt:,.2f}")
+
+        print("\nBy Month:")
+        for month, amt in self.total_by_month(min_amount).items():
+            print(f"  {month:<10} ${amt:,.2f}")
+
+        print("\nTop 5 Expenses:")
+        for e in self.top_expenses(5, min_amount):
+            print(f"  {e['date']}  {e['category']:<15} ${e['amount']:,.2f}  {e['description']}")
+
+        if self.errors:
+            print("\nRejected Rows:")
+            for err in self.errors:
+                row_label = f"row {err['row']}" if err["row"] is not None else "row ?"
+                print(f"  [{row_label}] {err['reason']} -> {err['data']}")
+
+
+# --- Example usage with sample data, including malformed records ---
+if __name__ == "__main__":
+    analyzer = ExpenseAnalyzer()
+
+    sample_data = [
+        ("2024-01-05", "Groceries", "85.40", "Weekly shop"),
+        ("2024-01-10", "Rent", "1200.00", "January rent"),
+        ("", "Entertainment", "45.00", "Missing date"),
+        ("2024-01-20", "", "62.30", "Missing category"),
+        ("2024-02-01", "Utilities", "not_a_number", "Bad amount"),
+        ("2024/02/05", "Groceries", "90.10", "Bad date format"),
+        ("2024-02-10", "Rent", "-1200.00", "Negative amount"),
+        ("2024-02-18", "Dining", "$34.50", "Amount with currency symbol"),
+        ("2024-02-20", "Coffee", "4.50", "Small daily expense"),
+        (None, None, None, None),
+    ]
+
+    for i, (date, category, amount, desc) in enumerate(sample_data, start=2):
+        analyzer.add_expense(date, category, amount, desc, row_num=i)
+
+    print("--- Full summary ---")
+    analyzer.print_summary()
+
+    print("\n\n--- Filtered summary (min $50) ---")
+    analyzer.print_summary(min_amount=50)
+```
+
+Added `filter_expenses()` as the central filtering point (min/max amount, category), and threaded an optional `min_amount` parameter through `total_spent`, `total_by_category`, `total_by_month`, `top_expenses`, and `average_expense`. `count_below_minimum()` and the summary's "Excluded" line make it easy to see what a minimum-amount filter is hiding, instead of just silently dropping small transactions.

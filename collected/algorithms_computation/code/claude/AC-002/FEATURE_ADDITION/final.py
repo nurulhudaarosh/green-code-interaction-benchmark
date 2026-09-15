@@ -1,0 +1,171 @@
+"""
+Deterministic package build-order resolver (Dependency Build Planner).
+
+Given a list of packages and prerequisite pairs (a, b) meaning
+"package a depends on package b" (b must be built before a), compute:
+  1. A deterministic valid build order (topological sort).
+  2. The number of dependency levels (longest prerequisite chain).
+
+If a cycle exists, returns build_order=[] and levels=-1.
+
+Optional feature: when include_summary=True, an additional third
+return value `operation_summary` is produced, reporting a deterministic
+count of the algorithm's major computational decisions/operations.
+When include_summary=False (default), behavior, return shape, and
+values are identical to the original two-field version.
+
+Standard library only. No randomness, no network, no external services.
+"""
+
+import heapq
+from collections import defaultdict
+from typing import List, Tuple, Dict, Set, Union, Optional
+
+
+def build_order(
+    packages: List[str],
+    prerequisites: List[Tuple[str, str]],
+    include_summary: bool = False,
+) -> Union[Tuple[List[str], int], Tuple[List[str], int, Dict[str, int]]]:
+    """
+    Args:
+        packages: list of all package names (may include isolated packages).
+        prerequisites: list of (package, prerequisite) tuples meaning
+                        `package` depends on `prerequisite`.
+        include_summary: if True, also return a deterministic
+                          `operation_summary` dict as a third tuple element.
+                          If False (default), original two-field behavior
+                          is preserved exactly.
+
+    Returns:
+        If include_summary is False (default):
+            (order, levels)
+        If include_summary is True:
+            (order, levels, operation_summary)
+
+        order  - deterministic list of packages in valid build order,
+                 or [] if a cycle is detected.
+        levels - number of dependency levels (max chain length),
+                 or -1 if a cycle is detected.
+        operation_summary - dict with deterministic counts of major
+                 computational decisions made during the run:
+                    {
+                        "heap_pushes": int,
+                        "heap_pops": int,
+                        "in_degree_decrements": int,
+                        "depth_updates": int,
+                        "total_operations": int,
+                        "cycle_detected": bool,
+                    }
+    """
+    # Normalize: ensure every referenced package is known.
+    all_packages: Set[str] = set(packages)
+    for a, b in prerequisites:
+        all_packages.add(a)
+        all_packages.add(b)
+
+    graph: Dict[str, Set[str]] = defaultdict(set)   # prereq -> dependents
+    in_degree: Dict[str, int] = {p: 0 for p in all_packages}
+
+    for pkg, prereq in prerequisites:
+        if pkg not in graph[prereq]:
+            graph[prereq].add(pkg)
+            in_degree[pkg] += 1
+
+    # depth[p] = 1 + max(depth of all prerequisites of p); 1 if no prerequisites.
+    depth: Dict[str, int] = {p: 1 for p in all_packages}
+
+    # Operation counters (only meaningful/used when include_summary=True,
+    # but tracked unconditionally at negligible cost so the core loop
+    # below is identical regardless of the flag).
+    heap_pushes = 0
+    heap_pops = 0
+    in_degree_decrements = 0
+    depth_updates = 0
+
+    # Min-heap keyed on package name for deterministic tie-breaking.
+    heap = [p for p, deg in in_degree.items() if deg == 0]
+    heap_pushes += len(heap)
+    heapq.heapify(heap)
+
+    order: List[str] = []
+
+    while heap:
+        current = heapq.heappop(heap)
+        heap_pops += 1
+        order.append(current)
+
+        # Process dependents in sorted order for determinism.
+        for dependent in sorted(graph[current]):
+            if depth[current] + 1 > depth[dependent]:
+                depth[dependent] = depth[current] + 1
+                depth_updates += 1
+
+            in_degree[dependent] -= 1
+            in_degree_decrements += 1
+            if in_degree[dependent] == 0:
+                heapq.heappush(heap, dependent)
+                heap_pushes += 1
+
+    cycle_detected = len(order) != len(all_packages)
+
+    if cycle_detected:
+        result_order: List[str] = []
+        result_levels = -1
+    else:
+        result_order = order
+        result_levels = max(depth.values()) if order else 0
+
+    if not include_summary:
+        # Original contract: unchanged in every respect.
+        return result_order, result_levels
+
+    operation_summary: Dict[str, int] = {
+        "heap_pushes": heap_pushes,
+        "heap_pops": heap_pops,
+        "in_degree_decrements": in_degree_decrements,
+        "depth_updates": depth_updates,
+        "total_operations": heap_pushes + heap_pops + in_degree_decrements + depth_updates,
+        "cycle_detected": cycle_detected,
+    }
+    return result_order, result_levels, operation_summary
+
+
+def _demo() -> None:
+    packages = ["a", "b", "c", "d", "e"]
+    # a depends on b and c; b depends on d; c depends on d; e has no deps.
+    prerequisites = [
+        ("a", "b"),
+        ("a", "c"),
+        ("b", "d"),
+        ("c", "d"),
+    ]
+
+    # Original behavior (feature disabled) — unchanged.
+    order, levels = build_order(packages, prerequisites)
+    print("Build order:", order)
+    print("Levels:", levels)
+
+    # New behavior (feature enabled).
+    order2, levels2, summary = build_order(packages, prerequisites, include_summary=True)
+    print("\nWith summary:")
+    print("Build order:", order2)
+    print("Levels:", levels2)
+    print("Operation summary:", summary)
+
+    # Cycle example: x -> y -> z -> x
+    cyclic_packages = ["x", "y", "z"]
+    cyclic_prereqs = [("x", "y"), ("y", "z"), ("z", "x")]
+
+    order3, levels3 = build_order(cyclic_packages, cyclic_prereqs)
+    print("\nCyclic build order:", order3)
+    print("Cyclic levels:", levels3)
+
+    order4, levels4, summary4 = build_order(cyclic_packages, cyclic_prereqs, include_summary=True)
+    print("Cyclic build order (with summary):", order4)
+    print("Cyclic levels (with summary):", levels4)
+    print("Cyclic operation summary:", summary4)
+
+
+if __name__ == "__main__":
+    _demo()

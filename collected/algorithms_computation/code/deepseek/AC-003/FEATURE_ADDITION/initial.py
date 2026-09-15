@@ -1,0 +1,154 @@
+"""
+Shortest Path from Single Source in Directed Graph with Non-negative Weights
+===========================================================================
+Problem:
+    Given a directed graph with n vertices (0 to n-1) and m edges, each with
+    non-negative integer weight, and a source vertex s, compute the shortest
+    distance from s to every other vertex. If a vertex is unreachable from s,
+    its distance should be -1.
+
+Constraints:
+    - 1 ≤ n ≤ 10^5
+    - 0 ≤ m ≤ 2*10^5
+    - 0 ≤ weight ≤ 10^9
+    - Graph may contain multiple edges and self-loops.
+    - All weights are non-negative.
+
+Output:
+    A list `dist` of length n where dist[i] is the shortest distance from s to i,
+    or -1 if i is unreachable.
+
+Algorithm:
+    Dijkstra's algorithm using adjacency lists and a binary heap (via heapq).
+    Time complexity: O((n + m) log n)
+    Space complexity: O(n + m)
+
+Implementation:
+    - `shortest_path(n, edges, s)` expects:
+        n: int
+        edges: List[Tuple[int, int, int]]  # (u, v, w) meaning edge u -> v with weight w
+        s: int
+    - Returns List[int] of length n.
+"""
+
+import heapq
+from typing import List, Tuple
+
+def shortest_path(n: int, edges: List[Tuple[int, int, int]], s: int) -> List[int]:
+    """
+    Computes shortest distances from source s to all vertices in a directed graph.
+
+    Args:
+        n: number of vertices (0..n-1)
+        edges: list of (u, v, w) where edge u -> v has weight w (w >= 0)
+        s: source vertex
+
+    Returns:
+        dist: list of length n where dist[i] is shortest distance from s to i,
+              or -1 if unreachable.
+    """
+    # Build adjacency list
+    adj = [[] for _ in range(n)]
+    for u, v, w in edges:
+        # Only add edge if weight is non-negative (already guaranteed but safe)
+        if w >= 0:
+            adj[u].append((v, w))
+        # If negative weights were allowed, we'd need Bellman-Ford,
+        # but problem states non-negative.
+
+    # Initialize distances
+    INF = 10**30  # larger than any possible path (max weight 1e9 * 1e5 edges = 1e14)
+    dist = [INF] * n
+    dist[s] = 0
+
+    # Priority queue: (distance, vertex)
+    pq = [(0, s)]
+
+    while pq:
+        d, u = heapq.heappop(pq)
+        # If this is an outdated entry, skip it
+        if d != dist[u]:
+            continue
+
+        # Relax edges from u
+        for v, w in adj[u]:
+            nd = d + w
+            if nd < dist[v]:
+                dist[v] = nd
+                heapq.heappush(pq, (nd, v))
+
+    # Convert INF to -1 for unreachable vertices
+    return [-1 if d == INF else d for d in dist]
+
+
+# Example usage and test cases (self-contained)
+if __name__ == "__main__":
+    # Test 1: Simple graph
+    # 0 -> 1 (5), 1 -> 2 (3), 0 -> 2 (10)
+    n1 = 3
+    edges1 = [(0, 1, 5), (1, 2, 3), (0, 2, 10)]
+    s1 = 0
+    expected1 = [0, 5, 8]  # 0->2 via 1 is shorter
+    result1 = shortest_path(n1, edges1, s1)
+    print(f"Test 1: {result1} (expected {expected1})")
+    assert result1 == expected1
+
+    # Test 2: Disconnected vertex
+    # 0 -> 1 (2), vertex 2 isolated
+    n2 = 3
+    edges2 = [(0, 1, 2)]
+    s2 = 0
+    expected2 = [0, 2, -1]
+    result2 = shortest_path(n2, edges2, s2)
+    print(f"Test 2: {result2} (expected {expected2})")
+    assert result2 == expected2
+
+    # Test 3: Multiple edges and self-loop
+    # 0 -> 1 (2), 0 -> 1 (5), 1 -> 1 (1), 1 -> 2 (3)
+    n3 = 3
+    edges3 = [(0, 1, 2), (0, 1, 5), (1, 1, 1), (1, 2, 3)]
+    s3 = 0
+    expected3 = [0, 2, 5]
+    result3 = shortest_path(n3, edges3, s3)
+    print(f"Test 3: {result3} (expected {expected3})")
+    assert result3 == expected3
+
+    # Test 4: Zero-weight edges
+    # 0 -> 1 (0), 1 -> 2 (0)
+    n4 = 3
+    edges4 = [(0, 1, 0), (1, 2, 0)]
+    s4 = 0
+    expected4 = [0, 0, 0]
+    result4 = shortest_path(n4, edges4, s4)
+    print(f"Test 4: {result4} (expected {expected4})")
+    assert result4 == expected4
+
+    # Test 5: Larger graph
+    n5 = 5
+    edges5 = [
+        (0, 1, 10),
+        (0, 2, 3),
+        (1, 2, 1),
+        (1, 3, 2),
+        (2, 1, 4),
+        (2, 3, 8),
+        (2, 4, 2),
+        (3, 4, 7),
+        (4, 3, 9),
+    ]
+    s5 = 0
+    expected5 = [0, 7, 3, 9, 5]  # 0->2->4 is 5, 0->2->1->3 is 3+4+2=9
+    result5 = shortest_path(n5, edges5, s5)
+    print(f"Test 5: {result5} (expected {expected5})")
+    assert result5 == expected5
+
+    # Test 6: Single vertex
+    n6 = 1
+    edges6 = []
+    s6 = 0
+    expected6 = [0]
+    result6 = shortest_path(n6, edges6, s6)
+    print(f"Test 6: {result6} (expected {expected6})")
+    assert result6 == expected6
+
+    print("\nAll tests passed!")

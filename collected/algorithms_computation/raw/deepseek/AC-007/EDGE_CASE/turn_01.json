@@ -1,0 +1,11 @@
+{
+  "task_id": "AC-007",
+  "model": "deepseek",
+  "interaction": "EDGE_CASE",
+  "turn": 1,
+  "saved_at": "2026-09-06T04:42:24.251149+00:00",
+  "response_sha256": "a191d9c9e87791c8d7361c437dc5002ddd23cd505e00d53fec346e1e34ccefd3",
+  "code_sha256": "99dde5aa61ba6e6bcac47d3b134666b93c75015c8ed88c0b94bbbc3f2ad19ce9",
+  "raw_file": ".collection/raw/deepseek/AC-007/EDGE_CASE/turn_01.txt",
+  "code_file": ".collection/code/deepseek/AC-007/EDGE_CASE/initial.py"
+}

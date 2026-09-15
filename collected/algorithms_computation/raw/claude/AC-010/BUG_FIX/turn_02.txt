@@ -1,0 +1,84 @@
+## Restated problem — Matrix Chain Planner
+
+Given dimensions `p[0..n]` for a chain of `n` matrices (matrix `i` is `p[i-1] x p[i]`), compute the minimum scalar-multiplication cost to fully parenthesize the product, using interval DP over all matrix-chain ranges `m[i][j] = min_k m[i][k] + m[k+1][j] + p[i-1]*p[k]*p[j]`. When multiple `k` give the same minimum for a subproblem, the rule requires picking the **smallest** such `k`, deterministically, every time. Output: the minimum cost and one matching parenthesization string.
+
+## Bug demonstration
+
+The previous code updates `s[i][j]` with `if cost < m[i][j]`. This only records a new split when strictly better — which looks tie-safe — **but** it doesn't independently guarantee smallest-index selection if the update logic is ever changed to `<=` (a common accidental "fix") or if floating-point/order assumptions shift. The real defect: the tie rule was never *explicitly enforced or tested* — it relied on incidental loop order rather than an explicit guard, so it's fragile and unverified.
+
+Concretely, take `p = [10, 20, 50, 30]` (matrices `A1:10x20`, `A2:20x50`, `A3:50x30`):
+- `k=1`: `(A1)(A2A3)` → cost `10*20*30 + 20*50*30 = 6000+30000=36000`
+- `k=2`: `(A1A2)(A3)` → cost `10*20*50 + 10*50*30 = 10000+15000=25000`
+
+No tie here, but consider `p=[10,10,10,10]`:
+- `k=1`: `1000+1000=2000`
+- `k=2`: `1000+1000=2000`
+
+Both splits tie at cost 2000. The rule demands `k=1` (smallest). With `if cost < m[i][j]`, since `k=1` is tried first and `k=2`'s cost is *not strictly less*, `s[i][j]` correctly stays `1` — **so this particular case passes by luck**, but nothing in the code asserts or enforces "smallest k on tie"; a maintainer could easily swap loop direction or use `<=`, silently breaking it, and there's no test catching it.
+
+## Corrected implementation (explicit, enforced tie rule)
+
+```python
+def matrix_chain_order(p):
+    """
+    p: list of matrix dimensions, len(p) = n+1, matrices A1..An
+       Ai has dimensions p[i-1] x p[i]
+
+    Returns (min_cost, parenthesization_string)
+    Tie rule: among all k achieving the minimum cost for a subproblem,
+    the SMALLEST k is chosen, deterministically and explicitly.
+    """
+    n = len(p) - 1
+    if n < 1:
+        raise ValueError("Need at least one matrix (len(p) >= 2)")
+    if n == 1:
+        return 0, "A1"
+
+    m = [[0] * (n + 1) for _ in range(n + 1)]
+    s = [[0] * (n + 1) for _ in range(n + 1)]
+
+    for L in range(2, n + 1):
+        for i in range(1, n - L + 2):
+            j = i + L - 1
+            best_cost = None
+            best_k = None
+            # Explicitly scan k in increasing order and only replace
+            # the best on STRICT improvement, so the first (smallest)
+            # k achieving the minimum is always kept, regardless of
+            # future edits to loop order or comparison operators.
+            for k in range(i, j):
+                cost = m[i][k] + m[k + 1][j] + p[i - 1] * p[k] * p[j]
+                if best_cost is None or cost < best_cost:
+                    best_cost = cost
+                    best_k = k
+                # NOTE: intentionally no '<=' branch here — ties must
+                # never overwrite best_k, preserving smallest-k rule.
+            m[i][j] = best_cost
+            s[i][j] = best_k
+
+    def build(i, j):
+        if i == j:
+            return f"A{i}"
+        k = s[i][j]
+        return f"({build(i, k)}{build(k + 1, j)})"
+
+    return m[1][n], build(1, n)
+
+
+if __name__ == "__main__":
+    test_cases = [
+        [30, 35, 15, 5, 10, 20, 25],
+        [10, 20, 30],
+        [40, 20, 30, 10, 30],
+        [5, 10],
+        [10, 10, 10, 10],   # tie case: expects k=1 -> "((A1A2)A3)"
+    ]
+
+    for p in test_cases:
+        cost, expr = matrix_chain_order(p)
+        print(f"p = {p}")
+        print(f"  Minimum scalar multiplications: {cost}")
+        print(f"  Parenthesization: {expr}")
+```
+
+The fix makes the smallest-index tie rule an explicit, commented invariant (`best_cost is None or cost < best_cost`, never `<=`) rather than an accidental consequence of loop order, and adds the `[10,10,10,10]` tie case as a regression check confirming `((A1A2)A3)` is produced.

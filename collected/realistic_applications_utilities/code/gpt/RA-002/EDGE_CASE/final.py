@@ -1,0 +1,30 @@
+def reconcile_inventory(inventory, reorder_levels, updates):
+    inventory = inventory or {}
+    reorder_levels = reorder_levels or {}
+    updates = updates or {}
+
+    updated = dict(inventory)
+    unknown_skus = []
+
+    for sku, quantity in updates.items():
+        if sku not in updated:
+            unknown_skus.append(sku)
+            continue
+
+        if not isinstance(quantity, (int, float)) or quantity < 0:
+            continue
+
+        updated[sku] = quantity
+
+    low_stock = [
+        sku for sku, stock in updated.items()
+        if stock == 0 or (
+            sku in reorder_levels and stock <= reorder_levels[sku]
+        )
+    ]
+
+    return {
+        "updated": updated,
+        "low_stock": low_stock,
+        "unknown_skus": unknown_skus
+    }

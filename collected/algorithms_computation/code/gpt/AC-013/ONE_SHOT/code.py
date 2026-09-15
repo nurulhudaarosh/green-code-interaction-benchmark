@@ -1,0 +1,239 @@
+from typing import List, Tuple
+
+
+def preprocess_matrix(matrix: List[List[int]]) -> List[List[int]]:
+    """
+    Build a 2D prefix-sum table.
+
+    prefix[i][j] contains the sum of matrix cells in rows
+    0..i-1 and columns 0..j-1.
+
+    Time: O(R * C)
+    Space: O(R * C)
+    """
+    rows = len(matrix)
+
+    if rows == 0:
+        return [[0]]
+
+    cols = len(matrix[0])
+
+    if cols == 0:
+        return [[0] * (cols + 1) for _ in range(rows + 1)]
+
+    # Validate that the matrix is rectangular.
+    for row in matrix:
+        if len(row) != cols:
+            raise ValueError("Matrix must be rectangular.")
+
+    prefix = [[0] * (cols + 1) for _ in range(rows + 1)]
+
+    for r in range(rows):
+        row_sum = 0
+        for c in range(cols):
+            row_sum += matrix[r][c]
+            prefix[r + 1][c + 1] = (
+                prefix[r][c + 1] + row_sum
+            )
+
+    return prefix
+
+
+def rectangle_sum(
+    prefix: List[List[int]],
+    r1: int,
+    c1: int,
+    r2: int,
+    c2: int
+) -> int:
+    """
+    Return the sum of the inclusive rectangle
+    (r1, c1) to (r2, c2).
+
+    Time: O(1)
+    """
+    return (
+        prefix[r2 + 1][c2 + 1]
+        - prefix[r1][c2 + 1]
+        - prefix[r2 + 1][c1]
+        + prefix[r1][c1]
+    )
+
+
+def rectangle_extrema(
+    matrix: List[List[int]],
+    r1: int,
+    c1: int,
+    r2: int,
+    c2: int
+) -> Tuple[int, int]:
+    """
+    Return (minimum, maximum) by directly scanning
+    the inclusive rectangle.
+
+    Time: O((r2-r1+1) * (c2-c1+1))
+    """
+    minimum = matrix[r1][c1]
+    maximum = matrix[r1][c1]
+
+    for r in range(r1, r2 + 1):
+        for c in range(c1, c2 + 1):
+            value = matrix[r][c]
+
+            if value < minimum:
+                minimum = value
+
+            if value > maximum:
+                maximum = value
+
+    return minimum, maximum
+
+
+def validate_query(
+    matrix: List[List[int]],
+    r1: int,
+    c1: int,
+    r2: int,
+    c2: int
+) -> None:
+    """Validate an inclusive rectangle query."""
+    rows = len(matrix)
+
+    if rows == 0:
+        raise ValueError("Cannot query an empty matrix.")
+
+    cols = len(matrix[0])
+
+    if cols == 0:
+        raise ValueError("Cannot query a matrix with zero columns.")
+
+    if not (0 <= r1 <= r2 < rows):
+        raise ValueError("Invalid row bounds.")
+
+    if not (0 <= c1 <= c2 < cols):
+        raise ValueError("Invalid column bounds.")
+
+
+def answer_rectangle_queries(
+    matrix: List[List[int]],
+    queries: List[Tuple[int, int, int, int]]
+) -> List[Tuple[int, int, int]]:
+    """
+    Answer all rectangle queries.
+
+    Each query is:
+        (r1, c1, r2, c2)
+
+    where both corners are inclusive.
+
+    Each result is:
+        (sum, minimum, maximum)
+
+    Returns results in the same order as the queries.
+    """
+    if not matrix:
+        if queries:
+            raise ValueError("Cannot query an empty matrix.")
+        return []
+
+    if not matrix[0]:
+        if queries:
+            raise ValueError("Cannot query a matrix with zero columns.")
+        return []
+
+    # Build the prefix-sum table once.
+    prefix = preprocess_matrix(matrix)
+
+    results = []
+
+    for r1, c1, r2, c2 in queries:
+        validate_query(matrix, r1, c1, r2, c2)
+
+        # Sum is answered in O(1).
+        total = rectangle_sum(prefix, r1, c1, r2, c2)
+
+        # Minimum and maximum are found by direct scanning.
+        minimum, maximum = rectangle_extrema(
+            matrix, r1, c1, r2, c2
+        )
+
+        results.append((total, minimum, maximum))
+
+    return results
+
+
+# -------------------------
+# Tests
+# -------------------------
+
+def run_tests() -> None:
+    matrix = [
+        [1, 2, 3, 4],
+        [5, 6, 7, 8],
+        [9, 10, 11, 12],
+        [13, 14, 15, 16],
+    ]
+
+    queries = [
+        (0, 0, 1, 1),  # 1,2,5,6
+        (1, 1, 2, 3),  # 6,7,8,10,11,12
+        (0, 0, 3, 3),  # entire matrix
+        (2, 2, 2, 2),  # single cell
+    ]
+
+    expected = [
+        (14, 1, 6),
+        (54, 6, 12),
+        (136, 1, 16),
+        (11, 11, 11),
+    ]
+
+    assert answer_rectangle_queries(matrix, queries) == expected
+
+    # Negative values.
+    matrix2 = [
+        [-5, 2, -1],
+        [4, -8, 3],
+        [7, 6, -2],
+    ]
+
+    queries2 = [
+        (0, 0, 2, 2),
+        (0, 0, 1, 1),
+        (1, 1, 2, 2),
+    ]
+
+    expected2 = [
+        (6, -8, 7),
+        (-7, -8, 4),
+        (-1, -8, 7),
+    ]
+
+    assert answer_rectangle_queries(matrix2, queries2) == expected2
+
+    # Repeated values.
+    matrix3 = [
+        [5, 5],
+        [5, 5],
+    ]
+
+    assert answer_rectangle_queries(
+        matrix3,
+        [(0, 0, 1, 1), (1, 1, 1, 1)]
+    ) == [
+        (20, 5, 5),
+        (5, 5, 5),
+    ]
+
+    # Invalid query.
+    try:
+        answer_rectangle_queries(matrix, [(2, 2, 1, 1)])
+        assert False, "Expected ValueError"
+    except ValueError:
+        pass
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()

@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""
+Offline NDJSON Analyzer
+
+Reads newline-delimited JSON (NDJSON) log records of the form:
+
+    {"user": {"id": "u1"}, "request": {"endpoint": "/api/x", "status": 200, "latency_ms": 123.4}}
+
+For each user, computes:
+  - request_count
+  - error_count   (status >= 400)
+  - avg_latency   (rounded to 3 decimals)
+  - top_endpoint  (most requested; ties broken lexically — smallest string wins)
+
+Malformed / unparseable lines can appear anywhere in the file (start, middle,
+end, interleaved) and are always skipped + counted, independent of position
+or surrounding valid records.
+
+Output is deterministic JSON: keys sorted, users sorted by ID, and endpoint
+ties resolved by an explicit (count desc, name asc) sort — never by
+relying on dict/Counter insertion order.
+
+Usage:
+    python ndjson_analyzer.py input.ndjson
+    cat input.ndjson | python ndjson_analyzer.py
+    python ndjson_analyzer.py input.ndjson -o output.json
+"""
+
+import sys
+import json
+import argparse
+from collections import defaultdict, Counter
+
+
+def parse_line(line):
+    """Parse a single NDJSON line, returning (user_id, endpoint, status, latency) or None if invalid."""
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        record = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+    if not isinstance(record, dict):
+        return None
+
+    user = record.get("user")
+    request = record.get("request")
+    if not isinstance(user, dict) or not isinstance(request, dict):
+        return None
+
+    user_id = user.get("id")
+    endpoint = request.get("endpoint")
+    status = request.get("status")
+    latency = request.get("latency_ms", request.get("latency"))
+
+    if user_id is None or endpoint is None:
+        return None
+    if not isinstance(status, (int, float)) or isinstance(status, bool):
+        return None
+    if not isinstance(latency, (int, float)) or isinstance(latency, bool):
+        return None
+
+    return str(user_id), str(endpoint), int(status), float(latency)
+
+
+def top_endpoint_for(endpoint_counts):
+    """
+    Deterministically pick the top endpoint.
+
+    Sort candidates by (-count, endpoint_name) so that:
+      - highest count wins
+      - ties are broken purely lexically (ascending), regardless of the
+        order endpoints were first seen or how Counter iterates internally
+    """
+    if not endpoint_counts:
+        return None
+    ranked = sorted(endpoint_counts.items(), key=lambda item: (-item[1], item[0]))
+    return ranked[0][0]
+
+
+def analyze(lines):
+    stats = defaultdict(lambda: {
+        "request_count": 0,
+        "error_count": 0,
+        "latency_sum": 0.0,
+        "endpoints": Counter(),
+    })
+    malformed_count = 0
+    malformed_line_numbers = []  # explicit record of *where* malformed lines occurred
+
+    for line_no, line in enumerate(lines, start=1):
+        parsed = parse_line(line)
+        if parsed is None:
+            # Empty lines are silently skipped (not counted as malformed);
+            # anything else that fails to parse/validate is malformed,
+            # regardless of its position in the file.
+            if line.strip():
+                malformed_count += 1
+                malformed_line_numbers.append(line_no)
+            continue
+
+        user_id, endpoint, status, latency = parsed
+        s = stats[user_id]
+        s["request_count"] += 1
+        s["latency_sum"] += latency
+        s["endpoints"][endpoint] += 1
+        if status >= 400:
+            s["error_count"] += 1
+
+    results = {}
+    for user_id, s in stats.items():
+        avg_latency = s["latency_sum"] / s["request_count"] if s["request_count"] else 0.0
+        results[user_id] = {
+            "request_count": s["request_count"],
+            "error_count": s["error_count"],
+            "avg_latency": round(avg_latency, 3),
+            "top_endpoint": top_endpoint_for(s["endpoints"]),
+        }
+
+    output = {
+        "users": dict(sorted(results.items(), key=lambda kv: kv[0])),
+        "malformed_lines": malformed_count,
+        "malformed_line_numbers": sorted(malformed_line_numbers),
+    }
+    return output
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Offline NDJSON log analyzer.")
+    parser.add_argument("input", nargs="?", help="Path to NDJSON file (default: stdin)")
+    parser.add_argument("-o", "--output", help="Path to write JSON output (default: stdout)")
+    args = parser.parse_args()
+
+    if args.input:
+        with open(args.input, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    else:
+        lines = sys.stdin.readlines()
+
+    result = analyze(lines)
+    output_json = json.dumps(result, indent=2, sort_keys=True)
+
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as f:
+            f.write(output_json + "\n")
+    else:
+        print(output_json)
+
+
+if __name__ == "__main__":
+    main()

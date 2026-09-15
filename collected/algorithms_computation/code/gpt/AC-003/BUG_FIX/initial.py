@@ -1,0 +1,150 @@
+"""
+Problem:
+Given a directed graph with non-negative edge weights and a source vertex,
+compute the shortest distance from the source to every vertex. If a vertex
+cannot be reached from the source, return -1 for that vertex.
+
+Key Constraints:
+- The graph is directed.
+- Edge weights are non-negative.
+- There may be unreachable vertices.
+- The solution should be deterministic.
+- Use an adjacency list representation.
+- Use Dijkstra's algorithm with a binary heap.
+- Only Python's standard library may be used.
+- No network access, APIs, external services, or randomness.
+
+Required Output:
+A list of shortest distances where result[v] is the shortest distance
+from the source to vertex v, or -1 if v is unreachable.
+
+Input Format:
+The solve() function expects:
+    n m
+    u v w
+    u v w
+    ...
+    source
+
+where:
+- n = number of vertices, numbered 0 through n-1
+- m = number of directed edges
+- each edge is u -> v with non-negative weight w
+- source = starting vertex
+
+Output Format:
+Print n integers separated by spaces.
+
+Example:
+Input:
+5 6
+0 1 4
+0 2 1
+2 1 2
+1 3 1
+2 3 5
+3 4 3
+0
+
+Output:
+0 3 1 4 7
+
+
+Algorithm:
+1. Store the directed graph using an adjacency list.
+2. Initialize every distance to infinity except the source, whose distance is 0.
+3. Use a binary min-heap (heapq) containing (distance, vertex).
+4. Repeatedly remove the vertex with the smallest tentative distance.
+5. Relax every outgoing edge:
+       new_distance = current_distance + weight
+   If this is smaller than the known distance, update it and push the
+   new pair into the heap.
+6. Vertices whose distance remains infinity are unreachable and are changed
+   to -1.
+
+Time Complexity:
+O((V + E) log V)
+
+Space Complexity:
+O(V + E)
+"""
+
+import sys
+import heapq
+
+
+def dijkstra(n, edges, source):
+    """Return shortest distances from source using Dijkstra's algorithm."""
+
+    # Adjacency list: graph[u] contains (v, weight)
+    graph = [[] for _ in range(n)]
+
+    for u, v, w in edges:
+        graph[u].append((v, w))
+
+    # Sort adjacency lists to make processing deterministic.
+    for neighbors in graph:
+        neighbors.sort()
+
+    INF = float("inf")
+    distance = [INF] * n
+    distance[source] = 0
+
+    # Binary min-heap containing (distance, vertex).
+    heap = [(0, source)]
+
+    while heap:
+        current_distance, u = heapq.heappop(heap)
+
+        # Ignore stale heap entries.
+        if current_distance != distance[u]:
+            continue
+
+        for v, weight in graph[u]:
+            new_distance = current_distance + weight
+
+            if new_distance < distance[v]:
+                distance[v] = new_distance
+                heapq.heappush(heap, (new_distance, v))
+
+    # Convert unreachable vertices from infinity to -1.
+    return [-1 if d == INF else d for d in distance]
+
+
+def solve():
+    data = sys.stdin.buffer.read().split()
+
+    if not data:
+        return
+
+    iterator = iter(data)
+
+    n = int(next(iterator))
+    m = int(next(iterator))
+
+    edges = []
+
+    for _ in range(m):
+        u = int(next(iterator))
+        v = int(next(iterator))
+        w = int(next(iterator))
+        edges.append((u, v, w))
+
+    source = int(next(iterator))
+
+    # Validate the source and vertices according to the stated format.
+    if not 0 <= source < n:
+        raise ValueError("Source vertex must be between 0 and n-1.")
+
+    for u, v, w in edges:
+        if not (0 <= u < n and 0 <= v < n):
+            raise ValueError("Vertex must be between 0 and n-1.")
+        if w < 0:
+            raise ValueError("Dijkstra's algorithm requires non-negative weights.")
+
+    result = dijkstra(n, edges, source)
+    sys.stdout.write(" ".join(map(str, result)))
+
+
+if __name__ == "__main__":
+    solve()

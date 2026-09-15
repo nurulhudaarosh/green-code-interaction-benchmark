@@ -1,0 +1,48 @@
+from pathlib import Path
+from PIL import Image
+
+def generate_thumbnails(input_dir, cache_dir, max_dim=128):
+    """
+    Recursively generate aspect-ratio-preserving thumbnails while
+    mirroring the input directory structure.
+
+    Empty subdirectories are also mirrored in cache_dir.
+    """
+    input_dir = Path(input_dir)
+    cache_dir = Path(cache_dir)
+
+    valid_extensions = {".png", ".jpg", ".jpeg"}
+    processed_count = 0
+
+    # Create the root cache directory.
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    # Mirror all directories, including empty ones.
+    for directory in input_dir.rglob("*"):
+        if directory.is_dir():
+            relative_dir = directory.relative_to(input_dir)
+            (cache_dir / relative_dir).mkdir(parents=True, exist_ok=True)
+
+    # Process valid images.
+    for src_path in input_dir.rglob("*"):
+        if not src_path.is_file() or src_path.suffix.lower() not in valid_extensions:
+            continue
+
+        relative_path = src_path.relative_to(input_dir)
+        dst_path = cache_dir / relative_path
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            with Image.open(src_path) as img:
+                thumbnail = img.copy()
+                thumbnail.thumbnail(
+                    (max_dim, max_dim),
+                    Image.Resampling.LANCZOS
+                )
+                thumbnail.save(dst_path)
+                processed_count += 1
+
+        except (OSError, ValueError):
+            continue
+
+    return processed_count

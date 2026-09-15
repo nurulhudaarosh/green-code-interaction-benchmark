@@ -1,0 +1,172 @@
+```python
+"""
+convert_format.py
+
+Batch-convert all images in a directory to PNG or JPEG, safely flattening
+transparency when converting to JPEG (since JPEG has no alpha channel).
+
+Usage:
+    from convert_format import convert_format
+    convert_format("input_images", "output_images", "JPEG")
+"""
+
+import os
+from pathlib import Path
+from PIL import Image
+
+# Extensions we'll attempt to read as images.
+SUPPORTED_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tiff", ".tif",
+    ".webp", ".ico", ".ppm", ".pgm",
+}
+
+
+def convert_format(
+    input_dir: str,
+    output_dir: str,
+    target_format: str,
+    background_color: tuple = (255, 255, 255),
+    jpeg_quality: int = 95,
+    overwrite: bool = True,
+) -> list:
+    """
+    Convert all images in `input_dir` to `target_format` ("PNG" or "JPEG"),
+    writing results to `output_dir`.
+
+    Transparency handling:
+        - Converting *to PNG*: alpha channel is preserved as-is.
+        - Converting *to JPEG*: JPEG doesn't support alpha, so any
+          transparency is flattened onto `background_color` (default white)
+          before saving, avoiding the common "colors look wrong / image
+          looks corrupted" problem of naively calling .convert("RGB") on
+          an RGBA image (which discards alpha instead of compositing it).
+
+    Args:
+        input_dir: Directory containing source images.
+        output_dir: Directory to write converted images to (created if needed).
+        target_format: "PNG" or "JPEG" (case-insensitive; "JPG" also accepted).
+        background_color: RGB tuple used to flatten transparency for JPEG.
+        jpeg_quality: Quality setting (1-95) used when saving JPEG.
+        overwrite: If False, skip files that already exist in output_dir.
+
+    Returns:
+        List of (source_path, dest_path) tuples for successfully converted files.
+
+    Raises:
+        ValueError: if target_format isn't PNG/JPEG.
+        FileNotFoundError: if input_dir doesn't exist.
+    """
+    target_format = target_format.strip().upper()
+    if target_format == "JPG":
+        target_format = "JPEG"
+    if target_format not in ("PNG", "JPEG"):
+        raise ValueError(f"target_format must be 'PNG' or 'JPEG', got {target_format!r}")
+
+    in_path = Path(input_dir)
+    out_path = Path(output_dir)
+
+    if not in_path.is_dir():
+        raise FileNotFoundError(f"input_dir does not exist or is not a directory: {input_dir}")
+
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    ext = ".png" if target_format == "PNG" else ".jpg"
+    converted = []
+    errors = []
+
+    for entry in sorted(in_path.iterdir()):
+        if not entry.is_file():
+            continue
+        if entry.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            continue
+
+        dest_file = out_path / (entry.stem + ext)
+
+        if dest_file.exists() and not overwrite:
+            continue
+
+        try:
+            with Image.open(entry) as img:
+                # Ensure any lazy-loaded formats (e.g. some GIF/webp frames)
+                # are fully loaded before we inspect their mode.
+                img.load()
+
+                if target_format == "PNG":
+                    # Preserve transparency; just normalize mode if needed.
+                    if img.mode not in ("RGBA", "RGB", "LA", "L", "P"):
+                        img = img.convert("RGBA" if "A" in img.mode else "RGB")
+                    img.save(dest_file, format="PNG")
+
+                else:  # target_format == "JPEG"
+                    img = _flatten_to_rgb(img, background_color)
+                    img.save(dest_file, format="JPEG", quality=jpeg_quality)
+
+            converted.append((str(entry), str(dest_file)))
+
+        except Exception as e:
+            errors.append((str(entry), str(e)))
+
+    if errors:
+        print(f"Converted {len(converted)} file(s); {len(errors)} failed:")
+        for path, msg in errors:
+            print(f"  - {path}: {msg}")
+    else:
+        print(f"Converted {len(converted)} file(s) to {target_format} in '{output_dir}'.")
+
+    return converted
+
+
+def _flatten_to_rgb(img: Image.Image, background_color: tuple) -> Image.Image:
+    """
+    Safely flatten an image with potential transparency onto a solid
+    background and return an RGB image suitable for JPEG saving.
+
+    Handles the common transparency-bearing modes:
+        - RGBA: alpha channel used directly as the composite mask.
+        - LA:   grayscale + alpha; converted to RGBA first, then composited.
+        - P:    palette mode which may have an embedded transparency index;
+                converted to RGBA if transparency info is present.
+    Any other mode is converted directly to RGB (no transparency to lose).
+    """
+    if img.mode == "P":
+        # Palette images can carry transparency via the 'transparency' info key.
+        if "transparency" in img.info:
+            img = img.convert("RGBA")
+        else:
+            return img.convert("RGB")
+
+    if img.mode == "LA":
+        img = img.convert("RGBA")
+
+    if img.mode == "RGBA":
+        background = Image.new("RGB", img.size, background_color)
+        # Use the alpha channel as the mask so partially transparent pixels
+        # blend proportionally with the background instead of being
+        # abruptly cut out.
+        background.paste(img, mask=img.split()[-1])
+        return background
+
+    # No alpha channel to worry about (e.g. RGB, L, CMYK, etc.)
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    return img
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Batch convert images to PNG or JPEG.")
+    parser.add_argument("input_dir", help="Directory with source images")
+    parser.add_argument("output_dir", help="Directory to write converted images")
+    parser.add_argument("target_format", help="PNG or JPEG")
+    parser.add_argument(
+        "--background",
+        default="255,255,255",
+        help="Comma-separated RGB background for JPEG flattening, e.g. '255,255,255'",
+    )
+    parser.add_argument("--quality", type=int, default=95, help="JPEG quality (1-95)")
+    args = parser.parse_args()
+
+    bg = tuple(int(x) for x in args.background.split(","))
+    convert_format(args.input_dir, args.output_dir, args.target_format, background_color=bg, jpeg_quality=args.quality)
+```

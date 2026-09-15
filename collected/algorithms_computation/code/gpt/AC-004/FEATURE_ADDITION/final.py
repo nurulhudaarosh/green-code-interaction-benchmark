@@ -1,0 +1,281 @@
+from bisect import bisect_right
+from typing import List, Tuple, Dict, Any
+
+
+def weighted_job_scheduler(
+    jobs: List[Tuple[int, int, int]],
+    include_operation_summary: bool = False,
+) -> Dict[str, Any]:
+    """
+    Weighted Job Scheduling.
+
+    Each job is:
+        (start, finish, profit)
+
+    Rules:
+      - Jobs are compatible when previous.finish <= current.start.
+      - Maximize total profit.
+      - If multiple schedules have the same maximum profit,
+        choose the lexicographically smallest sequence of
+        original job indices.
+
+    Parameters:
+        jobs:
+            List of (start, finish, profit) tuples.
+
+        include_operation_summary:
+            If True, include the deterministic operation_summary
+            field in the result.
+
+    Returns:
+
+        When include_operation_summary=False:
+        {
+            "max_profit": int,
+            "selected_indices": List[int]
+        }
+
+        When include_operation_summary=True:
+        {
+            "max_profit": int,
+            "selected_indices": List[int],
+            "operation_summary": {
+                "predecessor_searches": int,
+                "dp_decisions": int,
+                "total_major_operations": int
+            }
+        }
+    """
+
+    # Validate input.
+    for i, job in enumerate(jobs):
+        if len(job) != 3:
+            raise ValueError(
+                f"Job at index {i} must contain "
+                "(start, finish, profit)."
+            )
+
+        start, finish, profit = job
+
+        if finish < start:
+            raise ValueError(
+                f"Job at index {i} has finish < start."
+            )
+
+        if not isinstance(profit, int):
+            raise TypeError(
+                f"Profit at index {i} must be an integer."
+            )
+
+    n = len(jobs)
+
+    if n == 0:
+        result = {
+            "max_profit": 0,
+            "selected_indices": [],
+        }
+
+        if include_operation_summary:
+            result["operation_summary"] = {
+                "predecessor_searches": 0,
+                "dp_decisions": 0,
+                "total_major_operations": 0,
+            }
+
+        return result
+
+    # Sort by finish time, then use deterministic secondary keys.
+    ordered = sorted(
+        (
+            (start, finish, profit, original_index)
+            for original_index, (start, finish, profit)
+            in enumerate(jobs)
+        ),
+        key=lambda job: (job[1], job[0], job[3]),
+    )
+
+    finish_times = [job[1] for job in ordered]
+
+    # ---------------------------------------------------------
+    # Operation 1:
+    # Find the latest compatible predecessor for every job.
+    #
+    # bisect_right allows finish == start, meaning endpoint
+    # touching jobs are compatible.
+    # ---------------------------------------------------------
+    predecessor = [-1] * n
+    predecessor_searches = 0
+
+    for i in range(n):
+        start = ordered[i][0]
+
+        predecessor[i] = (
+            bisect_right(finish_times, start, 0, i) - 1
+        )
+
+        predecessor_searches += 1
+
+    # ---------------------------------------------------------
+    # Dynamic programming.
+    # ---------------------------------------------------------
+    dp_profit = [0] * n
+    dp_indices: List[List[int]] = [[] for _ in range(n)]
+
+    dp_decisions = 0
+
+    for i in range(n):
+        start, finish, profit, original_index = ordered[i]
+
+        # Skip current job.
+        if i == 0:
+            skip_profit = 0
+            skip_indices = []
+        else:
+            skip_profit = dp_profit[i - 1]
+            skip_indices = dp_indices[i - 1]
+
+        # Take current job.
+        if predecessor[i] == -1:
+            take_profit = profit
+            take_indices = [original_index]
+        else:
+            p = predecessor[i]
+            take_profit = dp_profit[p] + profit
+            take_indices = dp_indices[p] + [original_index]
+
+        # One major DP decision for this job.
+        dp_decisions += 1
+
+        if take_profit > skip_profit:
+            dp_profit[i] = take_profit
+            dp_indices[i] = take_indices
+
+        elif take_profit < skip_profit:
+            dp_profit[i] = skip_profit
+            dp_indices[i] = skip_indices
+
+        else:
+            # Deterministic tie-breaking.
+            if take_indices < skip_indices:
+                dp_profit[i] = take_profit
+                dp_indices[i] = take_indices
+            else:
+                dp_profit[i] = skip_profit
+                dp_indices[i] = skip_indices
+
+    # Preserve the original output exactly.
+    result = {
+        "max_profit": dp_profit[-1],
+        "selected_indices": dp_indices[-1],
+    }
+
+    # Add the new field only when explicitly requested.
+    if include_operation_summary:
+        result["operation_summary"] = {
+            "predecessor_searches": predecessor_searches,
+            "dp_decisions": dp_decisions,
+            "total_major_operations": (
+                predecessor_searches + dp_decisions
+            ),
+        }
+
+    return result
+
+
+# -------------------------------------------------------------
+# Tests
+# -------------------------------------------------------------
+if __name__ == "__main__":
+
+    # Standard weighted scheduling.
+    jobs = [
+        (1, 3, 50),
+        (3, 5, 20),
+        (0, 6, 100),
+        (5, 7, 30),
+    ]
+
+    # Original behavior remains unchanged by default.
+    result = weighted_job_scheduler(jobs)
+
+    assert result == {
+        "max_profit": 100,
+        "selected_indices": [2],
+    }
+
+    # New optional operation summary.
+    result = weighted_job_scheduler(
+        jobs,
+        include_operation_summary=True,
+    )
+
+    assert result == {
+        "max_profit": 100,
+        "selected_indices": [2],
+        "operation_summary": {
+            "predecessor_searches": 4,
+            "dp_decisions": 4,
+            "total_major_operations": 8,
+        },
+    }
+
+    # Endpoint-touching jobs are compatible.
+    jobs = [
+        (0, 2, 50),
+        (2, 4, 60),
+        (4, 6, 70),
+    ]
+
+    result = weighted_job_scheduler(jobs)
+
+    assert result == {
+        "max_profit": 180,
+        "selected_indices": [0, 1, 2],
+    }
+
+    result = weighted_job_scheduler(
+        jobs,
+        include_operation_summary=True,
+    )
+
+    assert result["max_profit"] == 180
+    assert result["selected_indices"] == [0, 1, 2]
+    assert result["operation_summary"] == {
+        "predecessor_searches": 3,
+        "dp_decisions": 3,
+        "total_major_operations": 6,
+    }
+
+    # Tie-breaking.
+    jobs = [
+        (0, 3, 50),
+        (0, 3, 50),
+    ]
+
+    result = weighted_job_scheduler(jobs)
+
+    assert result == {
+        "max_profit": 50,
+        "selected_indices": [0],
+    }
+
+    # Empty input.
+    assert weighted_job_scheduler([]) == {
+        "max_profit": 0,
+        "selected_indices": [],
+    }
+
+    assert weighted_job_scheduler(
+        [],
+        include_operation_summary=True,
+    ) == {
+        "max_profit": 0,
+        "selected_indices": [],
+        "operation_summary": {
+            "predecessor_searches": 0,
+            "dp_decisions": 0,
+            "total_major_operations": 0,
+        },
+    }
+
+    print("All tests passed.")

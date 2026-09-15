@@ -1,0 +1,51 @@
+from pathlib import Path
+from PIL import Image, ImageOps
+
+
+def generate_thumbnails(input_dir, cache_dir, max_dim=128):
+    """Recursively generates aspect-ratio-preserving thumbnails,
+
+    mirroring the input directory structure.
+    """
+    input_path = Path(input_dir).resolve()
+    cache_path = Path(cache_dir).resolve()
+
+    # Common image extensions to process
+    valid_extensions = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}
+
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input directory does not exist: {input_path}")
+
+    for file_path in input_path.rglob("*"):
+        if file_path.is_file() and file_path.suffix.lower() in valid_extensions:
+            # Recreate relative directory structure in the cache directory
+            relative_path = file_path.relative_to(input_path)
+            target_file_path = cache_path / relative_path
+
+            # Create destination subfolder if it doesn't exist
+            target_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Skip generation if thumbnail is already up-to-date
+            if (
+                target_file_path.exists()
+                and target_file_path.stat().st_mtime >= file_path.stat().st_mtime
+            ):
+                continue
+
+            try:
+                with Image.open(file_path) as img:
+                    # Correct EXIF orientation (e.g., phone camera rotations)
+                    img = ImageOps.exif_transpose(img)
+
+                    # Pillow's thumbnail method preserves aspect ratio in-place
+                    img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+
+                    # Preserve RGBA/P modes when saving PNGs/WebP, convert to RGB for JPEG
+                    save_format = img.format or target_file_path.suffix[1:].upper()
+                    if save_format in ("JPEG", "JPG") and img.mode in ("RGBA", "P"):
+                        img = img.convert("RGB")
+
+                    img.save(target_file_path, format=save_format, quality=85)
+
+            except Exception as e:
+                print(f"Skipping {file_path}: {e}")

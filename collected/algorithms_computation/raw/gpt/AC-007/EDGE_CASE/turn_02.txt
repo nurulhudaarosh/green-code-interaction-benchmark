@@ -1,0 +1,354 @@
+## Restated Problem
+
+Given an **undirected weighted graph**, construct a **minimum spanning forest (MSF)** and return:
+
+* `total_cost`: the sum of the weights of all selected edges.
+* `selected_edge_ids`: the original IDs of the selected edges.
+* If multiple edges have the same weight, process them by **increasing original edge ID**.
+
+The graph can be disconnected, so every connected component should receive its own minimum spanning tree.
+
+### Difficult boundary cases
+
+The implementation should correctly handle valid inputs at the limits, including:
+
+* `num_vertices = 0`
+* `num_vertices = 1`
+* An empty edge list
+* The maximum allowed number of vertices/edges, when supplied by the problem's constraints
+* Minimum and maximum valid edge weights
+* Very large positive or negative weights, without assuming weights fit in a small integer range
+* Minimum and maximum valid original edge IDs
+* Equal-weight edges at the boundary values
+* Disconnected graphs
+* Self-loops and parallel edges, if they are permitted by the input specification
+
+Python integers naturally handle arbitrarily large integer sums, so the implementation does not overflow for large integer weights.
+
+### Deterministic behavior
+
+The sorting rule remains exactly:
+
+```text
+(weight, original_edge_id)
+```
+
+Therefore, equal-cost edges always have deterministic tie handling.
+
+## Implementation + Boundary Tests
+
+```python
+from typing import Iterable, List, Tuple
+
+
+class DSU:
+    """Disjoint Set Union with path compression and union by size."""
+
+    def __init__(self, n: int):
+        self.parent = list(range(n))
+        self.size = [1] * n
+
+    def find(self, x: int) -> int:
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]
+            x = self.parent[x]
+        return x
+
+    def union(self, a: int, b: int) -> bool:
+        root_a = self.find(a)
+        root_b = self.find(b)
+
+        if root_a == root_b:
+            return False
+
+        # Union by size.
+        if self.size[root_a] < self.size[root_b]:
+            root_a, root_b = root_b, root_a
+
+        self.parent[root_b] = root_a
+        self.size[root_a] += self.size[root_b]
+
+        return True
+
+
+def minimum_spanning_forest(
+    num_vertices: int,
+    edges: Iterable[Tuple[int, int, int, int]]
+) -> Tuple[int, List[int]]:
+    """
+    Construct a minimum spanning forest using Kruskal's algorithm.
+
+    Edge format:
+        (u, v, weight, original_edge_id)
+
+    Returns:
+        (total_cost, selected_edge_ids)
+
+    Equal-weight edges are processed by increasing original edge ID.
+    """
+
+    if num_vertices < 0:
+        raise ValueError("num_vertices must be non-negative")
+
+    edge_list = list(edges)
+
+    # Validate vertices.
+    for u, v, weight, edge_id in edge_list:
+        if not (0 <= u < num_vertices):
+            raise ValueError(f"Invalid vertex: {u}")
+        if not (0 <= v < num_vertices):
+            raise ValueError(f"Invalid vertex: {v}")
+
+    # Deterministic Kruskal ordering.
+    edge_list.sort(key=lambda edge: (edge[2], edge[3]))
+
+    dsu = DSU(num_vertices)
+
+    total_cost = 0
+    selected_edge_ids = []
+
+    for u, v, weight, edge_id in edge_list:
+        # An edge is selected only when it connects
+        # two previously separate components.
+        if dsu.union(u, v):
+            total_cost += weight
+            selected_edge_ids.append(edge_id)
+
+    return total_cost, selected_edge_ids
+
+
+# ============================================================
+# TESTS
+# ============================================================
+
+def run_tests():
+    # --------------------------------------------------------
+    # Test 1: Empty graph / minimum vertex boundary
+    # --------------------------------------------------------
+    assert minimum_spanning_forest(0, []) == (0, [])
+
+    # --------------------------------------------------------
+    # Test 2: One vertex / no edges
+    # --------------------------------------------------------
+    assert minimum_spanning_forest(1, []) == (0, [])
+
+    # --------------------------------------------------------
+    # Test 3: One vertex with a self-loop.
+    # Self-loop cannot be part of an MST.
+    # --------------------------------------------------------
+    assert minimum_spanning_forest(
+        1,
+        [(0, 0, 10, 1)]
+    ) == (0, [])
+
+    # --------------------------------------------------------
+    # Test 4: Simple connected graph
+    # --------------------------------------------------------
+    edges = [
+        (0, 1, 4, 10),
+        (0, 2, 1, 11),
+        (1, 2, 2, 12),
+        (1, 3, 3, 13),
+        (2, 3, 5, 14),
+    ]
+
+    assert minimum_spanning_forest(4, edges) == (
+        6,
+        [11, 12, 13]
+    )
+
+    # --------------------------------------------------------
+    # Test 5: Disconnected graph
+    # --------------------------------------------------------
+    edges = [
+        (0, 1, 2, 1),
+        (1, 2, 3, 2),
+        (3, 4, 5, 3),
+    ]
+
+    assert minimum_spanning_forest(5, edges) == (
+        10,
+        [1, 2, 3]
+    )
+
+    # --------------------------------------------------------
+    # Test 6: Equal weights.
+    # Original edge ID determines processing order.
+    # --------------------------------------------------------
+    edges = [
+        (0, 1, 5, 30),
+        (1, 2, 5, 10),
+        (0, 2, 5, 20),
+    ]
+
+    # IDs 10, 20, 30 are processed in that order.
+    # 10 selects (1,2)
+    # 20 selects (0,2)
+    # 30 is rejected because it creates a cycle.
+    assert minimum_spanning_forest(3, edges) == (
+        10,
+        [10, 20]
+    )
+
+    # --------------------------------------------------------
+    # Test 7: Parallel edges.
+    # Equal endpoints are allowed to have different IDs.
+    # --------------------------------------------------------
+    edges = [
+        (0, 1, 5, 100),
+        (0, 1, 2, 101),
+        (0, 1, 2, 50),
+    ]
+
+    # Weight 2 is considered first.
+    # Among equal weights, ID 50 comes first.
+    assert minimum_spanning_forest(2, edges) == (
+        2,
+        [50]
+    )
+
+    # --------------------------------------------------------
+    # Test 8: Minimum integer weight boundary.
+    #
+    # Python integers have arbitrary precision. Using a very
+    # small integer should not cause overflow.
+    # --------------------------------------------------------
+    MIN_INT = -(2 ** 63)
+
+    edges = [
+        (0, 1, MIN_INT, 1),
+        (1, 2, MIN_INT + 1, 2),
+        (0, 2, 100, 3),
+    ]
+
+    assert minimum_spanning_forest(3, edges) == (
+        MIN_INT + (MIN_INT + 1),
+        [1, 2]
+    )
+
+    # --------------------------------------------------------
+    # Test 9: Maximum 64-bit integer boundary.
+    # --------------------------------------------------------
+    MAX_INT = 2 ** 63 - 1
+
+    edges = [
+        (0, 1, MAX_INT, 1),
+        (1, 2, MAX_INT, 2),
+    ]
+
+    assert minimum_spanning_forest(3, edges) == (
+        2 * MAX_INT,
+        [1, 2]
+    )
+
+    # --------------------------------------------------------
+    # Test 10: Minimum and maximum weights together.
+    # --------------------------------------------------------
+    edges = [
+        (0, 1, MAX_INT, 1),
+        (1, 2, MIN_INT, 2),
+        (0, 2, 0, 3),
+    ]
+
+    # The two cheapest edges are MIN_INT and 0.
+    assert minimum_spanning_forest(3, edges) == (
+        MIN_INT,
+        [2, 3]
+    )
+
+    # --------------------------------------------------------
+    # Test 11: Very large total cost.
+    # Checks that the sum itself does not overflow.
+    # --------------------------------------------------------
+    huge = 10 ** 100
+
+    edges = [
+        (0, 1, huge, 1),
+        (1, 2, huge, 2),
+        (2, 3, huge, 3),
+    ]
+
+    assert minimum_spanning_forest(4, edges) == (
+        3 * huge,
+        [1, 2, 3]
+    )
+
+    # --------------------------------------------------------
+    # Test 12: Negative weights.
+    # --------------------------------------------------------
+    edges = [
+        (0, 1, -5, 1),
+        (1, 2, -10, 2),
+        (0, 2, 1, 3),
+    ]
+
+    assert minimum_spanning_forest(3, edges) == (
+        -15,
+        [2, 1]
+    )
+
+    # --------------------------------------------------------
+    # Test 13: Equal boundary weights + ID tie-breaking.
+    # --------------------------------------------------------
+    edges = [
+        (0, 1, MIN_INT, 30),
+        (1, 2, MIN_INT, 10),
+        (0, 2, MIN_INT, 20),
+    ]
+
+    # IDs 10, 20, 30 are processed in that exact order.
+    assert minimum_spanning_forest(3, edges) == (
+        2 * MIN_INT,
+        [10, 20]
+    )
+
+    # --------------------------------------------------------
+    # Test 14: Large edge IDs.
+    # --------------------------------------------------------
+    edges = [
+        (0, 1, 1, 10**100),
+        (1, 2, 2, 10**100 + 1),
+    ]
+
+    assert minimum_spanning_forest(3, edges) == (
+        3,
+        [10**100, 10**100 + 1]
+    )
+
+    # --------------------------------------------------------
+    # Test 15: Boundary-style dense graph.
+    # Many edges, including equal weights and cycles.
+    # --------------------------------------------------------
+    edges = [
+        (0, 1, 1, 5),
+        (0, 2, 1, 1),
+        (0, 3, 1, 4),
+        (1, 2, 1, 2),
+        (1, 3, 1, 3),
+        (2, 3, 1, 6),
+    ]
+
+    # Equal weights -> IDs 1,2,3,4,5,6.
+    # Select IDs 1, 2, 3.
+    assert minimum_spanning_forest(4, edges) == (
+        3,
+        [1, 2, 3]
+    )
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()
+```
+
+### Preserved requirements
+
+The original behavior is unchanged:
+
+* **Kruskal's algorithm** is still used.
+* **DSU** is still used for cycle detection.
+* The graph can be disconnected.
+* `total_cost` and `selected_edge_ids` remain the required outputs.
+* Equal weights are still resolved by **original edge ID**.
+* The solution remains deterministic and uses only the **Python standard library**.

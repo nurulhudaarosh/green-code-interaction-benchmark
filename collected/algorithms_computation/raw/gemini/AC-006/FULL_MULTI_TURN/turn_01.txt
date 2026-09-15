@@ -1,0 +1,146 @@
+### Problem Analysis
+
+We are given a 2D numeric grid and a numeric threshold $T$.
+
+1. **Candidate Cells:** A cell $(r, c)$ is valid if its value is greater than or equal to $T$ ($\text{grid}[r][c] \ge T$).
+2. **Connected Components:** Valid cells form 4-connected regions (connected vertically and horizontally).
+3. **Region Attributes:**
+* **Size:** Total number of cells in the component.
+* **Perimeter:** Total count of outer and inner grid cell edges exposed either to the boundary of the grid or to a cell with value strictly less than $T$.
+* **Smallest Coordinate:** The minimum row-column coordinate $(r, c)$ in the region, evaluated lexicographically (i.e., smaller row $r$, then smaller column $c$).
+
+
+4. **Ordering Criteria:** We seek the region that maximizes and minimizes attributes in the following strict priority order:
+1. **Maximal Size** (primary)
+2. **Maximal Perimeter** (secondary tie-breaker)
+3. **Minimal Smallest Coordinate** (tertiary tie-breaker)
+
+
+
+---
+
+### Key Constraints & Required Output
+
+* **Constraints:**
+* Grid dimensions are $M \times N$ ($M, N \ge 1$).
+* Values in grid and threshold $T$ are numerical (integers or floats).
+* 4-connectivity only (up, down, left, right).
+
+
+* **Output:**
+* A tuple `(size, perimeter, (min_row, min_col))` representing the best region according to the tie-breaking rules.
+* If no region meets the threshold $T$ (no cell $\ge T$), return `(0, 0, None)`.
+
+
+
+---
+
+### Algorithm Overview
+
+1. Maintain a `visited` set to track cells already assigned to a region.
+2. Iterate through every cell $(r, c)$ in the grid.
+3. If $\text{grid}[r][c] \ge T$ and $(r, c)$ has not been visited:
+* Start an **iterative Flood Fill** (using standard BFS/DFS with a queue/stack) to explore the 4-connected component.
+* For each cell $(r, c)$ popped from the queue:
+* Increment the component `size` by 1.
+* Track the minimum coordinate `(min_r, min_c)` found in the component.
+* For each of the 4 neighboring directions $(nr, nc)$:
+* If $(nr, nc)$ is out of grid bounds OR $\text{grid}[nr][nc] < T$, increment `perimeter` by 1 (it is an exposed edge).
+* Else if $(nr, nc)$ is in bounds, $\ge T$, and unvisited, mark it visited and push it to the queue.
+
+
+
+
+
+
+4. Compare the found region against the current best region using the tie-breaker key `(size, perimeter, -min_r, -min_c)`.
+5. Return the attributes of the winning component.
+
+---
+
+### Python Implementation
+
+```python
+from collections import deque
+
+def find_largest_region(grid, T):
+    """
+    Finds the largest 4-connected region with cell values >= T.
+    
+    Returns:
+        (size, perimeter, (min_row, min_col)) if a region exists,
+        else (0, 0, None).
+    """
+    if not grid or not grid[0]:
+        return (0, 0, None)
+    
+    rows, cols = len(grid), len(grid[0])
+    visited = set()
+    best_region = None  # Will store (size, perimeter, min_r, min_c)
+    
+    # 4-directional vectors: Up, Down, Left, Right
+    directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+    
+    for r in range(rows):
+        for c in range(cols):
+            if grid[r][c] >= T and (r, c) not in visited:
+                # Start iterative flood fill (BFS)
+                queue = deque([(r, c)])
+                visited.add((r, c))
+                
+                size = 0
+                perimeter = 0
+                min_r, min_c = r, c
+                
+                while queue:
+                    curr_r, curr_c = queue.popleft()
+                    size += 1
+                    
+                    # Update lexicographically smallest coordinate
+                    if (curr_r, curr_c) < (min_r, min_c):
+                        min_r, min_c = curr_r, curr_c
+                    
+                    # Check all 4 boundaries/neighbors
+                    for dr, dc in directions:
+                        nr, nc = curr_r + dr, curr_c + dc
+                        
+                        # Exposed edge check (out of bounds or value < T)
+                        if not (0 <= nr < rows and 0 <= nc < cols) or grid[nr][nc] < T:
+                            perimeter += 1
+                        elif (nr, nc) not in visited:
+                            visited.add((nr, nc))
+                            queue.append((nr, nc))
+                
+                # Candidate tuple for tie-breaking:
+                # Maximize size, then maximize perimeter, then minimize (min_r, min_c)
+                candidate_key = (size, perimeter, -min_r, -min_c)
+                candidate_data = (size, perimeter, (min_r, min_c))
+                
+                if best_region is None:
+                    best_region = (candidate_key, candidate_data)
+                else:
+                    if candidate_key > best_region[0]:
+                        best_region = (candidate_key, candidate_data)
+                        
+    if best_region is None:
+        return (0, 0, None)
+        
+    return best_region[1]
+
+
+# Example Usage & Verification:
+if __name__ == "__main__":
+    sample_grid = [
+        [5, 5, 2, 6],
+        [5, 1, 6, 6],
+        [2, 6, 6, 1]
+    ]
+    threshold = 5
+    
+    result = find_largest_region(sample_grid, threshold)
+    print("Result:", result)
+    # Output: (4, 10, (0, 2))
+    # Explanation: The region of 6s has size 4, perimeter 10, min coordinate (0, 2).
+    # The region of 5s has size 3, perimeter 8, min coordinate (0, 0).
+
+```

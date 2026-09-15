@@ -1,0 +1,70 @@
+from pathlib import Path
+from PIL import Image
+
+def convert_format(
+    input_dir: str | Path,
+    output_dir: str | Path,
+    target_format: str,
+    background_color: tuple[int, int, int] = (255, 255, 255)
+) -> None:
+    """
+    Recursively converts image files from input_dir to target_format (JPEG or PNG).
+    Flattens transparent channels onto background_color for JPEG output.
+    
+    :param input_dir: Path to source image directory.
+    :param output_dir: Path to output directory.
+    :param target_format: Desired format ('JPEG'/'JPG' or 'PNG').
+    :param background_color: RGB tuple for transparent region flattening (default: white).
+    """
+    in_path = Path(input_dir)
+    out_path = Path(output_dir)
+    
+    fmt = target_format.upper().strip()
+    if fmt == "JPG":
+        fmt = "JPEG"
+    if fmt not in ("JPEG", "PNG"):
+        raise ValueError(f"Unsupported target format: {target_format}. Choose 'JPEG' or 'PNG'.")
+
+    # Validate background_color tuple
+    if not (isinstance(background_color, tuple) and len(background_color) == 3 and all(0 <= c <= 255 for c in background_color)):
+        raise ValueError("background_color must be an RGB tuple of 3 integers between 0 and 255, e.g., (255, 255, 255).")
+
+    ext = ".jpg" if fmt == "JPEG" else ".png"
+    valid_extensions = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif", ".gif"}
+
+    # Add alpha 255 (fully opaque) to the user's RGB background color
+    bg_rgba = background_color + (255,)
+
+    for file_path in in_path.rglob("*"):
+        if file_path.is_file() and file_path.suffix.lower() in valid_extensions:
+            relative_path = file_path.relative_to(in_path)
+            destination = out_path / relative_path.with_suffix(ext)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+
+            try:
+                with Image.open(file_path) as img:
+                    if fmt == "JPEG":
+                        # Convert source to RGBA to normalize all image modes
+                        rgba_img = img.convert("RGBA")
+                        
+                        # Create background canvas using configured RGB color
+                        background = Image.new("RGBA", rgba_img.size, bg_rgba)
+                        
+                        # Composite transparent pixels over the background color
+                        composited = Image.alpha_composite(background, rgba_img)
+                        
+                        final_img = composited.convert("RGB")
+                        final_img.save(destination, format="JPEG", quality=95)
+
+                    elif fmt == "PNG":
+                        if img.mode == "CMYK":
+                            final_img = img.convert("RGB")
+                        else:
+                            final_img = img
+                        
+                        final_img.save(destination, format="PNG")
+
+                    print(f"Converted: {file_path.name} -> {destination}")
+
+            except Exception as e:
+                print(f"Error processing {file_path}: {e}")

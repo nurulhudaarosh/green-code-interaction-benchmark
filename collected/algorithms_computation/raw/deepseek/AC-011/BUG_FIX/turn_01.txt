@@ -1,0 +1,151 @@
+I’ll walk through the problem and then implement a deterministic solution.
+
+---
+
+## Problem Understanding
+We are given:
+
+- A list of items, each with a **weight** and a **value**.
+- A knapsack **capacity**.
+- Items are indivisible (you either take all or none of an item).
+- Goal: Maximize total value without exceeding capacity.
+- **Tie-breaking**: Among all optimal solutions, return the lexicographically smallest list of **original indices** (0‑based).
+
+---
+
+## Key Constraints (not explicitly given, but assumed typical for 0/1 knapsack):
+- Number of items `n` can be up to, say, a few thousand.
+- Capacity `W` can be moderate (up to ~10^4 or 10^5) so DP is feasible.
+- Weights and values are positive integers.
+
+---
+
+## Required Output
+- A list of original indices (0‑based) of selected items.
+
+---
+
+## Algorithm Description
+We use **0/1 knapsack DP** with descending capacity updates.
+
+1. **DP Table**:
+   - `dp[w]` = maximum value achievable with exact capacity `w` (or at most capacity, we use exact capacity and then take max at the end).
+   - Initialize `dp[0] = 0`, others to `-inf` (or -1).
+
+2. **Transition**:
+   - For each item `i` with weight `wi` and value `vi`:
+     - Iterate capacity `w` from `W` down to `wi`:
+       - `dp[w] = max(dp[w], dp[w - wi] + vi)`
+
+3. **Reconstruction for lexicographically smallest indices**:
+   - We want the smallest index list (lexicographically) among optimal solutions.
+   - After DP, find the best capacity `best_w` that gives maximum value (in case of ties, we choose the smallest capacity to favor smaller indices? Actually, for lexicographic tie-break, we need to reconstruct carefully).
+   - To enforce lexicographic minimality, we can **greedily** decide from index 0 to n-1: include item `i` if there exists an optimal solution that includes it and still allows optimal total value.
+   - For that, we need prefix/suffix DP or we can reconstruct by testing each item.
+
+   **Simpler robust method**:
+   - Build a 2D DP table `dp[i][w]` = max value using first `i` items (0..i-1) and capacity `w`. This is O(n*W) memory, but we can also use 1D and then reconstruct with backtracking, but tie-breaking requires careful choice.
+   - Better: Use 2D DP (or store parent choices) and reconstruct by backtracking from `(n, best_w)` while preferring smaller indices when equal values.
+
+   We'll implement with **2D DP** (or a compact version) to allow deterministic reconstruction.
+
+   Actually, we can avoid full 2D by:
+   - Compute `dp[w]` as max value.
+   - To reconstruct lexicographically smallest, we iterate items in order, and for each, check if we can include it and still reach the optimal value. But we need to know the remaining capacity and whether there exists a solution for the suffix.
+
+   We'll use a **suffix DP** array: `suffix[i][w]` = max value using items from `i` to `n-1` with capacity `w`. Then we can greedily decide.
+
+   **Steps**:
+   - Let `n` = number of items.
+   - Compute `suffix[i][w]` for i from n down to 0.
+   - Then reconstruct:
+     - `remaining_cap = W`, `remaining_value = optimal_value`.
+     - For `i` from 0 to n-1:
+       - If `wi <= remaining_cap`:
+         - Value if we take item i: `vi + suffix[i+1][remaining_cap - wi]`
+         - Value if we skip: `suffix[i+1][remaining_cap]`
+         - If taking gives exactly `remaining_value` and (skipping gives less, or taking is lexicographically smaller because we want smaller indices), then include it.
+       - Actually, to be lexicographically smallest, we include item i whenever possible to still achieve optimal value. So we check:
+         - `if vi + suffix[i+1][remaining_cap - wi] == remaining_value` then include (because including earlier index makes list lexicographically smaller than skipping it and including later ones).
+         - Else skip.
+
+   This yields lexicographically smallest index list.
+
+---
+
+## Implementation
+We'll implement the suffix DP with a 2D list of size `(n+1) x (W+1)`. For large n or W, we might use a more memory-efficient approach, but for clarity and correctness we'll use 2D; we can optimize if needed.
+
+We'll use `-10**9` as -inf.
+
+---
+
+## Deterministic Python Solution
+
+```python
+def knapsack_selection(weights, values, capacity):
+    n = len(weights)
+    W = capacity
+    
+    # suffix[i][w] = max value using items from i to n-1 with capacity w
+    suffix = [[-10**9] * (W + 1) for _ in range(n + 1)]
+    # base: suffix[n][w] = 0 for all w (no items left)
+    for w in range(W + 1):
+        suffix[n][w] = 0
+    
+    # fill suffix table from bottom to top
+    for i in range(n - 1, -1, -1):
+        wi, vi = weights[i], values[i]
+        for w in range(W + 1):
+            # skip item i
+            best = suffix[i + 1][w]
+            # take item i if possible
+            if w >= wi:
+                take = vi + suffix[i + 1][w - wi]
+                if take > best:
+                    best = take
+            suffix[i][w] = best
+    
+    optimal_value = suffix[0][W]
+    
+    # reconstruct lexicographically smallest index list
+    selected = []
+    remaining_cap = W
+    for i in range(n):
+        wi, vi = weights[i], values[i]
+        if wi <= remaining_cap:
+            # check if taking item i leads to optimal value
+            if vi + suffix[i + 1][remaining_cap - wi] == optimal_value:
+                selected.append(i)
+                remaining_cap -= wi
+                optimal_value -= vi
+        # else skip automatically
+    return selected
+
+# Example usage:
+if __name__ == "__main__":
+    weights = [2, 3, 4, 5]
+    values  = [3, 4, 5, 6]
+    cap = 8
+    print(knapsack_selection(weights, values, cap))
+    # Expected output: [0, 2] or [1, 2]? Both give value 8? Actually:
+    # item0+item2 = 3+5=8, weight 2+4=6
+    # item1+item2 = 4+5=9, weight 3+4=7 -> better
+    # item0+item1 = 7, weight 5
+    # item0+item3 = 9, weight 7 -> tie with item1+item2? values 9 both
+    # Lexicographically smaller: [0, 3] vs [1, 2] => [0, 3] is smaller because first index 0 < 1
+    # Our algorithm will produce [0, 3] if it leads to optimal value.
+```
+Let's test mentally:
+- suffix computed.
+- optimal_value = 9.
+- i=0: wi=2, take gives 3 + suffix[1][6]. suffix[1][6] = best from items 1..3 with cap 6: items 1(3,4) + item2(4,5)=9 with weight7? no, item1+item3=10 with weight8? Actually item1(3,4)+item3(5,6)=10 weight8 -> value 10? Wait values: [3,4,5,6] weights [2,3,4,5]. For cap 6 from items 1..3: best is item1+item3? weight 3+5=8 >6; item1+item2 = 4+5=9 weight7>6; item2+item3=11 weight9>6; single max is item3=6 weight5. So suffix[1][6]=6. Then take = 3+6=9 = optimal, so include 0.
+- remaining_cap = 6, optimal_value = 6.
+- i=1: wi=3, take gives 4 + suffix[2][3]. suffix[2][3] from items 2..3 with cap3: max is item2? weight4>3, item3 weight5>3 => 0. So take=4, but optimal_value=6, so skip.
+- i=2: wi=4, take gives 5 + suffix[3][2]. suffix[3][2] from item3 with cap2: 0 (weight5>2). So take=5, not 6, skip.
+- i=3: wi=5, take gives 6 + suffix[4][1] = 6, which equals optimal_value=6, so include 3.
+- Result: [0, 3] correct.
+
+---
+
+This solution is deterministic, uses only standard library, and handles ties correctly.

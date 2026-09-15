@@ -1,0 +1,81 @@
+```python
+import csv
+import re
+import sys
+from collections import defaultdict
+
+
+def normalize_email(email: str) -> str:
+    """Canonicalize email: lowercase, strip whitespace."""
+    if not email:
+        return ""
+    return email.strip().lower()
+
+
+def normalize_phone(phone: str) -> str:
+    """Canonicalize phone: strip non-digits; prepend default US country code (+1) if 10 digits."""
+    if not phone:
+        return ""
+    digits = re.sub(r"\D", "", phone)
+    if len(digits) == 10:
+        return f"+1{digits}"
+    elif len(digits) == 11 and digits.startswith("1"):
+        return f"+{digits}"
+    elif digits:
+        return f"+{digits}"
+    return ""
+
+
+def score_record(row: dict) -> int:
+    """Calculate completeness score based on non-empty field values."""
+    return sum(1 for val in row.values() if val and val.strip())
+
+
+def normalize_customer_csv(
+    input_filepath: str, output_filepath: str, email_col="email", phone_col="phone"
+):
+    with open(input_filepath, mode="r", newline="", encoding="utf-8") as infile:
+        reader = csv.DictReader(infile)
+        fieldnames = reader.fieldnames
+        if not fieldnames:
+            return
+
+        grouped_records = defaultdict(list)
+
+        for index, row in enumerate(reader):
+            # Canonicalize key fields
+            row[email_col] = normalize_email(row.get(email_col, ""))
+            if phone_col in row:
+                row[phone_col] = normalize_phone(row.get(phone_col, ""))
+
+            norm_email = row[email_col]
+            if not norm_email:
+                continue
+
+            # Store tuple of (-completeness_score, original_index, row)
+            # Higher completeness comes first; ties break using earliest row index
+            score = score_record(row)
+            grouped_records[norm_email].append((-score, index, row))
+
+    # Resolve deduplication and select top record for each normalized email
+    deduped_rows = []
+    for norm_email in sorted(grouped_records.keys()):
+        records = grouped_records[norm_email]
+        records.sort(key=lambda x: (x[0], x[1]))
+        best_row = records[0][2]
+        deduped_rows.append(best_row)
+
+    # Write normalized, deterministic records sorted by normalized email
+    with open(output_filepath, mode="w", newline="", encoding="utf-8") as outfile:
+        writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(deduped_rows)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) == 3:
+        normalize_customer_csv(sys.argv[1], sys.argv[2])
+    else:
+        print("Usage: python normalizer.py <input_csv> <output_csv>")
+
+```

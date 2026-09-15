@@ -1,0 +1,69 @@
+import os
+from pathlib import Path
+from PIL import Image
+
+def convert_format(input_dir, output_dir, target_format):
+    """
+    Convert all images in input_dir to the target format ('PNG' or 'JPEG'),
+    saving results in output_dir. Transparency is safely flattened onto a
+    white background when converting to JPEG (which has no alpha channel).
+
+    Args:
+        input_dir (str): Path to directory containing source images.
+        output_dir (str): Path to directory where converted images are saved.
+        target_format (str): 'PNG' or 'JPEG' (case-insensitive).
+
+    Returns:
+        list[str]: Paths of successfully written output files.
+    """
+    target_format = target_format.strip().upper()
+    if target_format not in ("PNG", "JPEG"):
+        raise ValueError("target_format must be 'PNG' or 'JPEG'")
+
+    ext = ".png" if target_format == "PNG" else ".jpg"
+
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    if not input_path.is_dir():
+        raise NotADirectoryError(f"{input_dir} is not a valid directory")
+
+    valid_exts = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tiff", ".tif", ".webp"}
+    written_files = []
+
+    for file in sorted(input_path.iterdir()):
+        if not file.is_file() or file.suffix.lower() not in valid_exts:
+            continue
+
+        try:
+            with Image.open(file) as img:
+                img.load()  # force load to catch truncated/corrupt files early
+
+                if target_format == "JPEG":
+                    # Flatten transparency (alpha or palette-with-alpha) onto white background
+                    if img.mode in ("RGBA", "LA") or (
+                        img.mode == "P" and "transparency" in img.info
+                    ):
+                        img = img.convert("RGBA")
+                        background = Image.new("RGB", img.size, (255, 255, 255))
+                        background.paste(img, mask=img.split()[-1])  # use alpha channel as mask
+                        out_img = background
+                    else:
+                        out_img = img.convert("RGB")
+                else:  # PNG
+                    if img.mode == "P":
+                        # Preserve any transparency by converting to RGBA
+                        out_img = img.convert("RGBA")
+                    else:
+                        out_img = img.copy()
+
+                out_file = output_path / (file.stem + ext)
+                save_kwargs = {"quality": 95} if target_format == "JPEG" else {}
+                out_img.save(out_file, format=target_format, **save_kwargs)
+                written_files.append(str(out_file))
+
+        except Exception as e:
+            print(f"Skipping {file.name}: could not convert ({e})")
+
+    return written_files

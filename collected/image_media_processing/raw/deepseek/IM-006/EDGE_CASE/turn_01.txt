@@ -1,0 +1,51 @@
+Here's a Python function that extracts metadata from images in a directory:
+
+```python
+import os
+from PIL import Image
+
+
+def extract_metadata(input_dir):
+    """
+    Extract metadata from all images in input_dir.
+
+    Returns a sorted list of dicts with keys:
+        filename, format, mode, width, height, file_size_bytes
+    """
+    metadata = []
+
+    for entry in os.scandir(input_dir):
+        if not entry.is_file():
+            continue
+
+        file_path = entry.path
+        try:
+            with Image.open(file_path) as img:
+                # Force loading so truncated files raise here
+                img.load()
+                metadata.append({
+                    "filename": entry.name,
+                    "format": img.format,
+                    "mode": img.mode,
+                    "width": img.width,
+                    "height": img.height,
+                    "file_size_bytes": entry.stat().st_size,
+                })
+        except (UnidentifiedImageError, OSError):
+            # Not an image or unreadable — skip
+            continue
+
+    metadata.sort(key=lambda m: m["filename"])
+    return metadata
+```
+
+Key points:
+
+- **`os.scandir`** iterates directory entries efficiently; `entry.stat()` avoids a second filesystem lookup.
+- **`Image.open`** is lazy, so `img.load()` is called to validate that the file is actually a complete, decodable image before adding it to the results.
+- **`img.format`** gives the detected format (e.g. `"PNG"`, `"JPEG"`) regardless of extension, which is usually more reliable than the filename suffix.
+- **Exception handling** skips non-image files and unreadable/corrupt images rather than crashing the whole scan. `UnidentifiedImageError` is a subclass of `OSError` in newer Pillow versions, but listing both is harmless and explicit.
+- **Sorting** by filename gives deterministic output. If you want case-insensitive ordering, use `key=lambda m: m["filename"].lower()`.
+
+
+This is faster on directories with many non-image files, but it will miss images with unusual or missing extensions.

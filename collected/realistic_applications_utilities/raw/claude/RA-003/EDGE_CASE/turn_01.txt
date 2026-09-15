@@ -1,0 +1,125 @@
+```python
+from dataclasses import dataclass, field
+from typing import Any, Optional
+import math
+
+
+@dataclass
+class Assessment:
+    name: str
+    score: Optional[float]
+    pass_mark: Optional[float]
+    valid: bool = True
+    reason: str = ""
+
+
+def parse_assessments(raw: list[dict[str, Any]]) -> list[Assessment]:
+    """Convert raw dicts into Assessment objects, flagging malformed entries
+    instead of raising, so one bad record doesn't kill the whole batch."""
+    parsed = []
+    for i, r in enumerate(raw or []):
+        name = r.get("name", f"unnamed_{i}")
+
+        score = r.get("score")
+        pass_mark = r.get("pass_mark")
+
+        # Malformed: missing fields
+        if score is None or pass_mark is None:
+            parsed.append(Assessment(name, None, None, False, "missing score/pass_mark"))
+            continue
+
+        # Malformed: non-numeric
+        try:
+            score = float(score)
+            pass_mark = float(pass_mark)
+        except (TypeError, ValueError):
+            parsed.append(Assessment(name, None, None, False, "non-numeric value"))
+            continue
+
+        # Malformed: NaN / infinite
+        if not (math.isfinite(score) and math.isfinite(pass_mark)):
+            parsed.append(Assessment(name, None, None, False, "NaN/infinite value"))
+            continue
+
+        # Malformed: negative score
+        if score < 0 or pass_mark < 0:
+            parsed.append(Assessment(name, None, None, False, "negative value"))
+            continue
+
+        parsed.append(Assessment(name, score, pass_mark))
+    return parsed
+
+
+def evaluate(raw: list[dict[str, Any]]) -> dict[str, Any]:
+    """Grade a batch of assessments, handling:
+    - empty data
+    - exact pass marks (score == pass_mark counts as a PASS, not a fail)
+    - ties (equal scores share the same rank)
+    - malformed records (reported separately, not silently dropped)
+    """
+    if not raw:
+        return {
+            "results": [],
+            "invalid": [],
+            "summary": {"total": 0, "passed": 0, "failed": 0, "invalid": 0},
+        }
+
+    parsed = parse_assessments(raw)
+    valid = [a for a in parsed if a.valid]
+    invalid = [a for a in parsed if not a.valid]
+
+    # Pass/fail: >= pass_mark is a pass (exact boundary handled explicitly)
+    results = []
+    for a in valid:
+        passed = a.score >= a.pass_mark
+        results.append({
+            "name": a.name,
+            "score": a.score,
+            "pass_mark": a.pass_mark,
+            "passed": passed,
+            "exact_pass": math.isclose(a.score, a.pass_mark),
+        })
+
+    # Rank with ties: same score -> same rank, next rank skips accordingly
+    # (standard competition ranking, e.g. 1,2,2,4)
+    for r in sorted(results, key=lambda x: x["score"], reverse=True):
+        pass  # placeholder to keep sort stable before ranking pass below
+
+    ranked = sorted(results, key=lambda x: x["score"], reverse=True)
+    rank = 0
+    prev_score = None
+    for i, r in enumerate(ranked, start=1):
+        if r["score"] != prev_score:
+            rank = i
+            prev_score = r["score"]
+        r["rank"] = rank
+
+    passed_count = sum(1 for r in results if r["passed"])
+
+    return {
+        "results": ranked,
+        "invalid": [{"name": a.name, "reason": a.reason} for a in invalid],
+        "summary": {
+            "total": len(raw),
+            "passed": passed_count,
+            "failed": len(valid) - passed_count,
+            "invalid": len(invalid),
+        },
+    }
+
+
+if __name__ == "__main__":
+    sample = [
+        {"name": "Alice", "score": 85, "pass_mark": 60},
+        {"name": "Bob", "score": 60, "pass_mark": 60},       # exact pass mark
+        {"name": "Carl", "score": 85, "pass_mark": 60},      # tie with Alice
+        {"name": "Dana", "score": "n/a", "pass_mark": 60},   # malformed
+        {"name": "Eve", "pass_mark": 60},                    # missing score
+        {"name": "Fay", "score": -5, "pass_mark": 60},       # invalid negative
+    ]
+    from pprint import pprint
+    pprint(evaluate(sample))
+    pprint(evaluate([]))  # empty data case
+```
+
+Key behaviors: `score >= pass_mark` treats an exact match as a pass; ranking uses standard competition ranking (`1,2,2,4`) so ties share a rank without skipping people; malformed records (missing fields, non-numeric, NaN/inf, negative) are quarantined in `invalid` rather than crashing or silently vanishing; and empty input returns a well-formed zeroed-out result instead of raising.

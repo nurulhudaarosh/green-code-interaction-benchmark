@@ -1,0 +1,80 @@
+from pathlib import Path
+from PIL import Image
+import numpy as np
+
+
+def preprocess_images(input_dir, output_dir, clip_percentile=None):
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    stats = {}
+
+    for file in input_dir.iterdir():
+        if not file.is_file():
+            continue
+
+        try:
+            # Convert image to grayscale
+            img = Image.open(file).convert("L")
+            arr = np.array(img, dtype=np.float32)
+
+            # Store original min/max statistics
+            original_min = float(arr.min())
+            original_max = float(arr.max())
+
+            stats[file.name] = {
+                "min": original_min,
+                "max": original_max
+            }
+
+            # Handle completely flat images first
+            # This covers all-zero, all-255, and any other
+            # uniformly-colored image.
+            if original_min == original_max:
+                normalized = np.full(
+                    arr.shape,
+                    255 if original_min == 255 else 0,
+                    dtype=np.uint8
+                )
+            else:
+                # Calculate normalization range
+                if clip_percentile is not None:
+                    if not 0 <= clip_percentile < 50:
+                        raise ValueError(
+                            "clip_percentile must be between 0 and 50."
+                        )
+
+                    lo = float(
+                        np.percentile(arr, clip_percentile)
+                    )
+                    hi = float(
+                        np.percentile(arr, 100 - clip_percentile)
+                    )
+                else:
+                    lo = original_min
+                    hi = original_max
+
+                # Clipping can make a non-flat image flat,
+                # so check again before dividing.
+                if hi == lo:
+                    normalized = np.full(
+                        arr.shape,
+                        0,
+                        dtype=np.uint8
+                    )
+                else:
+                    clipped = np.clip(arr, lo, hi)
+
+                    normalized = (
+                        (clipped - lo) / (hi - lo) * 255
+                    ).astype(np.uint8)
+
+            # Save as PNG
+            output_path = output_dir / f"{file.stem}.png"
+            Image.fromarray(normalized).save(output_path, "PNG")
+
+        except Exception as e:
+            print(f"Skipping {file.name}: {e}")
+
+    return stats

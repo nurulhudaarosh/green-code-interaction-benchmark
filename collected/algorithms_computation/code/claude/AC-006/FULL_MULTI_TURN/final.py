@@ -1,0 +1,352 @@
+"""
+Largest 4-connected region (value >= T) finder.
+Deterministic, standard-library-only. Iterative flood fill; counts every exposed side.
+
+Explicitly verified difficult cases:
+  - repeated values (identical numbers in disjoint/adjacent regions)
+  - deterministic ties (equal size, and equal size+perimeter, resolved by smallest coordinate)
+"""
+
+import unittest
+from typing import Dict, List, NamedTuple, Optional, Tuple
+
+
+class RegionResult(NamedTuple):
+    size: int
+    perimeter: int
+    coordinate: Optional[Tuple[int, int]]
+    cells: Tuple[Tuple[int, int], ...]
+    operation_summary: Optional[Dict[str, int]] = None  # None unless explicitly requested
+
+
+def _validate_grid(grid: List[List[float]]) -> Tuple[int, int]:
+    if not grid or not grid[0]:
+        return 0, 0
+    width = len(grid[0])
+    for r, row in enumerate(grid):
+        if len(row) != width:
+            raise ValueError(f"Ragged grid: row {r} has length {len(row)}, expected {width}")
+    return len(grid), width
+
+
+def _flood_fill(
+    grid: List[List[float]],
+    visited: List[List[bool]],
+    start: Tuple[int, int],
+    threshold: float,
+    rows: int,
+    cols: int,
+    ops: Dict[str, int],
+) -> Tuple[int, int, Tuple[int, int], List[Tuple[int, int]]]:
+    """
+    Iterative (stack-based) flood fill. Connectivity is determined purely by
+    adjacency via the visited matrix -- never by value equality -- so repeated
+    values in disjoint parts of the grid never merge into one region.
+    """
+    stack = [start]
+    visited[start[0]][start[1]] = True
+
+    size = 0
+    perimeter = 0
+    smallest = start
+    cells: List[Tuple[int, int]] = []
+    deltas = ((-1, 0), (1, 0), (0, -1), (0, 1))
+
+    while stack:
+        r, c = stack.pop()
+        size += 1
+        ops["cells_visited"] += 1
+        cells.append((r, c))
+        if (r, c) < smallest:
+            smallest = (r, c)
+
+        for dr, dc in deltas:
+            nr, nc = r + dr, c + dc
+            ops["neighbor_checks"] += 1
+
+            if nr < 0 or nr >= rows or nc < 0 or nc >= cols:
+                perimeter += 1
+                ops["exposed_sides_counted"] += 1
+                continue
+            if grid[nr][nc] < threshold:
+                perimeter += 1
+                ops["exposed_sides_counted"] += 1
+                continue
+            if not visited[nr][nc]:
+                visited[nr][nc] = True
+                stack.append((nr, nc))
+                ops["cells_pushed"] += 1
+
+    return size, perimeter, smallest, cells
+
+
+def _region_key(size: int, perimeter: int, coord: Tuple[int, int]) -> Tuple[int, int, int, int]:
+    """
+    Explicit sort key enforcing the tie-break rule:
+      1) larger size wins
+      2) larger perimeter wins
+      3) smaller coordinate wins
+    Using a single tuple key compared with '<' guarantees the same winner
+    every run, regardless of scan order among equally-ranked regions.
+    """
+    return (-size, -perimeter, coord[0], coord[1])
+
+
+def largest_region(
+    grid: List[List[float]],
+    threshold: float,
+    include_operation_summary: bool = False,
+) -> RegionResult:
+    rows, cols = _validate_grid(grid)
+    if rows == 0 or cols == 0:
+        return RegionResult(
+            size=0,
+            perimeter=0,
+            coordinate=None,
+            cells=(),
+            operation_summary=(
+                {
+                    "regions_discovered": 0,
+                    "cells_visited": 0,
+                    "neighbor_checks": 0,
+                    "exposed_sides_counted": 0,
+                    "cells_pushed": 0,
+                    "tie_break_comparisons": 0,
+                    "total_operations": 0,
+                }
+                if include_operation_summary
+                else None
+            ),
+        )
+
+    visited = [[False] * cols for _ in range(rows)]
+
+    best_key: Optional[Tuple[int, int, int, int]] = None
+    best_size = 0
+    best_perimeter = 0
+    best_coord: Optional[Tuple[int, int]] = None
+    best_cells: Tuple[Tuple[int, int], ...] = ()
+
+    ops: Dict[str, int] = {
+        "regions_discovered": 0,
+        "cells_visited": 0,
+        "neighbor_checks": 0,
+        "exposed_sides_counted": 0,
+        "cells_pushed": 0,
+        "tie_break_comparisons": 0,
+    }
+
+    for r in range(rows):
+        for c in range(cols):
+            if visited[r][c] or grid[r][c] < threshold:
+                continue
+
+            ops["regions_discovered"] += 1
+            size, perimeter, coord, cells = _flood_fill(
+                grid, visited, (r, c), threshold, rows, cols, ops
+            )
+            key = _region_key(size, perimeter, coord)
+
+            ops["tie_break_comparisons"] += 1
+            if best_key is None or key < best_key:
+                best_key = key
+                best_size = size
+                best_perimeter = perimeter
+                best_coord = coord
+                best_cells = tuple(cells)
+
+    summary = (
+        {**ops, "total_operations": sum(ops.values())}
+        if include_operation_summary
+        else None
+    )
+
+    if best_coord is None:
+        return RegionResult(
+            size=0, perimeter=0, coordinate=None, cells=(), operation_summary=summary
+        )
+
+    return RegionResult(
+        size=best_size,
+        perimeter=best_perimeter,
+        coordinate=best_coord,
+        cells=best_cells,
+        operation_summary=summary,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Tests
+# --------------------------------------------------------------------------- #
+class TestLargestThresholdRegion(unittest.TestCase):
+    def test_basic_single_region(self):
+        grid = [
+            [9, 9, 1],
+            [9, 1, 1],
+            [1, 1, 1],
+        ]
+        result = largest_region(grid, 5)
+        self.assertEqual(result.size, 3)
+        self.assertEqual(result.coordinate, (0, 0))
+        self.assertEqual(result.operation_summary, None)
+
+    def test_repeated_values_disjoint_regions_not_merged(self):
+        """
+        Same value (7) appears in two diagonally-touching (not 4-adjacent) blocks.
+        They must NOT be merged just because the values are identical.
+        """
+        grid = [
+            [7, 7, 1, 1],
+            [7, 7, 1, 1],
+            [1, 1, 7, 7],
+            [1, 1, 7, 7],
+        ]
+        result = largest_region(grid, 5)
+        # Two disjoint 2x2 regions of identical value 7, both size 4, both perimeter 8.
+        # Tie-break -> smaller coordinate -> top-left block.
+        self.assertEqual(result.size, 4)
+        self.assertEqual(result.perimeter, 8)
+        self.assertEqual(result.coordinate, (0, 0))
+        self.assertEqual(sorted(result.cells), [(0, 0), (0, 1), (1, 0), (1, 1)])
+
+    def test_repeated_values_all_identical_grid_forms_one_region(self):
+        """
+        Entire grid is the same repeated value >= T: connectivity makes it
+        one single region, not multiple.
+        """
+        grid = [[6, 6, 6], [6, 6, 6], [6, 6, 6]]
+        result = largest_region(grid, 3)
+        self.assertEqual(result.size, 9)
+        self.assertEqual(result.coordinate, (0, 0))
+        # Perimeter of a solid 3x3 block = 4 sides per corner-ish; compute directly: 12
+        self.assertEqual(result.perimeter, 12)
+
+    def test_deterministic_tie_equal_size_different_perimeter(self):
+        """
+        Two regions of equal size but different perimeter: larger perimeter wins,
+        even though it is scanned second (later row-major position).
+        """
+        grid = [
+            [9, 9, 9, 9, 1],  # compact-ish line, size 4
+            [1, 1, 1, 1, 1],
+            [8, 1, 8, 1, 8],  # jagged, size 3 -- adjust to equal size 4 below
+            [8, 1, 8, 1, 8],
+        ]
+        # Build a cleaner controlled example instead: two size-4 regions,
+        # one compact (perimeter 8) and one straight line (perimeter 10).
+        grid = [
+            [9, 9, 1, 1],
+            [9, 9, 1, 1],
+            [1, 1, 1, 1],
+            [8, 8, 8, 8],  # straight line of 4 -> perimeter 10
+        ]
+        result = largest_region(grid, 5)
+        self.assertEqual(result.size, 4)
+        self.assertEqual(result.perimeter, 10)  # line beats compact square on perimeter
+        self.assertEqual(result.coordinate, (3, 0))
+
+    def test_deterministic_tie_equal_size_equal_perimeter_smallest_coordinate(self):
+        """
+        Two regions with identical size AND identical perimeter (both 2x2 blocks,
+        made of different repeated values). Smallest coordinate must win,
+        deterministically, regardless of which is discovered first or second.
+        """
+        grid = [
+            [5, 5, 1, 1, 1],
+            [5, 5, 1, 1, 1],
+            [1, 1, 1, 1, 1],
+            [1, 1, 1, 8, 8],
+            [1, 1, 1, 8, 8],
+        ]
+        result = largest_region(grid, 4)
+        self.assertEqual(result.size, 4)
+        self.assertEqual(result.perimeter, 8)
+        self.assertEqual(result.coordinate, (0, 0))
+
+        # Reverse-value variant: same shapes, values swapped, must not change the
+        # coordinate winner since connectivity/shape (not value) drives the tie-break.
+        grid_swapped_values = [
+            [8, 8, 1, 1, 1],
+            [8, 8, 1, 1, 1],
+            [1, 1, 1, 1, 1],
+            [1, 1, 1, 5, 5],
+            [1, 1, 1, 5, 5],
+        ]
+        result2 = largest_region(grid_swapped_values, 4)
+        self.assertEqual(result2.size, 4)
+        self.assertEqual(result2.perimeter, 8)
+        self.assertEqual(result2.coordinate, (0, 0))
+
+    def test_determinism_across_repeated_runs(self):
+        """
+        Running the same ambiguous (multi-tie) grid many times must always
+        produce the identical result -- no randomness, no run-to-run drift.
+        """
+        grid = [
+            [3, 3, 1, 3, 3],
+            [3, 3, 1, 3, 3],
+            [1, 1, 1, 1, 1],
+            [3, 3, 1, 3, 3],
+            [3, 3, 1, 3, 3],
+        ]
+        results = [largest_region(grid, 2) for _ in range(25)]
+        first = results[0]
+        for r in results[1:]:
+            self.assertEqual(r.size, first.size)
+            self.assertEqual(r.perimeter, first.perimeter)
+            self.assertEqual(r.coordinate, first.coordinate)
+            self.assertEqual(r.cells, first.cells)
+        # Four equally-sized (4), equally-perimetered (8) 2x2 corner blocks of
+        # identical repeated value 3 -> smallest coordinate (0,0) must win every time.
+        self.assertEqual(first.coordinate, (0, 0))
+
+    def test_operation_summary_disabled_by_default_preserves_original_fields(self):
+        grid = [[5, 5], [5, 5]]
+        plain = largest_region(grid, 3)
+        with_ops = largest_region(grid, 3, include_operation_summary=True)
+        self.assertIsNone(plain.operation_summary)
+        self.assertIsNotNone(with_ops.operation_summary)
+        self.assertEqual(plain.size, with_ops.size)
+        self.assertEqual(plain.perimeter, with_ops.perimeter)
+        self.assertEqual(plain.coordinate, with_ops.coordinate)
+        self.assertEqual(plain.cells, with_ops.cells)
+
+    def test_no_region_meets_threshold(self):
+        grid = [[1, 1], [1, 1]]
+        result = largest_region(grid, 5)
+        self.assertEqual(result.size, 0)
+        self.assertEqual(result.perimeter, 0)
+        self.assertIsNone(result.coordinate)
+        self.assertEqual(result.cells, ())
+
+    def test_ragged_grid_raises(self):
+        with self.assertRaises(ValueError):
+            largest_region([[1, 2], [3]], 1)
+
+
+def _demo() -> None:
+    grid = [
+        [5, 5, 1, 9, 9],
+        [5, 5, 1, 9, 1],
+        [1, 1, 1, 1, 1],
+        [8, 8, 1, 3, 3],
+        [8, 8, 1, 3, 3],
+    ]
+    T = 4
+    print("Grid:")
+    for row in grid:
+        print(row)
+    print(f"Threshold: {T}\n")
+
+    result = largest_region(grid, T)
+    print(f"size:              {result.size}")
+    print(f"perimeter:         {result.perimeter}")
+    print(f"coordinate:        {result.coordinate}")
+    print(f"cells:             {sorted(result.cells)}")
+    print(f"operation_summary: {result.operation_summary}")
+
+
+if __name__ == "__main__":
+    _demo()
+    print("\nRunning tests...\n")
+    unittest.main(argv=[""], exit=False, verbosity=2)

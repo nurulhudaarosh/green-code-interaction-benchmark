@@ -1,0 +1,82 @@
+### Problem Understanding & Constraints
+
+Given two strings $S_1$ and $S_2$, the goal is to:
+
+1. Compute the length of their **Longest Common Subsequence (LCS)**.
+2. Reconstruct one specific LCS string using a **deterministic tie-breaking rule**: when the DP values for taking a character from $S_1$ versus $S_2$ are equal, prefer advancing in $S_1$ (i.e., prefer the transition moving up/north in the DP table over moving left/west).
+
+**Key Constraints & Requirements:**
+
+* **Input:** Two strings, $S_1$ of length $m$ and $S_2$ of length $n$.
+* **Time Complexity:** $O(m \times n)$ using standard quadratic dynamic programming.
+* **Space Complexity:** $O(m \times n)$ table to enable backtracking/reconstruction.
+* **Output:** A tuple containing `(lcs_length, lcs_string)`.
+
+---
+
+### Algorithm Description
+
+1. **DP Table Construction:**
+Define `dp[i][j]` as the length of the LCS of prefixes $S_1[0 \dots i-1]$ and $S_2[0 \dots j-1]$.
+* Base cases: `dp[i][0] = 0` and `dp[0][j] = 0`.
+* If $S_1[i-1] == S_2[j-1]$: `dp[i][j] = dp[i-1][j-1] + 1`
+* Else: `dp[i][j] = max(dp[i-1][j], dp[i][j-1])`
+
+
+2. **Deterministic Backtracking:**
+Start at `i = m, j = n` and reconstruct the sequence backwards:
+* If $S_1[i-1] == S_2[j-1]$: add $S_1[i-1]$ to the result, move to `(i-1, j-1)`.
+* Else if `dp[i-1][j] >= dp[i][j-1]`: move to `(i-1, j)`. This satisfies the deterministic rule favoring advancing in $S_1$ on ties (`dp[i-1][j] == dp[i][j-1]`).
+* Else: move to `(i, j-1)`.
+
+
+3. Reverse the collected characters to produce the final LCS string.
+
+---
+
+### Python Solution
+
+```python
+def lcs_with_reconstruction(s1: str, s2: str) -> tuple[int, str]:
+    m, n = len(s1), len(s2)
+    
+    # Step 1: Compute DP table
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if s1[i - 1] == s2[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+                
+    lcs_length = dp[m][n]
+    
+    # Step 2: Backtrack to reconstruct the LCS string
+    i, j = m, n
+    lcs_chars = []
+    
+    while i > 0 and j > 0:
+        if s1[i - 1] == s2[j - 1]:
+            lcs_chars.append(s1[i - 1])
+            i -= 1
+            j -= 1
+        elif dp[i - 1][j] >= dp[i][j - 1]:
+            # Deterministic tie-breaking: prefer advancing in s1 (decrementing i)
+            i -= 1
+        else:
+            j -= 1
+            
+    lcs_string = "".join(reversed(lcs_chars))
+    return lcs_length, lcs_string
+
+
+# Example usage
+if __name__ == "__main__":
+    str1 = "ABCBDAB"
+    str2 = "BDCABA"
+    length, result = lcs_with_reconstruction(str1, str2)
+    print(f"Length: {length}")
+    print(f"LCS:    {result}")
+
+```

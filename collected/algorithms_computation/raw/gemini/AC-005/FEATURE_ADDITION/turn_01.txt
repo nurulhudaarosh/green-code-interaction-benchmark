@@ -1,0 +1,115 @@
+### Problem Understanding
+
+Given an array/sequence of integers $A = [a_0, a_1, \dots, a_{n-1}]$, the goal is to find a strictly increasing subsequence $A[i_0], A[i_1], \dots, A[i_{k-1}]$ with $0 \le i_0 < i_1 < \dots < i_{k-1} < n$ such that:
+
+1. $a_{i_0} < a_{i_1} < \dots < a_{i_{k-1}}$ (Strictly Increasing)
+2. The length $k$ is maximized.
+3. Among all optimal subsequences of maximum length $k$, the sequence of original 0-based indices $[i_0, i_1, \dots, i_{k-1}]$ is **lexicographically smallest**.
+
+---
+
+### Key Constraints & Required Output
+
+* **Input:** A list/sequence of integers $A$.
+* **Time Complexity Target:** $O(n^2)$ using Dynamic Programming.
+* **Space Complexity Target:** $O(n)$ for storing DP states and parent pointers.
+* **Required Output:** A list of 0-based indices $[i_0, i_1, \dots, i_{k-1}]$ corresponding to the strictly increasing subsequence of maximum length that yields the lexicographically smallest index sequence.
+
+---
+
+### Algorithm Description
+
+We use an $O(n^2)$ Dynamic Programming approach where each index $i$ keeps track of the optimal strictly increasing subsequence ending at index $i$:
+
+1. **State Definition:**
+* `dp[i]`: Length of the longest strictly increasing subsequence ending at index $i$.
+* `parent[i]`: The predecessor index $j$ ($j < i$) that formed `dp[i]`, initialized to `-1`.
+* `path[i]`: The full sequence of indices ending at $i$. To compare paths lexicographically during transitions, we store the explicit index sequence `path[i]` for each index $i$.
+
+
+2. **DP Transitions:**
+For each index $i$ from $0$ to $n-1$:
+* Initialize `dp[i] = 1` and `path[i] = [i]`.
+* Iterate through all previous indices $j < i$:
+* If $A[j] < A[i]$:
+* Candidate length = `dp[j] + 1`
+* Candidate path = `path[j] + [i]`
+* Update `dp[i]` and `path[i]` if:
+1. Candidate length $>$ `dp[i]`, OR
+2. Candidate length $==$ `dp[i]` AND Candidate path is **lexicographically smaller** than `path[i]`.
+
+
+
+
+
+
+
+
+3. **Global Optimum Selection:**
+* Find the maximum length $L = \max(dp)$.
+* Among all indices $i$ where `dp[i] == L`, select the index $i$ whose `path[i]` is lexicographically smallest.
+* Return `path[best_index]`.
+
+
+
+---
+
+### Python Solution
+
+```python
+def longest_increasing_subsequence_indices(arr: list[int]) -> list[int]:
+    """
+    Finds the strictly increasing subsequence of maximum length and returns
+    the lexicographically smallest sequence of original 0-based indices.
+    
+    Time Complexity: O(n^2)
+    Space Complexity: O(n^2) for explicit index sequence path comparisons.
+    """
+    n = len(arr)
+    if n == 0:
+        return []
+
+    # dp[i] stores the length of the LIS ending at index i
+    dp = [1] * n
+    
+    # path[i] stores the complete 0-based index sequence ending at i
+    path = [[i] for i in range(n)]
+
+    for i in range(n):
+        for j in range(i):
+            if arr[j] < arr[i]:
+                candidate_len = dp[j] + 1
+                candidate_path = path[j] + [i]
+                
+                # Update if we find a strictly longer sequence, or a sequence
+                # of equal length with a lexicographically smaller index path.
+                if candidate_len > dp[i]:
+                    dp[i] = candidate_len
+                    path[i] = candidate_path
+                elif candidate_len == dp[i] and candidate_path < path[i]:
+                    path[i] = candidate_path
+
+    # Find maximum LIS length
+    max_len = max(dp)
+    
+    # Among all paths achieving max_len, pick the lexicographically smallest index path
+    best_path = None
+    for i in range(n):
+        if dp[i] == max_len:
+            if best_path is None or path[i] < best_path:
+                best_path = path[i]
+
+    return best_path if best_path is not None else []
+
+
+# Example Usage
+if __name__ == "__main__":
+    nums = [10, 22, 9, 33, 21, 50, 41, 60, 80]
+    result_indices = longest_increasing_subsequence_indices(nums)
+    result_values = [nums[idx] for idx in result_indices]
+    
+    print(f"Input Array: {nums}")
+    print(f"Lexicographically Smallest Index Path: {result_indices}")
+    print(f"Corresponding LIS Values: {result_values}")
+
+```

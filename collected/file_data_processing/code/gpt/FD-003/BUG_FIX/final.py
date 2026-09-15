@@ -1,0 +1,115 @@
+import csv
+import sys
+from collections import defaultdict
+
+
+def aggregate_sales(input_file, output_file):
+    sales = defaultdict(lambda: {
+        "total_units": 0,
+        "total_revenue": 0.0
+    })
+
+    invalid_rows = 0
+
+    with open(input_file, "r", newline="", encoding="utf-8") as file:
+        reader = csv.DictReader(file)
+
+        required_columns = {"region", "category", "units", "unit_price"}
+
+        if not required_columns.issubset(reader.fieldnames or set()):
+            raise ValueError(
+                "CSV must contain: region, category, units, unit_price"
+            )
+
+        for row in reader:
+            try:
+                region = row["region"].strip()
+                category = row["category"].strip()
+
+                if not region or not category:
+                    invalid_rows += 1
+                    continue
+
+                units_text = row["units"].strip()
+                price_text = row["unit_price"].strip()
+
+                # Reject missing or malformed numeric fields
+                if not units_text or not price_text:
+                    invalid_rows += 1
+                    continue
+
+                units = int(units_text)
+                unit_price = float(price_text)
+
+                # Reject invalid numeric values
+                if units <= 0 or unit_price < 0:
+                    invalid_rows += 1
+                    continue
+
+                # Reject NaN and infinity
+                if unit_price != unit_price or unit_price in (
+                    float("inf"),
+                    float("-inf")
+                ):
+                    invalid_rows += 1
+                    continue
+
+                revenue = units * unit_price
+                key = (region, category)
+
+                sales[key]["total_units"] += units
+                sales[key]["total_revenue"] += revenue
+
+            except (ValueError, TypeError, KeyError, AttributeError):
+                # Skip malformed rows completely
+                invalid_rows += 1
+                continue
+
+    with open(output_file, "w", newline="", encoding="utf-8") as file:
+        fieldnames = [
+            "region",
+            "category",
+            "total_units",
+            "total_revenue",
+            "weighted_avg_unit_price"
+        ]
+
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for region, category in sorted(sales.keys()):
+            total_units = sales[(region, category)]["total_units"]
+            total_revenue = sales[(region, category)]["total_revenue"]
+
+            weighted_avg_price = total_revenue / total_units
+
+            writer.writerow({
+                "region": region,
+                "category": category,
+                "total_units": total_units,
+                "total_revenue": f"{total_revenue:.2f}",
+                "weighted_avg_unit_price": f"{weighted_avg_price:.2f}"
+            })
+
+    print("Aggregation completed.")
+    print(f"Invalid rows ignored: {invalid_rows}")
+    print(f"Output written to: {output_file}")
+
+
+def main():
+    if len(sys.argv) != 3:
+        print("Usage: python sales_aggregator.py input.csv output.csv")
+        sys.exit(1)
+
+    try:
+        aggregate_sales(sys.argv[1], sys.argv[2])
+    except FileNotFoundError:
+        print(f"Error: Input file '{sys.argv[1]}' not found.")
+        sys.exit(1)
+    except ValueError as error:
+        print(f"Error: {error}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

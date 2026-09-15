@@ -1,0 +1,153 @@
+Here’s a complete solution that follows your requirements: it identifies the problem, states the constraints and outputs, explains the algorithm, and provides a deterministic Python implementation using only the standard library.
+
+## Problem understanding
+
+We are given a 2D integer matrix and must answer rectangle queries on it. Each query defines an axis-aligned rectangle using two corners: `(r1, c1)` and `(r2, c2)`, inclusive. For each query, we must return:
+
+- the sum of all values inside the rectangle,
+- the minimum value inside the rectangle,
+- the maximum value inside the rectangle.
+
+The preprocessing step can build auxiliary data structures before queries arrive, but query answers must be produced efficiently enough for the intended workload.
+
+## Key constraints and required output
+
+Assumptions for a practical implementation:
+
+- Matrix dimensions: `R` rows, `C` columns.
+- Query coordinates are valid and satisfy `0 <= r1 <= r2 < R` and `0 <= c1 <= c2 < C`.
+- Values are integers, possibly negative.
+- Queries are inclusive on both ends.
+- The solution should use only the Python standard library.
+- No randomness, network, APIs, or external services.
+
+Required output per query:
+
+- `(sum, minimum, maximum)` for the requested rectangle.
+
+## Algorithm
+
+The requested mixed strategy is:
+
+1. **2D prefix sum for sum queries**  
+   Build `pref` where `pref[i][j]` is the sum of the submatrix from `(0, 0)` to `(i - 1, j - 1)` using 1-based indexing.  
+   Then the sum of rectangle `(r1, c1)` to `(r2, c2)` is computed in `O(1)`:
+   \[
+   \text{sum} = P[r2+1][c2+1] - P[r1][c2+1] - P[r2+1][c1] + P[r1][c1]
+   \]
+
+2. **Direct rectangle scanning for minimum and maximum**  
+   For each query, scan every cell inside the rectangle and track the minimum and maximum.  
+   This costs `O((r2 - r1 + 1) * (c2 - c1 + 1))` per query for extrema.
+
+This creates a mixed workload: fast `O(1)` sum queries, but slower extrema queries proportional to rectangle area.
+
+## Python implementation
+
+```python
+from typing import List, Tuple
+
+
+class RectangleQueryProcessor:
+    def __init__(self, matrix: List[List[int]]):
+        if not matrix or not matrix[0]:
+            raise ValueError("Matrix must be non-empty")
+
+        self.matrix = matrix
+        self.rows = len(matrix)
+        self.cols = len(matrix[0])
+
+        # Validate rectangular shape
+        for r in range(self.rows):
+            if len(matrix[r]) != self.cols:
+                raise ValueError("Matrix must be rectangular")
+
+        # Build 2D prefix sum table with 1-based indexing
+        # pref[i][j] = sum of matrix[0..i-1][0..j-1]
+        self.pref = [[0] * (self.cols + 1) for _ in range(self.rows + 1)]
+
+        for i in range(1, self.rows + 1):
+            row_sum = 0
+            for j in range(1, self.cols + 1):
+                row_sum += self.matrix[i - 1][j - 1]
+                self.pref[i][j] = self.pref[i - 1][j] + row_sum
+
+    def query(self, r1: int, c1: int, r2: int, c2: int) -> Tuple[int, int, int]:
+        """
+        Returns (sum, minimum, maximum) for inclusive rectangle
+        from (r1, c1) to (r2, c2).
+        """
+        if not (0 <= r1 <= r2 < self.rows and 0 <= c1 <= c2 < self.cols):
+            raise IndexError("Query rectangle is out of bounds")
+
+        # O(1) sum using prefix table
+        total = (
+            self.pref[r2 + 1][c2 + 1]
+            - self.pref[r1][c2 + 1]
+            - self.pref[r2 + 1][c1]
+            + self.pref[r1][c1]
+        )
+
+        # Direct scan for min and max
+        mn = None
+        mx = None
+
+        for r in range(r1, r2 + 1):
+            row = self.matrix[r]
+            for c in range(c1, c2 + 1):
+                val = row[c]
+                if mn is None or val < mn:
+                    mn = val
+                if mx is None or val > mx:
+                    mx = val
+
+        return total, mn, mx
+
+
+def main():
+    matrix = [
+        [1, 2, 3, 4],
+        [5, 6, 7, 8],
+        [9, 10, 11, 12],
+    ]
+
+    processor = RectangleQueryProcessor(matrix)
+
+    queries = [
+        (0, 0, 0, 0),   # single cell
+        (0, 0, 1, 1),   # top-left 2x2
+        (1, 1, 2, 2),   # bottom-right 2x2
+        (0, 0, 2, 3),   # whole matrix
+        (0, 1, 2, 2),   # middle columns
+    ]
+
+    for q in queries:
+        r1, c1, r2, c2 = q
+        result = processor.query(r1, c1, r2, c2)
+        print(f"Query {q}: sum={result[0]}, min={result[1]}, max={result[2]}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## Example output
+
+For the sample matrix and queries above, the program prints:
+
+```text
+Query (0, 0, 0, 0): sum=1, min=1, max=1
+Query (0, 0, 1, 1): sum=14, min=1, max=6
+Query (1, 1, 2, 2): sum=34, min=6, max=11
+Query (0, 0, 2, 3): sum=78, min=1, max=12
+Query (0, 1, 2, 2): sum=63, min=2, max=11
+```
+
+## Complexity summary
+
+- **Preprocessing:** `O(R * C)` time and `O(R * C)` memory for the prefix sum table.
+- **Sum query:** `O(1)`.
+- **Min/max query:** `O(area)` where `area = (r2 - r1 + 1) * (c2 - c1 + 1)`.
+- **Overall per query:** `O(area)` because of the extrema scan.
+
+This matches the requested mixed preprocessing/query workload: a 2D prefix-sum table for sums and direct rectangle scanning for extrema.

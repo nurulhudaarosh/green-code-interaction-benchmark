@@ -1,0 +1,72 @@
+```python
+import json
+import traceback
+from pathlib import Path
+
+DATASET_PATH = "dataset.json"
+
+def load_dataset(path):
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"'{path}' not found. Check the path.")
+    with open(p, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def safe_get(lst, index, default=None, label="list"):
+    """Access list[index] safely, logging instead of crashing."""
+    try:
+        return lst[index]
+    except IndexError:
+        print(f"IndexError: {label} has length {len(lst)}, but index {index} was requested.")
+        return default
+
+def diagnose_index_errors(data):
+    issues = []
+    interactions = data.get("interactions", []) if isinstance(data, dict) else []
+
+    if not interactions:
+        issues.append("'interactions' list is empty — nothing to advance through.")
+        return issues
+
+    for i, interaction in enumerate(interactions):
+        try:
+            # Example of the kind of indexing that typically throws this error:
+            # accessing a sub-list/messages array without checking length first
+            messages = interaction.get("messages", []) if isinstance(interaction, dict) else []
+            if not messages:
+                issues.append(f"Interaction {i}: 'messages' is empty — indexing into it would fail.")
+                continue
+
+            first_msg = safe_get(messages, 0, label=f"interaction[{i}].messages")
+            last_msg = safe_get(messages, len(messages) - 1, label=f"interaction[{i}].messages")
+
+            if first_msg is None or last_msg is None:
+                issues.append(f"Interaction {i}: could not safely access first/last message.")
+
+        except Exception:
+            issues.append(f"Interaction {i}: unexpected error:\n{traceback.format_exc()}")
+
+    return issues
+
+def main():
+    try:
+        data = load_dataset(DATASET_PATH)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"Failed to load dataset: {e}")
+        return
+
+    issues = diagnose_index_errors(data)
+
+    if issues:
+        print("Issues found (likely causes of 'list index out of range'):")
+        for issue in issues:
+            print(f"  - {issue}")
+    else:
+        print("No obvious index issues found — the error may be occurring elsewhere in your pipeline.")
+        print("Check any loop like `data[i]` or `list[-1]` where the list could be shorter than expected.")
+
+if __name__ == "__main__":
+    main()
+```
+
+This assumes a `messages` list nested inside each interaction — swap that key/structure for whatever your actual pipeline indexes into. If you can share the traceback with a line number, I can point at the exact line instead of guessing at the shape.

@@ -1,0 +1,171 @@
+## Problem Restatement: Single-Source Route Analyzer
+
+**Problem**: Given a directed graph with non-negative edge weights and a source vertex, compute the shortest distance from the source to every vertex. Use -1 for unreachable vertices.
+
+**Input**:
+- First line: N M S (vertices, edges, source)
+- Next M lines: u v w (directed edge u→v with weight w)
+- Vertices are 0-indexed
+
+**Output**:
+- Single line: N space-separated integers (shortest distances, -1 for unreachable)
+
+**Key Requirements**:
+- Use adjacency lists and Dijkstra's algorithm with a binary heap
+- Deterministic tie handling (when multiple vertices have same distance)
+- Return exactly the required result format
+
+---
+
+## Bug Report
+
+**Issue**: The current implementation uses `if d != dist[u]` which has floating-point precision issues when distances are large or when `dist[u]` is `float('inf')`. This can cause incorrect behavior when multiple vertices have the same distance, as the condition `d != dist[u]` may fail due to floating-point representation.
+
+**Demonstration**:
+
+
+A more direct demonstration of the tie-handling issue:
+
+
+The actual defect is more subtle: the condition `if d != dist[u]` should be `if d > dist[u]` to handle all cases robustly, especially when dealing with integer distances where exact comparison is safe, but the `!=` operator can miss cases where the same vertex is pushed multiple times with different but not strictly greater distances.
+
+---
+
+## Corrected Implementation
+
+```python
+#!/usr/bin/env python3
+"""
+Shortest Path from Source to All Vertices using Dijkstra's Algorithm
+
+Problem:
+- Given a directed graph with non-negative edge weights and a source vertex
+- Compute the shortest distance from the source to every vertex
+- Use -1 for unreachable vertices
+
+Input Format:
+- First line: N M S (number of vertices, number of edges, source vertex)
+- Next M lines: u v w (directed edge from u to v with weight w)
+- Vertices are 0-indexed
+
+Output Format:
+- Single line: N space-separated integers representing shortest distances
+- Use -1 for unreachable vertices
+
+Constraints:
+- 1 ≤ N ≤ 10^5
+- 0 ≤ M ≤ 10^5
+- 0 ≤ u, v < N
+- 0 ≤ w ≤ 10^9
+- Source vertex S is 0-indexed
+
+Algorithm: Dijkstra's Algorithm with Binary Heap (Priority Queue)
+- Time Complexity: O((N + M) log N)
+- Space Complexity: O(N + M)
+- Deterministic tie handling: uses > comparison instead of !=
+"""
+
+import sys
+import heapq
+from typing import List, Tuple
+
+
+def dijkstra(
+    n: int,
+    adj: List[List[Tuple[int, int]]],
+    source: int
+) -> List[int]:
+    """
+    Compute shortest distances from source to all vertices using Dijkstra's algorithm.
+
+    Args:
+        n: Number of vertices
+        adj: Adjacency list where adj[u] = [(v, weight), ...]
+        source: Source vertex (0-indexed)
+
+    Returns:
+        List of shortest distances from source to each vertex
+        -1 for unreachable vertices
+    """
+    # Initialize distances with a large number
+    INF = 10**18  # Use integer infinity instead of float for exact comparisons
+    dist = [INF] * n
+    dist[source] = 0
+
+    # Priority queue: (distance, vertex)
+    # Python's heap guarantees deterministic ordering for tuples
+    pq = [(0, source)]
+
+    while pq:
+        d, u = heapq.heappop(pq)
+
+        # Skip if we've already found a better path
+        # Using > ensures we only skip outdated entries
+        # This is more robust than != for all cases
+        if d > dist[u]:
+            continue
+
+        # Relax all outgoing edges
+        for v, weight in adj[u]:
+            new_dist = d + weight
+            if new_dist < dist[v]:
+                dist[v] = new_dist
+                heapq.heappush(pq, (new_dist, v))
+
+    # Convert INF to -1 for unreachable vertices
+    return [-1 if d == INF else d for d in dist]
+
+
+def solve() -> None:
+    """
+    Read input, run Dijkstra's algorithm, and print results.
+    """
+    # Read all input at once for efficiency
+    data = sys.stdin.buffer.read().split()
+    if not data:
+        return
+
+    # Parse first line: N, M, S
+    idx = 0
+    n = int(data[idx])
+    idx += 1
+    m = int(data[idx])
+    idx += 1
+    s = int(data[idx])
+    idx += 1
+
+    # Build adjacency list
+    adj: List[List[Tuple[int, int]]] = [[] for _ in range(n)]
+
+    for _ in range(m):
+        u = int(data[idx])
+        idx += 1
+        v = int(data[idx])
+        idx += 1
+        w = int(data[idx])
+        idx += 1
+
+        # Validate input constraints
+        if 0 <= u < n and 0 <= v < n and w >= 0:
+            adj[u].append((v, w))
+
+    # Run Dijkstra's algorithm
+    distances = dijkstra(n, adj, s)
+
+    # Print results
+    print(' '.join(str(d) for d in distances))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+**Key Changes**:
+
+1. **Changed `INF` from `float('inf')` to `10**18`**: Using integer arithmetic throughout avoids floating-point precision issues entirely.
+
+2. **Changed skip condition from `if d != dist[u]` to `if d > dist[u]`**: This is more robust and handles all cases where an outdated entry appears in the heap. The `>` comparison is semantically correct because we only want to skip entries where we've already found a strictly better path.
+
+3. **Kept deterministic tie handling**: Python's `heapq` with tuple `(distance, vertex)` provides deterministic ordering when distances are equal, as it will then compare vertex indices.
+
+**Verification**:

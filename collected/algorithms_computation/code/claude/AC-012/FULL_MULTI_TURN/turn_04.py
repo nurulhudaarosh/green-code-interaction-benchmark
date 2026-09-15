@@ -1,0 +1,224 @@
+"""
+Longest Common Subsequence (LCS): length + deterministic reconstruction,
+with an optional operation_summary field reporting decision counts, plus
+tests covering worst-case-like O(n*m) structures.
+
+Algorithm: quadratic-time dynamic programming (O(n*m) time and space) plus
+backward predecessor reconstruction. When the DP scores for the two possible
+predecessor moves are tied, the reconstruction deterministically prefers
+advancing in the FIRST string (A) — implemented by preferring the branch
+that keeps A's pointer fixed longer (i.e., moving j first on ties).
+
+Standard library only. No randomness, no I/O beyond the demo/tests in
+__main__.
+"""
+
+from typing import Tuple, Dict, Union
+import time
+
+
+def lcs(
+    a: str,
+    b: str,
+    include_operation_summary: bool = False,
+) -> Union[Tuple[int, str], Tuple[int, str, Dict[str, int]]]:
+    """
+    Compute the LCS length and one deterministic LCS string for a and b.
+
+    Tie-breaking rule during reconstruction: when dp[i][j-1] >= dp[i-1][j]
+    (the 'left' branch, which advances b), that branch is taken on ties.
+    Only when dp[i-1][j] is strictly greater does the algorithm move by
+    decrementing i (advancing a). This makes the reconstruction favor
+    matches anchored earlier in a first, consistent with "prefer advancing
+    in the first string on equal scores."
+
+    Args:
+        a: first string.
+        b: second string.
+        include_operation_summary: if True, also return a dict summarizing
+            the major computational decisions made (DP cell fills, DP-table
+            ties encountered, reconstruction steps, and reconstruction-step
+            ties encountered). When False (default), behavior and return
+            shape are identical to the original implementation.
+
+    Returns:
+        If include_operation_summary is False:
+            (length, subsequence)
+        If include_operation_summary is True:
+            (length, subsequence, operation_summary)
+        where length is the LCS length, subsequence is one valid LCS
+        consistent with the tie-break rule, and operation_summary is a
+        dict of counts as described above.
+    """
+    n, m = len(a), len(b)
+
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+
+    dp_cells_filled = 0
+    dp_ties = 0
+
+    for i in range(1, n + 1):
+        ai = a[i - 1]
+        row_i, row_im1 = dp[i], dp[i - 1]
+        for j in range(1, m + 1):
+            dp_cells_filled += 1
+            if ai == b[j - 1]:
+                row_i[j] = row_im1[j - 1] + 1
+            else:
+                up = row_im1[j]      # dp[i-1][j] -> advances a if chosen
+                left = row_i[j - 1]  # dp[i][j-1] -> advances b if chosen
+                if up == left:
+                    dp_ties += 1
+                row_i[j] = up if up >= left else left
+
+    length = dp[n][m]
+
+    chars = []
+    i, j = n, m
+    reconstruction_steps = 0
+    reconstruction_ties = 0
+    while i > 0 and j > 0:
+        reconstruction_steps += 1
+        if a[i - 1] == b[j - 1]:
+            chars.append(a[i - 1])
+            i -= 1
+            j -= 1
+        else:
+            up = dp[i - 1][j]
+            left = dp[i][j - 1]
+            if up == left:
+                reconstruction_ties += 1
+            if left >= up:
+                # Tie or b-branch strictly better: advance in the second
+                # string first, preserving priority for matches anchored
+                # earlier in the first string.
+                j -= 1
+            else:
+                i -= 1
+
+    chars.reverse()
+    subsequence = "".join(chars)
+
+    assert len(subsequence) == length
+
+    if not include_operation_summary:
+        return length, subsequence
+
+    operation_summary: Dict[str, int] = {
+        "dp_cells_filled": dp_cells_filled,
+        "dp_ties_encountered": dp_ties,
+        "reconstruction_steps": reconstruction_steps,
+        "reconstruction_ties_encountered": reconstruction_ties,
+        "total_major_decisions": dp_cells_filled + reconstruction_steps,
+    }
+
+    return length, subsequence, operation_summary
+
+
+def _is_subsequence(s: str, of: str) -> bool:
+    """Check that s is a subsequence of `of` (used to validate LCS results)."""
+    it = iter(of)
+    return all(ch in it for ch in s)
+
+
+def _run_basic_tests() -> None:
+    cases = [
+        ("ABCBDAB", "BDCABA", 4, "BCBA"),
+        ("", "ABC", 0, ""),
+        ("ABC", "", 0, ""),
+        ("AGGTAB", "GXTXAYB", 4, "GTAB"),
+        ("AAAA", "AA", 2, "AA"),
+        ("ABAB", "BABA", 3, "ABA"),
+        ("BA", "AB", 1, "A"),
+        ("abc", "abc", 3, "abc"),
+        ("abc", "xyz", 0, ""),
+    ]
+    for a, b, exp_len, exp_sub in cases:
+        length, sub = lcs(a, b)
+        assert length == exp_len, f"length mismatch for {a!r},{b!r}: got {length}, want {exp_len}"
+        assert sub == exp_sub, f"lcs mismatch for {a!r},{b!r}: got {sub!r}, want {exp_sub!r}"
+    print("basic regression tests: OK")
+
+
+def _run_worst_case_tests() -> None:
+    # (a) Single repeated character, equal length: every cell is a match.
+    # Forces a full diagonal chain through reconstruction; LCS length = n.
+    n = 300
+    a = "X" * n
+    b = "X" * n
+    length, sub, summary = lcs(a, b, include_operation_summary=True)
+    assert length == n
+    assert sub == "X" * n
+    assert summary["dp_cells_filled"] == n * n
+    assert _is_subsequence(sub, a) and _is_subsequence(sub, b)
+    print(f"(a) repeated-char equal-length ({n}x{n}): length={length}, "
+          f"dp_cells_filled={summary['dp_cells_filled']}")
+
+    # (b) Disjoint alphabets: every cell is a mismatch, maximizing max()
+    # comparisons and ties across the whole table. LCS length = 0.
+    n, m = 250, 220
+    a = "A" * n
+    b = "B" * m
+    length, sub, summary = lcs(a, b, include_operation_summary=True)
+    assert length == 0
+    assert sub == ""
+    assert summary["dp_cells_filled"] == n * m
+    # Every non-first row/col cell is a mismatch here, so ties should be
+    # common (dp values along a and b axes stay equal for disjoint chars
+    # only where counts coincide) -- just check the table was fully scanned.
+    print(f"(b) disjoint alphabets ({n}x{m}): length={length}, "
+          f"dp_cells_filled={summary['dp_cells_filled']}, "
+          f"dp_ties_encountered={summary['dp_ties_encountered']}")
+
+    # (c) Repeated character, unequal length: asymmetric worst case.
+    n, m = 400, 150
+    a = "Y" * n
+    b = "Y" * m
+    length, sub, summary = lcs(a, b, include_operation_summary=True)
+    assert length == min(n, m)
+    assert sub == "Y" * min(n, m)
+    assert summary["dp_cells_filled"] == n * m
+    assert _is_subsequence(sub, a) and _is_subsequence(sub, b)
+    print(f"(c) repeated-char unequal-length ({n}x{m}): length={length}, "
+          f"dp_cells_filled={summary['dp_cells_filled']}")
+
+    # Timing sanity check: O(n*m) should stay well within a couple of
+    # seconds for these sizes on standard hardware; not a strict assertion
+    # on wall-clock time (that would be flaky), just a reported figure.
+    start = time.perf_counter()
+    lcs("Z" * 500, "Z" * 500)
+    elapsed = time.perf_counter() - start
+    print(f"timing check: 500x500 repeated-char case took {elapsed:.3f}s")
+
+    print("worst-case-structure tests: OK")
+
+
+def _demo() -> None:
+    cases = [
+        ("ABCBDAB", "BDCABA"),
+        ("", "ABC"),
+        ("ABC", ""),
+        ("AGGTAB", "GXTXAYB"),
+        ("AAAA", "AA"),
+        ("ABAB", "BABA"),
+        ("BA", "AB"),
+        ("abc", "abc"),
+        ("abc", "xyz"),
+    ]
+    print("-- default behavior (unchanged) --")
+    for a, b in cases:
+        length, sub = lcs(a, b)
+        print(f"A={a!r:12} B={b!r:12} -> length={length}, lcs={sub!r}")
+
+    print("\n-- with operation_summary --")
+    for a, b in cases:
+        length, sub, summary = lcs(a, b, include_operation_summary=True)
+        print(f"A={a!r:12} B={b!r:12} -> length={length}, lcs={sub!r}, summary={summary}")
+
+    print("\n-- tests --")
+    _run_basic_tests()
+    _run_worst_case_tests()
+
+
+if __name__ == "__main__":
+    _demo()

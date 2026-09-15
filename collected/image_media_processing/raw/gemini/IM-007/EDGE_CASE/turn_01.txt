@@ -1,0 +1,70 @@
+Perceptual average hashing (aHash) generates a fixed-size fingerprint for an image based on its structural brightness levels, allowing quick comparison using Hamming distance.
+
+Here is the complete Python implementation using `Pillow` and `numpy`:
+
+```python
+import numpy as np
+from PIL import Image
+
+
+def compute_ahash(image_path: str, hash_size: int = 8) -> str:
+    """Computes the Average Hash (aHash) of an image.
+
+    Args:
+        image_path: Path to the image file.
+        hash_size: Width and height of the resized image (default 8 for 64-bit
+          hash).
+
+    Returns:
+        Hexadecimal string representation of the perceptual hash.
+    """
+    # 1. Open the image and convert to grayscale
+    img = Image.open(image_path).convert("L")
+
+    # 2. Resize using high-quality resampling to remove high frequencies
+    img = img.resize((hash_size, hash_size), Image.Resampling.LANCZOS)
+
+    # 3. Convert image pixels to a numpy array
+    pixels = np.array(img, dtype=np.float64)
+
+    # 4. Calculate the average pixel value
+    avg = pixels.mean()
+
+    # 5. Create a boolean array where pixels > average are True (1) and <= are False (0)
+    diff = pixels > avg
+
+    # 6. Convert the boolean array to bits and then to a hex string
+    # Pack bits row-wise into bytes
+    bits = diff.flatten()
+    byte_array = np.packbits(bits)
+    hash_hex = byte_array.tobytes().hex()
+
+    return hash_hex
+
+
+def hamming_distance(hash_a: str, hash_b: str) -> int:
+    """Calculates the Hamming distance between two hex hashes.
+
+    Args:
+        hash_a: Hexadecimal hash string.
+        hash_b: Hexadecimal hash string.
+
+    Returns:
+        The number of differing bits (0 means identical).
+    """
+    if len(hash_a) != len(hash_b):
+        raise ValueError("Hashes must be of equal length to compare.")
+
+    # Convert hex strings to raw byte sequences
+    bytes_a = bytes.fromhex(hash_a)
+    bytes_b = bytes.fromhex(hash_b)
+
+    # XOR each byte pair and count set bits (differing bits)
+    distance = 0
+    for byte1, byte2 in zip(bytes_a, bytes_b):
+        xor_result = byte1 ^ byte2
+        distance += bin(xor_result).count("1")
+
+    return distance
+
+```

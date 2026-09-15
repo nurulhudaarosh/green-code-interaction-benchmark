@@ -1,0 +1,57 @@
+def coin_change(coins, target):
+    """
+    Returns (min_coins, combination) for unbounded coin change.
+    If impossible: returns (-1, [])
+    """
+    if target < 0:
+        return -1, []
+    if target == 0:
+        return 0, []
+
+    # DP array: minimum coins to make amount i
+    dp = [float('inf')] * (target + 1)
+    dp[0] = 0
+
+    # Keep track of which coin was used to make amount i
+    # We'll store one coin denomination that leads to the optimal solution
+    used_coin = [-1] * (target + 1)
+
+    # Unbounded coin change: iterate amounts then coins
+    for amount in range(1, target + 1):
+        for coin in coins:
+            if amount >= coin and dp[amount - coin] + 1 < dp[amount]:
+                dp[amount] = dp[amount - coin] + 1
+                used_coin[amount] = coin
+
+    if dp[target] == float('inf'):
+        return -1, []
+
+    # Reconstruct the combination
+    combination = []
+    remaining = target
+    while remaining > 0:
+        coin = used_coin[remaining]
+        combination.append(coin)
+        remaining -= coin
+
+    # The reconstruction gives coins in reverse order; we can reverse for clarity
+    combination.reverse()
+
+    return dp[target], combination
+
+
+# Example usage (will not run when imported, but demonstrates functionality)
+if __name__ == "__main__":
+    # Test cases
+    test_cases = [
+        ([1, 2, 5], 11),    # Expected: 3, [5, 5, 1] or [5, 2, 2, 2]? Actually min is 3: 5+5+1
+        ([2], 3),           # Expected: -1, []
+        ([1, 3, 4], 6),     # Expected: 2, [3, 3]
+        ([4, 5], 8),        # Expected: 2, [4, 4]
+        ([2, 5, 10], 0),    # Expected: 0, []
+        ([3, 7, 11], 15),   # Expected: 3? 11+4? no 4 not available. 7+7+? 1 no => -1? Actually 11+?4 no, 7+3+?5 no, 3*5=15 but coin 3 exists => 5 coins. So min is 5: [3,3,3,3,3] but wait 7+?8 no, so 5 is correct.
+    ]
+
+    for coins, target in test_cases:
+        count, combo = coin_change(coins, target)
+        print(f"coins={coins}, target={target} => count={count}, combo={combo}")

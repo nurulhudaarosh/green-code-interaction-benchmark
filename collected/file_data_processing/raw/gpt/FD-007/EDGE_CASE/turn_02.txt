@@ -1,0 +1,69 @@
+```python
+import csv
+from datetime import datetime
+from collections import defaultdict
+
+INPUT_FILE = "login_logout.csv"
+OUTPUT_FILE = "user_summaries.csv"
+
+events = defaultdict(list)
+
+with open(INPUT_FILE, "r", newline="", encoding="utf-8") as file:
+    reader = csv.DictReader(file)
+
+    for row in reader:
+        user = row["user_id"]
+        timestamp = datetime.fromisoformat(row["timestamp"])
+        event = row["event"].strip().lower()
+        events[user].append((timestamp, event))
+
+summaries = []
+
+for user, user_events in events.items():
+    user_events.sort(key=lambda x: x[0])
+
+    sessions = []
+    login_time = None
+
+    for timestamp, event in user_events:
+        if event == "login":
+            if login_time is None:
+                login_time = timestamp
+
+        elif event == "logout":
+            if login_time is not None and timestamp >= login_time:
+                sessions.append((login_time, timestamp))
+                login_time = None
+
+    merged = []
+
+    for start, end in sessions:
+        if not merged:
+            merged.append([start, end])
+        elif start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+
+    total_seconds = sum(
+        (end - start).total_seconds()
+        for start, end in merged
+    )
+
+    summaries.append({
+        "user_id": user,
+        "session_count": len(merged),
+        "active_seconds": int(total_seconds)
+    })
+
+summaries.sort(key=lambda x: x["user_id"])
+
+with open(OUTPUT_FILE, "w", newline="", encoding="utf-8") as file:
+    writer = csv.DictWriter(
+        file,
+        fieldnames=["user_id", "session_count", "active_seconds"]
+    )
+
+    writer.writeheader()
+    writer.writerows(summaries)
+```

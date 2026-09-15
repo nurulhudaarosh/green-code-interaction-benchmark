@@ -1,0 +1,159 @@
+## Restated Problem — Single-Source Route Analyzer
+
+Given a **directed graph** with `n` vertices, non-negative edge weights, and a source vertex `s`, compute the shortest distance from `s` to every vertex.
+
+### Existing required behavior/output
+
+The analyzer must:
+
+* Represent the graph using **adjacency lists**.
+* Use **Dijkstra's algorithm with a binary heap** (`heapq`).
+* Support only non-negative edge weights.
+* Return the shortest distance from the source to every vertex.
+* Return `-1` for every unreachable vertex.
+* Preserve **deterministic tie handling**.
+* Return **exactly the required result** when no additional feature is requested.
+* Avoid changing unrelated behavior or output fields.
+
+### New optional feature
+
+Add an optional `operation_summary` field.
+
+When explicitly requested, the result becomes:
+
+```text
+{
+    "distances": [...],
+    "operation_summary": {
+        "major_operations": <integer>
+    }
+}
+```
+
+`major_operations` is a deterministic count of the algorithm's major computational decisions. For this implementation, count each **edge-relaxation decision** made while processing a non-stale vertex.
+
+An edge relaxation is counted whether the candidate distance:
+
+* improves the current shortest distance, or
+* is rejected because it does not improve it.
+
+This gives a deterministic, meaningful measure of the amount of shortest-path computation performed.
+
+When the feature is **disabled/not requested**, the function returns the original distance list unchanged.
+
+## Corrected implementation
+
+```python
+import heapq
+
+
+def single_source_route_analyzer(n, edges, source, include_operation_summary=False):
+    """
+    Compute shortest distances from `source` to every vertex.
+
+    When include_operation_summary is False:
+        Returns the original list of distances.
+
+    When include_operation_summary is True:
+        Returns:
+        {
+            "distances": [...],
+            "operation_summary": {
+                "major_operations": <count>
+            }
+        }
+    """
+
+    # Adjacency-list representation.
+    graph = [[] for _ in range(n)]
+
+    for u, v, weight in edges:
+        graph[u].append((v, weight))
+
+    # Deterministic adjacency traversal.
+    for neighbors in graph:
+        neighbors.sort(key=lambda item: (item[0], item[1]))
+
+    INF = float("inf")
+    dist = [INF] * n
+    dist[source] = 0
+
+    # Binary heap.
+    # Vertex ID provides deterministic tie handling.
+    heap = [(0, source)]
+
+    major_operations = 0
+
+    while heap:
+        current_dist, u = heapq.heappop(heap)
+
+        # Ignore stale entries.
+        if current_dist != dist[u]:
+            continue
+
+        for v, weight in graph[u]:
+            # One major computational decision:
+            # determine whether this edge improves dist[v].
+            major_operations += 1
+
+            new_dist = current_dist + weight
+
+            if new_dist < dist[v]:
+                dist[v] = new_dist
+                heapq.heappush(heap, (new_dist, v))
+
+    distances = [-1 if d == INF else d for d in dist]
+
+    # Preserve the original output when the feature is not requested.
+    if not include_operation_summary:
+        return distances
+
+    return {
+        "distances": distances,
+        "operation_summary": {
+            "major_operations": major_operations
+        }
+    }
+
+
+# Example
+if __name__ == "__main__":
+    n = 4
+    edges = [
+        (0, 1, 1),
+        (0, 2, 1),
+        (1, 3, 1),
+        (2, 3, 1),
+    ]
+
+    # Original behavior
+    print(single_source_route_analyzer(n, edges, 0))
+
+    # New optional behavior
+    print(single_source_route_analyzer(
+        n, edges, 0, include_operation_summary=True
+    ))
+```
+
+### Output
+
+Without the feature:
+
+```text
+[0, 1, 1, 2]
+```
+
+With the feature:
+
+```text
+{
+    "distances": [0, 1, 1, 2],
+    "operation_summary": {
+        "major_operations": 4
+    }
+}
+```
+
+There are four outgoing edges examined from reachable, non-stale vertices, so the deterministic operation count is `4`.
+
+**Backward compatibility is preserved:** existing callers that do not request `operation_summary` receive the exact original distance-list output.

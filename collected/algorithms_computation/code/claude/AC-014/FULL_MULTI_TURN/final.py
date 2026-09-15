@@ -1,0 +1,264 @@
+"""
+PROBLEM RESTATEMENT
+--------------------
+One-Dimensional K-Cluster Partition:
+Given n real-valued points and an integer k, sort the points and partition
+them into exactly k contiguous clusters (in sorted order) minimizing the
+total within-cluster sum of squared deviations from each cluster's own mean.
+
+REQUIRED OUTPUTS (unchanged)
+-------------------------------
+- total_cost: float, the minimized sum of squared deviations.
+- boundaries: List[int] of length k+1, indices into the sorted point array
+  marking cluster boundaries (boundaries[0] == 0, boundaries[-1] == n).
+  Cluster i occupies sorted_points[boundaries[i]:boundaries[i+1]].
+- Optional (opt-in) `operation_summary` dict when include_summary=True,
+  appended as a third tuple element; default behavior (2-tuple) unchanged.
+
+REQUIRED CONSTRAINTS (unchanged)
+-----------------------------------
+- Points sorted first; clusters must be contiguous in sorted order.
+- Exact solution via prefix sums + interval-cost dynamic programming,
+  O(k*n^2) time.
+- Deterministic tie handling: among split points achieving the same minimal
+  DP cost (within a small floating-point tolerance), the LARGEST tied split
+  index is always chosen, regardless of floating-point summation noise.
+- Standard library only; no randomness, no network/API calls, no external
+  services, no human interaction.
+
+NEWLY HANDLED DIFFICULT CASES
+--------------------------------
+1. REPEATED VALUES: Points may contain duplicates (e.g. [5, 5, 5, 5]). The
+   algorithm already handles this correctly with no special-casing needed:
+   interval_cost(i, j) on a run of identical values is exactly 0 (zero
+   variance), and the DP naturally treats duplicate-valued points as
+   ordinary sorted elements. We add tests to lock in this behavior,
+   including cases where duplicates span a chosen cluster boundary — since
+   points are only distinguishable by position (index) after sorting, not
+   by "identity," a boundary is permitted to fall *between* two equal
+   values, which is a legitimate degenerate split (cost of splitting equal
+   values apart is never better, but must not raise errors or behave
+   nondeterministically).
+2. DETERMINISTIC TIES: When two or more candidate split points yield
+   provably equal cost (either exactly, or within TIE_EPS due to floating
+   point summation order), the implementation must pick the SAME split
+   every time: the rule is "prefer the LARGEST tied index i". We add tests
+   with constructed exact-tie inputs (e.g. [0,1,2,3] with k=2, and
+   symmetric duplicate-heavy inputs) and assert the returned boundaries are
+   stable across repeated calls and across trivially reordered-but-equal
+   input construction.
+
+Nothing about the original algorithm, output shape, or tie-break rule is
+changed -- these cases were always in-scope for the DP, and this revision
+adds explicit test coverage plus a short doc note confirming correctness.
+"""
+
+from typing import List, Tuple, Union
+import math
+import unittest
+
+
+def cluster_1d(
+    points: List[float],
+    k: int,
+    include_summary: bool = False,
+) -> Union[Tuple[float, List[int]], Tuple[float, List[int], dict]]:
+    """
+    Partition 1-D points into k contiguous clusters minimizing the sum of
+    squared deviations from each cluster's mean.
+
+    Deterministic tie-break rule: among split points achieving the same
+    minimal DP cost (compared within a small floating-point tolerance),
+    the LARGEST split index is chosen. This applies uniformly whether the
+    tie arises from distinct values or from repeated/duplicate values.
+
+    Args:
+        points: list of real-valued points (duplicates allowed).
+        k: number of contiguous clusters (1 <= k <= n).
+        include_summary: if True, also return an `operation_summary` dict.
+            Default False preserves the original 2-tuple return exactly.
+
+    Returns:
+        (total_cost, boundaries) or (total_cost, boundaries, operation_summary)
+    """
+    if not isinstance(k, int) or k < 1:
+        raise ValueError("k must be a positive integer")
+    n = len(points)
+    if n == 0:
+        raise ValueError("points must be non-empty")
+    if k > n:
+        raise ValueError("k cannot exceed the number of points")
+
+    sorted_points = sorted(points)
+
+    prefix_sum = [0.0] * (n + 1)
+    prefix_sqsum = [0.0] * (n + 1)
+    for idx in range(1, n + 1):
+        v = sorted_points[idx - 1]
+        prefix_sum[idx] = prefix_sum[idx - 1] + v
+        prefix_sqsum[idx] = prefix_sqsum[idx - 1] + v * v
+
+    def interval_cost(i: int, j: int) -> float:
+        m = j - i
+        if m <= 0:
+            return 0.0
+        s = prefix_sum[j] - prefix_sum[i]
+        sq = prefix_sqsum[j] - prefix_sqsum[i]
+        cost = sq - (s * s) / m
+        return cost if cost > 0.0 else 0.0
+
+    INF = math.inf
+    TIE_EPS = 1e-9  # tolerance to treat near-equal floating costs as tied
+
+    dp = [[INF] * (n + 1) for _ in range(k + 1)]
+    parent = [[-1] * (n + 1) for _ in range(k + 1)]
+    dp[0][0] = 0.0
+
+    interval_cost_evaluations = 0
+    dp_states_filled = 0
+    tie_breaks_applied = 0
+
+    for c in range(1, k + 1):
+        for j in range(c, n + 1):
+            best_cost = INF
+            best_i = -1
+            for i in range(c - 1, j):
+                prev = dp[c - 1][i]
+                if prev == INF:
+                    continue
+                total = prev + interval_cost(i, j)
+                interval_cost_evaluations += 1
+                if best_i == -1:
+                    best_cost = total
+                    best_i = i
+                elif total < best_cost - TIE_EPS:
+                    best_cost = total
+                    best_i = i
+                elif abs(total - best_cost) <= TIE_EPS:
+                    tie_breaks_applied += 1
+                    best_cost = total
+                    best_i = i
+            dp[c][j] = best_cost
+            parent[c][j] = best_i
+            dp_states_filled += 1
+
+    total_cost = dp[k][n]
+    if total_cost == INF:
+        raise RuntimeError("No valid partition found (unexpected)")
+
+    boundaries = [n]
+    c, j = k, n
+    while c > 0:
+        i = parent[c][j]
+        boundaries.append(i)
+        j = i
+        c -= 1
+    boundaries.reverse()
+
+    if not include_summary:
+        return total_cost, boundaries
+
+    operation_summary = {
+        "interval_cost_evaluations": interval_cost_evaluations,
+        "dp_states_filled": dp_states_filled,
+        "tie_breaks_applied": tie_breaks_applied,
+        "n_points": n,
+        "k_clusters": k,
+    }
+    return total_cost, boundaries, operation_summary
+
+
+# ---------------------------------------------------------------------------
+# TESTS
+# ---------------------------------------------------------------------------
+class TestClusterOneDim(unittest.TestCase):
+
+    # ---- Baseline / original behavior preserved ----
+    def test_basic_signature_default(self):
+        cost, bounds = cluster_1d([0, 1, 2, 3], 2)
+        self.assertIsInstance(cost, float)
+        self.assertEqual(bounds[0], 0)
+        self.assertEqual(bounds[-1], 4)
+        self.assertEqual(len(bounds), 3)
+
+    def test_summary_opt_in_matches_default(self):
+        cost, bounds = cluster_1d([1, 2, 3, 10, 11, 12], 2)
+        cost2, bounds2, summary = cluster_1d(
+            [1, 2, 3, 10, 11, 12], 2, include_summary=True
+        )
+        self.assertEqual(cost, cost2)
+        self.assertEqual(bounds, bounds2)
+        self.assertEqual(summary["n_points"], 6)
+        self.assertEqual(summary["k_clusters"], 2)
+
+    # ---- Deterministic ties (distinct values) ----
+    def test_exact_tie_prefers_largest_index(self):
+        # {0}|{1,2,3} cost=2 ; {0,1,2}|{3} cost=2 -> tie, expect largest i (3)
+        cost, bounds = cluster_1d([0, 1, 2, 3], 2)
+        self.assertAlmostEqual(cost, 2.0)
+        self.assertEqual(bounds, [0, 3, 4])
+
+    def test_tie_result_is_stable_across_repeated_calls(self):
+        results = [cluster_1d([0, 1, 2, 3], 2) for _ in range(20)]
+        first = results[0]
+        for r in results[1:]:
+            self.assertEqual(r, first)
+
+    def test_symmetric_tie_k3(self):
+        # Symmetric data likely to produce multiple equal-cost partitions.
+        data = [-3, -2, -1, 1, 2, 3]
+        result_a = cluster_1d(data, 3)
+        result_b = cluster_1d(list(reversed(data)), 3)  # same set, reordered
+        self.assertEqual(result_a, result_b)
+
+    # ---- Repeated values / duplicates ----
+    def test_all_identical_values(self):
+        cost, bounds = cluster_1d([5, 5, 5, 5, 5, 5], 3)
+        self.assertAlmostEqual(cost, 0.0)
+        self.assertEqual(bounds[0], 0)
+        self.assertEqual(bounds[-1], 6)
+        self.assertEqual(len(bounds), 4)
+
+    def test_duplicates_with_k_equal_n(self):
+        # k == n forces every point into its own singleton cluster -> cost 0
+        cost, bounds = cluster_1d([2, 2, 2, 9, 9], 5)
+        self.assertAlmostEqual(cost, 0.0)
+        self.assertEqual(bounds, [0, 1, 2, 3, 4, 5])
+
+    def test_duplicates_spanning_boundary_is_legal(self):
+        # Two identical values (2,2) can legally be split into different
+        # clusters without error; cost must still be minimal/correct.
+        data = [2, 2, 8, 8]
+        cost, bounds = cluster_1d(data, 2)
+        # Best split is {2,2}|{8,8} with cost 0, not splitting the duplicate
+        # pair apart -- verifies duplicates are NOT forced apart improperly.
+        self.assertAlmostEqual(cost, 0.0)
+        self.assertEqual(bounds, [0, 2, 4])
+
+    def test_duplicates_tie_break_deterministic(self):
+        # [1,1,1,1] with k=2: every split of the 4 identical points costs 0,
+        # a genuine 3-way tie among i=1,2,3 -> must deterministically pick
+        # the largest (i=3).
+        cost, bounds = cluster_1d([1, 1, 1, 1], 2)
+        self.assertAlmostEqual(cost, 0.0)
+        self.assertEqual(bounds, [0, 3, 4])
+
+    def test_duplicates_with_summary_counts_ties(self):
+        cost, bounds, summary = cluster_1d([1, 1, 1, 1], 2, include_summary=True)
+        self.assertAlmostEqual(cost, 0.0)
+        self.assertEqual(bounds, [0, 3, 4])
+        self.assertGreaterEqual(summary["tie_breaks_applied"], 1)
+
+    # ---- Sanity: k == 1 and single point edge cases still work ----
+    def test_k_equals_1(self):
+        cost, bounds = cluster_1d([4, 1, 7, 1, 4], 1)
+        self.assertEqual(bounds, [0, 5])
+
+    def test_single_point(self):
+        cost, bounds = cluster_1d([42], 1)
+        self.assertAlmostEqual(cost, 0.0)
+        self.assertEqual(bounds, [0, 1])
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

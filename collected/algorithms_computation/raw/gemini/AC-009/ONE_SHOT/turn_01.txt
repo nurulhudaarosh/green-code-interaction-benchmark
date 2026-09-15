@@ -1,0 +1,121 @@
+### 1. Problem Identification and Understanding
+
+The goal is to find the **minimum number of coins** required to form a target integer amount $A$ using a given set of coin denominations $C = [c_1, c_2, \dots, c_n]$.
+
+* Each coin denomination can be reused an unlimited number of times (**Unbounded Knapsack / Coin Change Problem**).
+* If no combination of coins can sum precisely to $A$, the result should indicate failure by returning a count of `-1` along with an empty coin list.
+* When multiple combinations yield the same minimum coin count, a deterministic rule must be applied to select the coin list (e.g., prioritizing larger or smaller coin values).
+
+---
+
+### 2. Key Constraints & Required Output
+
+* **Constraints:**
+* Target amount $A \ge 0$.
+* Coin denominations $c_i > 0$.
+* Unlimited supply of each coin denomination.
+
+
+* **Required Output:**
+* A tuple `(min_coins, coins_used)` where:
+* `min_coins`: Integer representing the minimum number of coins needed (or `-1` if impossible).
+* `coins_used`: List of integers representing the specific coin values used to form $A$, sorted in non-decreasing order (or `[]` if impossible).
+
+
+
+
+
+---
+
+### 3. Algorithm Description
+
+We use a **1D Dynamic Programming (DP)** approach combined with a parent tracking array for deterministic reconstruction:
+
+1. **Initialization:**
+* Sort the coin denominations in ascending order to ensure deterministic traversal.
+* Create a DP array `dp` of size $A + 1$, initialized to $\infty$, with `dp[0] = 0`. `dp[i]` stores the minimum coins to make amount $i$.
+* Create a tracking array `parent_coin` of size $A + 1$, initialized to `-1`. `parent_coin[i]` stores the last coin value added to reach amount $i$.
+
+
+2. **DP State Transitions:**
+* Iterating $i$ from $1$ to $A$, and for each coin denomination $c \in C$:
+* If $i - c \ge 0$ and `dp[i - c] + 1 < dp[i]`:
+* Update `dp[i] = dp[i - c] + 1`
+* Record `parent_coin[i] = c`
+
+
+
+
+* Iterating through coins in sorted order guarantees a deterministic tie-breaker when two combinations yield the same minimum count.
+
+
+3. **Reconstruction:**
+* If `dp[A] == infinity`, target $A$ cannot be formed $\rightarrow$ return `(-1, [])`.
+* Otherwise, reconstruct the solution by backtracking from target $A$ using `parent_coin` until reaching amount $0$.
+* Sort the resulting list of coins to return a clean, deterministic output.
+
+
+
+---
+
+### 4. Python Implementation
+
+```python
+from typing import List, Tuple
+
+def min_coins_change(coins: List[int], amount: int) -> Tuple[int, List[int]]:
+    """
+    Finds the minimum number of coins needed to reach 'amount' and returns
+    the count and the sorted list of coins used.
+    
+    Returns:
+        Tuple[int, List[int]]: (min_coin_count, list_of_coins)
+        If impossible, returns (-1, []).
+    """
+    if amount < 0:
+        return -1, []
+    if amount == 0:
+        return 0, []
+    
+    # Sort coin denominations for deterministic behavior
+    sorted_coins = sorted(list(set(coins)))
+    
+    # dp[i] stores the minimum coins to make amount i
+    dp = [float('inf')] * (amount + 1)
+    dp[0] = 0
+    
+    # parent_coin[i] stores the coin value used to reach amount i
+    parent_coin = [-1] * (amount + 1)
+    
+    for i in range(1, amount + 1):
+        for coin in sorted_coins:
+            if i - coin >= 0 and dp[i - coin] + 1 < dp[i]:
+                dp[i] = dp[i - coin] + 1
+                parent_coin[i] = coin
+
+    # If target amount is unreachable
+    if dp[amount] == float('inf'):
+        return -1, []
+    
+    # Reconstruct the coin combination
+    result_coins = []
+    curr = amount
+    while curr > 0:
+        c = parent_coin[curr]
+        result_coins.append(c)
+        curr -= c
+        
+    result_coins.sort()
+    return int(dp[amount]), result_coins
+
+
+# Example Execution:
+if __name__ == "__main__":
+    denominations = [1, 2, 5]
+    target = 11
+    count, chosen_coins = min_coins_change(denominations, target)
+    print(f"Target: {target}")
+    print(f"Minimum coins count: {count}")
+    print(f"Coins used: {chosen_coins}")
+
+```

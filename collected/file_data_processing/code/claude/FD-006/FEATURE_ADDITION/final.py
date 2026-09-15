@@ -1,0 +1,90 @@
+import csv
+import re
+import sys
+
+
+def normalize_email(email: str) -> str:
+    if not email:
+        return ""
+    email = email.strip().lower()
+    return email
+
+
+def normalize_phone(phone: str) -> str:
+    if not phone:
+        return ""
+    digits = re.sub(r"\D", "", phone)
+    if not digits:
+        return ""
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    if len(digits) == 10:
+        return f"+1{digits}"
+    if len(digits) > 10:
+        return f"+{digits}"
+    return digits
+
+
+def completeness_score(record: dict) -> int:
+    score = 0
+    for value in record.values():
+        if value is not None and str(value).strip() != "":
+            score += 1
+    return score
+
+
+def normalize_csv(input_path: str, output_path: str) -> None:
+    with open(input_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames or []
+        rows = list(reader)
+
+    if "email" not in fieldnames or "phone" not in fieldnames:
+        raise ValueError("Input CSV must contain 'email' and 'phone' columns")
+
+    groups = {}
+    for idx, row in enumerate(rows):
+        norm_email = normalize_email(row.get("email", ""))
+        norm_phone = normalize_phone(row.get("phone", ""))
+
+        normalized_row = dict(row)
+        normalized_row["email"] = norm_email
+        normalized_row["phone"] = norm_phone
+
+        if norm_email == "":
+            continue
+
+        entry = {
+            "row_index": idx,
+            "record": normalized_row,
+            "score": completeness_score(normalized_row),
+        }
+
+        if norm_email not in groups:
+            groups[norm_email] = entry
+        else:
+            existing = groups[norm_email]
+            # Higher completeness score wins.
+            if entry["score"] > existing["score"]:
+                groups[norm_email] = entry
+            # On a tie, keep the earliest row (smaller row_index),
+            # i.e. do NOT replace the existing entry.
+            elif entry["score"] == existing["score"] and entry["row_index"] < existing["row_index"]:
+                groups[norm_email] = entry
+
+    # Deterministic output: sorted by normalized email.
+    final_records = [groups[key]["record"] for key in sorted(groups.keys())]
+
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for record in final_records:
+            writer.writerow(record)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: python normalizer.py <input.csv> <output.csv>")
+        sys.exit(1)
+
+    normalize_csv(sys.argv[1], sys.argv[2])

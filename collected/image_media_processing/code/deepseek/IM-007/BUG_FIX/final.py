@@ -1,0 +1,34 @@
+from PIL import Image
+
+
+def compute_ahash(image_path, hash_size=8):
+    """
+    Compute the classic average-hash (aHash) perceptual hash of an image.
+
+    Algorithm:
+      1. Convert the image to grayscale.
+      2. Resize to (hash_size, hash_size) with a high-quality downsampler.
+      3. Compute the mean of the resized pixel values (the threshold).
+      4. Set each bit to 1 if the pixel >= mean, else 0.
+
+    Returns an integer whose low hash_size*hash_size bits encode the hash,
+    with the top-left pixel as the most significant bit.
+    """
+    with Image.open(image_path) as img:
+        img = img.convert("L").resize(
+            (hash_size, hash_size), Image.Resampling.LANCZOS
+        )
+        pixels = list(img.getdata())
+
+    # True mean of the resized grayscale pixels (NOT a hardcoded 128).
+    threshold = sum(pixels) / len(pixels)
+
+    bits = 0
+    for px in pixels:
+        bits = (bits << 1) | (1 if px >= threshold else 0)
+    return bits
+
+
+def hamming_distance(hash_a, hash_b):
+    """Number of differing bits between two integer hashes."""
+    return bin(hash_a ^ hash_b).count("1")

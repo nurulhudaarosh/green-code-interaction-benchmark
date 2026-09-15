@@ -1,0 +1,251 @@
+Here is a complete, self-contained Python script implementing an enterprise-grade Inventory Reconciliation module using Pandas.
+
+It handles multi-location comparisons between theoretical (system/ERP) stock and physical count records, calculates item-level, categorical, and overall variance metrics (units and financial valuation), classifies operational discrepancies, and flags items exceeding variance thresholds for audit.
+
+```python
+from datetime import datetime
+import numpy as np
+import pandas as pd
+
+
+def reconcile_inventory(
+    system_df: pd.DataFrame,
+    count_df: pd.DataFrame,
+    cost_df: pd.DataFrame,
+    unit_variance_threshold: float = 10.0,
+    cost_variance_threshold: float = 100.0,
+) -> dict[str, pd.DataFrame]:
+    """Reconciles physical inventory counts against system records across multiple locations.
+
+    Parameters:
+    - system_df: System stock records [sku, location, system_qty]
+    - count_df: Physical count records [sku, location, physical_qty]
+    - cost_df: Unit cost & metadata [sku, item_name, category, unit_cost]
+    - unit_variance_threshold: Flag if abs(unit variance) > threshold
+    - cost_variance_threshold: Flag if abs(cost variance) > threshold
+
+    Returns:
+    - Dictionary containing item-level reconciliation, category summary, and audit flags.
+    """
+    # 1. Outer Merge System and Physical Counts to capture all SKUs (over-counts, missing stock, matched)
+    reconciled = pd.merge(
+        system_df, count_df, on=["sku", "location"], how="outer"
+    )
+
+    # 2. Merge Product Master / Cost Data
+    reconciled = pd.merge(reconciled, cost_df, on="sku", how="left")
+
+    # Fill missing values for missing stock records / unlisted items
+    reconciled["system_qty"] = reconciled["system_qty"].fillna(0)
+    reconciled["physical_qty"] = reconciled["physical_qty"].fillna(0)
+    reconciled["unit_cost"] = reconciled["unit_cost"].fillna(0.0)
+    reconciled["item_name"] = reconciled["item_name"].fillna("Unknown SKU")
+    reconciled["category"] = reconciled["category"].fillna("Uncategorized")
+
+    # 3. Variance & Financial Calculations
+    reconciled["unit_variance"] = (
+        reconciled["physical_qty"] - reconciled["system_qty"]
+    )
+    reconciled["system_value"] = (
+        reconciled["system_qty"] * reconciled["unit_cost"]
+    )
+    reconciled["physical_value"] = (
+        reconciled["physical_qty"] * reconciled["unit_cost"]
+    )
+    reconciled["cost_variance"] = (
+        reconciled["unit_variance"] * reconciled["unit_cost"]
+    )
+    reconciled["abs_cost_variance"] = reconciled["cost_variance"].abs()
+
+    # Accuracy percentage per item
+    reconciled["item_accuracy_pct"] = np.where(
+        reconciled["system_qty"] == 0,
+        np.where(reconciled["physical_qty"] == 0, 100.0, 0.0),
+        (
+            1
+            - (
+                reconciled["unit_variance"].abs()
+                / reconciled[["system_qty", "physical_qty"]].max(axis=1)
+            )
+        )
+        * 100.0,
+    )
+
+    # 4. Discrepancy Classification
+    conditions = [
+        (reconciled["unit_variance"] == 0),
+        (reconciled["system_qty"] == 0) & (reconciled["physical_qty"] > 0),
+        (reconciled["system_qty"] > 0) & (reconciled["physical_qty"] == 0),
+        (reconciled["unit_variance"] > 0),
+        (reconciled["unit_variance"] < 0),
+    ]
+    choices = [
+        "Matched",
+        "Unrecorded Stock (Surplus)",
+        "Missing Stock (Total Loss)",
+        "Physical Surplus",
+        "Physical Shortage",
+    ]
+    reconciled["discrepancy_type"] = np.select(
+        conditions, choices, default="Unknown"
+    )
+
+    # 5. Threshold Flagging for Audit
+    reconciled["requires_audit"] = (
+        reconciled["unit_variance"].abs() >= unit_variance_threshold
+    ) | (reconciled["abs_cost_variance"] >= cost_variance_threshold)
+
+    # 6. Aggregated Category Summary
+    category_summary = (
+        reconciled.groupby("category")
+        .agg(
+            skus_counted=("sku", "nunique"),
+            total_system_qty=("system_qty", "sum"),
+            total_physical_qty=("physical_qty", "sum"),
+            net_unit_variance=("unit_variance", "sum"),
+            total_system_val=("system_value", "sum"),
+            total_physical_val=("physical_value", "sum"),
+            net_cost_variance=("cost_variance", "sum"),
+            abs_cost_variance=("abs_cost_variance", "sum"),
+            flagged_audit_items=("requires_audit", "sum"),
+        )
+        .reset_index()
+    )
+
+    # Aggregate accuracy metrics (Gross Variance / Gross System Value)
+    category_summary["net_val_accuracy_pct"] = (
+        1
+        - (
+            category_summary["net_cost_variance"].abs()
+            / category_summary["total_system_val"]
+        )
+    ) * 100.0
+    category_summary["abs_val_accuracy_pct"] = (
+        1
+        - (
+            category_summary["abs_cost_variance"]
+            / category_summary["total_system_val"]
+        )
+    ) * 100.0
+
+    # Filtered view for high-risk audit items
+    audit_df = (
+        reconciled[reconciled["requires_audit"]]
+        .sort_values(by="abs_cost_variance", ascending=False)
+        .reset_index(drop=True)
+    )
+
+    return {
+        "item_reconciliation": reconciled,
+        "category_summary": category_summary,
+        "audit_exceptions": audit_df,
+    }
+
+
+# ==============================================================================
+# Execution & Verification Mock Data
+# ==============================================================================
+if __name__ == "__main__":
+    # Mock Data: System Records (ERP/WMS)
+    df_system = pd.DataFrame(
+        {
+            "sku": ["SKU-101", "SKU-102", "SKU-103", "SKU-104", "SKU-105"],
+            "location": ["WH-A", "WH-A", "WH-B", "WH-A", "WH-B"],
+            "system_qty": [150, 50, 200, 10, 0],
+        }
+    )
+
+    # Mock Data: Physical Count Records
+    df_physical = pd.DataFrame(
+        {
+            "sku": ["SKU-101", "SKU-102", "SKU-103", "SKU-104", "SKU-106"],
+            "location": ["WH-A", "WH-A", "WH-B", "WH-A", "WH-A"],
+            "physical_qty": [148, 30, 200, 0, 15],
+        }
+    )
+
+    # Mock Data: Master Catalog & Unit Cost
+    df_master = pd.DataFrame(
+        {
+            "sku": [
+                "SKU-101",
+                "SKU-102",
+                "SKU-103",
+                "SKU-104",
+                "SKU-105",
+                "SKU-106",
+            ],
+            "item_name": [
+                "Laptop A",
+                "Monitor B",
+                "Keyboard C",
+                "Dock D",
+                "Mouse E",
+                "Adapter F",
+            ],
+            "category": [
+                "Electronics",
+                "Electronics",
+                "Accessories",
+                "Accessories",
+                "Accessories",
+                "Accessories",
+            ],
+            "unit_cost": [800.0, 200.0, 40.0, 150.0, 25.0, 45.0],
+        }
+    )
+
+    # Run Reconciliation Process
+    results = reconcile_inventory(
+        system_df=df_system,
+        count_df=df_physical,
+        cost_df=df_master,
+        unit_variance_threshold=5,
+        cost_variance_threshold=100.0,
+    )
+
+    print("=== ITEM RECONCILIATION SAMPLE ===")
+    print(
+        results["item_reconciliation"][
+            [
+                "sku",
+                "location",
+                "system_qty",
+                "physical_qty",
+                "unit_variance",
+                "cost_variance",
+                "discrepancy_type",
+                "requires_audit",
+            ]
+        ]
+    )
+
+    print("\n=== CATEGORY SUMMARY ===")
+    print(
+        results["category_summary"][
+            [
+                "category",
+                "total_system_qty",
+                "total_physical_qty",
+                "net_cost_variance",
+                "abs_val_accuracy_pct",
+                "flagged_audit_items",
+            ]
+        ]
+    )
+
+    print("\n=== AUDIT EXCEPTIONS REQUIRED ===")
+    print(
+        results["audit_exceptions"][
+            [
+                "sku",
+                "location",
+                "item_name",
+                "unit_variance",
+                "cost_variance",
+                "discrepancy_type",
+            ]
+        ]
+    )
+
+```

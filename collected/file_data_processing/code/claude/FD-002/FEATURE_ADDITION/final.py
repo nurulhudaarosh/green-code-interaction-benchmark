@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""
+Offline NDJSON Analyzer
+------------------------
+Reads a newline-delimited JSON (NDJSON) log file where each line looks like:
+
+{"user": {"id": "u1", "name": "Alice"}, "request": {"endpoint": "/api/x", "status": 200, "latency_ms": 123}}
+
+For every line it extracts the nested "user" and "request" objects, skips/counts
+malformed lines, and produces per-user aggregates:
+    - request_count
+    - error_count      (status >= 400)
+    - avg_latency_ms   (rounded to 2 decimals)
+    - top_endpoint     (most requested; ties broken lexically, smallest string wins)
+
+Output is deterministic JSON: users sorted by user_id, keys sorted, fixed formatting.
+
+Usage:
+    python analyzer.py input.ndjson > output.json
+    cat input.ndjson | python analyzer.py > output.json
+"""
+
+import sys
+import json
+from collections import defaultdict
+
+
+def parse_line(line, malformed_counter):
+    """Parse a single NDJSON line, extracting nested user/request fields.
+    Returns (user_id, endpoint, status, latency_ms) or None if malformed."""
+    line = line.strip()
+    if not line:
+        return None
+
+    try:
+        obj = json.loads(line)
+    except (json.JSONDecodeError, TypeError):
+        malformed_counter[0] += 1
+        return None
+
+    try:
+        user = obj["user"]
+        request = obj["request"]
+
+        user_id = user["id"]
+        endpoint = request["endpoint"]
+        status = request["status"]
+        latency_ms = request["latency_ms"]
+
+        if not isinstance(user_id, str):
+            raise ValueError("user.id must be a string")
+        if not isinstance(endpoint, str):
+            raise ValueError("request.endpoint must be a string")
+        if not isinstance(status, (int, float)):
+            raise ValueError("request.status must be numeric")
+        if not isinstance(latency_ms, (int, float)):
+            raise ValueError("request.latency_ms must be numeric")
+
+    except (KeyError, TypeError, ValueError):
+        malformed_counter[0] += 1
+        return None
+
+    return user_id, endpoint, status, latency_ms
+
+
+def analyze(lines):
+    malformed_counter = [0]  # mutable counter passed by reference
+
+    request_counts = defaultdict(int)
+    error_counts = defaultdict(int)
+    latency_sums = defaultdict(float)
+    endpoint_counts = defaultdict(lambda: defaultdict(int))
+
+    for line in lines:
+        parsed = parse_line(line, malformed_counter)
+        if parsed is None:
+            continue
+
+        user_id, endpoint, status, latency_ms = parsed
+
+        request_counts[user_id] += 1
+        latency_sums[user_id] += latency_ms
+        if status >= 400:
+            error_counts[user_id] += 1
+        endpoint_counts[user_id][endpoint] += 1
+
+    users_result = {}
+    for user_id, count in request_counts.items():
+        avg_latency = latency_sums[user_id] / count if count else 0.0
+
+        # Most-requested endpoint: highest count wins;
+        # ties broken by choosing the lexically smaller endpoint string.
+        ep_counts = endpoint_counts[user_id]
+        top_endpoint = min(
+            ep_counts.items(),
+            key=lambda kv: (-kv[1], kv[0])
+        )[0]
+
+        users_result[user_id] = {
+            "request_count": count,
+            "error_count": error_counts[user_id],
+            "avg_latency_ms": round(avg_latency, 2),
+            "top_endpoint": top_endpoint,
+        }
+
+    sorted_users = dict(sorted(users_result.items(), key=lambda kv: kv[0]))
+
+    result = {
+        "users": sorted_users,
+        "summary": {
+            "total_users": len(sorted_users),
+            "total_requests": sum(request_counts.values()),
+            "total_errors": sum(error_counts.values()),
+            "malformed_lines": malformed_counter[0],
+        },
+    }
+
+    return result
+
+
+def main():
+    if len(sys.argv) > 1:
+        with open(sys.argv[1], "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    else:
+        lines = sys.stdin.readlines()
+
+    result = analyze(lines)
+
+    print(json.dumps(result, sort_keys=True, indent=2, separators=(",", ": ")))
+
+
+if __name__ == "__main__":
+    main()

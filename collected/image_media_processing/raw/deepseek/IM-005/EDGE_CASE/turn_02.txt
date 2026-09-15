@@ -1,0 +1,82 @@
+```python
+import os
+from PIL import Image, ImageFilter, UnidentifiedImageError
+
+
+def apply_blur(input_dir, output_dir, radius):
+    """
+    Apply a Gaussian blur of the given radius to every image in input_dir,
+    saving the results to output_dir.
+
+    Args:
+        input_dir (str): Directory containing the source images.
+        output_dir (str): Directory where blurred images will be written.
+        radius (float): Gaussian blur radius. Must be >= 0.
+                        radius == 0 copies images through unchanged.
+
+    Raises:
+        ValueError: If radius is negative.
+        NotADirectoryError: If input_dir is not a directory.
+    """
+    if radius < 0:
+        raise ValueError(f"radius must be non-negative, got {radius}")
+    if not os.path.isdir(input_dir):
+        raise NotADirectoryError(f"input_dir is not a directory: {input_dir}")
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    for filename in os.listdir(input_dir):
+        src_path = os.path.join(input_dir, filename)
+        if not os.path.isfile(src_path):
+            continue
+
+        dst_path = os.path.join(output_dir, filename)
+
+        try:
+            with Image.open(src_path) as img:
+                img.load()
+                if radius == 0:
+                    img.save(dst_path)
+                else:
+                    # GaussianBlur can fail on degenerate sizes (e.g. 1x1)
+                    # for some Pillow versions / modes. Fall back to a
+                    # manual box-ish blur that is safe for tiny images.
+                    try:
+                        blurred = img.filter(ImageFilter.GaussianBlur(radius=radius))
+                    except (ValueError, OSError):
+                        blurred = _safe_blur(img, radius)
+                    blurred.save(dst_path)
+        except UnidentifiedImageError:
+            # Skip files that aren't images Pillow can open.
+            continue
+
+
+def _safe_blur(img, radius):
+    """
+    Fallback blur that works for tiny images (including 1x1).
+
+    For very small images, a true Gaussian kernel larger than the image
+    itself is meaningless. We clamp the effective radius to the image
+    dimensions and apply a box blur via ImageFilter.BoxBlur, which handles
+    edge cases more gracefully. For 1x1 images this returns the pixel
+    unchanged.
+    """
+    width, height = img.size
+    max_radius = max(0, min(width, height) - 1)
+
+    if max_radius <= 0 or radius <= 0:
+        return img.copy()
+
+    effective = min(radius, max_radius)
+    try:
+        return img.filter(ImageFilter.BoxBlur(radius=effective))
+    except (ValueError, OSError):
+        return img.copy()
+```
+
+Key changes to handle the 1×1 edge case:
+
+- **`img.load()`** forces the pixel data to be decoded before filtering, so any decode issues surface at open time rather than mid-pipeline.
+- **Try/except around `GaussianBlur`**: some Pillow builds raise `ValueError` (kernel larger than image) or `OSError` on degenerate sizes. We catch those and fall back.
+- **`_safe_blur` fallback**: clamps the effective radius to `min(width, height) - 1` and uses `ImageFilter.BoxBlur`, which is well-behaved on tiny inputs. For a 1×1 image, `max_radius` is `0`, so we return a copy of the original pixel — a valid 1×1 output, unblurred (there's nothing to blur).
+- The fallback also protects against a second failure by returning `img.copy()` as a last resort, so the output is always a valid image.

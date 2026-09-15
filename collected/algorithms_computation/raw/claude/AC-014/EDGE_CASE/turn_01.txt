@@ -1,0 +1,170 @@
+```python
+"""
+Optimal 1-D k-means via contiguous-partition dynamic programming.
+
+Problem
+-------
+Given n real-valued points, sort them and split the sorted sequence into
+exactly k non-empty, CONTIGUOUS clusters so as to minimize the total
+within-cluster sum of squared deviations from each cluster's mean:
+
+    cost = sum_{c=1..k} sum_{x in cluster_c} (x - mean(cluster_c))^2
+
+Because clusters must be contiguous in sorted order, this is solvable
+exactly (no local optima, no randomness needed) with dynamic programming,
+unlike general-dimensional k-means which is NP-hard.
+
+Algorithm
+---------
+1. Sort the points.
+2. Build prefix sums of the values and of the squared values so that the
+   cost of any contiguous segment (i..j) can be computed in O(1):
+       n_seg   = j - i + 1
+       sum_seg = S[j]   - S[i-1]
+       sq_seg  = S2[j]  - S2[i-1]
+       cost(i,j) = sq_seg - sum_seg**2 / n_seg
+   (This is algebraically the sum of squared deviations from the mean.)
+3. DP over (number of clusters used so far, rightmost index covered):
+       dp[m][j] = min over i in [m..j] of dp[m-1][i-1] + cost(i, j)
+   dp[0][0] = 0, dp[0][j>0] = +inf (can't cover points with 0 clusters).
+4. Track the best split point for each (m, j) to reconstruct the boundary
+   indices by backtracking from dp[k][n].
+
+Complexity: O(n^2 * k) time, O(n * k) space. Fully deterministic -- no
+randomness, no external calls, standard library only.
+
+Output
+------
+`optimal_1d_clusters` returns:
+  - cost: the minimum total sum-of-squared-deviations (float)
+  - boundaries: list of k+1 indices into the SORTED array such that
+    cluster c (0-indexed) is sorted_points[boundaries[c]:boundaries[c+1]]
+  - sorted_points: the sorted input, so boundaries can be applied directly
+"""
+
+from __future__ import annotations
+from typing import List, Sequence, Tuple
+import math
+
+
+def _segment_cost(prefix_sum: List[float], prefix_sq: List[float], i: int, j: int) -> float:
+    """Cost of segment covering 1-indexed points i..j inclusive (sum of squared
+    deviations from the segment mean), computed in O(1) via prefix sums."""
+    n_seg = j - i + 1
+    s = prefix_sum[j] - prefix_sum[i - 1]
+    sq = prefix_sq[j] - prefix_sq[i - 1]
+    # sum((x - mean)^2) = sum(x^2) - (sum(x))^2 / n
+    return sq - (s * s) / n_seg
+
+
+def optimal_1d_clusters(
+    points: Sequence[float], k: int
+) -> Tuple[float, List[int], List[float]]:
+    """
+    Partition `points` into k contiguous clusters (after sorting) minimizing
+    the total sum of squared deviations from each cluster's mean.
+
+    Parameters
+    ----------
+    points : sequence of numbers (n >= 1)
+    k : desired number of clusters, 1 <= k <= n
+
+    Returns
+    -------
+    (cost, boundaries, sorted_points)
+      cost         : optimal total sum-of-squared-deviations (float)
+      boundaries   : list of k+1 indices [b0=0, b1, ..., bk=n] into
+                     sorted_points; cluster c = sorted_points[b_c : b_{c+1}]
+      sorted_points: the input points sorted ascending
+    """
+    n = len(points)
+    if n == 0:
+        raise ValueError("points must be non-empty")
+    if not (1 <= k <= n):
+        raise ValueError(f"k must satisfy 1 <= k <= n (n={n}), got k={k}")
+
+    sorted_points = sorted(points)
+
+    # 1-indexed prefix sums: prefix_sum[0] = 0, prefix_sum[t] = sum of first t points
+    prefix_sum = [0.0] * (n + 1)
+    prefix_sq = [0.0] * (n + 1)
+    for t in range(1, n + 1):
+        v = sorted_points[t - 1]
+        prefix_sum[t] = prefix_sum[t - 1] + v
+        prefix_sq[t] = prefix_sq[t - 1] + v * v
+
+    INF = math.inf
+
+    # dp[m][j] = min cost to cover first j points using exactly m clusters
+    dp = [[INF] * (n + 1) for _ in range(k + 1)]
+    dp[0][0] = 0.0
+
+    # split[m][j] = best start index i (1-indexed) of the last (m-th) cluster
+    split = [[0] * (n + 1) for _ in range(k + 1)]
+
+    for m in range(1, k + 1):
+        # last cluster needs at least 1 point, and the first (m-1) clusters
+        # need at least (m-1) points, so j ranges from m to n.
+        for j in range(m, n + 1):
+            best_cost = INF
+            best_i = -1
+            # i is the 1-indexed start of the m-th (last) cluster;
+            # i ranges so that clusters 1..m-1 can cover i-1 points with m-1 clusters
+            for i in range(m, j + 1):
+                prev = dp[m - 1][i - 1]
+                if prev == INF:
+                    continue
+                c = prev + _segment_cost(prefix_sum, prefix_sq, i, j)
+                if c < best_cost:
+                    best_cost = c
+                    best_i = i
+            dp[m][j] = best_cost
+            split[m][j] = best_i
+
+    total_cost = dp[k][n]
+
+    # Backtrack to find boundaries (0-indexed positions in sorted_points)
+    boundaries = [n]  # end boundary
+    j = n
+    for m in range(k, 0, -1):
+        i = split[m][j]  # 1-indexed start of this cluster
+        boundaries.append(i - 1)  # 0-indexed start
+        j = i - 1
+    boundaries.reverse()
+
+    return total_cost, boundaries, sorted_points
+
+
+def clusters_from_boundaries(
+    sorted_points: List[float], boundaries: List[int]
+) -> List[List[float]]:
+    """Materialize the actual cluster contents from boundary indices."""
+    return [
+        sorted_points[boundaries[c]:boundaries[c + 1]]
+        for c in range(len(boundaries) - 1)
+    ]
+
+
+if __name__ == "__main__":
+    # Deterministic demonstration (fixed input, no randomness).
+    data = [1, 2, 3, 10, 11, 12, 13, 50, 51, 52]
+    k = 3
+
+    cost, boundaries, sorted_points = optimal_1d_clusters(data, k)
+    clusters = clusters_from_boundaries(sorted_points, boundaries)
+
+    print("Sorted points:", sorted_points)
+    print(f"k = {k}")
+    print("Optimal total cost (sum of squared deviations):", cost)
+    print("Boundary indices:", boundaries)
+    for idx, c in enumerate(clusters):
+        mean = sum(c) / len(c)
+        print(f"  Cluster {idx}: {c}  (mean={mean:.3f})")
+
+    # Sanity check: recompute cost directly from clusters and compare
+    recomputed = sum(
+        sum((x - sum(c) / len(c)) ** 2 for x in c) for c in clusters
+    )
+    assert abs(recomputed - cost) < 1e-9, "Mismatch between DP cost and direct cost!"
+    print("\nSanity check passed: DP cost matches direct recomputation.")
+```

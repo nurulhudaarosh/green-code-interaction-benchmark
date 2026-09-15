@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""
+Inventory Reconciliation Utility
+---------------------------------
+Compares two CSV snapshots (old vs new) of warehouse/product inventory,
+sums duplicate (warehouse, product) records, classifies each key as
+added / removed / changed / unchanged, computes the quantity delta
+(new - old), and writes a deterministic, sorted CSV report.
+
+Expected input CSV columns (header required):
+    warehouse,product,quantity
+
+Usage:
+    python reconcile_inventory.py old.csv new.csv -o report.csv
+"""
+
+import argparse
+import csv
+import sys
+from collections import defaultdict
+from typing import Dict, Tuple, List
+
+Key = Tuple[str, str]  # (warehouse, product)
+
+
+def load_and_sum(path: str) -> Dict[Key, int]:
+    """Read a CSV file and sum quantities for duplicate (warehouse, product) keys."""
+    totals: Dict[Key, int] = defaultdict(int)
+
+    try:
+        with open(path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+
+            required = {"warehouse", "product", "quantity"}
+            if reader.fieldnames is None or not required.issubset(
+                {c.strip().lower() for c in reader.fieldnames}
+            ):
+                raise ValueError(
+                    f"{path}: missing required columns {required}, "
+                    f"found {reader.fieldnames}"
+                )
+
+            # Build a case-insensitive column lookup
+            col_map = {c.strip().lower(): c for c in reader.fieldnames}
+
+            for row_num, row in enumerate(reader, start=2):
+                warehouse = row[col_map["warehouse"]].strip()
+                product = row[col_map["product"]].strip()
+                qty_raw = row[col_map["quantity"]].strip()
+
+                if not warehouse or not product:
+                    raise ValueError(
+                        f"{path}, row {row_num}: warehouse/product cannot be empty"
+                    )
+
+                try:
+                    qty = int(float(qty_raw))
+                except ValueError:
+                    raise ValueError(
+                        f"{path}, row {row_num}: invalid quantity '{qty_raw}'"
+                    )
+
+                totals[(warehouse, product)] += qty
+
+    except FileNotFoundError:
+        print(f"Error: file not found: {path}", file=sys.stderr)
+        sys.exit(1)
+
+    return totals
+
+
+def reconcile(
+    old_totals: Dict[Key, int], new_totals: Dict[Key, int]
+) -> List[dict]:
+    """Classify every key across both snapshots and compute deltas."""
+    all_keys = set(old_totals) | set(new_totals)
+    results = []
+
+    for key in all_keys:
+        warehouse, product = key
+        old_qty = old_totals.get(key)
+        new_qty = new_totals.get(key)
+
+        if old_qty is None:
+            status = "added"
+            old_display = 0
+            delta = new_qty
+        elif new_qty is None:
+            status = "removed"
+            new_display = 0
+            delta = -old_qty
+            old_display = old_qty
+            new_qty = new_display
+        else:
+            delta = new_qty - old_qty
+            status = "unchanged" if delta == 0 else "changed"
+            old_display = old_qty
+
+        results.append(
+            {
+                "warehouse": warehouse,
+                "product": product,
+                "old_quantity": old_display if old_qty is None else old_display,
+                "new_quantity": new_qty,
+                "delta": delta,
+                "status": status,
+            }
+        )
+
+    # Deterministic ordering: warehouse, then product
+    results.sort(key=lambda r: (r["warehouse"], r["product"]))
+    return results
+
+
+def write_report(results: List[dict], out_path: str) -> None:
+    """Write the reconciliation results to a sorted, deterministic CSV."""
+    fieldnames = ["warehouse", "product", "old_quantity", "new_quantity", "delta", "status"]
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in results:
+            writer.writerow(row)
+
+
+def print_summary(results: List[dict]) -> None:
+    """Print a quick summary of classification counts to stdout."""
+    counts = defaultdict(int)
+    for r in results:
+        counts[r["status"]] += 1
+
+    print("Reconciliation Summary")
+    print("-----------------------")
+    for status in ("added", "removed", "changed", "unchanged"):
+        print(f"  {status:10}: {counts[status]}")
+    print(f"  {'total keys':10}: {len(results)}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Reconcile two inventory CSV snapshots (old vs new)."
+    )
+    parser.add_argument("old_csv", help="Path to the OLD snapshot CSV file")
+    parser.add_argument("new_csv", help="Path to the NEW snapshot CSV file")
+    parser.add_argument(
+        "-o", "--output", default="reconciliation_report.csv",
+        help="Output CSV path (default: reconciliation_report.csv)"
+    )
+    parser.add_argument(
+        "-q", "--quiet", action="store_true",
+        help="Suppress the summary printout"
+    )
+    args = parser.parse_args()
+
+    old_totals = load_and_sum(args.old_csv)
+    new_totals = load_and_sum(args.new_csv)
+
+    results = reconcile(old_totals, new_totals)
+    write_report(results, args.output)
+
+    if not args.quiet:
+        print_summary(results)
+        print(f"\nReport written to: {args.output}")
+
+
+if __name__ == "__main__":
+    main()

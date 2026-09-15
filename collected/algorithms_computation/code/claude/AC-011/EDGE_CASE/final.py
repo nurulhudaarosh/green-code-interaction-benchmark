@@ -1,0 +1,202 @@
+from typing import List, Tuple
+
+
+def knapsack01(weights: List[int], values: List[int], capacity: int) -> Tuple[int, List[int]]:
+    """
+    Solve 0/1 knapsack deterministically.
+
+    Args:
+        weights: list of item weights (non-negative integers)
+        values: list of item values (non-negative integers)
+        capacity: knapsack capacity (non-negative integer)
+
+    Returns:
+        (max_value, selected_indices) where selected_indices is sorted
+        ascending and is the lexicographically smallest such list among
+        all subsets achieving max_value.
+    """
+    n = len(weights)
+    if n != len(values):
+        raise ValueError("weights and values must have the same length")
+    if capacity < 0:
+        raise ValueError("capacity must be non-negative")
+    for i, w in enumerate(weights):
+        if w < 0:
+            raise ValueError(f"weight at index {i} must be non-negative")
+    for i, v in enumerate(values):
+        if v < 0:
+            raise ValueError(f"value at index {i} must be non-negative")
+
+    # --- Boundary case: no items ---
+    if n == 0:
+        return 0, []
+
+    # dp[c] = best value achievable with capacity exactly <= c
+    dp = [0] * (capacity + 1)
+
+    for i in range(n):
+        w, v = weights[i], values[i]
+        if w > capacity:
+            # This item can never fit under any remaining capacity <= capacity;
+            # skip its DP pass entirely (still correctly excluded by construction,
+            # since no c satisfies w <= c only when w > capacity globally).
+            continue
+        # iterate capacity descending so each item is used at most once
+        for c in range(capacity, w - 1, -1):
+            cand = dp[c - w] + v
+            if cand > dp[c]:
+                dp[c] = cand
+
+    max_value = dp[capacity] if capacity >= 0 else 0
+
+    # --- Boundary case: zero capacity ---
+    # dp[0] already correctly reflects only zero-weight items being usable,
+    # since w <= c requires w <= 0 i.e. w == 0 when c == 0.
+
+    # Build suffix DP: suffix_dp[i][c] = max value using items i..n-1
+    # with capacity c.
+    suffix_dp = [[0] * (capacity + 1) for _ in range(n + 1)]
+    for i in range(n - 1, -1, -1):
+        w, v = weights[i], values[i]
+        row_next = suffix_dp[i + 1]
+        row_cur = suffix_dp[i]
+        for c in range(capacity + 1):
+            best = row_next[c]
+            if w <= c:
+                cand = row_next[c - w] + v
+                if cand > best:
+                    best = cand
+            row_cur[c] = best
+
+    selected = []
+    remaining_capacity = capacity
+    remaining_value = suffix_dp[0][capacity]
+
+    for i in range(n):
+        w, v = weights[i], values[i]
+        skip_value = suffix_dp[i + 1][remaining_capacity]
+        if skip_value == remaining_value:
+            # Skipping keeps optimum reachable -> skip for lexicographically
+            # smallest index set (this also correctly handles free/zero-value
+            # items: they're only kept if strictly necessary to hit max_value)
+            continue
+        else:
+            selected.append(i)
+            remaining_capacity -= w
+            remaining_value -= v
+
+    return max_value, selected
+
+
+def _self_test() -> None:
+    # --- Original core tests (preserved) ---
+    w = [2, 3, 4, 5]
+    v = [3, 4, 5, 6]
+    cap = 5
+    val, idxs = knapsack01(w, v, cap)
+    assert val == 7, val
+    assert idxs == [0, 1], idxs
+
+    w2 = [1, 1]
+    v2 = [5, 5]
+    cap2 = 1
+    val2, idxs2 = knapsack01(w2, v2, cap2)
+    assert val2 == 5, val2
+    assert idxs2 == [0], idxs2
+
+    val3, idxs3 = knapsack01([1, 2], [10, 20], 0)
+    assert val3 == 0 and idxs3 == [], (val3, idxs3)
+
+    val4, idxs4 = knapsack01([], [], 10)
+    assert val4 == 0 and idxs4 == [], (val4, idxs4)
+
+    val5, idxs5 = knapsack01([0, 1], [3, 3], 1)
+    assert val5 == 6, val5
+    assert idxs5 == [0, 1], idxs5
+
+    # --- New boundary-value tests ---
+
+    # 1. n == 0 with capacity 0 as well
+    val_a, idxs_a = knapsack01([], [], 0)
+    assert val_a == 0 and idxs_a == [], (val_a, idxs_a)
+
+    # 2. Nonzero items, capacity == 0: only zero-weight items possible,
+    #    here none are zero-weight, so nothing selected.
+    val_b, idxs_b = knapsack01([1, 2, 3], [100, 200, 300], 0)
+    assert val_b == 0 and idxs_b == [], (val_b, idxs_b)
+
+    # 3. Single zero-weight item at capacity 0: should always be taken
+    #    (free value, no capacity cost).
+    val_c, idxs_c = knapsack01([0], [5], 0)
+    assert val_c == 5 and idxs_c == [0], (val_c, idxs_c)
+
+    # 4. Item weight exactly equals capacity: must be fully usable.
+    val_d, idxs_d = knapsack01([7], [42], 7)
+    assert val_d == 42 and idxs_d == [0], (val_d, idxs_d)
+
+    # 5. Every item's weight exceeds capacity: nothing selectable.
+    val_e, idxs_e = knapsack01([10, 20, 30], [1, 2, 3], 5)
+    assert val_e == 0 and idxs_e == [], (val_e, idxs_e)
+
+    # 6. All weights zero, values differ (including a zero-value item):
+    #    all items should be selected since zero weight never costs
+    #    capacity and every nonzero value strictly helps; the zero-value
+    #    item is only included if required to match max_value -- but
+    #    since it costs nothing and doesn't change max_value, the
+    #    skip-first rule will correctly exclude it if it's not needed
+    #    for the max value itself (lexicographically smallest wins).
+    val_f, idxs_f = knapsack01([0, 0, 0], [3, 0, 5], 100)
+    assert val_f == 8, val_f
+    assert idxs_f == [0, 2], idxs_f  # index 1 (value 0) correctly skipped
+
+    # 7. Large capacity and moderate item count: performance/robustness
+    #    check, plus correctness against brute force for small n.
+    import itertools
+    w_big = [3, 7, 11, 2, 9, 5, 13, 4]
+    v_big = [10, 22, 33, 6, 28, 15, 40, 12]
+    cap_big = 1_000_000  # far exceeds sum of all weights
+    val_g, idxs_g = knapsack01(w_big, v_big, cap_big)
+    assert val_g == sum(v_big), val_g
+    assert idxs_g == list(range(len(w_big))), idxs_g
+
+    # 8. Tie-breaking with duplicate (weight, value) pairs at different
+    #    indices: must prefer the smallest-index item(s).
+    val_h, idxs_h = knapsack01([5, 5, 5], [10, 10, 10], 5)
+    assert val_h == 10 and idxs_h == [0], (val_h, idxs_h)
+
+    val_i, idxs_i = knapsack01([5, 5, 5], [10, 10, 10], 10)
+    assert val_i == 20 and idxs_i == [0, 1], idxs_i
+
+    # 9. Brute-force cross-check for correctness + lexicographic
+    #    tie-breaking on a small randomized-but-fixed instance.
+    w_small = [2, 2, 3, 3, 4]
+    v_small = [3, 3, 5, 5, 6]
+    cap_small = 6
+    best_val = -1
+    best_idxs = None
+    for r in range(len(w_small) + 1):
+        for combo in itertools.combinations(range(len(w_small)), r):
+            tw = sum(w_small[i] for i in combo)
+            tv = sum(v_small[i] for i in combo)
+            if tw <= cap_small:
+                combo_list = list(combo)
+                if tv > best_val or (tv == best_val and combo_list < best_idxs):
+                    best_val = tv
+                    best_idxs = combo_list
+    val_j, idxs_j = knapsack01(w_small, v_small, cap_small)
+    assert val_j == best_val, (val_j, best_val)
+    assert idxs_j == best_idxs, (idxs_j, best_idxs)
+
+    print("All self-tests passed (including boundary-value cases).")
+
+
+if __name__ == "__main__":
+    _self_test()
+
+    # Example usage
+    weights = [2, 3, 4, 5]
+    values = [3, 4, 5, 6]
+    capacity = 5
+    best_value, chosen_indices = knapsack01(weights, values, capacity)
+    print(f"Max value: {best_value}")
+    print(f"Selected original indices: {chosen_indices}")

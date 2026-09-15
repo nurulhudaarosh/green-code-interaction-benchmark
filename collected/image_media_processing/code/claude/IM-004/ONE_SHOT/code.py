@@ -1,0 +1,100 @@
+import os
+from pathlib import Path
+
+import numpy as np
+from PIL import Image
+
+VALID_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+
+
+def preprocess_images(input_dir, output_dir):
+    """
+    Grayscale and min-max normalize every image in input_dir to the full
+    0-255 range, saving results as PNG files in output_dir.
+
+    For each image:
+        1. Convert to grayscale ("L" mode).
+        2. Compute original min/max pixel values (before normalization).
+        3. Rescale so that min -> 0 and max -> 255.
+           If the image is constant (min == max), output is all zeros
+           to avoid divide-by-zero.
+        4. Save as PNG in output_dir, using the original filename stem
+           with a .png extension.
+
+    Args:
+        input_dir (str or Path): Directory containing input images.
+        output_dir (str or Path): Directory to save processed PNGs.
+            Created if it doesn't exist.
+
+    Returns:
+        dict: Mapping of original filename -> {
+            "min": original min pixel value (float),
+            "max": original max pixel value (float),
+            "output_path": path to the saved PNG (str),
+        }
+        Files that fail to load as images are skipped and reported
+        under the "errors" key of the returned dict (mapping filename
+        -> error message).
+    """
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if not input_dir.is_dir():
+        raise NotADirectoryError(f"Input directory not found: {input_dir}")
+
+    stats = {}
+    errors = {}
+
+    for entry in sorted(input_dir.iterdir()):
+        if not entry.is_file():
+            continue
+        if entry.suffix.lower() not in VALID_EXTS:
+            continue
+
+        try:
+            with Image.open(entry) as img:
+                gray = img.convert("L")
+                arr = np.asarray(gray, dtype=np.float64)
+        except Exception as e:
+            errors[entry.name] = str(e)
+            continue
+
+        orig_min = float(arr.min())
+        orig_max = float(arr.max())
+
+        if orig_max > orig_min:
+            normalized = (arr - orig_min) * (255.0 / (orig_max - orig_min))
+        else:
+            # Constant image: nothing to stretch; output all zeros
+            normalized = np.zeros_like(arr)
+
+        normalized = np.clip(np.round(normalized), 0, 255).astype(np.uint8)
+
+        out_name = entry.stem + ".png"
+        out_path = output_dir / out_name
+        Image.fromarray(normalized, mode="L").save(out_path, format="PNG")
+
+        stats[entry.name] = {
+            "min": orig_min,
+            "max": orig_max,
+            "output_path": str(out_path),
+        }
+
+    if errors:
+        stats["errors"] = errors
+
+    return stats
+
+
+if __name__ == "__main__":
+    import argparse
+    import json
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("input_dir", help="Directory of input images")
+    parser.add_argument("output_dir", help="Directory to write processed PNGs")
+    args = parser.parse_args()
+
+    result = preprocess_images(args.input_dir, args.output_dir)
+    print(json.dumps(result, indent=2))

@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+"""
+Longest Increasing Route: longest strictly increasing subsequence,
+returning the lexicographically smallest original-index sequence among
+all maximum-length answers. O(n^2) DP with explicit index-sequence
+tie-breaking. Standard library only, fully deterministic.
+
+Optional feature: pass report_summary=True to additionally receive an
+`operation_summary` dict counting major computational decisions made
+during the DP. When report_summary is False (default), the return value
+and all original behavior are unchanged from the base version.
+
+Includes a deterministic self-test suite (no external test framework)
+covering the smallest permitted input and disconnected/degenerate
+structures, run automatically when executed with no stdin input.
+"""
+
+from typing import List, Tuple, Union, Dict
+import sys
+
+
+def lis_lex_smallest_indices(
+    a: List[int],
+    report_summary: bool = False
+) -> Union[Tuple[int, List[int]], Tuple[int, List[int], Dict[str, int]]]:
+    n = len(a)
+
+    candidate_checks = 0
+    length_improvements = 0
+    tie_breaks = 0
+    final_selection_comparisons = 0
+
+    if n == 0:
+        if report_summary:
+            summary = {
+                "candidate_checks": 0,
+                "length_improvements": 0,
+                "tie_breaks": 0,
+                "final_selection_comparisons": 0,
+                "total_decisions": 0,
+            }
+            return 0, [], summary
+        return 0, []
+
+    dp_len = [1] * n
+    best_seq: List[List[int]] = [[i] for i in range(n)]
+
+    for i in range(n):
+        best_len_for_i = 1
+        best_candidate: List[int] = [i]
+        for j in range(i):
+            candidate_checks += 1
+            if a[j] < a[i]:
+                candidate_len = dp_len[j] + 1
+                candidate_seq = best_seq[j] + [i]
+                if candidate_len > best_len_for_i:
+                    best_len_for_i = candidate_len
+                    best_candidate = candidate_seq
+                    length_improvements += 1
+                elif candidate_len == best_len_for_i:
+                    if candidate_seq < best_candidate:
+                        best_candidate = candidate_seq
+                        tie_breaks += 1
+        dp_len[i] = best_len_for_i
+        best_seq[i] = best_candidate
+
+    max_len = max(dp_len)
+
+    overall_best: List[int] = None
+    for i in range(n):
+        if dp_len[i] == max_len:
+            seq = best_seq[i]
+            if overall_best is None:
+                overall_best = seq
+            else:
+                final_selection_comparisons += 1
+                if seq < overall_best:
+                    overall_best = seq
+
+    if report_summary:
+        total_decisions = (
+            candidate_checks
+            + length_improvements
+            + tie_breaks
+            + final_selection_comparisons
+        )
+        summary = {
+            "candidate_checks": candidate_checks,
+            "length_improvements": length_improvements,
+            "tie_breaks": tie_breaks,
+            "final_selection_comparisons": final_selection_comparisons,
+            "total_decisions": total_decisions,
+        }
+        return max_len, overall_best, summary
+
+    return max_len, overall_best
+
+
+def _read_ints_from_stdin() -> List[int]:
+    data = sys.stdin.read().split()
+    return [int(x) for x in data]
+
+
+def _run_self_tests() -> None:
+    """Deterministic assert-based tests. No external framework/network."""
+
+    # 1. Smallest permitted input: empty list.
+    length, indices = lis_lex_smallest_indices([])
+    assert (length, indices) == (0, []), "empty input failed"
+
+    # 2. Smallest non-empty input: single element.
+    length, indices = lis_lex_smallest_indices([42])
+    assert (length, indices) == (1, [0]), "single element failed"
+
+    # 3. Disconnected structure: all equal values, no valid increasing edge.
+    length, indices = lis_lex_smallest_indices([5, 5, 5, 5])
+    assert (length, indices) == (1, [0]), "all-equal failed"
+
+    # 4. Disconnected structure: strictly decreasing, no valid increasing edge.
+    length, indices = lis_lex_smallest_indices([9, 7, 5, 3])
+    assert (length, indices) == (1, [0]), "strictly decreasing failed"
+
+    # 5. Two equal elements only.
+    length, indices = lis_lex_smallest_indices([4, 4])
+    assert (length, indices) == (1, [0]), "two equal elements failed"
+
+    # 6. Duplicates mixed with strict increases.
+    length, indices = lis_lex_smallest_indices([1, 2, 2, 3])
+    assert (length, indices) == (3, [0, 1, 3]), "duplicates-with-increase failed"
+
+    # 7. Classic LIS example, known optimal length.
+    length, indices = lis_lex_smallest_indices([10, 9, 2, 5, 3, 7, 101, 18, 3, 8, 9])
+    assert length == 4, "classic LIS length failed"
+    values = [10, 9, 2, 5, 3, 7, 101, 18, 3, 8, 9]
+    seq_vals = [values[i] for i in indices]
+    assert all(seq_vals[k] < seq_vals[k + 1] for k in range(len(seq_vals) - 1)), \
+        "classic LIS not strictly increasing"
+    assert indices == sorted(indices), "indices not increasing"
+
+    # 8. Tie-breaking: multiple length-2 options, must pick lexicographically
+    #    smallest index sequence -> earliest possible indices.
+    length, indices = lis_lex_smallest_indices([1, 5, 2, 5])
+    assert length == 2, "tie-break length failed"
+    assert indices == [0, 1], "tie-break lexicographic index selection failed"
+
+    # 9. operation_summary present only when requested; absent by default.
+    base_result = lis_lex_smallest_indices([3, 1, 2])
+    assert len(base_result) == 2, "default call must return exactly 2 fields"
+    full_result = lis_lex_smallest_indices([3, 1, 2], report_summary=True)
+    assert len(full_result) == 3, "report_summary=True must return 3 fields"
+    l1, idx1 = base_result
+    l2, idx2, summary = full_result
+    assert (l1, idx1) == (l2, idx2), "enabling summary must not change core output"
+    assert summary["total_decisions"] == (
+        summary["candidate_checks"]
+        + summary["length_improvements"]
+        + summary["tie_breaks"]
+        + summary["final_selection_comparisons"]
+    ), "operation_summary total_decisions inconsistent"
+
+    # 10. operation_summary for empty input is well-formed and zeroed.
+    _, _, empty_summary = lis_lex_smallest_indices([], report_summary=True)
+    assert empty_summary == {
+        "candidate_checks": 0,
+        "length_improvements": 0,
+        "tie_breaks": 0,
+        "final_selection_comparisons": 0,
+        "total_decisions": 0,
+    }, "empty-input operation_summary failed"
+
+    print("All self-tests passed.")
+
+
+if __name__ == "__main__":
+    if not sys.stdin.isatty():
+        raw = _read_ints_from_stdin()
+    else:
+        raw = []
+
+    if raw:
+        seq = raw
+        length, indices = lis_lex_smallest_indices(seq)
+        values = [seq[i] for i in indices]
+        print(f"Input sequence: {seq}")
+        print(f"Max length (L): {length}")
+        print(f"Chosen indices: {indices}")
+        print(f"Chosen values : {values}")
+    else:
+        _run_self_tests()
+
+        seq = [10, 9, 2, 5, 3, 7, 101, 18, 3, 8, 9]
+        length, indices = lis_lex_smallest_indices(seq)
+        values = [seq[i] for i in indices]
+        print(f"Input sequence: {seq}")
+        print(f"Max length (L): {length}")
+        print(f"Chosen indices: {indices}")
+        print(f"Chosen values : {values}")
+
+        length2, indices2, op_summary = lis_lex_smallest_indices(seq, report_summary=True)
+        assert length2 == length and indices2 == indices
+        print(f"Operation summary: {op_summary}")

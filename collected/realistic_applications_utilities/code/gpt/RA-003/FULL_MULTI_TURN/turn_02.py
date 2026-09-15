@@ -1,0 +1,136 @@
+from typing import Dict, List, Any
+
+
+def validate_assessments(assessments: List[Dict[str, Any]]) -> None:
+    """Validate assessment definitions before analysis."""
+    if not isinstance(assessments, list):
+        raise ValueError("Assessments must be a list.")
+
+    if not assessments:
+        return
+
+    total_weight = 0.0
+
+    for i, assessment in enumerate(assessments):
+        if not isinstance(assessment, dict):
+            raise ValueError(f"Assessment {i} must be a dictionary.")
+
+        if "name" not in assessment:
+            raise ValueError(f"Assessment {i} is missing 'name'.")
+        if "max_score" not in assessment:
+            raise ValueError(f"Assessment {i} is missing 'max_score'.")
+        if "weight" not in assessment:
+            raise ValueError(f"Assessment {i} is missing 'weight'.")
+
+        max_score = assessment["max_score"]
+        weight = assessment["weight"]
+
+        # Reject booleans because bool is a subclass of int in Python.
+        if isinstance(max_score, bool) or not isinstance(max_score, (int, float)):
+            raise ValueError(f"Invalid max_score for assessment {i}.")
+        if max_score <= 0:
+            raise ValueError(f"max_score must be greater than 0 for assessment {i}.")
+
+        if isinstance(weight, bool) or not isinstance(weight, (int, float)):
+            raise ValueError(f"Invalid weight for assessment {i}.")
+        if weight <= 0:
+            raise ValueError(f"weight must be greater than 0 for assessment {i}.")
+
+        total_weight += float(weight)
+
+    if abs(total_weight - 100.0) > 1e-9:
+        raise ValueError(
+            f"Assessment weights must total exactly 100. Got {total_weight}."
+        )
+
+
+def validate_students(students: List[Dict[str, Any]],
+                      assessments: List[Dict[str, Any]]) -> None:
+    """Validate student scores against assessment limits."""
+    if not isinstance(students, list):
+        raise ValueError("Students must be a list.")
+
+    assessment_names = [a["name"] for a in assessments]
+
+    if len(set(assessment_names)) != len(assessment_names):
+        raise ValueError("Assessment names must be unique.")
+
+    for i, student in enumerate(students):
+        if not isinstance(student, dict):
+            raise ValueError(f"Student {i} must be a dictionary.")
+
+        if "name" not in student:
+            raise ValueError(f"Student {i} is missing 'name'.")
+
+        for assessment in assessments:
+            name = assessment["name"]
+
+            if name not in student:
+                raise ValueError(
+                    f"Student '{student['name']}' is missing score for '{name}'."
+                )
+
+            score = student[name]
+            max_score = assessment["max_score"]
+
+            if isinstance(score, bool) or not isinstance(score, (int, float)):
+                raise ValueError(
+                    f"Invalid score for student '{student['name']}' "
+                    f"in '{name}'."
+                )
+
+            # Scores must be within the inclusive valid range.
+            if score < 0 or score > max_score:
+                raise ValueError(
+                    f"Score for student '{student['name']}' in '{name}' "
+                    f"must be between 0 and {max_score}."
+                )
+
+
+def analyze_students(
+    students: List[Dict[str, Any]],
+    assessments: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """
+    Analyze student performance using weighted assessment scores.
+
+    Validation rules:
+    - max_score > 0
+    - weight > 0
+    - weights must total exactly 100
+    - scores must be numeric
+    - scores must be in [0, max_score]
+    """
+    validate_assessments(assessments)
+    validate_students(students, assessments)
+
+    if not students:
+        return []
+
+    results = []
+
+    for student in students:
+        weighted_total = 0.0
+
+        for assessment in assessments:
+            score = float(student[assessment["name"]])
+            max_score = float(assessment["max_score"])
+            weight = float(assessment["weight"])
+
+            percentage = (score / max_score) * 100
+            weighted_total += percentage * (weight / 100)
+
+        results.append({
+            "name": student["name"],
+            "score": round(weighted_total, 2),
+            "passed": weighted_total >= 40
+        })
+
+    # Deterministic ranking:
+    # higher score first, then name alphabetically for ties.
+    results.sort(key=lambda x: (-x["score"], x["name"]))
+
+    for rank, result in enumerate(results, start=1):
+        result["rank"] = rank
+
+    return results

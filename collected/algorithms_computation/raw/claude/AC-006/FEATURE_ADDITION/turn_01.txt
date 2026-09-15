@@ -1,0 +1,205 @@
+```python
+"""
+PROBLEM
+-------
+Given a 2D numeric grid and a threshold T, find the largest 4-connected
+region (up/down/left/right adjacency) consisting of cells whose value is
+>= T.
+
+Return:
+  - size:        number of cells in the region
+  - perimeter:   total count of "exposed sides" of the region, where a
+                  side of a cell is exposed if the neighbor across that
+                  side is either outside the grid or is not part of the
+                  region (i.e. its value is < T)
+  - coordinate:  the smallest (row, col) coordinate belonging to that
+                  region (using standard tuple ordering: compare row
+                  first, then column)
+
+Tie-breaking when multiple regions share the maximum size:
+  1. Prefer the region with the LARGER perimeter.
+  2. If still tied, prefer the region with the SMALLER coordinate
+     (smallest (row, col) tuple contained in the region).
+
+KEY CONSTRAINTS
+----------------
+- The grid is a rectangular list of lists of numbers (int/float). It may
+  be empty, or contain rows of length 0.
+- T is a numeric threshold; a cell qualifies if grid[r][c] >= T.
+- Connectivity is strictly 4-directional (no diagonals).
+- The solution must be fully deterministic: no randomness, no reliance
+  on hash-ordering, no network/API access, no external services, and no
+  human interaction. Only the Python standard library may be used.
+- Flood fill must be implemented iteratively (explicit stack), not via
+  recursion, to avoid recursion-depth issues on large grids and to keep
+  behavior deterministic and reproducible.
+
+REQUIRED OUTPUT
+----------------
+A single result describing the best region found:
+  (size, perimeter, coordinate)
+or an explicit "empty" result (size 0, perimeter 0, coordinate None) if
+no cell in the grid meets the threshold.
+
+ALGORITHM
+---------
+1. Scan the grid in row-major order. Skip cells that are already visited
+   or that don't meet the threshold.
+2. For every unvisited qualifying cell, run an iterative flood fill
+   (DFS using an explicit stack) to discover the full connected region:
+     - Mark cells visited as they are pushed, to avoid duplicate work.
+     - For each cell popped, examine its 4 neighbors:
+         * If the neighbor is in-bounds AND qualifies (>= T), it's part
+           of the same region -> push it (if not already visited).
+         * Otherwise (out-of-bounds OR value < T), that side of the
+           current cell is "exposed" -> increment the perimeter counter.
+   This guarantees every exposed side is counted exactly once, matching
+   the standard "area/perimeter of a polyomino" definition.
+3. After the region is fully explored, compute its size (cell count) and
+   its minimal coordinate (min of all (row, col) pairs in the region).
+4. Compare against the best region found so far using the tie-break
+   rules (bigger size > bigger perimeter > smaller coordinate) and keep
+   the winner.
+5. Return the best region's stats after scanning the whole grid.
+
+Because each cell is visited at most once (via the `visited` matrix) and
+each edge is inspected a constant number of times, the algorithm runs in
+O(rows * cols) time and space.
+"""
+
+from typing import List, Optional, Tuple, Union
+
+Number = Union[int, float]
+Grid = List[List[Number]]
+
+
+def largest_threshold_region(
+    grid: Grid, threshold: Number
+) -> Tuple[int, int, Optional[Tuple[int, int]]]:
+    """
+    Find the largest 4-connected region of cells with value >= threshold.
+
+    Returns a tuple: (size, perimeter, smallest_coordinate)
+    where smallest_coordinate is a (row, col) tuple, or None if no
+    qualifying cell exists.
+    """
+    if not grid or not grid[0]:
+        return (0, 0, None)
+
+    rows = len(grid)
+    cols = len(grid[0])
+    visited = [[False] * cols for _ in range(rows)]
+
+    def qualifies(r: int, c: int) -> bool:
+        return 0 <= r < rows and 0 <= c < cols and grid[r][c] >= threshold
+
+    def better(candidate, current) -> bool:
+        """True if `candidate` should replace `current` as the best region."""
+        c_size, c_perim, c_coord = candidate
+        b_size, b_perim, b_coord = current
+        if c_size != b_size:
+            return c_size > b_size
+        if c_perim != b_perim:
+            return c_perim > b_perim
+        return c_coord < b_coord
+
+    best: Optional[Tuple[int, int, Tuple[int, int]]] = None
+
+    DIRECTIONS = ((-1, 0), (1, 0), (0, -1), (0, 1))
+
+    for r in range(rows):
+        for c in range(cols):
+            if visited[r][c] or not qualifies(r, c):
+                continue
+
+            # Iterative flood fill (explicit stack, no recursion).
+            stack = [(r, c)]
+            visited[r][c] = True
+            size = 0
+            perimeter = 0
+            min_coord = (r, c)
+
+            while stack:
+                cr, cc = stack.pop()
+                size += 1
+                if (cr, cc) < min_coord:
+                    min_coord = (cr, cc)
+
+                for dr, dc in DIRECTIONS:
+                    nr, nc = cr + dr, cc + dc
+                    if qualifies(nr, nc):
+                        if not visited[nr][nc]:
+                            visited[nr][nc] = True
+                            stack.append((nr, nc))
+                        # If it qualifies but is already visited, it's
+                        # still part of the region (interior edge), so
+                        # it is NOT an exposed side.
+                    else:
+                        # Out of bounds or below threshold -> exposed side.
+                        perimeter += 1
+
+            candidate = (size, perimeter, min_coord)
+            if best is None or better(candidate, best):
+                best = candidate
+
+    if best is None:
+        return (0, 0, None)
+    return best
+
+
+def _self_test() -> None:
+    """A few deterministic sanity checks (not exhaustive)."""
+    grid1 = [
+        [5, 5, 1, 3],
+        [5, 5, 1, 4],
+        [1, 1, 1, 4],
+        [2, 4, 4, 4],
+    ]
+    # Region A: the 2x2 block of 5's at (0,0)-(1,1) -> size 4
+    # Region B: the 4's forming an L-shape -> size 5
+    result = largest_threshold_region(grid1, 4)
+    print("Test 1:", result)
+    assert result[0] == 5  # size of the 4-region (L shape)
+
+    grid2 = [
+        [1, 1],
+        [1, 1],
+    ]
+    result2 = largest_threshold_region(grid2, 10)
+    print("Test 2:", result2)
+    assert result2 == (0, 0, None)
+
+    grid3 = [[7]]
+    result3 = largest_threshold_region(grid3, 7)
+    print("Test 3:", result3)
+    assert result3 == (1, 4, (0, 0))
+
+    # Two equal-size regions with different perimeter -> larger perimeter wins.
+    grid4 = [
+        [9, 9, 0, 9, 9],
+        [9, 9, 0, 0, 9],
+    ]
+    # Left region: (0,0),(0,1),(1,0),(1,1) -> a 2x2 block, size 4
+    # Right region: (0,3),(0,4),(1,4) -> an L of size 3
+    result4 = largest_threshold_region(grid4, 9)
+    print("Test 4:", result4)
+    assert result4[0] == 4  # the 2x2 block is strictly larger
+
+    print("All self-tests passed.")
+
+
+if __name__ == "__main__":
+    _self_test()
+
+    # Example usage:
+    example_grid = [
+        [3, 4, 4, 1],
+        [4, 4, 1, 1],
+        [1, 1, 5, 5],
+        [1, 1, 5, 5],
+    ]
+    T = 4
+    size, perimeter, coord = largest_threshold_region(example_grid, T)
+    print(f"\nGrid: {example_grid}\nThreshold: {T}")
+    print(f"Largest region -> size={size}, perimeter={perimeter}, smallest_coord={coord}")
+```

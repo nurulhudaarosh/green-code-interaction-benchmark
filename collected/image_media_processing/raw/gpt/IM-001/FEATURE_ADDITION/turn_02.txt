@@ -1,0 +1,41 @@
+Here’s the extended version. The `resample_filter` parameter can be passed as a Pillow filter constant, with `LANCZOS` as the default.
+
+```python
+from pathlib import Path
+from PIL import Image
+
+def batch_resize(input_dir, output_dir, target_size,
+                 resample_filter=Image.Resampling.LANCZOS):
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    valid_extensions = {".png", ".jpg", ".jpeg"}
+    count = 0
+
+    allowed_filters = {
+        Image.Resampling.NEAREST,
+        Image.Resampling.BILINEAR,
+        Image.Resampling.BICUBIC,
+        Image.Resampling.LANCZOS,
+    }
+
+    if resample_filter not in allowed_filters:
+        raise ValueError(
+            "resample_filter must be NEAREST, BILINEAR, BICUBIC, or LANCZOS"
+        )
+
+    for file_path in input_dir.iterdir():
+        if not file_path.is_file() or file_path.suffix.lower() not in valid_extensions:
+            continue
+
+        with Image.open(file_path) as img:
+            resized = img.resize(target_size, resample=resample_filter)
+            resized.save(output_dir / file_path.name)
+
+        count += 1
+
+    return count
+```
+
+Example usage:

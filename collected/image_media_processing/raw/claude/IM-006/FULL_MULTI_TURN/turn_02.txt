@@ -1,0 +1,42 @@
+The version I gave you already uses `os.path.getsize(full_path)` for `file_size_bytes`, not `len(img.tobytes())` — so that particular bug isn't present in it. Here it is again with a comment making that explicit, in case you're merging it with another version that had the `tobytes()` issue:
+
+```python
+import os
+from PIL import Image
+
+
+def extract_metadata(input_dir):
+    """
+    Extract metadata for every image file in input_dir.
+
+    Returns a list of dicts sorted by filename, each containing:
+        filename, format, mode, width, height, file_size_bytes
+    """
+    results = []
+
+    for entry in os.listdir(input_dir):
+        full_path = os.path.join(input_dir, entry)
+
+        if not os.path.isfile(full_path):
+            continue
+
+        try:
+            with Image.open(full_path) as img:
+                results.append({
+                    "filename": entry,
+                    "format": img.format,
+                    "mode": img.mode,
+                    "width": img.width,
+                    "height": img.height,
+                    # IMPORTANT: use the on-disk file size, NOT len(img.tobytes()),
+                    # which would give the size of the decoded pixel buffer instead.
+                    "file_size_bytes": os.path.getsize(full_path),
+                })
+        except (IOError, SyntaxError):
+            continue
+
+    results.sort(key=lambda d: d["filename"])
+    return results
+```
+
+If you have a different copy of this function (e.g., from another file or an earlier draft) that does use `img.tobytes()`, feel free to paste it here and I'll patch that exact version directly.

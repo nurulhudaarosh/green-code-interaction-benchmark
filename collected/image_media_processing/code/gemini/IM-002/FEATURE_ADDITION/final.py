@@ -1,0 +1,74 @@
+from typing import List, Optional, Union
+from pathlib import Path
+from PIL import Image, ImageOps
+
+
+def generate_thumbnails(
+    input_dir: Union[str, Path],
+    cache_dir: Union[str, Path],
+    max_dim: int = 128,
+    extensions: Optional[List[str]] = None,
+):
+    """Recursively generates aspect-ratio-preserving thumbnails from `input_dir`
+
+    and saves them under `cache_dir`, recreating the exact directory structure.
+
+    Args:
+        input_dir: Source directory containing original images.
+        cache_dir: Target directory for generated thumbnails.
+        max_dim: Maximum width or height of the thumbnail in pixels.
+        extensions: List of file extensions to include (e.g., [".png", "jpg"]).
+                    Defaults to [".png", ".jpg", ".jpeg"].
+    """
+    input_path = Path(input_dir).resolve()
+    cache_path = Path(cache_dir).resolve()
+
+    # Default extensions if none are provided
+    if extensions is None:
+        extensions = [".png", ".jpg", ".jpeg"]
+
+    # Normalize extensions: ensure lowercase and starting with a dot
+    valid_extensions = {
+        ext if ext.startswith(".") else f".{ext}"
+        for ext in (e.lower() for e e in extensions)
+    }
+
+    for file_path in input_path.rglob("*"):
+        # Skip directories and files with unrequested extensions
+        if not file_path.is_file() or file_path.suffix.lower() not in valid_extensions:
+            continue
+
+        # Recreate relative directory structure in the cache folder
+        relative_path = file_path.relative_to(input_path)
+        target_path = cache_path / relative_path
+
+        # Skip generation if thumbnail exists and source wasn't modified since
+        if (
+            target_path.exists()
+            and target_path.stat().st_mtime >= file_path.stat().st_mtime
+        ):
+            continue
+
+        # Ensure subdirectories exist
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            with Image.open(file_path) as img:
+                # Auto-orient based on EXIF data
+                img = ImageOps.exif_transpose(img)
+
+                # Convert RGBA/P modes to RGB if saving to standard formats like JPEG
+                if target_path.suffix.lower() in {
+                    ".jpg",
+                    ".jpeg",
+                } and img.mode in ("RGBA", "P"):
+                    img = img.convert("RGB")
+
+                # Resize image preserving aspect ratio
+                img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+
+                # Save the generated thumbnail
+                img.save(target_path)
+
+        except Exception as e:
+            print(f"Skipping {file_path}: {e}")

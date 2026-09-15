@@ -1,0 +1,109 @@
+```python
+import datetime
+
+
+def analyze_user_sessions(events):
+    """Analyzes login/logout events, merges overlapping sessions, and calculates active time.
+
+    :param events: List of dicts, e.g., [{"user": "alice", "type": "login",
+    "timestamp": datetime.datetime(...) handle parsing if inputs are strings]
+    :return: Dict of sorted user summaries with total active seconds and session
+    intervals.
+    """
+    # 1. Group events by user
+    user_events = {}
+    for event in events:
+        user = event["user"]
+        ts = event["timestamp"]
+
+        # Convert string timestamp to datetime object if necessary
+        if isinstance(ts, str):
+            ts = datetime.datetime.fromisoformat(ts)
+
+        user_events.setdefault(user, []).append((ts, event["type"].lower()))
+
+    user_summaries = {}
+
+    # Sort users alphabetically
+    for user in sorted(user_events.keys()):
+        # Sort user events chronologically
+        raw_events = sorted(user_events[user], key=lambda x: x[0])
+
+        # 2. Pair each login with the next valid logout
+        paired_sessions = []
+        current_login_ts = None
+
+        for ts, event_type in raw_events:
+            if event_type == "login":
+                # If already logged in, ignore subsequent logins (or overwrite to track latest)
+                if current_login_ts is None:
+                    current_login_ts = ts
+            elif event_type == "logout":
+                if current_login_ts is not None:
+                    # Valid pair found
+                    if ts >= current_login_ts:
+                        paired_sessions.append((current_login_ts, ts))
+                    current_login_ts = None
+
+        if not paired_sessions:
+            user_summaries[user] = {
+                "total_active_seconds": 0,
+                "merged_sessions": [],
+            }
+            continue
+
+        # 3. Merge overlapping or touching sessions
+        merged_sessions = []
+        # Sort paired sessions by start time
+        paired_sessions.sort(key=lambda x: x[0])
+
+        curr_start, curr_end = paired_sessions[0]
+
+        for next_start, next_end in paired_sessions[1:]:
+            # If the next session starts before or exactly when the current ends, merge
+            if next_start <= curr_end:
+                curr_end = max(curr_end, next_end)
+            else:
+                merged_sessions.append((curr_start, curr_end))
+                curr_start, curr_end = next_start, next_end
+        merged_sessions.append((curr_start, curr_end))
+
+        # 4. Calculate total active seconds
+        total_seconds = sum(
+            int((end - start).total_seconds()) for start, end in merged_sessions
+        )
+
+        user_summaries[user] = {
+            "total_active_seconds": total_seconds,
+            "merged_sessions": merged_sessions,
+        }
+
+    return user_summaries
+
+
+# Example Usage
+if __name__ == "__main__":
+    sample_events = [
+        {"user": "alice", "type": "login", "timestamp": "2026-03-30T08:00:00"},
+        {
+            "user": "alice",
+            "type": "login",
+            "timestamp": "2026-03-30T08:15:00",
+        },  # Duplicate login ignored
+        {"user": "alice", "type": "logout", "timestamp": "2026-03-30T10:00:00"},
+        {
+            "user": "alice",
+            "type": "login",
+            "timestamp": "2026-03-30T09:30:00",
+        },  # Overlapping session
+        {"user": "alice", "type": "logout", "timestamp": "2026-03-30T11:00:00"},
+        {"user": "bob", "type": "login", "timestamp": "2026-03-30T09:00:00"},
+        {"user": "bob", "type": "logout", "timestamp": "2026-03-30T09:45:00"},
+    ]
+
+    summary = analyze_user_sessions(sample_events)
+    import pprint
+
+    pprint.pprint(summary)
+
+```

@@ -1,0 +1,65 @@
+I understand the problem: we are given a set of indivisible items, each with a weight and a value, and a knapsack capacity. We must select a subset of items to maximize total value without exceeding the capacity. If there are multiple optimal subsets, we must return the lexicographically smallest list of original indices (0‑based).  
+
+**Key constraints** (assumed from typical 0/1 knapsack):  
+- Number of items `n` can be up to, say, 1000 or 2000 (the DP will be O(n * capacity)).  
+- Capacity and weights are integers, possibly large, but total capacity * n should be manageable in memory/time.  
+
+**Required output**: a list of original indices (0‑based) of the selected items.  
+
+**Algorithm description**:  
+We use standard 0/1 knapsack DP with 1‑D array `dp[w]` = maximum value achievable with capacity exactly `w`. We iterate items, updating capacities from `capacity` down to `item.weight` to avoid reuse. To reconstruct the lexicographically smallest index list among optimal solutions, we keep a separate parent array or rebuild by checking which items can be included while still achieving the optimal value. Since we want lexicographically smallest indices, we process items in reverse order (from last to first) during reconstruction, or we can do a forward greedy check: after DP, we start from capacity `C`, and for `i` from 0 to n‑1, if `item[i].weight <= C` and `dp[C] == dp[C - item[i].weight] + item[i].value`, we include it and subtract its weight. This ensures we take smaller indices whenever possible because we consider them first.  
+
+**Implementation**:  
+
+```python
+def knapsack(indices, weights, values, capacity):
+    n = len(indices)
+    # dp[w] = max value for exact capacity w
+    dp = [-10**18] * (capacity + 1)
+    dp[0] = 0
+
+    for i in range(n):
+        w = weights[i]
+        v = values[i]
+        for cap in range(capacity, w - 1, -1):
+            if dp[cap - w] + v > dp[cap]:
+                dp[cap] = dp[cap - w] + v
+
+    # Find the best total value over all capacities <= capacity
+    best_val = max(dp)
+    # Find the smallest capacity that achieves best_val (to help reconstruction)
+    best_cap = 0
+    for cap in range(capacity + 1):
+        if dp[cap] == best_val:
+            best_cap = cap
+            break
+
+    # Reconstruct lexicographically smallest index list
+    selected = []
+    rem_cap = best_cap
+    for i in range(n):
+        w = weights[i]
+        v = values[i]
+        if w <= rem_cap and dp[rem_cap] == dp[rem_cap - w] + v:
+            selected.append(indices[i])
+            rem_cap -= w
+
+    return selected
+
+
+def solve_knapsack(weights, values, capacity):
+    """
+    Returns the list of original indices (0-based) of items selected
+    to maximize total value under capacity.
+    Ties are broken by lexicographically smallest index list.
+    """
+    n = len(weights)
+    indices = list(range(n))
+    return knapsack(indices, weights, values, capacity)
+```
+
+**Example usage** (self‑contained):  
+
+
+
+**Note**: The reconstruction works because we check items in increasing index order and accept an item if it can be part of some optimal solution. This yields the lexicographically smallest list because we prefer smaller indices whenever they don't compromise optimality. The DP computes maximum values for exact capacities, so `dp[cap]` is well‑defined.

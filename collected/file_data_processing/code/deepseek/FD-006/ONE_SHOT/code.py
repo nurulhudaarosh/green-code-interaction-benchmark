@@ -1,0 +1,87 @@
+import csv
+import re
+from typing import List, Dict, Any, Tuple, Optional
+
+
+def normalize_email(email: Optional[str]) -> str:
+    if not email:
+        return ""
+    return email.strip().lower()
+
+
+def normalize_phone(phone: Optional[str]) -> str:
+    if not phone:
+        return ""
+    digits = re.sub(r"\D", "", phone)
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    return digits
+
+
+def completeness_score(record: Dict[str, str]) -> int:
+    score = 0
+    for value in record.values():
+        if value is not None and str(value).strip() != "":
+            score += 1
+    return score
+
+
+def normalize_csv(
+    input_path: str,
+    output_path: str,
+    email_field: str = "email",
+    phone_field: str = "phone",
+) -> None:
+    with open(input_path, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        fieldnames: List[str] = list(reader.fieldnames or [])
+        rows: List[Dict[str, str]] = []
+        for idx, row in enumerate(reader):
+            row = {k: (v if v is not None else "") for k, v in row.items()}
+            row["_row_index"] = idx
+            if email_field in row:
+                row[email_field] = normalize_email(row[email_field])
+            if phone_field in row:
+                row[phone_field] = normalize_phone(row[phone_field])
+            rows.append(row)
+
+    if email_field not in fieldnames:
+        raise ValueError(f"email_field '{email_field}' not found in CSV header")
+
+    groups: Dict[str, List[Dict[str, str]]] = {}
+    for row in rows:
+        key = row.get(email_field, "")
+        groups.setdefault(key, []).append(row)
+
+    chosen: List[Dict[str, str]] = []
+    for key, group in groups.items():
+        group_sorted = sorted(
+            group,
+            key=lambda r: (-completeness_score(r), r["_row_index"]),
+        )
+        best = group_sorted[0]
+        chosen.append(best)
+
+    chosen.sort(key=lambda r: r.get(email_field, ""))
+
+    out_fields = [f for f in fieldnames if f != "_row_index"]
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=out_fields)
+        writer.writeheader()
+        for row in chosen:
+            writer.writerow({k: row.get(k, "") for k in out_fields})
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) < 3:
+        print("Usage: python normalizer.py <input.csv> <output.csv> [email_field] [phone_field]")
+        sys.exit(1)
+
+    inp = sys.argv[1]
+    out = sys.argv[2]
+    ef = sys.argv[3] if len(sys.argv) > 3 else "email"
+    pf = sys.argv[4] if len(sys.argv) > 4 else "phone"
+
+    normalize_csv(inp, out, ef, pf)

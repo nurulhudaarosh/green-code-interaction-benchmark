@@ -1,0 +1,398 @@
+# Maximum Flow Planner — Restated Problem & Hardened Solution
+
+## 1. Original Problem (Restated)
+
+**Input:** A directed capacitated network with `n` vertices (0-indexed), `m` directed edges, a source `s`, and a sink `t`. Each edge `(u, v)` has a non-negative integer capacity `c`.
+
+**Task:** Compute the **maximum s-t flow** and report the flow assigned to **each original edge**.
+
+**Constraints & Rules:**
+- Flow conservation holds at every vertex except `s` and `t`.
+- For every edge: `0 ≤ flow(u, v) ≤ capacity(u, v)`.
+- Anti-parallel edges `(u,v)` and `(v,u)` are legal and must be handled independently.
+- Self-loops are allowed (contribute nothing to flow, must appear in output as `0`).
+- Vertices with no path to `t` must contribute `0` flow.
+- **Output order must match the input edge order exactly** (no reordering).
+- Use **Dinic's blocking-flow algorithm**; no randomness, no external services, standard library only.
+- Output: first line = max flow value; then one line per original edge (in input order) = flow on that edge.
+
+**Tie-breaking rule:** When multiple augmenting paths exist, DFS explores each vertex's adjacency list in **insertion order**, and the `iter` pointer never rewinds. This yields a deterministic assignment of flows given the same input.
+
+---
+
+## 2. Explicit Handling of Boundary / Difficult Cases
+
+The original solution works for the "happy path" but must explicitly defend against valid inputs that sit at the edges of the stated limits.
+
+| # | Case | Why it's dangerous | Required behavior |
+|---|------|--------------------|-------------------|
+| B1 | `n = 1` (only one vertex) | Source = sink; no edges possible | Max flow = `0`; every listed edge flow = `0` |
+| B2 | `m = 0` | No edges at all | Max flow = `0`; no flow lines printed (or none expected) |
+| B3 | `s == t` | Trivial source-sink identity | Max flow = `0`; all edge flows = `0` |
+| B4 | Edge capacity = `0` | Cannot carry flow | Flow on that edge must be `0`, but edge must still be printed |
+| B5 | Very large capacity (e.g., `10^18`) | `INF`-based DFS can under-augment if `INF` is small; Python ints are fine | Use `INF` strictly greater than the sum of capacities (not a fixed float) |
+| B6 | Self-loop `(u, u, c)` | Level condition would normally reject it, but we must not crash | Flow = `0` for that edge; must still be printed |
+| B7 | Parallel edges `(u, v, c1)`, `(u, v, c2)` | Must be tracked independently | Each prints its own flow |
+| B8 | Anti-parallel edges `(u, v, c1)`, `(v, u, c2)` | Naive residual construction merges them | Each has its own residual pair; both flows correct |
+| B9 | Disconnected `s` from `t` | BFS never reaches `t` | Max flow = `0`; all flows = `0` |
+| B10 | `s` or `t` has degree 0 | No path possible | Max flow = `0`; flows = `0` |
+| B11 | Empty input / whitespace-only input | Crash on `next(it)` | Print nothing, exit cleanly |
+| B12 | Edge endpoint out of range | IndexError during BFS/DFS | Validate and fail fast (or clamp per problem spec; here we assume well-formed input but defend against out-of-range by raising a clear error) |
+| B13 | Recursion depth exceeded (long path) | Python default recursion limit = 1000 | Raise `sys.setrecursionlimit` based on `n` |
+| B14 | Capacity sum exceeds `sys.maxsize` | Overflow in other languages | Python integers are arbitrary precision — safe |
+| B15 | Trailing whitespace / extra tokens | Off-by-one parsing | Use token iterator; ignore extras |
+
+---
+
+## 3. Key Fixes Applied to the Original Solution
+
+1. **`INF` sentinel:** Replace `float('inf')` (or a fixed large int) with `sum(capacities) + 1`, computed after reading input. Guarantees DFS can always push the full remaining flow in one call.
+2. **`sys.setrecursionlimit`:** Set to `max(1000, 2 * n + 10)` before running Dinic (DFS recursion depth is bounded by the level graph depth ≤ `n`).
+3. **`s == t` guard:** Short-circuit to `(0, [0]*m)`.
+4. **Empty input guard:** Return silently with no output.
+5. **Explicit self-loop handling:** Self-loops are added normally (they get a residual pair); DFS naturally rejects them because `level[u] != level[u] + 1`. Their reported flow is `0`.
+6. **Zero-capacity edges:** Added normally; residual capacity is `0` so no flow is ever pushed; reported flow is `0`.
+7. **Flow recovery by `orig_id`:** Unchanged — each forward residual edge stores `orig_id`; we read `capacity - remaining_residual`.
+8. **Deterministic tie-breaking:** Preserved — adjacency lists are append-only, DFS uses `iter[u]` monotonically, no sorting, no hashing.
+
+---
+
+## 4. Hardened Python Implementation
+
+```python
+import sys
+from collections import deque
+
+
+class Dinic:
+    def __init__(self, n):
+        self.n = n
+        self.graph = [[] for _ in range(n)]
+        # Each entry: [to, cap, rev_index, orig_id]
+        #   orig_id = -1 for reverse (residual) edges
+        #   orig_id >= 0 for forward edges mapping to input edge index
+        self.orig_caps = []
+        self.orig_from = []
+
+    def add_edge(self, u, v, cap, orig_id):
+        fwd = [v, cap, len(self.graph[v]), orig_id]
+        rev = [u, 0,   len(self.graph[u]), -1]
+        self.graph[u].append(fwd)
+        self.graph[v].append(rev)
+
+    def bfs(self, s, t):
+        self.level = [-1] * self.n
+        self.level[s] = 0
+        q = deque([s])
+        while q:
+            u = q.popleft()
+            for to, cap, _rev, _oid in self.graph[u]:
+                if cap > 0 and self.level[to] < 0:
+                    self.level[to] = self.level[u] + 1
+                    q.append(to)
+        return self.level[t] >= 0
+
+    def dfs(self, u, t, f):
+        if u == t:
+            return f
+        while self.iter[u] < len(self.graph[u]):
+            e = self.graph[u][self.iter[u]]
+            to, cap, rev, _oid = e
+            if cap > 0 and self.level[to] == self.level[u] + 1:
+                d = self.dfs(to, t, min(f, cap))
+                if d > 0:
+                    e[1] -= d
+                    self.graph[to][rev][1] += d
+                    return d
+            self.iter[u] += 1
+        return 0
+
+    def max_flow(self, s, t, inf):
+        flow = 0
+        while self.bfs(s, t):
+            self.iter = [0] * self.n
+            while True:
+                f = self.dfs(s, t, inf)
+                if f == 0:
+                    break
+                flow += f
+        return flow
+
+
+def solve(n, edges, s, t):
+    """
+    n: number of vertices
+    edges: list of (u, v, capacity), input order preserved
+    s, t: source, sink
+    Returns (max_flow_value, [flow_per_edge_in_input_order])
+
+    Handles boundary cases:
+      - s == t  -> (0, zeros)
+      - m == 0  -> (0, [])
+      - zero-capacity, self-loop, parallel, anti-parallel edges
+      - huge capacities (Python big ints)
+    """
+    m = len(edges)
+
+    # B11 / B3 / B1 / B2: trivial cases
+    if m == 0 or s == t:
+        return 0, [0] * m
+
+    # B13: DFS depth bounded by n
+    sys.setrecursionlimit(max(2000, 2 * n + 10))
+
+    # B5 / B14: INF strictly greater than total capacity so a single DFS
+    # can saturate any augmenting path in one shot.
+    total_cap = sum(c for _u, _v, c in edges)
+    INF = total_cap + 1 if total_cap > 0 else 1
+
+    din = Dinic(n)
+    for idx, (u, v, cap) in enumerate(edges):
+        # B12: defensive range check (input spec assumes valid; we fail loudly)
+        if not (0 <= u < n and 0 <= v < n):
+            raise ValueError(f"Edge {idx} endpoint out of range: ({u},{v}) for n={n}")
+        din.add_edge(u, v, cap, idx)
+        din.orig_caps.append(cap)
+        din.orig_from.append(u)
+
+    maxflow = din.max_flow(s, t, INF)
+
+    # Recover flow per original edge in input order.
+    result = [0] * m
+    # Build a lookup: for each u, list of (orig_id, forward_edge_obj)
+    by_origin = [[] for _ in range(n)]
+    for u in range(n):
+        for e in din.graph[u]:
+            if e[3] >= 0:  # forward (original) edge
+                by_origin[u].append((e[3], e))
+    for idx in range(m):
+        u = din.orig_from[idx]
+        for oid, e in by_origin[u]:
+            if oid == idx:
+                # B4 / B6: zero-cap or self-loop naturally yield 0 here
+                result[idx] = din.orig_caps[idx] - e[1]
+                break
+
+    # B9 / B10: if s unreachable from t, maxflow == 0 and every flow is 0
+    # (already reflected in `result`).
+    return maxflow, result
+
+
+def main():
+    data = sys.stdin.buffer.read().split()
+    if not data:  # B11
+        return
+    it = iter(data)
+    try:
+        n = int(next(it))
+        m = int(next(it))
+        s = int(next(it))
+        t = int(next(it))
+    except StopIteration:
+        return
+
+    edges = []
+    for _ in range(m):
+        try:
+            u = int(next(it)); v = int(next(it)); c = int(next(it))
+        except StopIteration:
+            break  # truncated input; process what we have
+        edges.append((u, v, c))
+
+    maxflow, flows = solve(n, edges, s, t)
+    out = [str(maxflow)]
+    out.extend(str(f) for f in flows)
+    sys.stdout.write("\n".join(out) + ("\n" if out else ""))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5. Boundary Test Suite
+
+Each test is self-contained: input → expected output. Run by piping the input block into the program.
+
+### T1 — `n = 1`, `s == t == 0`, `m = 0` (B1, B2, B3, B10)
+```
+1 0 0 0
+```
+**Expected:**
+```
+0
+```
+
+### T2 — `n = 2`, `s == t == 0`, one edge (B3)
+```
+2 1 0 0
+0 1 5
+```
+**Expected:**
+```
+0
+0
+```
+
+### T3 — Zero-capacity edge (B4)
+```
+2 1 0 1
+0 1 0
+```
+**Expected:**
+```
+0
+0
+```
+
+### T4 — Self-loop (B6)
+```
+3 3 0 2
+0 1 4
+1 1 100
+1 2 3
+```
+**Expected:**
+```
+3
+3
+0
+3
+```
+
+### T5 — Parallel edges (B7)
+```
+3 4 0 2
+0 1 2
+0 1 3
+1 2 10
+1 2 1
+```
+**Expected max flow = 5.** Flows sum to 5 on each parallel pair, but the exact split is deterministic by insertion order: Dinic saturates the first `0→1` (2) then the second (3), giving:
+```
+5
+2
+3
+5
+0
+```
+*(Last edge `1→2` capacity 1 gets 0 because `1→2` capacity-10 already absorbs all 5 units.)*
+
+### T6 — Anti-parallel edges (B8)
+```
+2 2 0 1
+0 1 7
+1 0 3
+```
+**Expected:** Max flow = 7. The `1→0` edge cannot carry flow because it goes "backwards" from sink to source in the level graph, and its own residual is never used to augment. Flow on `1→0` = 0.
+```
+7
+7
+0
+```
+
+### T7 — Disconnected `s` from `t` (B9)
+```
+4 2 0 3
+0 1 5
+2 3 5
+```
+**Expected:**
+```
+0
+0
+0
+```
+
+### T8 — Large capacities (B5, B14)
+```
+2 1 0 1
+0 1 1000000000000000000
+```
+**Expected:**
+```
+1000000000000000000
+1000000000000000000
+```
+
+### T9 — Empty input (B11)
+```
+(empty)
+```
+**Expected:**
+```
+(no output)
+```
+
+### T10 — Long chain forcing deep DFS (B13)
+For `n = 1500`, edges `0→1→2→...→1499`, capacity 1 each, `s=0`, `t=1499`:
+```
+1500 1499 0 1499
+0 1 1
+1 2 1
+...
+1498 1499 1
+```
+**Expected:** max flow = 1; every edge carries 1. Without raising the recursion limit, Python raises `RecursionError`.
+
+### T11 — Source has no outgoing edges (B10)
+```
+3 1 0 2
+1 2 9
+```
+**Expected:**
+```
+0
+0
+```
+
+### T12 — Sink has no incoming edges (B10)
+```
+3 1 0 2
+0 1 9
+```
+**Expected:**
+```
+0
+0
+```
+
+### T13 — All capacities zero (B4 + B9)
+```
+3 3 0 2
+0 1 0
+1 2 0
+0 2 0
+```
+**Expected:**
+```
+0
+0
+0
+0
+```
+
+---
+
+## 6. Preservation of Original Output & Tie-Breaking Rules
+
+- **Output format unchanged:** First line = max flow; subsequent lines = per-edge flow in input order.
+- **Tie-breaking unchanged:** Adjacency lists are built in input order; `iter[u]` is monotone; DFS recurses in list order. Therefore the same input always produces the same per-edge flow assignment — critical for reproducible judging.
+- **No reordering of edges:** Flows are recovered by matching `orig_id`, not by iterating graph internals.
+- **No lossy conversions:** All arithmetic uses Python `int` (arbitrary precision), so capacities up to `10^18` and beyond are exact.
+
+---
+
+## 7. Summary of Guarantees
+
+| Guarantee | Mechanism |
+|-----------|-----------|
+| Deterministic per-edge flow assignment | Insertion-order adjacency + monotone `iter` |
+| Input edge order preserved | `orig_id` tag + recovery loop over `0..m-1` |
+| Correct on `s == t`, `m == 0`, empty input | Early returns |
+| Correct on zero-cap / self-loop / parallel / anti-parallel | Per-original-edge residual pairs |
+| No overflow with huge capacities | Python big integers + `INF = total_cap + 1` |
+| No `RecursionError` on long paths | `sys.setrecursionlimit(2n + 10)` |
+| No crash on malformed endpoint | Explicit `ValueError` with edge index |
+| No output on empty stdin | Guard in `main()` |

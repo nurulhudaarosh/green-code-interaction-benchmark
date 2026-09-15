@@ -1,0 +1,11 @@
+{
+  "task_id": "RA-002",
+  "model": "gpt",
+  "interaction": "BUG_FIX",
+  "turn": 1,
+  "saved_at": "2026-09-14T05:01:59.416522+00:00",
+  "response_sha256": "bfd1249d54fd9ff9b3ae91529fc959918959e4e49eed6c2e8d5cf6a5a256de08",
+  "code_sha256": "f86fc2c2de498d96e2b092385a77df0ebf2d3bf21950620e3615a76ad599f74f",
+  "raw_file": ".collection/raw/gpt/RA-002/BUG_FIX/turn_01.txt",
+  "code_file": ".collection/code/gpt/RA-002/BUG_FIX/initial.py"
+}

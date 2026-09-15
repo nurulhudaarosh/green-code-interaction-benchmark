@@ -1,0 +1,185 @@
+"""
+Minimum Coin Construction
+
+Problem:
+Given a list of coin denominations and a target amount, find a combination
+of coins that produces the target using the minimum possible number of coins.
+Each denomination may be used any number of times.
+
+If the target cannot be formed, return:
+    (-1, [])
+
+Key constraints / assumptions:
+- Coin denominations are positive integers.
+- target is a non-negative integer.
+- Coins can be reused unlimited times.
+- The result must be deterministic.
+- For equal-quality solutions, reconstruction follows the original
+  denomination order.
+- No external libraries, network access, APIs, randomness, or human
+  interaction are used.
+
+Output:
+    (minimum_coin_count, coin_combination)
+
+Examples:
+    coins = [1, 3, 4], target = 6
+    output = (2, [3, 3])
+
+    coins = [2, 4], target = 7
+    output = (-1, [])
+
+Algorithm:
+Use one-dimensional unbounded coin-change DP.
+
+dp[a] = minimum number of coins needed to make amount a.
+
+For every amount from 1 to target, try every denomination. Since coins may
+be reused, dp[a - coin] can already contain a solution using the same coin.
+
+A separate choice array stores the coin selected for each amount so that the
+solution can be reconstructed deterministically.
+
+Time complexity:  O(target * number_of_denominations)
+Space complexity: O(target)
+"""
+
+from typing import List, Tuple
+
+
+def minimum_coin_construction(
+    coins: List[int],
+    target: int
+) -> Tuple[int, List[int]]:
+    """
+    Return the minimum number of coins needed to form target and the
+    corresponding deterministic coin combination.
+
+    Returns:
+        (count, combination)
+
+    If impossible:
+        (-1, [])
+    """
+
+    # Validate target.
+    if target < 0:
+        raise ValueError("target must be non-negative")
+
+    # Target 0 requires zero coins.
+    if target == 0:
+        return 0, []
+
+    # Keep only positive denominations.
+    # Duplicate denominations are removed while preserving first occurrence.
+    normalized_coins = []
+    seen = set()
+
+    for coin in coins:
+        if coin <= 0:
+            raise ValueError("coin denominations must be positive")
+
+        if coin not in seen:
+            seen.add(coin)
+            normalized_coins.append(coin)
+
+    if not normalized_coins:
+        return -1, []
+
+    # A value larger than target can never be used in a solution.
+    usable_coins = [coin for coin in normalized_coins if coin <= target]
+
+    if not usable_coins:
+        return -1, []
+
+    # dp[amount] = minimum number of coins needed for 'amount'.
+    INF = target + 1
+    dp = [INF] * (target + 1)
+
+    # choice[amount] = coin used to reach the optimal solution.
+    choice = [None] * (target + 1)
+
+    dp[0] = 0
+
+    # One-dimensional unbounded coin-change DP.
+    for amount in range(1, target + 1):
+        for coin in usable_coins:
+            if coin <= amount and dp[amount - coin] != INF:
+                candidate = dp[amount - coin] + 1
+
+                # Strictly better solution replaces the current one.
+                #
+                # If candidate == dp[amount], we do NOT replace the
+                # existing choice. This gives deterministic tie handling:
+                # the first denomination encountered in the original
+                # denomination order wins.
+                if candidate < dp[amount]:
+                    dp[amount] = candidate
+                    choice[amount] = coin
+
+    # Target cannot be constructed.
+    if dp[target] == INF:
+        return -1, []
+
+    # Deterministic reconstruction.
+    combination = []
+    current = target
+
+    while current > 0:
+        coin = choice[current]
+
+        # Defensive check; this should never happen for a reachable target.
+        if coin is None:
+            return -1, []
+
+        combination.append(coin)
+        current -= coin
+
+    return dp[target], combination
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+def run_tests() -> None:
+    # Basic example.
+    assert minimum_coin_construction([1, 3, 4], 6) == (2, [3, 3])
+
+    # Impossible target.
+    assert minimum_coin_construction([2, 4], 7) == (-1, [])
+
+    # Smallest valid target.
+    assert minimum_coin_construction([1], 1) == (1, [1])
+
+    # Target zero.
+    assert minimum_coin_construction([1, 2, 5], 0) == (0, [])
+
+    # Reusing coins is allowed.
+    assert minimum_coin_construction([2, 5], 10) == (2, [5, 5])
+
+    # A larger denomination gives the optimal result.
+    assert minimum_coin_construction([1, 5, 10], 12) == (3, [10, 1, 1])
+
+    # Deterministic tie handling.
+    # Both [2, 2] and [1, 3] use two coins.
+    # Because 2 appears first, [2, 2] is selected.
+    assert minimum_coin_construction([2, 1, 3], 4) == (2, [2, 2])
+
+    # Duplicate denominations are handled deterministically.
+    assert minimum_coin_construction([1, 1, 3], 6) == (2, [3, 3])
+
+    # No usable coins.
+    assert minimum_coin_construction([5, 7], 3) == (-1, [])
+
+    # Verify another optimal solution.
+    count, combination = minimum_coin_construction([1, 3, 4], 11)
+    assert count == 3
+    assert sum(combination) == 11
+    assert len(combination) == count
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()

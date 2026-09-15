@@ -1,0 +1,36 @@
+import os
+from PIL import Image
+
+def extract_metadata(input_dir):
+    metadata_list = []
+    
+    # Get all extensions supported by Pillow
+    supported_extensions = Image.registered_extensions()
+    
+    for filename in os.listdir(input_dir):
+        file_path = os.path.join(input_dir, filename)
+        
+        if os.path.isfile(file_path):
+            ext = os.path.splitext(filename)[1].lower()
+            if ext in supported_extensions:
+                try:
+                    # Get actual on-disk file size in bytes
+                    file_size = os.path.getsize(file_path)
+                    
+                    with Image.open(file_path) as img:
+                        width, height = img.size
+                        
+                        metadata_list.append({
+                            "filename": filename,
+                            "format": img.format,
+                            "mode": img.mode,
+                            "width": width,
+                            "height": height,
+                            "file_size_bytes": file_size
+                        })
+                except (IOError, SyntaxError):
+                    # Skip unparseable or non-image files
+                    continue
+
+    # Return list sorted alphabetically by filename
+    return sorted(metadata_list, key=lambda x: x["filename"])

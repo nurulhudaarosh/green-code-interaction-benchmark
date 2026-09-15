@@ -1,0 +1,110 @@
+"""
+Problem
+-------
+Given a list of coin denominations (positive integers, may repeat coin
+values conceptually but each denomination can be reused any number of
+times) and a target amount, find a combination of coins that sums exactly
+to the target using the MINIMUM number of coins.
+
+Constraints
+-----------
+- coins: list of positive integers (denominations). Duplicates in the
+  input list are treated as the same denomination.
+- amount: non-negative integer target.
+- Coins may be reused an unlimited number of times (unbounded knapsack /
+  coin-change).
+- If it is impossible to make the exact amount, return (-1, []).
+- amount == 0 is always achievable with 0 coins -> (0, []).
+
+Required Output
+----------------
+A tuple: (min_count, coin_list)
+  - min_count: the minimum number of coins needed, or -1 if impossible.
+  - coin_list: a list of the actual coins used (length == min_count),
+    or [] if impossible / amount is 0.
+
+Algorithm
+---------
+Classic 1-D unbounded coin-change dynamic programming:
+
+1. dp[i] = minimum number of coins to make amount i.
+   dp[0] = 0; dp[i] = inf initially for i > 0.
+2. For each amount i from 1..target, for each coin c (in a fixed,
+   deterministic order), if c <= i and dp[i-c] + 1 < dp[i]:
+       dp[i] = dp[i-c] + 1
+       choice[i] = c   (record which coin was used to reach i optimally)
+3. dp[target] gives the minimum coin count (or remains inf -> -1).
+4. Reconstruct the coin list by walking backwards from `target` using
+   the `choice` array until reaching 0.
+
+Determinism: coins are deduplicated and sorted once; the inner loop
+always iterates them in this fixed sorted order, so ties in dp updates
+are always broken the same way (the first coin, in sorted order, that
+achieves the minimum is kept). This guarantees the same input always
+produces the same output.
+
+Complexity: O(amount * num_distinct_coins) time, O(amount) space.
+
+No external libraries, network access, randomness, or human interaction
+are used — only the Python standard library (in fact, no imports are
+even needed).
+"""
+
+from typing import List, Tuple
+
+
+def min_coins(coins: List[int], amount: int) -> Tuple[int, List[int]]:
+    # --- Validate / normalize input ---
+    if amount < 0:
+        raise ValueError("amount must be non-negative")
+
+    # Deduplicate and keep only positive denominations, sorted for
+    # deterministic iteration order.
+    distinct_coins = sorted({c for c in coins if isinstance(c, int) and c > 0})
+
+    if amount == 0:
+        return 0, []
+
+    if not distinct_coins:
+        return -1, []
+
+    INF = float("inf")
+    dp = [INF] * (amount + 1)
+    dp[0] = 0
+    choice = [0] * (amount + 1)  # choice[i] = coin used to optimally reach i
+
+    for i in range(1, amount + 1):
+        for c in distinct_coins:
+            if c > i:
+                break  # distinct_coins is sorted; no smaller coins left to try
+            if dp[i - c] + 1 < dp[i]:
+                dp[i] = dp[i - c] + 1
+                choice[i] = c
+
+    if dp[amount] == INF:
+        return -1, []
+
+    # --- Deterministic reconstruction ---
+    result_coins = []
+    remaining = amount
+    while remaining > 0:
+        c = choice[remaining]
+        result_coins.append(c)
+        remaining -= c
+
+    result_coins.sort()  # canonical, deterministic ordering of output
+    return dp[amount], result_coins
+
+
+if __name__ == "__main__":
+    test_cases = [
+        ([1, 2, 5], 11),
+        ([2], 3),
+        ([1], 0),
+        ([186, 419, 83, 408], 6249),
+        ([5, 10, 25], 30),
+    ]
+
+    for coins, amount in test_cases:
+        count, used = min_coins(coins, amount)
+        print(f"coins={coins}, amount={amount} -> count={count}, used={used}")

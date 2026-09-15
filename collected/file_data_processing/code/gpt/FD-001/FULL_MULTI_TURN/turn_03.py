@@ -1,0 +1,137 @@
+import csv
+import argparse
+from collections import defaultdict
+from decimal import Decimal, InvalidOperation
+
+
+def process_csv(input_file, output_file):
+    # Step 1: Remove duplicate (customer_id, timestamp) records.
+    # Last occurrence in the input file wins.
+    records = {}
+
+    with open(input_file, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+
+        required_columns = {
+            "customer_id",
+            "timestamp",
+            "status",
+            "amount"
+        }
+
+        if not required_columns.issubset(reader.fieldnames or []):
+            missing = required_columns - set(reader.fieldnames or [])
+            raise ValueError(
+                f"Missing required columns: {', '.join(sorted(missing))}"
+            )
+
+        for row in reader:
+            key = (row["customer_id"], row["timestamp"])
+            records[key] = row
+
+    # Step 2: Select the true chronologically latest record
+    # for each customer.
+    latest_by_customer = {}
+
+    for (customer_id, timestamp), row in records.items():
+        if (
+            customer_id not in latest_by_customer
+            or timestamp > latest_by_customer[customer_id]["timestamp"]
+        ):
+            latest_by_customer[customer_id] = row
+
+    # Step 3: Sort final customer records deterministically.
+    retained_records = sorted(
+        latest_by_customer.values(),
+        key=lambda row: row["customer_id"]
+    )
+
+    # Step 4: Calculate status summary ONLY from retained records.
+    status_summary = defaultdict(
+        lambda: {
+            "count": 0,
+            "total_amount": Decimal("0")
+        }
+    )
+
+    for row in retained_records:
+        status = row["status"]
+
+        try:
+            amount = Decimal(row["amount"])
+        except InvalidOperation:
+            raise ValueError(
+                f"Invalid amount '{row['amount']}' "
+                f"for customer '{row['customer_id']}'"
+            )
+
+        status_summary[status]["count"] += 1
+        status_summary[status]["total_amount"] += amount
+
+    # Step 5: Write customer-level output.
+    with open(output_file, "w", newline="", encoding="utf-8") as f:
+        fieldnames = [
+            "customer_id",
+            "timestamp",
+            "status",
+            "amount"
+        ]
+
+        writer = csv.DictWriter(
+            f,
+            fieldnames=fieldnames
+        )
+
+        writer.writeheader()
+
+        for row in retained_records:
+            writer.writerow({
+                "customer_id": row["customer_id"],
+                "timestamp": row["timestamp"],
+                "status": row["status"],
+                "amount": row["amount"]
+            })
+
+    # Step 6: Display status summary.
+    print("\nStatus Summary")
+    print("=" * 50)
+    print(f"{'Status':<15}{'Retained Records':>18}{'Total Amount':>17}")
+    print("-" * 50)
+
+    for status in sorted(status_summary):
+        count = status_summary[status]["count"]
+        total = status_summary[status]["total_amount"]
+
+        print(
+            f"{status:<15}"
+            f"{count:>18}"
+            f"{total:>17.2f}"
+        )
+
+    print("=" * 50)
+    print(f"Total retained customer records: {len(retained_records)}")
+    print(f"Output written to: {output_file}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Process customer event CSV files."
+    )
+
+    parser.add_argument(
+        "input",
+        help="Input CSV file"
+    )
+
+    parser.add_argument(
+        "output",
+        help="Output CSV file"
+    )
+
+    args = parser.parse_args()
+
+    process_csv(args.input, args.output)
+
+
+if __name__ == "__main__":
+    main()

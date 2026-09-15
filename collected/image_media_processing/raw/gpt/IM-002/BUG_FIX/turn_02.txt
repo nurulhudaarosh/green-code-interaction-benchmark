@@ -1,0 +1,53 @@
+```python id="47182"
+from pathlib import Path
+from PIL import Image
+
+
+def generate_thumbnails(input_dir, cache_dir, max_dim=128):
+    """
+    Recursively generate aspect-ratio-preserving thumbnails.
+
+    The directory structure under input_dir is mirrored under cache_dir.
+    The longest side of each thumbnail will be at most max_dim.
+    """
+    input_dir = Path(input_dir)
+    cache_dir = Path(cache_dir)
+
+    valid_extensions = {".png", ".jpg", ".jpeg"}
+    processed_count = 0
+    skipped = []
+
+    if not input_dir.exists():
+        return {"processed_count": 0, "skipped": []}
+
+    for src_path in input_dir.rglob("*"):
+        if not src_path.is_file() or src_path.suffix.lower() not in valid_extensions:
+            continue
+
+        relative_path = src_path.relative_to(input_dir)
+        dst_path = cache_dir / relative_path
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            with Image.open(src_path) as img:
+                # Preserve the original aspect ratio.
+                img.thumbnail(
+                    (max_dim, max_dim),
+                    Image.Resampling.LANCZOS
+                )
+
+                # Convert modes that cannot be safely saved in JPEG/PNG.
+                if img.mode not in ("RGB", "RGBA", "L"):
+                    img = img.convert("RGBA")
+
+                img.save(dst_path)
+                processed_count += 1
+
+        except (OSError, ValueError):
+            skipped.append(str(src_path))
+
+    return {
+        "processed_count": processed_count,
+        "skipped": skipped
+    }
+```

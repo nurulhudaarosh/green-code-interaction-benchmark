@@ -1,0 +1,125 @@
+def min_squared_deviation_clustering(
+    points: list[float], 
+    k: int, 
+    return_summary: bool = False
+) -> tuple:
+    """
+    Sorts 1D points and partitions them into k contiguous clusters minimizing 
+    the sum of squared deviations from cluster means, with deterministic tie handling.
+    
+    Args:
+        points: List of 1D numerical values.
+        k: Desired number of clusters.
+        return_summary: If True, returns a 3-element tuple including an operation_summary dict.
+        
+    Returns:
+        Default (return_summary=False): (cost, boundaries)
+        Extended (return_summary=True):  (cost, boundaries, operation_summary)
+    """
+    n = len(points)
+    if n == 0 or k <= 0:
+        summary = {
+            "total_points": 0,
+            "target_clusters": 0,
+            "interval_evaluations": 0,
+            "tie_resolutions": 0
+        }
+        return (0.0, [0], summary) if return_summary else (0.0, [0])
+    
+    # Sort points deterministically
+    arr = sorted(points)
+    k_eff = min(k, n)
+    
+    # Track computational decisions
+    evaluations_count = 0
+    ties_count = 0
+    
+    # Precompute prefix sums for O(1) interval cost lookup
+    P = [0.0] * (n + 1)   # Prefix sum of x
+    Q = [0.0] * (n + 1)   # Prefix sum of x^2
+    for i in range(n):
+        P[i + 1] = P[i] + arr[i]
+        Q[i + 1] = Q[i] + arr[i] * arr[i]
+        
+    def get_cost(i: int, j: int) -> float:
+        """Calculates sum of squared errors (SSE) for subarray arr[i:j]."""
+        count = j - i
+        if count <= 0:
+            return 0.0
+        sum_x = P[j] - P[i]
+        sum_x2 = Q[j] - Q[i]
+        val = sum_x2 - (sum_x * sum_x) / count
+        return max(0.0, val)
+
+    # DP tables: dp[c][j] is the min cost for prefix of size j using c clusters
+    dp = [[float('inf')] * (n + 1) for _ in range(k_eff + 1)]
+    parent = [[0] * (n + 1) for _ in range(k_eff + 1)]
+    
+    # Base Case: 1 cluster for prefix of length j
+    for j in range(1, n + 1):
+        dp[1][j] = get_cost(0, j)
+        parent[1][j] = 0
+        
+    EPS = 1e-12  # Floating-point equality threshold
+        
+    # DP Transitions for c = 2..k
+    for c in range(2, k_eff + 1):
+        for j in range(c, n + 1):
+            best_cost = float('inf')
+            best_m = c - 1
+            
+            for m in range(c - 1, j):
+                evaluations_count += 1
+                cost = dp[c - 1][m] + get_cost(m, j)
+                
+                # Deterministic tie-handling
+                if cost < best_cost - EPS:
+                    best_cost = cost
+                    best_m = m
+                elif abs(cost - best_cost) <= EPS:
+                    ties_count += 1
+                    if m < best_m:
+                        best_cost = cost
+                        best_m = m
+
+            dp[c][j] = best_cost
+            parent[c][j] = best_m
+
+    # Backtrack boundary indices
+    boundaries = [0] * (k_eff + 1)
+    curr_j = n
+    for c in range(k_eff, 0, -1):
+        boundaries[c] = curr_j
+        curr_j = parent[c][curr_j]
+    boundaries[0] = 0
+    
+    cost = dp[k_eff][n]
+    
+    if return_summary:
+        operation_summary = {
+            "total_points": n,
+            "target_clusters": k_eff,
+            "interval_evaluations": evaluations_count,
+            "tie_resolutions": ties_count
+        }
+        return cost, boundaries, operation_summary
+    
+    return cost, boundaries
+
+
+# Verification and demonstration
+if __name__ == "__main__":
+    pts = [2.0, 1.0, 10.0, 12.0, 3.0, 25.0, 28.0]
+    
+    # Backward compatible invocation (Original requirement)
+    orig_cost, orig_bounds = min_squared_deviation_clustering(pts, 3)
+    print("--- Standard Call ---")
+    print(f"Cost: {orig_cost:.4f}, Boundaries: {orig_bounds}\n")
+
+    # Extended invocation with operation summary
+    ext_cost, ext_bounds, summary = min_squared_deviation_clustering(pts, 3, return_summary=True)
+    print("--- Extended Call (return_summary=True) ---")
+    print(f"Cost: {ext_cost:.4f}, Boundaries: {ext_bounds}")
+    print("Operation Summary:")
+    for k, v in summary.items():
+        print(f"  {k}: {v}")

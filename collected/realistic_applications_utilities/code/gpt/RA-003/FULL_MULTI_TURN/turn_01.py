@@ -1,0 +1,56 @@
+from dataclasses import dataclass
+from typing import Dict, List, Any
+
+@dataclass
+class Student:
+    student_id: str
+    name: str
+    assessments: Dict[str, float]
+
+def analyze_students(
+    students: List[Student],
+    assessment_weights: Dict[str, float],
+    pass_mark: float = 40.0
+) -> List[Dict[str, Any]]:
+    if not students:
+        return []
+    if not assessment_weights:
+        raise ValueError("Assessment weights cannot be empty")
+    if not 0 <= pass_mark <= 100:
+        raise ValueError("Pass mark must be between 0 and 100")
+
+    total_weight = sum(assessment_weights.values())
+    if total_weight <= 0:
+        raise ValueError("Total weight must be positive")
+
+    for assessment, weight in assessment_weights.items():
+        if weight < 0:
+            raise ValueError(f"Invalid weight for {assessment}")
+
+    results = []
+
+    for student in students:
+        weighted_score = 0.0
+
+        for assessment, weight in assessment_weights.items():
+            score = student.assessments.get(assessment, 0.0)
+
+            if not 0 <= score <= 100:
+                raise ValueError(
+                    f"Invalid score for {student.student_id}: "
+                    f"{assessment}={score}"
+                )
+
+            weighted_score += score * weight
+
+        final_score = weighted_score / total_weight
+
+        results.append({
+            "student_id": student.student_id,
+            "name": student.name,
+            "scores": dict(student.assessments),
+            "weighted_score": round(final_score, 2),
+            "status": "Pass" if final_score >= pass_mark else "Fail"
+        })
+
+    return results

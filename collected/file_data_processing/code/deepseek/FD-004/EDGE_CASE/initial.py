@@ -1,0 +1,151 @@
+import csv
+from collections import defaultdict
+from decimal import Decimal, InvalidOperation
+import argparse
+import sys
+
+
+KEY_FIELDS = ("warehouse", "product")
+QTY_FIELD = "quantity"
+
+
+def parse_quantity(value):
+    if value is None:
+        return Decimal("0")
+    s = str(value).strip()
+    if s == "":
+        return Decimal("0")
+    try:
+        return Decimal(s)
+    except InvalidOperation:
+        raise ValueError(f"Invalid quantity: {value!r}")
+
+
+def load_snapshot(path):
+    """Load CSV and sum duplicate (warehouse, product) keys."""
+    totals = defaultdict(lambda: Decimal("0"))
+    with open(path, "r", newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames is None:
+            raise ValueError(f"{path}: empty or missing header")
+
+        # Normalize header names (case-insensitive, trimmed)
+        field_map = {name.strip().lower(): name for name in reader.fieldnames}
+        missing = [k for k in KEY_FIELDS + (QTY_FIELD,) if k not in field_map]
+        if missing:
+            raise ValueError(f"{path}: missing required columns: {missing}")
+
+        wh_col = field_map["warehouse"]
+        prod_col = field_map["product"]
+        qty_col = field_map["quantity"]
+
+        for line_no, row in enumerate(reader, start=2):
+            wh = (row.get(wh_col) or "").strip()
+            prod = (row.get(prod_col) or "").strip()
+            if wh == "" and prod == "":
+                continue
+            try:
+                qty = parse_quantity(row.get(qty_col))
+            except ValueError as e:
+                raise ValueError(f"{path} line {line_no}: {e}")
+            totals[(wh, prod)] += qty
+    return totals
+
+
+def reconcile(old, new):
+    """Return deterministic list of reconciliation records."""
+    all_keys = sorted(set(old.keys()) | set(new.keys()))
+    records = []
+    for key in all_keys:
+        old_qty = old.get(key, Decimal("0"))
+        new_qty = new.get(key, Decimal("0"))
+        delta = new_qty - old_qty
+
+        if key not in old:
+            status = "added"
+        elif key not in new:
+            status = "removed"
+        elif old_qty == new_qty:
+            status = "unchanged"
+        else:
+            status = "changed"
+
+        records.append({
+            "warehouse": key[0],
+            "product": key[1],
+            "status": status,
+            "old_quantity": old_qty,
+            "new_quantity": new_qty,
+            "delta": delta,
+        })
+    return records
+
+
+def format_decimal(d):
+    """Deterministic decimal formatting (strip trailing zeros but keep integer form)."""
+    if d == d.to_integral_value():
+        return str(d.quantize(Decimal("1")))
+    # Normalize and remove trailing zeros without scientific notation
+    s = format(d.normalize(), "f")
+    return s
+
+
+def write_output(records, path):
+    fieldnames = [
+        "warehouse",
+        "product",
+        "status",
+        "old_quantity",
+        "new_quantity",
+        "delta",
+    ]
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for r in records:
+            writer.writerow({
+                "warehouse": r["warehouse"],
+                "product": r["product"],
+                "status": r["status"],
+                "old_quantity": format_decimal(r["old_quantity"]),
+                "new_quantity": format_decimal(r["new_quantity"]),
+                "delta": format_decimal(r["delta"]),
+            })
+
+
+def print_summary(records):
+    counts = defaultdict(int)
+    for r in records:
+        counts[r["status"]] += 1
+    total = len(records)
+    print(f"Total keys: {total}")
+    for status in ("added", "removed", "changed", "unchanged"):
+        print(f"  {status}: {counts[status]}")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Inventory reconciliation between two CSV snapshots."
+    )
+    parser.add_argument("old_csv", help="Path to old snapshot CSV")
+    parser.add_argument("new_csv", help="Path to new snapshot CSV")
+    parser.add_argument("-o", "--output", default="reconciliation.csv",
+                        help="Output CSV path (default: reconciliation.csv)")
+    args = parser.parse_args(argv)
+
+    try:
+        old = load_snapshot(args.old_csv)
+        new = load_snapshot(args.new_csv)
+    except (OSError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    records = reconcile(old, new)
+    write_output(records, args.output)
+    print_summary(records)
+    print(f"Wrote {args.output}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

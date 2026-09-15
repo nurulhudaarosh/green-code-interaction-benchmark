@@ -1,0 +1,305 @@
+from statistics import mean
+
+
+class StudentPerformanceAnalyzer:
+    def __init__(self, students=None):
+        self.students = []
+        for student in students or []:
+            self.add_student(
+                student.get("id"),
+                student.get("name", ""),
+                student.get("scores", {}),
+                student.get("weights")
+            )
+
+    @staticmethod
+    def _valid_score(score):
+        # Scores must be real numbers in the inclusive range 0–100.
+        return (
+            isinstance(score, (int, float))
+            and not isinstance(score, bool)
+            and 0 <= score <= 100
+        )
+
+    @staticmethod
+    def _valid_weight(weight):
+        # Weights must be numeric, finite, positive, and <= 100.
+        return (
+            isinstance(weight, (int, float))
+            and not isinstance(weight, bool)
+            and weight > 0
+            and weight <= 100
+        )
+
+    def _validate_scores(self, scores):
+        if not isinstance(scores, dict):
+            return {}
+
+        return {
+            subject: score
+            for subject, score in scores.items()
+            if isinstance(subject, str)
+            and subject.strip()
+            and self._valid_score(score)
+        }
+
+    def _validate_weights(self, weights, subjects):
+        if not isinstance(weights, dict):
+            return {}
+
+        valid = {
+            subject: weight
+            for subject, weight in weights.items()
+            if subject in subjects and self._valid_weight(weight)
+        }
+
+        # If weights are supplied for all subjects, they must total 100.
+        if valid and set(valid) == set(subjects):
+            total = sum(valid.values())
+            if abs(total - 100) > 1e-9:
+                return {}
+
+        return valid
+
+    def add_student(self, student_id, name, scores, weights=None):
+        if student_id is None:
+            return False
+
+        # Do not allow duplicate student IDs.
+        if any(s["id"] == student_id for s in self.students):
+            return False
+
+        clean_scores = self._validate_scores(scores)
+        clean_weights = self._validate_weights(weights, clean_scores)
+
+        self.students.append({
+            "id": student_id,
+            "name": name if isinstance(name, str) else "",
+            "scores": clean_scores,
+            "weights": clean_weights
+        })
+        return True
+
+    def get_student(self, student_id):
+        return next(
+            (s for s in self.students if s["id"] == student_id),
+            None
+        )
+
+    def remove_duplicate_students(self):
+        seen = set()
+        unique = []
+
+        for student in self.students:
+            if student["id"] not in seen:
+                seen.add(student["id"])
+                unique.append(student)
+
+        self.students = unique
+        return self.students
+
+    def average_score(self, student_id):
+        student = self.get_student(student_id)
+        if not student or not student["scores"]:
+            return 0.0
+
+        scores = student["scores"]
+        weights = student["weights"]
+
+        # Use weighted average only when valid weights exist for
+        # every subject and total exactly equals 100.
+        if weights and set(weights) == set(scores):
+            return sum(
+                scores[subject] * weights[subject] / 100
+                for subject in scores
+            )
+
+        return mean(scores.values())
+
+    def grade(self, score):
+        if score >= 80:
+            return "A+"
+        if score >= 70:
+            return "A"
+        if score >= 60:
+            return "B"
+        if score >= 50:
+            return "C"
+        if score >= 40:
+            return "D"
+        return "F"
+
+    def performance_report(self, student_id):
+        student = self.get_student(student_id)
+        if not student:
+            return None
+
+        scores = student["scores"]
+        average = self.average_score(student_id)
+
+        return {
+            "id": student["id"],
+            "name": student["name"],
+            "average": round(average, 2),
+            "grade": self.grade(average),
+            "subjects": dict(scores),
+            "weights": dict(student["weights"]),
+            "highest_subject": max(scores, key=scores.get) if scores else None,
+            "lowest_subject": min(scores, key=scores.get) if scores else None,
+            "passed": bool(scores) and all(score >= 40 for score in scores.values())
+        }
+
+    def all_reports(self):
+        self.remove_duplicate_students()
+        return [
+            self.performance_report(student["id"])
+            for student in self.students
+        ]
+
+    def class_average(self):
+        averages = [
+            self.average_score(student["id"])
+            for student in self.students
+            if student["scores"]
+        ]
+        return round(mean(averages), 2) if averages else 0.0
+
+    def subject_averages(self):
+        subjects = {}
+
+        for student in self.students:
+            for subject, score in student["scores"].items():
+                subjects.setdefault(subject, []).append(score)
+
+        return {
+            subject: round(mean(scores), 2)
+            for subject, scores in subjects.items()
+        }
+
+    def top_students(self, n=3):
+        if not isinstance(n, int) or n <= 0:
+            return []
+
+        ranked = sorted(
+            (
+                (
+                    student["id"],
+                    student["name"],
+                    self.average_score(student["id"])
+                )
+                for student in self.students
+                if student["scores"]
+            ),
+            key=lambda x: (-x[2], str(x[0]))
+        )
+
+        return [
+            {
+                "id": sid,
+                "name": name,
+                "average": round(avg, 2)
+            }
+            for sid, name, avg in ranked[:n]
+        ]
+
+    def low_performers(self, threshold=40):
+        if not self._valid_score(threshold):
+            return []
+
+        result = []
+
+        for student in self.students:
+            weak = {
+                subject: score
+                for subject, score in student["scores"].items()
+                if score < threshold
+            }
+
+            if weak:
+                result.append({
+                    "id": student["id"],
+                    "name": student["name"],
+                    "subjects": weak,
+                    "average": round(
+                        self.average_score(student["id"]), 2
+                    )
+                })
+
+        return result
+
+    def subject_topper(self, subject):
+        candidates = [
+            student
+            for student in self.students
+            if subject in student["scores"]
+        ]
+
+        if not candidates:
+            return None
+
+        topper = max(
+            candidates,
+            key=lambda s: (s["scores"][subject], str(s["id"]))
+        )
+
+        return {
+            "id": topper["id"],
+            "name": topper["name"],
+            "subject": subject,
+            "score": topper["scores"][subject]
+        }
+
+    def class_summary(self):
+        self.remove_duplicate_students()
+
+        valid = [s for s in self.students if s["scores"]]
+        averages = [self.average_score(s["id"]) for s in valid]
+
+        passed = sum(
+            all(score >= 40 for score in s["scores"].values())
+            for s in valid
+        )
+
+        return {
+            "total_students": len(self.students),
+            "students_with_scores": len(valid),
+            "class_average": round(mean(averages), 2) if averages else 0.0,
+            "highest_average": round(max(averages), 2) if averages else 0.0,
+            "lowest_average": round(min(averages), 2) if averages else 0.0,
+            "passed_students": passed,
+            "failed_students": len(valid) - passed,
+            "subject_averages": self.subject_averages()
+        }
+
+
+# Example
+students = [
+    {
+        "id": 1,
+        "name": "Alice",
+        "scores": {"Math": 85, "English": 78, "Science": 92},
+        "weights": {"Math": 40, "English": 30, "Science": 30}
+    },
+    {
+        "id": 2,
+        "name": "Bob",
+        "scores": {
+            "Math": 55,
+            "English": 62,
+            "Science": 105,   # invalid -> ignored
+            "ICT": -5         # invalid -> ignored
+        },
+        "weights": {
+            "Math": 40,
+            "English": 60
+        }
+    }
+]
+
+analyzer = StudentPerformanceAnalyzer(students)
+
+print(analyzer.all_reports())
+print(analyzer.class_summary())
+print(analyzer.top_students(3))
+print(analyzer.low_performers(50))
+print(analyzer.subject_topper("Math"))

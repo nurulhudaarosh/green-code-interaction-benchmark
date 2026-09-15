@@ -1,0 +1,106 @@
+## Problem
+
+Given an integer sequence `a[0..n-1]`, find a strictly increasing subsequence (by value) of maximum possible length. Among all subsequences achieving that maximum length, return the one whose sequence of **original indices** is lexicographically smallest.
+
+**Constraints:**
+- Input is a finite list of integers (any size, including empty), read from standard input or passed as a Python list.
+- "Strictly increasing" means each next element's value is greater than the previous.
+- Ties in length must be broken by comparing the index sequences lexicographically (compare index 0 vs index 0, then index 1 vs index 1, etc.), preferring smaller indices earlier.
+- No randomness, no external libraries, no network/API calls — deterministic pure computation.
+
+**Required output:** The maximum length `L`, and one valid list of original indices `i_0 < i_1 < ... < i_{L-1}` (strictly increasing indices, strictly increasing values `a[i_0] < a[i_1] < ... < a[i_{L-1}]`) that is lexicographically smallest among all optimal-length index sequences.
+
+**Algorithm (O(n²) DP with tie-breaking):**
+1. `dp[i]` = length of the longest strictly increasing subsequence ending at index `i` (using standard LIS DP: `dp[i] = 1 + max(dp[j] for j < i if a[j] < a[i])`, else `1`).
+2. To guarantee lexicographically smallest *index* sequence among max-length solutions, process `i` from `0` to `n-1`, and for each `i`, among all valid predecessors `j` achieving the max `dp[i]-1`, choose the `j` whose *own* stored best index-sequence is lexicographically smallest (not just any predecessor — the full chain must be smallest, so we store the actual best sequence ending at `i`, not just a parent pointer, and compare candidate full sequences directly).
+3. Track the best full sequence ending at each `i` explicitly; when combining `best[j] + [i]`, compare candidate sequences lexicographically to pick the smallest.
+4. Finally, among all `i` with `dp[i] == L` (the max), pick the sequence that is lexicographically smallest.
+
+```python
+#!/usr/bin/env python3
+"""
+Longest Strictly Increasing Subsequence with lexicographically smallest
+index sequence among all optimal (maximum-length) answers.
+
+Deterministic O(n^2) DP. Standard library only. No I/O side effects beyond
+stdin/stdout in the __main__ block.
+"""
+
+from typing import List, Tuple
+import sys
+
+
+def lis_lex_smallest_indices(a: List[int]) -> Tuple[int, List[int]]:
+    """
+    Given a list of integers `a`, find the maximum length L of a strictly
+    increasing subsequence, and return (L, indices) where `indices` is the
+    lexicographically smallest list of original indices (as a sequence of
+    ints, compared element-by-element) among all index sequences that
+    achieve length L and correspond to a valid strictly increasing
+    subsequence.
+
+    Returns (0, []) for an empty input.
+    """
+    n = len(a)
+    if n == 0:
+        return 0, []
+
+    # dp_len[i]  = length of best strictly increasing subsequence ending at i
+    # best_seq[i] = lexicographically smallest index-sequence of that length
+    #               ending exactly at index i
+    dp_len = [1] * n
+    best_seq: List[List[int]] = [[i] for i in range(n)]
+
+    for i in range(n):
+        best_len_for_i = 1
+        best_candidate: List[int] = [i]
+        for j in range(i):
+            if a[j] < a[i]:
+                candidate_len = dp_len[j] + 1
+                candidate_seq = best_seq[j] + [i]
+                if candidate_len > best_len_for_i:
+                    best_len_for_i = candidate_len
+                    best_candidate = candidate_seq
+                elif candidate_len == best_len_for_i:
+                    if candidate_seq < best_candidate:
+                        best_candidate = candidate_seq
+        dp_len[i] = best_len_for_i
+        best_seq[i] = best_candidate
+
+    max_len = max(dp_len)
+
+    overall_best: List[int] = None
+    for i in range(n):
+        if dp_len[i] == max_len:
+            seq = best_seq[i]
+            if overall_best is None or seq < overall_best:
+                overall_best = seq
+
+    return max_len, overall_best
+
+
+def _read_ints_from_stdin() -> List[int]:
+    data = sys.stdin.read().split()
+    return [int(x) for x in data]
+
+
+if __name__ == "__main__":
+    if not sys.stdin.isatty():
+        raw = _read_ints_from_stdin()
+    else:
+        raw = []
+
+    if raw:
+        seq = raw
+    else:
+        # Deterministic built-in example if no stdin input is provided.
+        seq = [10, 9, 2, 5, 3, 7, 101, 18, 3, 8, 9]
+
+    length, indices = lis_lex_smallest_indices(seq)
+    values = [seq[i] for i in indices]
+
+    print(f"Input sequence: {seq}")
+    print(f"Max length (L): {length}")
+    print(f"Chosen indices: {indices}")
+    print(f"Chosen values : {values}")
+```

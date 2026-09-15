@@ -1,0 +1,45 @@
+id="58321"
+import os
+from PIL import Image, UnidentifiedImageError
+
+def extract_metadata(input_dir):
+    results = []
+
+    for filename in os.listdir(input_dir):
+        path = os.path.join(input_dir, filename)
+
+        if not os.path.isfile(path):
+            continue
+
+        file_size = os.path.getsize(path)
+
+        try:
+            # Zero-byte files are invalid images.
+            if file_size == 0:
+                raise UnidentifiedImageError("Zero-byte image file")
+
+            # Verify the image data to detect truncated/corrupt files.
+            with Image.open(path) as img:
+                img.verify()
+
+            # Reopen after verify() because verify() invalidates the image object.
+            with Image.open(path) as img:
+                width, height = img.width, img.height
+
+                results.append({
+                    "filename": filename,
+                    "format": img.format,
+                    "mode": img.mode,
+                    "width": width,
+                    "height": height,
+                    "file_size_bytes": file_size,
+                    "aspect_ratio": round(width / height, 3)
+                })
+
+        except (OSError, UnidentifiedImageError, ValueError, SyntaxError):
+            results.append({
+                "filename": filename,
+                "error": True
+            })
+
+    return sorted(results, key=lambda x: x["filename"])

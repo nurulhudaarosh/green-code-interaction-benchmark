@@ -1,0 +1,126 @@
+import csv
+import re
+from typing import Any, List, Optional
+
+
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+_LETTER_MAP = {
+    **{c: str((i // 3) + 2) for i, c in enumerate("ABC")},
+    **{c: str((i // 3) + 2) for i, c in enumerate("DEF")},
+    **{c: str((i // 3) + 2) for i, c in enumerate("GHI")},
+    **{c: str((i // 3) + 2) for i, c in enumerate("JKL")},
+    **{c: str((i // 3) + 2) for i, c in enumerate("MNO")},
+    **{c: str((i // 3) + 2) for i, c in enumerate("PQRS")},
+    **{c: str((i // 3) + 2) for i, c in enumerate("TUV")},
+    **{c: str((i // 3) + 2) for i, c in enumerate("WXYZ")},
+}
+
+
+def normalize_email(value: Any) -> str:
+    if value is None:
+        return ""
+    s = str(value).strip().lower()
+    if not s:
+        return ""
+    s = s.strip("<>").strip()
+    s = re.sub(r"\s+", "", s)
+    if not EMAIL_RE.match(s):
+        return ""
+    return s
+
+
+def normalize_phone(value: Any, default_region: str = "US") -> str:
+    if value is None:
+        return ""
+    s = str(value).strip()
+    if not s:
+        return ""
+    s = s.upper()
+    converted = "".join(_LETTER_MAP.get(c, c) for c in s)
+    digits = re.sub(r"\D", "", converted)
+    if not digits:
+        return ""
+    if default_region.upper() == "US":
+        if len(digits) == 10:
+            return "+1" + digits
+        if len(digits) == 11 and digits.startswith("1"):
+            return "+" + digits
+        return "+" + digits
+    return "+" + digits
+
+
+def completeness_score(record: dict, fields: List[str]) -> int:
+    score = 0
+    for f in fields:
+        v = record.get(f)
+        if v is not None and str(v).strip() != "":
+            score += 1
+    return score
+
+
+def normalize_csv(
+    input_path: str,
+    output_path: str,
+    email_field: str = "email",
+    phone_field: str = "phone",
+    fields: Optional[List[str]] = None,
+    default_region: str = "US",
+) -> None:
+    with open(input_path, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+        original_fields = reader.fieldnames or []
+
+    if fields is None:
+        fields = list(original_fields)
+
+    for required in (email_field, phone_field):
+        if required not in original_fields:
+            raise ValueError(f"Missing required column: {required}")
+
+    out_fields = list(original_fields)
+    for extra in ("normalized_email", "normalized_phone"):
+        if extra not in out_fields:
+            out_fields.append(extra)
+
+    normalized_rows = []
+    for idx, row in enumerate(rows):
+        rec = dict(row)
+        rec["normalized_email"] = normalize_email(row.get(email_field, ""))
+        rec["normalized_phone"] = normalize_phone(
+            row.get(phone_field, ""), default_region=default_region
+        )
+        rec["_row_index"] = idx
+        normalized_rows.append(rec)
+
+    groups: dict = {}
+    for rec in normalized_rows:
+        groups.setdefault(rec["normalized_email"], []).append(rec)
+
+    selected = []
+    for key, group in groups.items():
+        # Highest completeness first; earliest input row breaks ties.
+        best = sorted(
+            group,
+            key=lambda r: (-completeness_score(r, fields), r["_row_index"]),
+        )[0]
+        selected.append(best)
+
+    # Deterministic output: sorted by normalized email (empty emails last).
+    selected.sort(key=lambda r: (r["normalized_email"] == "", r["normalized_email"]))
+
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=out_fields, extrasaction="ignore")
+        writer.writeheader()
+        for rec in selected:
+            writer.writerow(rec)
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) < 3:
+        print("Usage: python normalizer.py <input.csv> <output.csv>")
+        sys.exit(1)
+    normalize_csv(sys.argv[1], sys.argv[2])

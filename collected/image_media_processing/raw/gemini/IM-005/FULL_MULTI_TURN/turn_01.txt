@@ -1,0 +1,42 @@
+Here is the Python function using Pillow (`PIL`) to process all images in a directory.
+
+```python
+import os
+from PIL import Image, ImageFilter
+
+def apply_blur(input_dir: str, output_dir: str, radius: float) -> None:
+    """
+    Applies Gaussian blur of the given radius to every image in input_dir and saves to output_dir.
+    - Negative radius raises a ValueError.
+    - Radius of 0 acts as a passthrough (saves images without modification).
+    """
+    if radius < 0:
+        raise ValueError("Radius must be non-negative (>= 0).")
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    valid_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.webp')
+
+    for filename in os.listdir(input_dir):
+        if not filename.lower().endswith(valid_extensions):
+            continue
+
+        input_path = os.path.join(input_dir, filename)
+        output_path = os.path.join(output_dir, filename)
+
+        with Image.open(input_path) as img:
+            # Apply blur only if radius > 0
+            if radius > 0:
+                blurred_img = img.filter(ImageFilter.GaussianBlur(radius))
+                blurred_img.save(output_path)
+            else:
+                img.save(output_path)
+
+```
+
+### Key Considerations
+
+* **Validation**: Rejects negative `radius` immediately by raising a `ValueError`.
+* **Passthrough**: Skips the filtering process when `radius == 0`, preserving original quality while copying the image to the output directory.
+* **File Safety**: Uses context management (`with Image.open(...)`) to ensure files are properly closed after processing.
+* **Format Support**: Handles standard raster image formats (`.png`, `.jpg`, `.webp`, etc.).

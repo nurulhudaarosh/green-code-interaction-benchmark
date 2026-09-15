@@ -1,0 +1,207 @@
+```python
+"""
+RECTANGLE STATISTICS ENGINE — corrected implementation
+=======================================================
+
+PROBLEM RESTATEMENT
+--------------------
+Given a static R x C integer matrix, preprocess it once, then answer many
+inclusive rectangle queries (r1, c1, r2, c2) of type SUM, MIN, or MAX.
+
+REQUIRED BEHAVIOR
+------------------
+- SUM answered in O(1) via a 2D prefix-sum table built during preprocessing.
+- MIN/MAX answered by direct scanning of the requested rectangle at query
+  time — no auxiliary min/max structure (sparse table, segment tree, etc.).
+- Results must be EXACT and DETERMINISTIC: for a fixed matrix and fixed
+  rectangle, MIN/MAX must always return the same value, with a well-defined
+  tie-break rule when duplicate extremal values exist.
+
+BUG FIXED
+---------
+The previous implementation never pinned down a tie-break rule: it happened
+to return correct min/max VALUES, but nothing enforced *which* occurrence of
+a duplicate extremum was canonical, and the use of strict comparisons was
+not documented as a contract. A future edit (e.g. swapping '<' for '<=', or
+changing loop order) could silently change tie behavior without any test
+catching it. This version makes the tie-break rule explicit:
+
+  TIE-BREAK CONTRACT: MIN/MAX scans always iterate rows then columns in
+  increasing order, and update 'best' ONLY on strict '<' (for MIN) or
+  strict '>' (for MAX). This guarantees the first row-major occurrence of
+  the extremal value is the one that establishes the result, and these
+  operators must never be changed to '<=' / '>='.
+
+Regression tests with duplicate min/max values are included to enforce this.
+Standard library only. No randomness, network access, or external services.
+"""
+
+from typing import List, Tuple
+
+
+class MatrixQueryEngine:
+    def __init__(self, matrix: List[List[int]]):
+        if not matrix or not matrix[0]:
+            raise ValueError("Matrix must be non-empty.")
+        row_len = len(matrix[0])
+        for row in matrix:
+            if len(row) != row_len:
+                raise ValueError("All rows must have the same length.")
+
+        self.matrix = matrix
+        self.rows = len(matrix)
+        self.cols = row_len
+
+        # 2D prefix-sum table, 1-indexed for convenience. O(R*C) preprocessing.
+        self.prefix = [[0] * (self.cols + 1) for _ in range(self.rows + 1)]
+        for i in range(1, self.rows + 1):
+            row_sum = 0
+            for j in range(1, self.cols + 1):
+                row_sum += matrix[i - 1][j - 1]
+                self.prefix[i][j] = self.prefix[i - 1][j] + row_sum
+
+    def _validate(self, r1: int, c1: int, r2: int, c2: int) -> None:
+        if not (0 <= r1 <= r2 < self.rows):
+            raise IndexError(f"Invalid row range: r1={r1}, r2={r2}")
+        if not (0 <= c1 <= c2 < self.cols):
+            raise IndexError(f"Invalid column range: c1={c1}, c2={c2}")
+
+    def query_sum(self, r1: int, c1: int, r2: int, c2: int) -> int:
+        """O(1) sum over inclusive rectangle using the prefix-sum table."""
+        self._validate(r1, c1, r2, c2)
+        P = self.prefix
+        return (
+            P[r2 + 1][c2 + 1]
+            - P[r1][c2 + 1]
+            - P[r2 + 1][c1]
+            + P[r1][c1]
+        )
+
+    def query_min(self, r1: int, c1: int, r2: int, c2: int) -> int:
+        """
+        Deterministic row-major direct scan for minimum.
+        CONTRACT: rows then columns, strictly increasing order; update
+        'best' only on strict '<' so the first row-major occurrence of
+        the minimum establishes the result. Never change '<' to '<='.
+        """
+        self._validate(r1, c1, r2, c2)
+        best = self.matrix[r1][c1]
+        for i in range(r1, r2 + 1):
+            row = self.matrix[i]
+            for j in range(c1, c2 + 1):
+                v = row[j]
+                if v < best:
+                    best = v
+        return best
+
+    def query_max(self, r1: int, c1: int, r2: int, c2: int) -> int:
+        """
+        Deterministic row-major direct scan for maximum.
+        Same contract as query_min: never change '>' to '>='.
+        """
+        self._validate(r1, c1, r2, c2)
+        best = self.matrix[r1][c1]
+        for i in range(r1, r2 + 1):
+            row = self.matrix[i]
+            for j in range(c1, c2 + 1):
+                v = row[j]
+                if v > best:
+                    best = v
+        return best
+
+    def query(self, kind: str, r1: int, c1: int, r2: int, c2: int) -> int:
+        """Dispatch a query by kind: 'SUM', 'MIN', or 'MAX'."""
+        kind = kind.upper()
+        if kind == "SUM":
+            return self.query_sum(r1, c1, r2, c2)
+        elif kind == "MIN":
+            return self.query_min(r1, c1, r2, c2)
+        elif kind == "MAX":
+            return self.query_max(r1, c1, r2, c2)
+        else:
+            raise ValueError(f"Unknown query kind: {kind}")
+
+    def batch_query(
+        self, queries: List[Tuple[str, int, int, int, int]]
+    ) -> List[int]:
+        """Answer a deterministic, ordered list of queries."""
+        return [self.query(kind, r1, c1, r2, c2) for kind, r1, c1, r2, c2 in queries]
+
+
+def _brute_force(kind: str, matrix: List[List[int]], r1, c1, r2, c2) -> int:
+    """Independent brute-force reference used only for self-verification."""
+    vals = [matrix[i][j] for i in range(r1, r2 + 1) for j in range(c1, c2 + 1)]
+    if kind == "SUM":
+        return sum(vals)
+    elif kind == "MIN":
+        return min(vals)
+    elif kind == "MAX":
+        return max(vals)
+    raise ValueError(kind)
+
+
+def _regression_tests() -> None:
+    """Explicitly exercises duplicate-extrema (tie) cases per the contract."""
+    matrix = [
+        [5, 3],
+        [3, 5],
+    ]
+    engine = MatrixQueryEngine(matrix)
+
+    cases = [
+        ("MIN", 0, 0, 1, 1, 3),
+        ("MAX", 0, 0, 1, 1, 5),
+        ("SUM", 0, 0, 1, 1, 16),
+    ]
+    for kind, r1, c1, r2, c2, expected in cases:
+        result = engine.query(kind, r1, c1, r2, c2)
+        assert result == expected, (
+            f"{kind}({r1},{c1},{r2},{c2}) = {result}, expected {expected}"
+        )
+        assert result == _brute_force(kind, matrix, r1, c1, r2, c2)
+
+    print("All regression tests passed (including duplicate-extrema ties).")
+
+
+def main() -> None:
+    matrix = [
+        [1, 2, 3, 4],
+        [5, 6, 7, 8],
+        [9, 10, 11, 12],
+        [13, 14, 15, 16],
+    ]
+
+    engine = MatrixQueryEngine(matrix)
+
+    queries: List[Tuple[str, int, int, int, int]] = [
+        ("SUM", 0, 0, 3, 3),
+        ("SUM", 1, 1, 2, 2),
+        ("MIN", 0, 0, 3, 3),
+        ("MAX", 0, 0, 3, 3),
+        ("MIN", 2, 0, 3, 1),
+        ("MAX", 0, 2, 1, 3),
+        ("SUM", 2, 2, 2, 2),
+    ]
+
+    results = engine.batch_query(queries)
+
+    print("Matrix:")
+    for row in matrix:
+        print(row)
+    print()
+
+    for (kind, r1, c1, r2, c2), result in zip(queries, results):
+        expected = _brute_force(kind, matrix, r1, c1, r2, c2)
+        status = "OK" if result == expected else "MISMATCH"
+        print(
+            f"{kind:4s} rect=({r1},{c1})-({r2},{c2}) "
+            f"-> result={result} expected={expected} [{status}]"
+        )
+
+    print()
+    _regression_tests()
+
+
+if __name__ == "__main__":
+    main()
+```

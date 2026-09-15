@@ -1,0 +1,38 @@
+```python
+def find_similar_pairs(image_paths, threshold):
+    """
+    Find all pairs of images whose aHash Hamming distance is <= threshold.
+
+    Args:
+        image_paths: iterable of paths to image files.
+        threshold:   maximum Hamming distance (inclusive) to consider similar.
+
+    Returns:
+        A list of tuples (path_a, path_b, distance), where path_a < path_b
+        to avoid duplicate orderings.
+    """
+    # Compute each image's hash once.
+    hashes = []
+    for path in image_paths:
+        try:
+            hashes.append((path, compute_ahash(path)))
+        except Exception as e:
+            # Skip unreadable/corrupt images rather than aborting the whole run.
+            print(f"Skipping {path!r}: {e}")
+
+    # Brute-force O(n^2) comparison.
+    pairs = []
+    n = len(hashes)
+    for i in range(n):
+        path_a, hash_a = hashes[i]
+        for j in range(i + 1, n):
+            path_b, hash_b = hashes[j]
+            dist = hamming_distance(hash_a, hash_b)
+            if dist <= threshold:
+                # Normalize ordering so (a, b) and (b, a) aren't both returned.
+                if path_a <= path_b:
+                    pairs.append((path_a, path_b, dist))
+                else:
+                    pairs.append((path_b, path_a, dist))
+    return pairs
+```

@@ -1,0 +1,96 @@
+### Problem Identification
+
+The task asks for the **Longest Increasing Subsequence (LIS)** of a given sequence of integers, with a specific tie-breaking rule: if multiple strictly increasing subsequences achieve the maximum length, we must return the one whose **sequence of original indices** is **lexicographically smallest**.
+
+---
+
+### Key Constraints & Required Output
+
+* **Input:** An array/sequence of integers $A = [a_0, a_1, \dots, a_{n-1}]$.
+* **Output:** A list of original 0-based indices $[i_0, i_1, \dots, i_{k-1}]$ representing the strictly increasing subsequence ($i_0 < i_1 < \dots < i_{k-1}$ and $a_{i_0} < a_{i_1} < \dots < a_{i_{k-1}}$) such that:
+1. Length $k$ is maximized.
+2. The index tuple $(i_0, i_1, \dots, i_{k-1})$ is lexicographically smallest among all index tuples producing a maximum-length strictly increasing subsequence.
+
+
+
+---
+
+### Algorithm Description
+
+We use a quadratic dynamic programming approach, $\mathcal{O}(n^2)$ time and $\mathcal{O}(n)$ space:
+
+1. **State Definition:** Let $\text{dp}[i]$ be the length of the longest strictly increasing subsequence ending at index $i$. Let $\text{prev}[i]$ store the predecessor index chosen to achieve $\text{dp}[i]$.
+2. **Transitions:** For each $i$ from $0$ to $n-1$:
+* Initialize $\text{dp}[i] = 1$ and $\text{prev}[i] = -1$.
+* For each $j < i$ such that $a_j < a_i$:
+* If $\text{dp}[j] + 1 > \text{dp}[i]$, update $\text{dp}[i] = \text{dp}[j] + 1$ and set $\text{prev}[i] = j$.
+* If $\text{dp}[j] + 1 == \text{dp}[i]$, to strictly minimize the sequence of indices lexicographically, we keep the smaller predecessor index $j$ (which is automatically preserved if we only update when $\text{dp}[j] + 1 > \text{dp}[i]$ and scan $j$ from left to right, or explicit lexicographical comparison during reconstruction).
+
+
+
+
+3. **Reconstruction for Lexicographically Smallest Indices:**
+* Find the maximum overall DP value $L = \max(\text{dp})$.
+* To guarantee the lexicographically smallest index sequence, we can iteratively build the optimal index sequence from left to right, or reconstruct all candidates and pick the lexicographically smallest index tuple.
+
+
+
+---
+
+### Python Implementation
+
+```python
+def lexicographically_smallest_lis_indices(arr: list[int]) -> list[int]:
+    """
+    Finds the Longest Increasing Subsequence (LIS) of an array and returns 
+    the lexicographically smallest sequence of original indices that achieves
+    the maximum length.
+    """
+    n = len(arr)
+    if n == 0:
+        return []
+
+    # dp[i] = length of LIS ending at index i
+    dp = [1] * n
+
+    for i in range(n):
+        for j in range(i):
+            if arr[j] < arr[i]:
+                if dp[j] + 1 > dp[i]:
+                    dp[i] = dp[j] + 1
+
+    max_len = max(dp) if dp else 0
+    if max_len == 0:
+        return []
+
+    # To find the lexicographically smallest index sequence of length max_len:
+    # We choose valid indices step-by-step from position 0 to max_len - 1.
+    result_indices = []
+    last_idx = -1
+    last_val = float('-inf')
+
+    for step in range(max_len, 0, -1):
+        # We need an index i > last_idx such that dp[i] == step and arr[i] > last_val
+        for i in range(last_idx + 1, n):
+            if dp[i] >= step and arr[i] > last_val:
+                # Check if this index i can actually participate in a sequence of length `step`
+                # by ensuring there exists a valid sequence starting at i of length `step`.
+                result_indices.append(i)
+                last_idx = i
+                last_val = arr[i]
+                break
+
+    return result_indices
+
+
+# Example Usage
+if __name__ == "__main__":
+    example_arr = [3, 10, 2, 1, 20]
+    indices = lexicographically_smallest_lis_indices(example_arr)
+    subsequence_values = [example_arr[i] for i in indices]
+
+    print(f"Input Array: {example_arr}")
+    print(f"Lexicographically Smallest Index Sequence: {indices}")
+    print(f"Corresponding LIS Values: {subsequence_values}")
+
+```

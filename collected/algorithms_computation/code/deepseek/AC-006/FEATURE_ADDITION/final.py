@@ -1,0 +1,103 @@
+import sys
+
+def solve(include_summary=False):
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    
+    it = iter(data)
+    rows = int(next(it))
+    cols = int(next(it))
+    T = int(next(it))
+    
+    grid = []
+    for _ in range(rows):
+        row = []
+        for _ in range(cols):
+            row.append(int(next(it)))
+        grid.append(row)
+    
+    visited = [[False] * cols for _ in range(rows)]
+    
+    best_size = 0
+    best_perim = 0
+    best_r = rows
+    best_c = cols
+    
+    dirs = [(1,0), (-1,0), (0,1), (0,-1)]
+    
+    # For summary
+    total_cells_processed = 0
+    total_regions_found = 0
+    total_neighbor_checks = 0
+    
+    for sr in range(rows):
+        for sc in range(cols):
+            if visited[sr][sc] or grid[sr][sc] < T:
+                continue
+            
+            # Start a new region
+            total_regions_found += 1
+            stack = [(sr, sc)]
+            visited[sr][sc] = True
+            size = 0
+            perimeter = 0
+            min_r = sr
+            min_c = sc
+            
+            while stack:
+                r, c = stack.pop()
+                size += 1
+                total_cells_processed += 1
+                if r < min_r or (r == min_r and c < min_c):
+                    min_r, min_c = r, c
+                
+                for dr, dc in dirs:
+                    total_neighbor_checks += 1
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < rows and 0 <= nc < cols:
+                        if grid[nr][nc] >= T:
+                            if not visited[nr][nc]:
+                                visited[nr][nc] = True
+                                stack.append((nr, nc))
+                        else:
+                            perimeter += 1
+                    else:
+                        perimeter += 1
+            
+            # Compare with best
+            if size > best_size:
+                best_size = size
+                best_perim = perimeter
+                best_r, best_c = min_r, min_c
+            elif size == best_size:
+                if perimeter > best_perim:
+                    best_perim = perimeter
+                    best_r, best_c = min_r, min_c
+                elif perimeter == best_perim:
+                    if min_r < best_r or (min_r == best_r and min_c < best_c):
+                        best_r, best_c = min_r, min_c
+    
+    # Required outputs (always present)
+    print(best_size)
+    print(best_perim)
+    print(best_r, best_c)
+    
+    # Optional extra field
+    if include_summary:
+        # Deterministic summary: 
+        # regions_found, cells_processed, neighbor_checks, grid_size
+        summary = {
+            "operation_summary": {
+                "total_regions_found": total_regions_found,
+                "total_cells_processed": total_cells_processed,
+                "total_neighbor_checks": total_neighbor_checks,
+                "grid_cells": rows * cols
+            }
+        }
+        print(summary)
+
+if __name__ == "__main__":
+    # By default, do not include summary (original behavior)
+    # To enable: solve(include_summary=True)
+    solve()

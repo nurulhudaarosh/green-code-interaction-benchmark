@@ -1,0 +1,94 @@
+```python
+def min_squared_deviation_clustering(points: list[float], k: int) -> tuple[float, list[int]]:
+    """
+    Sorts 1D points and partitions them into k contiguous clusters minimizing 
+    the sum of squared deviations from cluster means, with deterministic tie handling.
+    
+    Returns:
+        (min_cost, boundary_indices) where boundary_indices is a list of k+1 
+        indices starting at 0 and ending at len(points).
+    """
+    n = len(points)
+    if n == 0 or k <= 0:
+        return 0.0, [0]
+    
+    # Sort points deterministically
+    arr = sorted(points)
+    k = min(k, n)
+    
+    # Precompute prefix sums for O(1) interval cost lookup
+    P = [0.0] * (n + 1)   # Prefix sum of x
+    Q = [0.0] * (n + 1)   # Prefix sum of x^2
+    for i in range(n):
+        P[i + 1] = P[i] + arr[i]
+        Q[i + 1] = Q[i] + arr[i] * arr[i]
+        
+    def get_cost(i: int, j: int) -> float:
+        """Calculates sum of squared errors (SSE) for subarray arr[i:j]."""
+        count = j - i
+        if count <= 0:
+            return 0.0
+        sum_x = P[j] - P[i]
+        sum_x2 = Q[j] - Q[i]
+        val = sum_x2 - (sum_x * sum_x) / count
+        return max(0.0, val)
+
+    # DP tables: dp[c][j] is the min cost for prefix of size j using c clusters
+    dp = [[float('inf')] * (n + 1) for _ in range(k + 1)]
+    parent = [[0] * (n + 1) for _ in range(k + 1)]
+    
+    # Base Case: 1 cluster for prefix of length j
+    for j in range(1, n + 1):
+        dp[1][j] = get_cost(0, j)
+        parent[1][j] = 0
+        
+    EPS = 1e-12  # Tolerance threshold for floating-point equality tie-breaking
+        
+    # DP Transitions for c = 2..k
+    for c in range(2, k + 1):
+        for j in range(c, n + 1):
+            best_cost = float('inf')
+            best_m = c - 1
+            
+            for m in range(c - 1, j):
+                cost = dp[c - 1][m] + get_cost(m, j)
+                
+                # Deterministic tie-handling: prefer strictly lower cost,
+                # break floating-point ties by consistently selecting smallest split index m
+                if cost < best_cost - EPS:
+                    best_cost = cost
+                    best_m = m
+                elif abs(cost - best_cost) <= EPS:
+                    if m < best_m:
+                        best_cost = cost
+                        best_m = m
+
+            dp[c][j] = best_cost
+            parent[c][j] = best_m
+
+    # Backtrack boundary indices
+    boundaries = [0] * (k + 1)
+    curr_j = n
+    for c in range(k, 0, -1):
+        boundaries[c] = curr_j
+        curr_j = parent[c][curr_j]
+    boundaries[0] = 0
+    
+    return dp[k][n], boundaries
+
+
+# Verification and demonstration
+if __name__ == "__main__":
+    # Test case 1: Distinct clusters
+    pts1 = [2.0, 1.0, 10.0, 12.0, 3.0, 25.0, 28.0]
+    cost1, bounds1 = min_squared_deviation_clustering(pts1, 3)
+    print(f"Points: {sorted(pts1)}")
+    print(f"Cost: {cost1:.4f}, Boundaries: {bounds1}\n")
+
+    # Test case 2: Duplicate values demonstrating deterministic tie-breaking
+    pts2 = [1.0, 1.0, 1.0, 1.0]
+    cost2, bounds2 = min_squared_deviation_clustering(pts2, 2)
+    print(f"Points: {pts2}")
+    print(f"Cost: {cost2:.4f}, Boundaries: {bounds2}")
+
+```

@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "created_at": "2026-08-16T05:42:49.991157+00:00",
+  "updated_at": "2026-09-13T10:13:03.509582+00:00",
+  "category": null,
+  "current": {
+    "task_index": 0,
+    "task_id": "TL-001",
+    "model_index": 0,
+    "model": "gpt",
+    "interaction_index": 4,
+    "interaction": "FULL_MULTI_TURN",
+    "turn": 0
+  },
+  "completed": {
+    "TL-001|gpt|ONE_SHOT": {
+      "task_id": "TL-001",
+      "model": "gpt",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "TL-001|gpt|BUG_FIX": {
+      "task_id": "TL-001",
+      "model": "gpt",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "TL-001|gpt|FEATURE_ADDITION": {
+      "task_id": "TL-001",
+      "model": "gpt",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "TL-001|gpt|EDGE_CASE": {
+      "task_id": "TL-001",
+      "model": "gpt",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    }
+  },
+  "history": []
+}

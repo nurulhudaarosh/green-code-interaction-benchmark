@@ -1,0 +1,268 @@
+from typing import List, Tuple, Optional, Dict
+
+
+class RectangleStatisticsEngine:
+    """Preprocess an integer matrix for sum/min/max rectangle queries.
+
+    Contract:
+      * sum  -> O(1) via 2D prefix sums.
+      * min/max -> O(area) direct scan.
+      * Deterministic tie handling: among tied extremal cells, the reported
+        representative is the one with the smallest (row, col), independent
+        of scan order. `query` returns the extremal values themselves.
+
+    Edge cases:
+      * Smallest valid input: 1x1 matrix. All queries collapse to (0,0,0,0).
+      * Empty input ([] or [[]]) -> ValueError (not a valid structure).
+      * Inverted or out-of-range rectangle bounds -> IndexError.
+      * Degenerate 1x1 subrectangles of larger matrices are valid.
+    """
+
+    def __init__(self, matrix: List[List[int]],
+                 enable_operation_summary: bool = False) -> None:
+        # --- Empty structure rejection (deterministic) ---
+        if not isinstance(matrix, list):
+            raise ValueError("Matrix must be a list of rows.")
+        if len(matrix) == 0:
+            raise ValueError("Empty matrix is not a valid input.")
+        if not isinstance(matrix[0], list) or len(matrix[0]) == 0:
+            raise ValueError("Empty row is not a valid input.")
+        self.rows = len(matrix)
+        self.cols = len(matrix[0])
+        if any((not isinstance(row, list)) or len(row) != self.cols
+               for row in matrix):
+            raise ValueError("Matrix rows must all have the same length.")
+
+        self.matrix = matrix
+        self.enable_operation_summary = enable_operation_summary
+        self.last_operation_summary: Optional[Dict[str, int]] = None
+
+        build_decisions = 0
+        self.prefix = [[0] * (self.cols + 1) for _ in range(self.rows + 1)]
+        for i in range(self.rows):
+            row_sum = 0
+            pi = self.prefix[i]
+            pi1 = self.prefix[i + 1]
+            mi = matrix[i]
+            for j in range(self.cols):
+                row_sum += mi[j]
+                pi1[j + 1] = pi[j + 1] + row_sum
+                build_decisions += 1
+        self._build_decisions = build_decisions
+
+    # -------- validation: rejects inverted, out-of-range, disconnected --------
+    def _validate(self, r1: int, c1: int, r2: int, c2: int) -> None:
+        if not (0 <= r1 <= r2 < self.rows and 0 <= c1 <= c2 < self.cols):
+            raise IndexError(
+                f"Invalid rectangle ({r1},{c1})-({r2},{c2}) "
+                f"for matrix {self.rows}x{self.cols}."
+            )
+
+    # -------- core aggregates --------
+    def rect_sum(self, r1: int, c1: int, r2: int, c2: int) -> int:
+        self._validate(r1, c1, r2, c2)
+        P = self.prefix
+        return P[r2 + 1][c2 + 1] - P[r1][c2 + 1] - P[r2 + 1][c1] + P[r1][c1]
+
+    def rect_min_with_cell(self, r1: int, c1: int, r2: int, c2: int
+                           ) -> Tuple[int, Tuple[int, int]]:
+        self._validate(r1, c1, r2, c2)
+        best: Optional[Tuple[int, int, int]] = None  # (value, row, col)
+        for i in range(r1, r2 + 1):
+            row = self.matrix[i]
+            for j in range(c1, c2 + 1):
+                cand = (row[j], i, j)
+                if best is None or cand < best:
+                    best = cand
+        v, i, j = best  # type: ignore[misc]
+        return v, (i, j)
+
+    def rect_max_with_cell(self, r1: int, c1: int, r2: int, c2: int
+                           ) -> Tuple[int, Tuple[int, int]]:
+        self._validate(r1, c1, r2, c2)
+        best: Optional[Tuple[int, int, int]] = None  # (-value, row, col)
+        for i in range(r1, r2 + 1):
+            row = self.matrix[i]
+            for j in range(c1, c2 + 1):
+                cand = (-row[j], i, j)
+                if best is None or cand < best:
+                    best = cand
+        neg_v, i, j = best  # type: ignore[misc]
+        return -neg_v, (i, j)
+
+    def rect_min(self, r1: int, c1: int, r2: int, c2: int) -> int:
+        return self.rect_min_with_cell(r1, c1, r2, c2)[0]
+
+    def rect_max(self, r1: int, c1: int, r2: int, c2: int) -> int:
+        return self.rect_max_with_cell(r1, c1, r2, c2)[0]
+
+    # -------- public query (unchanged shape) --------
+    def query(self, r1: int, c1: int, r2: int, c2: int) -> Tuple[int, int, int]:
+        return (
+            self.rect_sum(r1, c1, r2, c2),
+            self.rect_min(r1, c1, r2, c2),
+            self.rect_max(r1, c1, r2, c2),
+        )
+
+    def query_full(self, r1: int, c1: int, r2: int, c2: int):
+        s = self.rect_sum(r1, c1, r2, c2)
+        mn, mn_cell = self.rect_min_with_cell(r1, c1, r2, c2)
+        mx, mx_cell = self.rect_max_with_cell(r1, c1, r2, c2)
+        return s, (mn, mn_cell), (mx, mx_cell)
+
+    # -------- optional operation-summary feature --------
+    def _count_operations(self, r1: int, c1: int, r2: int, c2: int) -> Dict[str, int]:
+        area = (r2 - r1 + 1) * (c2 - c1 + 1)
+        return {
+            "preprocessing_decisions": self._build_decisions,
+            "sum_decisions": 4,
+            "min_decisions": area,
+            "max_decisions": area,
+            "query_decisions": 4 + 2 * area,
+            "total_decisions": self._build_decisions + 4 + 2 * area,
+        }
+
+    def query_with_summary(self, r1: int, c1: int, r2: int, c2: int):
+        result = self.query(r1, c1, r2, c2)
+        if self.enable_operation_summary:
+            summary = self._count_operations(r1, c1, r2, c2)
+            self.last_operation_summary = summary
+            return result + (summary,)
+        self.last_operation_summary = None
+        return result + (None,)
+
+
+def _demo() -> None:
+    # ============================================================
+    # Case A: smallest permitted input (1x1)
+    # ============================================================
+    tiny = RectangleStatisticsEngine([[42]])
+    assert tiny.query(0, 0, 0, 0) == (42, 42, 42)
+    assert tiny.query_full(0, 0, 0, 0) == (42, (42, (0, 0)), (42, (0, 0)))
+
+    # Any other query on 1x1 must raise IndexError.
+    for bad in [(-1, 0, 0, 0), (0, -1, 0, 0), (0, 0, 1, 0),
+                (0, 0, 0, 1), (1, 0, 1, 0), (0, 1, 0, 1)]:
+        try:
+            tiny.query(*bad)
+            raise AssertionError(f"Expected IndexError for {bad}")
+        except IndexError:
+            pass
+
+    # ============================================================
+    # Case B: empty / disconnected structures must be rejected
+    # ============================================================
+    for bad_matrix in [[], [[]], [[1, 2], []], [[1], [2, 3]], "not a list"]:
+        try:
+            RectangleStatisticsEngine(bad_matrix)  # type: ignore[arg-type]
+            raise AssertionError(f"Expected ValueError for {bad_matrix!r}")
+        except ValueError:
+            pass
+
+    # ============================================================
+    # Case C: degenerate 1x1 subrectangles of a larger matrix
+    # (valid, not disconnected) + inverted / out-of-range rejection
+    # ============================================================
+    M = [[5, 1, 5],
+         [1, 5, 1],
+         [5, 1, 5]]
+    eng = RectangleStatisticsEngine(M, enable_operation_summary=True)
+
+    # Every 1x1 subrectangle is valid and reports its own cell.
+    for i in range(3):
+        for j in range(3):
+            s, mn, mx = eng.query(i, j, i, j)
+            assert s == mn == mx == M[i][j]
+            assert eng.query_full(i, j, i, j) == (
+                M[i][j], (M[i][j], (i, j)), (M[i][j], (i, j))
+            )
+
+    # Inverted bounds -> IndexError.
+    for bad in [(2, 0, 1, 0), (0, 2, 0, 1), (2, 2, 0, 0)]:
+        try:
+            eng.query(*bad)
+            raise AssertionError(f"Expected IndexError for {bad}")
+        except IndexError:
+            pass
+
+    # Out-of-range bounds -> IndexError.
+    for bad in [(0, 0, 3, 0), (0, 0, 0, 3), (-1, 0, 0, 0), (0, -1, 0, 0)]:
+        try:
+            eng.query(*bad)
+            raise AssertionError(f"Expected IndexError for {bad}")
+        except IndexError:
+            pass
+
+    # ============================================================
+    # Original outputs + tie-breaking preserved on the 3x3
+    # ============================================================
+    assert eng.query(0, 0, 2, 2) == (27, 1, 5)
+    assert eng.query(1, 0, 1, 2) == (7, 1, 5)
+    # min=1 -> smallest (row,col) is (0,1); max=5 -> smallest (row,col) is (0,0)
+    assert eng.query_full(0, 0, 2, 2) == (27, (1, (0, 1)), (5, (0, 0)))
+
+    # Order-independence of tie-breaking under reversed scan.
+    def scan_min_rev(r1, c1, r2, c2):
+        best = None
+        for i in range(r2, r1 - 1, -1):
+            for j in range(c2, c1 - 1, -1):
+                cand = (M[i][j], i, j)
+                if best is None or cand < best:
+                    best = cand
+        return best[0], (best[1], best[2])
+
+    def scan_max_rev(r1, c1, r2, c2):
+        best = None
+        for i in range(r2, r1 - 1, -1):
+            for j in range(c2, c1 - 1, -1):
+                cand = (-M[i][j], i, j)
+                if best is None or cand < best:
+                    best = cand
+        return -best[0], (best[1], best[2])
+
+    for r1 in range(3):
+        for c1 in range(3):
+            for r2 in range(r1, 3):
+                for c2 in range(c1, 3):
+                    _, mn_cell = eng.rect_min_with_cell(r1, c1, r2, c2)
+                    _, mx_cell = eng.rect_max_with_cell(r1, c1, r2, c2)
+                    assert mn_cell == scan_min_rev(r1, c1, r2, c2)[1]
+                    assert mx_cell == scan_max_rev(r1, c1, r2, c2)[1]
+
+    # ============================================================
+    # Feature disabled: original behavior fully preserved
+    # ============================================================
+    eng_off = RectangleStatisticsEngine(M)
+    s, mn, mx, summary = eng_off.query_with_summary(0, 0, 2, 2)
+    assert (s, mn, mx) == (27, 1, 5)
+    assert summary is None
+    assert eng_off.last_operation_summary is None
+
+    # Feature enabled: summary populated and deterministic.
+    s1, mn1, mx1, sum1 = eng.query_with_summary(0, 0, 2, 2)
+    s2, mn2, mx2, sum2 = eng.query_with_summary(0, 0, 2, 2)
+    assert (s1, mn1, mx1) == (s2, mn2, mx2) == (27, 1, 5)
+    assert sum1 == sum2
+    assert sum1 == {
+        "preprocessing_decisions": 9,
+        "sum_decisions": 4,
+        "min_decisions": 9,
+        "max_decisions": 9,
+        "query_decisions": 22,
+        "total_decisions": 31,
+    }
+
+    # 1x1 summary on the 3x3: area=1 -> query_decisions = 6, total = 15
+    _, _, _, tiny_summary = eng.query_with_summary(1, 1, 1, 1)
+    assert tiny_summary["min_decisions"] == 1
+    assert tiny_summary["max_decisions"] == 1
+    assert tiny_summary["query_decisions"] == 6
+    assert tiny_summary["total_decisions"] == 15
+
+    print("All checks passed: original outputs and tie-breaking preserved; "
+          "smallest-input, empty-structure, and disconnected/degenerate "
+          "cases handled deterministically.")
+
+
+if __name__ == "__main__":
+    _demo()

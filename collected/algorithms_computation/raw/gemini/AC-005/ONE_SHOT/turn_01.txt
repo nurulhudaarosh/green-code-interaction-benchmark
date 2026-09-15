@@ -1,0 +1,99 @@
+### Problem Analysis & Constraints
+
+The goal is to find a strictly increasing subsequence of maximum length from a given integer sequence $A$ of length $N$. If there are multiple strictly increasing subsequences that attain the maximum length, we must break ties by selecting the one whose sequence of **original 0-based indices** is **lexicographically smallest**.
+
+* **Key Constraints:**
+* **Strictly Increasing Subsequence:** For indices $i_1 < i_2 < \dots < i_k$, we must have $A[i_1] < A[i_2] < \dots < A[i_k]$.
+* **Tie-Breaking:** Among all valid subsequences of the maximum length $L$, select the index sequence $(i_1, i_2, \dots, i_L)$ that is lexicographically smallest.
+
+
+* **Output:** The list of values corresponding to the chosen strictly increasing subsequence (or the index sequence, depending on representation; here we return the values of the optimal subsequence).
+
+---
+
+### Algorithm Description
+
+We use a quadratic dynamic programming approach, $O(N^2)$ time and $O(N)$ space:
+
+1. **State Definition:** Let $\text{dp}[i]$ be the length of the longest strictly increasing subsequence ending at index $i$. Let $\text{parent}[i]$ store the predecessor index of $i$ in the optimal subsequence ending at $i$.
+2. **Base Case:** For every index $i$, initialize $\text{dp}[i] = 1$ and $\text{parent}[i] = -1$.
+3. **Transitions:** For each $i$ from $0$ to $N-1$, iterate through previous indices $j$ from $0$ to $i-1$:
+* If $A[j] < A[i]$:
+* If $\text{dp}[j] + 1 > \text{dp}[i]$, update $\text{dp}[i] = \text{dp}[j] + 1$ and set $\text{parent}[i] = j$.
+* If $\text{dp}[j] + 1 == \text{dp}[i]$, to ensure the lexicographically smallest index sequence, we compare the sub-path ending at $j$ with the sub-path ending at $\text{parent}[i]$. We update $\text{parent}[i] = j$ if the index sequence leading up to $j$ is lexicographically smaller than the one leading to $\text{parent}[i]$.
+
+
+
+
+4. **Global Selection:** Find the index $k$ that maximizes $\text{dp}[k]$. If there are ties for the maximum DP value, select the index $k$ whose constructed index sequence is lexicographically smallest.
+5. **Reconstruction:** Reconstruct the sequence by following the `parent` pointers backward from the selected starting index $k$, then reverse the result.
+
+---
+
+### Python Implementation
+
+```python
+def lexicographically_smallest_lis(arr: list[int]) -> list[int]:
+    """
+    Finds the strictly increasing subsequence of maximum length from `arr`.
+    Breaks ties by returning the subsequence corresponding to the 
+    lexicographically smallest 0-based index sequence.
+    """
+    n = len(arr)
+    if n == 0:
+        return []
+
+    dp = [1] * n
+    parent = [-1] * n
+
+    # Helper function to reconstruct index path ending at index `idx`
+    def get_index_path(idx: int) -> list[int]:
+        path = []
+        curr = idx
+        while curr != -1:
+            path.append(curr)
+            curr = parent[curr]
+        return path[::-1]
+
+    # Populate DP and parent tables
+    for i in range(n):
+        for j in range(i):
+            if arr[j] < arr[i]:
+                cand_len = dp[j] + 1
+                if cand_len > dp[i]:
+                    dp[i] = cand_len
+                    parent[i] = j
+                elif cand_len == dp[i]:
+                    # Tie-breaking for predecessor choice at index i:
+                    # Choose j if its index path is lexicographically smaller
+                    path_j = get_index_path(j)
+                    path_prev = get_index_path(parent[i])
+                    if path_j < path_prev:
+                        parent[i] = j
+
+    # Find the maximum LIS length
+    max_len = max(dp)
+
+    # Gather all candidate ending indices that achieve max_len
+    best_end_idx = -1
+    best_path = None
+
+    for i in range(n):
+        if dp[i] == max_len:
+            path = get_index_path(i)
+            if best_path is None or path < best_path:
+                best_path = path
+                best_end_idx = i
+
+    # Reconstruct and return the element values from the best index path
+    return [arr[i] for i in best_path]
+
+
+# Example Usage & Verification
+if __name__ == "__main__":
+    test_arr = [3, 1, 4, 1, 5, 9, 2, 6, 5]
+    result = lexicographically_smallest_lis(test_arr)
+    print("Input Array:", test_arr)
+    print("Lexicographically Smallest LIS:", result)
+
+```

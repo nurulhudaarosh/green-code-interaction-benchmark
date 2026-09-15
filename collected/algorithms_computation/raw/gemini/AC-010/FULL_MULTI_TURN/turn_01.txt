@@ -1,0 +1,92 @@
+### Problem Identification & Analysis
+
+The problem asks for the optimal solution to the **Matrix Chain Multiplication** problem using Interval Dynamic Programming. Given a sequence of dimensions $p_0, p_1, \dots, p_n$ representing a chain of $n$ matrices where matrix $A_i$ has dimensions $p_{i-1} \times p_i$:
+
+1. Determine the minimum number of scalar multiplications required to multiply the chain $A_1 A_2 \dots A_n$.
+2. Construct the optimal parenthesization string.
+3. Apply a deterministic tie-breaking rule: when multiple split points $k$ yield the same minimum cost for a subproblem $A_{i..j}$, choose the **smallest split index $k$**.
+
+### Constraints & Output Requirements
+
+* **Input:** A list/sequence of dimensions `p` of length $n+1$ representing $n$ matrices.
+* **Tie-Breaking Constraint:** For a subchain from matrix $i$ to $j$, if split $k$ ($i \le k < j$) matches the minimal cost, select the lowest such $k$.
+* **Required Output:**
+* Minimum multiplication cost (an integer).
+* A string representing the optimal parenthesization (e.g., `"((A1A2)A3)"` or `"((A1 x A2) x A3)"`).
+
+
+
+### Algorithm
+
+We use **Interval Dynamic Programming**:
+
+1. Define $m[i][j]$ as the minimum scalar multiplications needed to compute $A_i \dots A_j$.
+2. Define $s[i][j]$ to store the optimal split point $k$ for subchain $i \dots j$.
+3. Base Cases: $m[i][i] = 0$ for all $1 \le i \le n$.
+4. Recurrence: For subchain length $l$ from $2$ to $n$, and start index $i$ from $1$ to $n - l + 1$ (where $j = i + l - 1$):
+
+$$m[i][j] = \min_{i \le k < j} \{ m[i][k] + m[k+1][j] + p_{i-1} \cdot p_k \cdot p_j \}$$
+
+
+
+We iterate $k$ from $i$ to $j - 1$ sequentially. Strict inequality (`<`) ensures that if an equal cost is encountered, the earlier (smaller) split index $k$ is preserved.
+5. Reconstruct the parenthesized string recursively using the split table $s$.
+
+### Python Implementation
+
+```python
+def matrix_chain_order(p):
+    """
+    Computes the minimum scalar multiplication cost and optimal parenthesization
+    for a chain of matrices given their dimensions p.
+    
+    Tie-breaking rule: Equal-cost choices pick the smallest split index k.
+    """
+    n = len(p) - 1
+    if n <= 0:
+        return 0, ""
+    if n == 1:
+        return 0, "A1"
+
+    # m[i][j]: minimum cost to multiply A_i...A_j
+    # s[i][j]: optimal split point k for A_i...A_j
+    # 1-based indexing used for matrices A_1 to A_n
+    m = [[0] * (n + 1) for _ in range(n + 1)]
+    s = [[0] * (n + 1) for _ in range(n + 1)]
+
+    # l is the chain length
+    for l in range(2, n + 1):
+        for i in range(1, n - l + 2):
+            j = i + l - 1
+            m[i][j] = float('inf')
+            
+            # Iterate k from i to j-1 (ensures smallest k is picked on ties)
+            for k in range(i, j):
+                cost = m[i][k] + m[k + 1][j] + p[i - 1] * p[k] * p[j]
+                if cost < m[i][j]:  # Strict inequality enforces smallest split index tie-breaker
+                    m[i][j] = cost
+                    s[i][j] = k
+
+    def build_parentheses(i, j):
+        if i == j:
+            return f"A{i}"
+        k = s[i][j]
+        left = build_parentheses(i, k)
+        right = build_parentheses(k + 1, j)
+        return f"({left}{right})"
+
+    min_cost = m[1][n]
+    parenthesization = build_parentheses(1, n)
+    
+    return min_cost, parenthesization
+
+
+# Example usage:
+if __name__ == "__main__":
+    # Example dimensions: Matrix A1 (10x30), A2 (30x5), A3 (5x60)
+    dimensions = [10, 30, 5, 60]
+    cost, structure = matrix_chain_order(dimensions)
+    print(f"Minimum Cost: {cost}")
+    print(f"Optimal Parenthesization: {structure}")
+
+```

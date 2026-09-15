@@ -1,0 +1,347 @@
+## Restated Problem — Single-Source Route Analyzer
+
+Given a directed graph with `n` vertices, non-negative edge weights, and a source vertex, compute the shortest distance from the source to every vertex.
+
+The implementation must:
+
+* Use an **adjacency list**.
+* Use **Dijkstra's algorithm with a binary heap** (`heapq`).
+* Return `-1` for unreachable vertices.
+* Preserve deterministic tie handling.
+* Return the original distance-list output when `operation_summary` is not requested.
+* When `operation_summary` is explicitly requested, additionally return the deterministic `operation_summary` field.
+* Handle valid **boundary-value inputs** without changing any other requirements.
+
+### Boundary cases explicitly handled
+
+The implementation below tests:
+
+1. **Smallest valid graph** — one vertex and no edges.
+2. **Maximum-sized vertex identifiers** — edges involving `n - 1`.
+3. **Maximum permitted edge weight** — ensuring large distances are handled safely.
+4. **Large accumulated shortest-path distance** — multiple maximum-weight edges.
+5. **Boundary source** — source is the first/last valid vertex.
+6. **Equal shortest paths at boundary vertices** — deterministic tie handling remains unchanged.
+7. **Unreachable boundary vertex** — still returns `-1`.
+
+```python
+import heapq
+import unittest
+
+
+def single_source_route_analyzer(
+    n,
+    edges,
+    source,
+    include_operation_summary=False
+):
+    """
+    Compute shortest distances from source to every vertex.
+
+    Vertices are numbered 0 through n - 1.
+    Edge weights must be non-negative.
+
+    Original behavior:
+        returns a list of distances.
+
+    Optional behavior:
+        when include_operation_summary=True, returns:
+        {
+            "distances": [...],
+            "operation_summary": {
+                "major_operations": <count>
+            }
+        }
+
+    Deterministic tie handling:
+        heap entries are (distance, vertex), so equal-distance
+        vertices are processed in increasing vertex-ID order.
+    """
+
+    if n < 1:
+        raise ValueError("n must be at least 1")
+
+    if not 0 <= source < n:
+        raise ValueError("source must be a valid vertex")
+
+    graph = [[] for _ in range(n)]
+
+    for u, v, weight in edges:
+        if not 0 <= u < n or not 0 <= v < n:
+            raise ValueError("edge contains an invalid vertex")
+
+        if weight < 0:
+            raise ValueError("Dijkstra requires non-negative edge weights")
+
+        graph[u].append((v, weight))
+
+    # Deterministic adjacency traversal.
+    for neighbors in graph:
+        neighbors.sort(key=lambda item: (item[0], item[1]))
+
+    INF = float("inf")
+    dist = [INF] * n
+    dist[source] = 0
+
+    # Binary heap with vertex ID as deterministic tie-breaker.
+    heap = [(0, source)]
+
+    major_operations = 0
+
+    while heap:
+        current_dist, u = heapq.heappop(heap)
+
+        # Ignore stale heap entries.
+        if current_dist != dist[u]:
+            continue
+
+        for v, weight in graph[u]:
+            # One major computational decision:
+            # evaluate whether this edge gives a shorter route.
+            major_operations += 1
+
+            new_dist = current_dist + weight
+
+            if new_dist < dist[v]:
+                dist[v] = new_dist
+                heapq.heappush(heap, (new_dist, v))
+
+    distances = [
+        -1 if distance == INF else distance
+        for distance in dist
+    ]
+
+    # Preserve the exact original output when the optional
+    # feature is not requested.
+    if not include_operation_summary:
+        return distances
+
+    return {
+        "distances": distances,
+        "operation_summary": {
+            "major_operations": major_operations
+        }
+    }
+
+
+class TestSingleSourceRouteAnalyzer(unittest.TestCase):
+
+    def test_smallest_valid_input(self):
+        """
+        Boundary: smallest valid graph.
+        One vertex, no edges, source is that vertex.
+        """
+        self.assertEqual(
+            single_source_route_analyzer(1, [], 0),
+            [0]
+        )
+
+    def test_smallest_input_with_operation_summary(self):
+        """
+        Same boundary case with the optional feature enabled.
+        """
+        self.assertEqual(
+            single_source_route_analyzer(
+                1,
+                [],
+                0,
+                include_operation_summary=True
+            ),
+            {
+                "distances": [0],
+                "operation_summary": {
+                    "major_operations": 0
+                }
+            }
+        )
+
+    def test_last_vertex_boundary(self):
+        """
+        Boundary vertex n-1 is reachable from source 0.
+        """
+        n = 5
+        edges = [
+            (0, 4, 7)
+        ]
+
+        self.assertEqual(
+            single_source_route_analyzer(n, edges, 0),
+            [0, -1, -1, -1, 7]
+        )
+
+    def test_last_vertex_as_source(self):
+        """
+        Boundary source: source == n-1.
+        """
+        n = 5
+        edges = [
+            (4, 0, 3)
+        ]
+
+        self.assertEqual(
+            single_source_route_analyzer(n, edges, 4),
+            [3, -1, -1, -1, 0]
+        )
+
+    def test_maximum_edge_weight(self):
+        """
+        Boundary edge weight.
+
+        A single edge with the largest supported integer-like
+        weight should remain exactly representable.
+        """
+        max_weight = 10**18
+
+        edges = [
+            (0, 1, max_weight)
+        ]
+
+        self.assertEqual(
+            single_source_route_analyzer(2, edges, 0),
+            [0, max_weight]
+        )
+
+    def test_large_accumulated_distance(self):
+        """
+        Several boundary-weight edges accumulate into a very
+        large shortest-path distance.
+        """
+        max_weight = 10**18
+
+        edges = [
+            (0, 1, max_weight),
+            (1, 2, max_weight),
+            (2, 3, max_weight)
+        ]
+
+        self.assertEqual(
+            single_source_route_analyzer(4, edges, 0),
+            [
+                0,
+                max_weight,
+                2 * max_weight,
+                3 * max_weight
+            ]
+        )
+
+    def test_deterministic_equal_distance_tie(self):
+        """
+        Two routes to vertex 3 have exactly the same cost.
+
+        The heap uses (distance, vertex), so vertex 1 is processed
+        before vertex 2 when both have distance 1.
+
+        Equal distances do not overwrite an already established
+        distance because updates require strict improvement.
+        """
+        edges = [
+            (0, 2, 1),
+            (0, 1, 1),
+            (1, 3, 1),
+            (2, 3, 1)
+        ]
+
+        expected = [0, 1, 1, 2]
+
+        self.assertEqual(
+            single_source_route_analyzer(4, edges, 0),
+            expected
+        )
+
+        # Reversing input order must not change the result.
+        reversed_edges = list(reversed(edges))
+
+        self.assertEqual(
+            single_source_route_analyzer(4, reversed_edges, 0),
+            expected
+        )
+
+    def test_unreachable_boundary_vertex(self):
+        """
+        The final vertex n-1 is valid but unreachable.
+        It must remain -1.
+        """
+        n = 4
+        edges = [
+            (0, 1, 5),
+            (1, 2, 5)
+        ]
+
+        self.assertEqual(
+            single_source_route_analyzer(n, edges, 0),
+            [0, 5, 10, -1]
+        )
+
+    def test_zero_weight_boundary_edges(self):
+        """
+        Boundary non-negative weight: zero.
+        """
+        edges = [
+            (0, 1, 0),
+            (1, 2, 0),
+            (2, 3, 5)
+        ]
+
+        self.assertEqual(
+            single_source_route_analyzer(4, edges, 0),
+            [0, 0, 0, 5]
+        )
+
+    def test_boundary_graph_with_summary(self):
+        """
+        Large-weight boundary values while also exercising
+        operation_summary.
+        """
+        max_weight = 10**18
+
+        edges = [
+            (0, 1, max_weight),
+            (0, 2, max_weight),
+            (1, 3, max_weight),
+            (2, 3, max_weight)
+        ]
+
+        result = single_source_route_analyzer(
+            4,
+            edges,
+            0,
+            include_operation_summary=True
+        )
+
+        self.assertEqual(
+            result["distances"],
+            [
+                0,
+                max_weight,
+                max_weight,
+                2 * max_weight
+            ]
+        )
+
+        self.assertEqual(
+            result["operation_summary"]["major_operations"],
+            4
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+### Key preservation point
+
+The boundary handling does **not** alter the original algorithm or tie-breaking rule:
+
+```text
+heap entry = (distance, vertex)
+```
+
+Therefore, when two vertices have the same tentative distance, the smaller vertex ID is processed first. More importantly, equal-length routes use a **strict `<` relaxation**, so an equal-distance route does not arbitrarily replace the existing distance.
+
+The original output remains:
+
+```text
+[distance_0, distance_1, ..., distance_(n-1)]
+```
+
+unless `include_operation_summary=True`, in which case the additional summary is explicitly requested.

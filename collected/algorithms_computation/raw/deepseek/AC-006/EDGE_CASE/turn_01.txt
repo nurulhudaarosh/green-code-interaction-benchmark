@@ -1,0 +1,82 @@
+I’ll implement a Python solution that follows exactly the requirements.
+
+```python
+import sys
+
+def solve():
+    # Read grid dimensions
+    line = sys.stdin.readline().strip()
+    if not line:
+        return
+    R, C = map(int, line.split())
+    
+    # Read the grid
+    grid = []
+    for _ in range(R):
+        row = list(map(int, sys.stdin.readline().split()))
+        grid.append(row)
+    
+    # Read threshold
+    T = int(sys.stdin.readline().strip())
+    
+    visited = [[False] * C for _ in range(R)]
+    
+    best_size = 0
+    best_perimeter = 0
+    best_r = R
+    best_c = C
+    
+    # Directions: up, down, left, right
+    dirs = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+    
+    for start_r in range(R):
+        for start_c in range(C):
+            if visited[start_r][start_c] or grid[start_r][start_c] < T:
+                continue
+            
+            # BFS/DFS flood fill
+            stack = [(start_r, start_c)]
+            visited[start_r][start_c] = True
+            cells = []
+            min_r, min_c = start_r, start_c
+            
+            while stack:
+                r, c = stack.pop()
+                cells.append((r, c))
+                if r < min_r or (r == min_r and c < min_c):
+                    min_r, min_c = r, c
+                
+                for dr, dc in dirs:
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < R and 0 <= nc < C:
+                        if not visited[nr][nc] and grid[nr][nc] >= T:
+                            visited[nr][nc] = True
+                            stack.append((nr, nc))
+            
+            # Compute perimeter: count exposed sides
+            perimeter = 0
+            for r, c in cells:
+                for dr, dc in dirs:
+                    nr, nc = r + dr, c + dc
+                    if nr < 0 or nr >= R or nc < 0 or nc >= C or grid[nr][nc] < T:
+                        perimeter += 1
+            
+            size = len(cells)
+            
+            # Compare: larger size better; if tie, larger perimeter; if tie, smaller coordinate
+            if (size > best_size or
+                (size == best_size and perimeter > best_perimeter) or
+                (size == best_size and perimeter == best_perimeter and 
+                 (min_r < best_r or (min_r == best_r and min_c < best_c)))):
+                best_size = size
+                best_perimeter = perimeter
+                best_r, best_c = min_r, min_c
+    
+    # Output result
+    print(best_size)
+    print(best_perimeter)
+    print(best_r, best_c)
+
+if __name__ == "__main__":
+    solve()
+```

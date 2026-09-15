@@ -1,0 +1,417 @@
+"""
+Weighted Job Scheduling — Maximum Profit Non-Overlapping Jobs
+================================================================
+
+RESTATED PROBLEM
+-----------------
+We are given a collection of "jobs". Each job j has:
+    - an original index            idx(j)
+    - a start time                 start(j)
+    - a finish time                finish(j)   (start(j) < finish(j))
+    - a profit                     profit(j)   (real number)
+
+We must choose a subset S of the jobs such that:
+    (a) No two jobs in S properly overlap in time. Two jobs are
+        considered COMPATIBLE (allowed together) if one finishes at
+        or before the other starts — i.e. intervals are treated as
+        half-open [start, finish), so jobs that merely TOUCH at a
+        shared endpoint (A finishes exactly when B starts) are fine.
+    (b) The sum of profits of jobs in S is as large as possible.
+
+Among all subsets S achieving the maximum total profit, ties are
+broken deterministically: we prefer the subset whose sorted sequence
+of ORIGINAL indices is lexicographically smallest.
+
+KEY CONSTRAINTS
+----------------
+1. start(j) < finish(j) for every job.
+2. Selected jobs must be pairwise compatible under the touching-allowed
+   rule described above.
+3. Profit values may be int or float; ties in total profit must be
+   broken by lexicographically-smallest original-index sequence.
+4. Fully deterministic: standard library only, no randomness, no
+   network access, no external services, no human interaction.
+
+REQUIRED OUTPUT
+----------------
+- The maximum achievable total profit.
+- The list of original job indices chosen to realize that profit,
+  reported in ascending (deterministic) order.
+
+ALGORITHM
+---------
+1. Sort jobs by finish time (ties broken by original index, so the
+   sort itself is deterministic regardless of input order).
+2. For each job i (0-based position in the finish-sorted list),
+   binary-search among the finish times of jobs before it for the
+   latest job whose finish time is <= this job's start time (its
+   "compatible predecessor"). This is where touching endpoints are
+   explicitly treated as compatible (`bisect_right`, non-strict `<=`).
+3. Dynamic programming over the finish-time-sorted sequence:
+       dp[i] = max( dp[i-1],  profit[i] + dp[predecessor[i] + 1] )
+   dp[i] = best achievable profit using only the first i jobs
+   (in sorted order).
+4. Reconstruct the optimal subset with an ITERATIVE (non-recursive)
+   forward pass that mirrors the DP recurrence exactly, so it scales
+   to large n without hitting Python's recursion limit — this matters
+   for the worst-case chain structures tested below. Whenever the
+   "include" and "exclude" choices tie in profit, we deterministically
+   keep whichever produces the lexicographically smaller sequence of
+   original indices.
+
+COMPLEXITY
+----------
+- Sorting:                    O(n log n)
+- Binary-search predecessors: O(n log n)
+- DP fill:                    O(n)
+- Reconstruction:              O(n) states, each doing O(n) tuple
+                                merge/compare work in the worst case
+                                (dense tie structures) -> O(n^2) worst
+                                case for reconstruction only; the
+                                profit computation itself remains
+                                O(n log n).
+"""
+
+import sys
+import time
+from bisect import bisect_right
+from dataclasses import dataclass
+from typing import List, Tuple
+
+
+@dataclass(frozen=True)
+class Job:
+    index: int      # original index
+    start: float
+    finish: float
+    profit: float
+
+
+def _find_predecessor(finish_times_prefix: List[float], start: float) -> int:
+    """
+    Binary search for the index (0-based, within finish_times_prefix)
+    of the last job whose finish time is <= start (touching endpoints
+    count as compatible). Returns -1 if none exists.
+    """
+    pos = bisect_right(finish_times_prefix, start)
+    return pos - 1
+
+
+def solve_job_scheduling(jobs: List[Tuple[int, float, float, float]]):
+    """
+    jobs: list of (original_index, start, finish, profit)
+
+    Returns (max_profit, selected_original_indices_sorted)
+    where selected_original_indices_sorted is the lexicographically
+    smallest sequence of original indices among all subsets achieving
+    max_profit and satisfying the non-overlap (touching-allowed)
+    constraint.
+    """
+    if not jobs:
+        return 0, []
+
+    job_objs = [Job(idx, s, f, p) for (idx, s, f, p) in jobs]
+
+    # Sort by finish time; break ties by original index for determinism,
+    # regardless of the order jobs were supplied in.
+    job_objs.sort(key=lambda j: (j.finish, j.index))
+
+    n = len(job_objs)
+    finish_times = [j.finish for j in job_objs]
+    starts = [j.start for j in job_objs]
+    profits = [j.profit for j in job_objs]
+
+    # predecessor[i] = last index k < i (0-based, sorted order) such
+    # that finish_times[k] <= starts[i].
+    predecessor = [_find_predecessor(finish_times[:i], starts[i]) for i in range(n)]
+
+    # dp[i] = max profit achievable using the first i jobs (sorted order)
+    dp = [0.0] * (n + 1)
+    for i in range(n):
+        exclude_profit = dp[i]
+        pred = predecessor[i]
+        include_profit = profits[i] + (dp[pred + 1] if pred >= 0 else 0.0)
+        dp[i + 1] = max(include_profit, exclude_profit)
+
+    max_profit = dp[n]
+
+    # ---- Iterative reconstruction (no recursion -> safe for large n) ----
+    # memo[i] = (profit, sorted_tuple_of_original_indices) matching dp[i].
+    # Dependencies (i-1) and (pred+1) are always < i, so a simple forward
+    # loop suffices; no call stack is used, avoiding recursion-limit
+    # issues on deep/adversarial worst-case chains.
+    memo: List[Tuple[float, Tuple[int, ...]]] = [(0.0, tuple())] * (n + 1)
+
+    for i in range(1, n + 1):
+        idx0 = i - 1
+        exclude_profit_full, exclude_seq = memo[i - 1]
+
+        pred = predecessor[idx0]
+        pred_key = pred + 1 if pred >= 0 else 0
+        pred_profit, pred_seq = memo[pred_key]
+        include_profit_full = profits[idx0] + pred_profit
+        include_seq = tuple(sorted(pred_seq + (job_objs[idx0].index,)))
+
+        if include_profit_full > exclude_profit_full:
+            result = (include_profit_full, include_seq)
+        elif include_profit_full < exclude_profit_full:
+            result = (exclude_profit_full, exclude_seq)
+        else:
+            # Equal profit: deterministically prefer the lexicographically
+            # smaller sequence of original indices.
+            result = (exclude_profit_full, min(include_seq, exclude_seq))
+
+        memo[i] = result
+
+    final_profit, final_seq = memo[n]
+    assert abs(final_profit - max_profit) < 1e-9, "Profit mismatch during reconstruction"
+
+    return max_profit, list(final_seq)
+
+
+def _format_profit(p: float) -> str:
+    if float(p).is_integer():
+        return str(int(p))
+    return str(p)
+
+
+# ======================================================================
+# Deterministic worst-case-like structure generators (no randomness)
+# ======================================================================
+
+def _gen_long_touching_chain(n: int):
+    """
+    Worst case for predecessor chaining: n jobs that all touch
+    end-to-end (job k finishes exactly when job k+1 starts). Every job
+    is compatible with every other job in sequence, so the optimal
+    solution must take ALL of them. This stresses the binary-search
+    predecessor lookup at every position (each predecessor is exactly
+    the immediately preceding job) and forces the DP to chain through
+    the full length n.
+    """
+    jobs = []
+    for i in range(n):
+        jobs.append((i, i, i + 1, 1))  # profit 1 each, touching endpoints
+    return jobs
+
+
+def _gen_all_overlapping_equal_profit(n: int):
+    """
+    Worst case for TIE-BREAKING: n jobs that all share the exact same
+    interval [0, 1) and the same profit. None are compatible with any
+    other, so exactly one can be chosen, and every single-job choice
+    yields identical profit. This maximizes the number of profit ties
+    the reconstruction must resolve, and the correct deterministic
+    answer must be the smallest original index (job 0).
+    """
+    jobs = []
+    for i in range(n):
+        jobs.append((i, 0, 1, 100))  # identical interval & profit
+    return jobs
+
+
+def _gen_alternating_include_exclude(n: int):
+    """
+    Worst case for DP branching decisions: pairs of overlapping jobs
+    with carefully staggered profits so that, at many points, the
+    "include" and "exclude" choices are genuinely competitive (forcing
+    real max() comparisons rather than one option trivially dominating).
+    Structure: for each pair index k, job (2k) spans [2k, 2k+2) with
+    profit 3, and job (2k+1) spans [2k+1, 2k+3) with profit 3 as well —
+    overlapping neighbors of equal profit, chained across the whole
+    range, so many local ties must be broken consistently.
+    """
+    jobs = []
+    idx = 0
+    for k in range(n):
+        jobs.append((idx, 2 * k, 2 * k + 2, 3))
+        idx += 1
+        jobs.append((idx, 2 * k + 1, 2 * k + 3, 3))
+        idx += 1
+    return jobs
+
+
+def _gen_reverse_order_non_overlapping(n: int):
+    """
+    Worst case for input ORDER independence: n mutually non-overlapping
+    jobs, but supplied in reverse original-index order interleaved with
+    reverse time order, to ensure sorting-by-finish-time correctly
+    normalizes everything regardless of how the caller passed the data.
+    Every job is disjoint, so the optimal answer is simply "take all",
+    with total profit = sum of all profits, selected = [0..n-1].
+    """
+    jobs = []
+    for i in range(n):
+        start = i * 10
+        finish = start + 5
+        profit = i + 1
+        jobs.append((i, start, finish, profit))
+    # Reverse the list order (but keep original_index fields correct)
+    # to simulate adversarial / non-finish-sorted input.
+    return list(reversed(jobs))
+
+
+def _gen_large_disjoint_stress(n: int):
+    """
+    Worst case for algorithmic COMPLEXITY (O(n log n) target): a large
+    number of pairwise disjoint jobs with strictly increasing, widely
+    spaced start/finish times. This exercises the sort and the O(log n)
+    binary search at scale without being dominated by tie-handling
+    overhead in reconstruction (each job's predecessor is unambiguous).
+    """
+    jobs = []
+    for i in range(n):
+        start = i * 3
+        finish = start + 2
+        profit = (i % 7) + 1  # deterministic varying profit, no randomness
+        jobs.append((i, start, finish, profit))
+    return jobs
+
+
+# ======================================================================
+# Tests
+# ======================================================================
+
+def _run_case(title: str, jobs, expected_profit=None, expected_selected=None,
+              time_limit_seconds=None):
+    print(f"\n--- {title} ---")
+    t0 = time.perf_counter()
+    max_profit, selected = solve_job_scheduling(jobs)
+    elapsed = time.perf_counter() - t0
+
+    print(f"  n jobs           : {len(jobs)}")
+    print(f"  max profit        : {_format_profit(max_profit)}")
+    n_show = selected if len(selected) <= 20 else (selected[:10] + ["..."] + selected[-10:])
+    print(f"  selected indices  : {n_show}")
+    print(f"  elapsed (seconds) : {elapsed:.4f}")
+
+    if expected_profit is not None:
+        assert abs(max_profit - expected_profit) < 1e-9, (
+            f"FAILED: expected profit {expected_profit}, got {max_profit}"
+        )
+        print(f"  [OK] profit matches expected {_format_profit(expected_profit)}")
+
+    if expected_selected is not None:
+        assert selected == expected_selected, (
+            f"FAILED: expected selection {expected_selected}, got {selected}"
+        )
+        print("  [OK] selection matches expected sequence")
+
+    if time_limit_seconds is not None:
+        assert elapsed <= time_limit_seconds, (
+            f"FAILED: exceeded time budget of {time_limit_seconds}s (took {elapsed:.4f}s)"
+        )
+        print(f"  [OK] completed within {time_limit_seconds}s budget")
+
+    return max_profit, selected
+
+
+def main():
+    print("Input jobs (index, start, finish, profit) — basic example:")
+    basic_jobs = [
+        (0, 1, 3, 50),
+        (1, 3, 5, 20),   # touches job 0 at time 3 -> compatible
+        (2, 0, 6, 100),
+        (3, 5, 7, 30),   # touches job 1 at time 5 -> compatible
+        (4, 6, 8, 40),   # touches job 3 at time 6 -> compatible
+        (5, 8, 9, 10),
+    ]
+    for j in basic_jobs:
+        print(f"  {j}")
+
+    max_profit, selected = solve_job_scheduling(basic_jobs)
+    print("\nResult:")
+    print(f"  Maximum total profit: {_format_profit(max_profit)}")
+    print(f"  Selected original job indices (sorted): {selected}")
+    print("\nSelected jobs detail:")
+    job_lookup = {j[0]: j for j in basic_jobs}
+    for idx in selected:
+        print(f"  {job_lookup[idx]}")
+
+    print("\n================ Standard edge-case tests ================")
+
+    _run_case(
+        "Tie test (small): overlap vs two touching jobs, equal total profit",
+        [
+            (0, 0, 2, 10),
+            (1, 2, 4, 10),   # touches job0, compatible; combined profit 20
+            (2, 0, 4, 20),   # overlaps both; same total profit as 0+1
+        ],
+        expected_profit=20,
+        expected_selected=[0, 1],  # lexicographically smallest among {[0,1], [2]}
+    )
+
+    _run_case("Empty input", [], expected_profit=0, expected_selected=[])
+
+    _run_case(
+        "Single job",
+        [(0, 1, 2, 99)],
+        expected_profit=99,
+        expected_selected=[0],
+    )
+
+    print("\n================ Worst-case-like structural tests ================")
+
+    # 1) Long touching chain: must select ALL jobs, profit = n.
+    n1 = 500
+    chain_jobs = _gen_long_touching_chain(n1)
+    _run_case(
+        f"Long touching chain (n={n1}); expect all jobs selected",
+        chain_jobs,
+        expected_profit=n1,
+        expected_selected=list(range(n1)),
+    )
+
+    # 2) Dense tie-breaking stress: identical overlapping jobs, must pick index 0.
+    n2 = 300
+    tie_jobs = _gen_all_overlapping_equal_profit(n2)
+    _run_case(
+        f"All-overlapping equal-profit jobs (n={n2}); expect smallest index only",
+        tie_jobs,
+        expected_profit=100,
+        expected_selected=[0],
+    )
+
+    # 3) Alternating include/exclude branching stress.
+    n3 = 200
+    alt_jobs = _gen_alternating_include_exclude(n3)
+    alt_profit, alt_selected = _run_case(
+        f"Alternating overlapping pairs (n={2 * n3} jobs); DP branch stress",
+        alt_jobs,
+    )
+    # Sanity: no two selected jobs may overlap.
+    alt_lookup = {j[0]: (j[1], j[2]) for j in alt_jobs}
+    intervals = sorted(alt_lookup[i] for i in alt_selected)
+    for a, b in zip(intervals, intervals[1:]):
+        assert a[1] <= b[0], f"FAILED: overlap detected between {a} and {b}"
+    print("  [OK] verified no overlaps among selected jobs")
+
+    # 4) Reverse/adversarial input ordering: must normalize via sort.
+    n4 = 250
+    rev_jobs = _gen_reverse_order_non_overlapping(n4)
+    expected_total = sum(j[3] for j in rev_jobs)
+    _run_case(
+        f"Reverse-order disjoint jobs (n={n4}); order-independence check",
+        rev_jobs,
+        expected_profit=expected_total,
+        expected_selected=list(range(n4)),
+    )
+
+    # 5) Large-scale disjoint stress test for O(n log n) scaling behavior.
+    n5 = 5000
+    large_jobs = _gen_large_disjoint_stress(n5)
+    expected_total_5 = sum(j[3] for j in large_jobs)
+    _run_case(
+        f"Large disjoint stress test (n={n5}); complexity/scale check",
+        large_jobs,
+        expected_profit=expected_total_5,
+        expected_selected=list(range(n5)),
+        time_limit_seconds=10.0,
+    )
+
+    print("\nAll tests passed.")
+
+
+if __name__ == "__main__":
+    sys.setrecursionlimit(10000)  # defensive only; reconstruction is now iterative
+    main()

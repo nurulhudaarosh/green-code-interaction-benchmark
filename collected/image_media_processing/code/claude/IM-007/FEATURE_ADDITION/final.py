@@ -1,0 +1,69 @@
+from PIL import Image
+from itertools import combinations
+
+def compute_ahash(image_path, hash_size=8):
+    """
+    Compute the average hash (aHash) of an image.
+
+    Steps:
+      1. Convert to grayscale
+      2. Resize to (hash_size x hash_size)
+      3. Compute the mean pixel value
+      4. Set each bit to 1 if the pixel is >= mean, else 0
+
+    Returns an integer representing the hash bits.
+    """
+    image = Image.open(image_path).convert("L")  # grayscale
+    image = image.resize((hash_size, hash_size), Image.LANCZOS)
+
+    pixels = list(image.getdata())
+    avg = sum(pixels) / len(pixels)
+
+    bits = 0
+    for pixel in pixels:
+        bits <<= 1
+        if pixel >= avg:
+            bits |= 1
+
+    return bits
+
+
+def hamming_distance(hash_a, hash_b):
+    """
+    Compute the Hamming distance between two hashes (as integers).
+    Lower distance = more similar images.
+    """
+    return bin(hash_a ^ hash_b).count("1")
+
+
+def find_similar_pairs(image_paths, threshold, hash_size=8):
+    """
+    Find all pairs of images whose aHash Hamming distance is <= threshold.
+
+    Args:
+        image_paths: list of file paths to images.
+        threshold: maximum Hamming distance to consider two images "similar".
+        hash_size: hash grid size, passed through to compute_ahash.
+
+    Returns:
+        A list of tuples: (path_a, path_b, distance), sorted by ascending
+        distance. Images that fail to hash (e.g. unreadable/corrupt files)
+        are skipped with a printed warning rather than raising.
+    """
+    hashes = {}
+    for path in image_paths:
+        try:
+            hashes[path] = compute_ahash(path, hash_size=hash_size)
+        except Exception as e:
+            print(f"Warning: could not hash '{path}': {e}")
+
+    valid_paths = list(hashes.keys())
+
+    similar_pairs = []
+    for path_a, path_b in combinations(valid_paths, 2):
+        distance = hamming_distance(hashes[path_a], hashes[path_b])
+        if distance <= threshold:
+            similar_pairs.append((path_a, path_b, distance))
+
+    similar_pairs.sort(key=lambda x: x[2])
+    return similar_pairs

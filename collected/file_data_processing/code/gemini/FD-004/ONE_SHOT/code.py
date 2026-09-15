@@ -1,0 +1,69 @@
+import csv
+from collections import defaultdict
+from typing import Dict, Tuple
+
+def load_and_aggregate_csv(file_path: str) -> Dict[Tuple[str, str], float]:
+    """
+    Reads a CSV snapshot and sums quantities for duplicate (warehouse, product) keys.
+    Expected CSV headers: warehouse, product, quantity
+    """
+    aggregated_data = defaultdict(float)
+    with open(file_path, mode='r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            warehouse = row['warehouse'].strip()
+            product = row['product'].strip()
+            quantity = float(row['quantity'])
+            aggregated_data[(warehouse, product)] += quantity
+    return aggregated_data
+
+def reconcile_inventory(old_csv_path: str, new_csv_path: str, output_csv_path: str) -> None:
+    """
+    Compares old and new CSV inventory snapshots, classifies changes,
+    calculates delta (new - old), and exports a deterministically sorted output CSV.
+    """
+    old_data = load_and_aggregate_csv(old_csv_path)
+    new_data = load_and_aggregate_csv(new_csv_path)
+    
+    all_keys = set(old_data.keys()).union(set(new_data.keys()))
+    reconciled_records = []
+
+    for warehouse, product in all_keys:
+        old_qty = old_data.get((warehouse, product), 0.0)
+        new_qty = new_data.get((warehouse, product), 0.0)
+        
+        in_old = (warehouse, product) in old_data
+        in_new = (warehouse, product) in new_data
+        
+        if in_new and not in_old:
+            status = "ADDED"
+        elif in_old and not in_new:
+            status = "REMOVED"
+        elif old_qty != new_qty:
+            status = "CHANGED"
+        else:
+            status = "UNCHANGED"
+            
+        qty_change = new_qty - old_qty
+        
+        reconciled_records.append({
+            "warehouse": warehouse,
+            "product": product,
+            "old_quantity": old_qty,
+            "new_quantity": new_qty,
+            "quantity_change": qty_change,
+            "status": status
+        })
+
+    # Deterministic sort: Primary key = warehouse, Secondary key = product
+    reconciled_records.sort(key=lambda x: (x["warehouse"], x["product"]))
+
+    # Write output to CSV
+    fieldnames = ["warehouse", "product", "old_quantity", "new_quantity", "quantity_change", "status"]
+    with open(output_csv_path, mode='w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(reconciled_records)
+
+if __name__ == "__main__":
+    reconcile_inventory("old_snapshot.csv", "new_snapshot.csv", "reconciled_inventory.csv")

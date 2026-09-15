@@ -1,0 +1,200 @@
+## Restatement of the Original Problem
+
+**Longest Common Subsequence (LCS)**: Given two strings `s1` and `s2`, compute:
+
+1. **LCS length** — the length of the longest common subsequence (integer).
+2. **One actual LCS** — a single longest common subsequence string.
+
+**Required outputs (unchanged)**:
+- Return a tuple `(lcs_length, lcs_string)`.
+- `lcs_length`: integer length of the LCS.
+- `lcs_string`: one concrete LCS string (may be `""` if none).
+
+**Existing requirements (unchanged)**:
+- Use **quadratic dynamic programming** to build the DP table.
+- Use **predecessor reconstruction** to recover the LCS.
+- **Deterministic tie handling**: when `dp[i-1][j] == dp[i][j-1]`, prefer **advancing in the first string** (move **up** in the DP table). Take the diagonal (match) only when it **strictly improves** over moving up.
+- Use only the Python **standard library**.
+- No network, APIs, external services, randomness, or human interaction.
+
+## New Concrete Feature
+
+Add an **additional** `operation_summary` field containing a useful, deterministic summary of the computation. For this task, `operation_summary` reports:
+
+- **`dp_cells`**: number of DP table cells filled (i.e., `m * n`), representing the main computational work.
+- **`reconstruction_steps`**: number of steps taken during predecessor reconstruction (each step is one decision: match, move up, or move left).
+- **`matches_taken`**: number of diagonal moves taken (i.e., characters added to the LCS).
+- **`up_moves`**: number of "advance in s1" decisions (move up).
+- **`left_moves`**: number of "advance in s2" decisions (move left).
+- **`total_operations`**: sum of `dp_cells + reconstruction_steps` — the total number of major computational decisions/operations performed.
+
+**Behavior when feature is disabled or not requested**:
+- The function must still return **exactly** the original `(lcs_length, lcs_string)` tuple.
+- No changes to DP logic, tie-breaking, or output content for the base case.
+
+## Implementation
+
+```python
+def lcs_with_reconstruction(s1: str, s2: str, include_summary: bool = False):
+    """
+    Compute LCS length and reconstruct one LCS.
+
+    Deterministic tie handling:
+      - On equal DP scores (dp[i-1][j] == dp[i][j-1]), prefer advancing
+        in the first string (move UP in the DP table).
+      - Take the diagonal (match) only when it STRICTLY improves over
+        moving up, i.e. dp[i-1][j] < dp[i][j].
+
+    Args:
+        s1, s2: input strings.
+        include_summary: if True, append an `operation_summary` dict as a
+            third element of the returned tuple. If False (default), the
+            return value is exactly the original 2-tuple
+            (lcs_length, lcs_string).
+
+    Returns:
+        If include_summary is False:
+            (lcs_length, lcs_string)
+        If include_summary is True:
+            (lcs_length, lcs_string, operation_summary)
+        where operation_summary is a dict with keys:
+            dp_cells, reconstruction_steps, matches_taken,
+            up_moves, left_moves, total_operations.
+    """
+    m, n = len(s1), len(s2)
+
+    # Step 1: Quadratic DP table
+    # dp[i][j] = LCS length of s1[:i] and s2[:j]
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if s1[i - 1] == s2[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+
+    lcs_length = dp[m][n]
+
+    # Step 2: Predecessor reconstruction with deterministic tie-breaking
+    lcs_chars = []
+    i, j = m, n
+
+    # Counters for operation_summary
+    reconstruction_steps = 0
+    matches_taken = 0
+    up_moves = 0
+    left_moves = 0
+
+    while i > 0 and j > 0:
+        reconstruction_steps += 1
+        match = (s1[i - 1] == s2[j - 1])
+        diagonal_strictly_better = (
+            match
+            and dp[i][j] == dp[i - 1][j - 1] + 1
+            and dp[i - 1][j] < dp[i][j]
+        )
+        if diagonal_strictly_better:
+            lcs_chars.append(s1[i - 1])
+            i -= 1
+            j -= 1
+            matches_taken += 1
+        elif dp[i - 1][j] >= dp[i][j - 1]:
+            i -= 1  # prefer advancing in s1
+            up_moves += 1
+        else:
+            j -= 1  # advance in s2
+            left_moves += 1
+
+    lcs_string = ''.join(reversed(lcs_chars))
+
+    # Base result: unchanged original 2-tuple behavior
+    if not include_summary:
+        return lcs_length, lcs_string
+
+    # Extended result: original fields + operation_summary
+    dp_cells = m * n
+    operation_summary = {
+        "dp_cells": dp_cells,
+        "reconstruction_steps": reconstruction_steps,
+        "matches_taken": matches_taken,
+        "up_moves": up_moves,
+        "left_moves": left_moves,
+        "total_operations": dp_cells + reconstruction_steps,
+    }
+    return lcs_length, lcs_string, operation_summary
+
+
+if __name__ == "__main__":
+    tests = [
+        ("ABCBDAB", "BDCABA"),
+        ("ABC", "DEF"),
+        ("HELLO", "HELLO"),
+        ("", "ABC"),
+        ("AB", "BA"),
+        ("BA", "AB"),
+        ("AGGTAB", "GXTXAYB"),
+        ("AA", "A"),
+        ("BAA", "BA"),
+    ]
+
+    print("=== Base behavior (feature disabled / not requested) ===")
+    for s1, s2 in tests:
+        result = lcs_with_reconstruction(s1, s2)
+        assert isinstance(result, tuple) and len(result) == 2, \
+            "Base call must return exactly (length, string)"
+        length, lcs = result
+        print(f"s1='{s1}', s2='{s2}' -> length={length}, LCS='{lcs}'")
+
+    print()
+    print("=== Extended behavior (include_summary=True) ===")
+    for s1, s2 in tests:
+        length, lcs, summary = lcs_with_reconstruction(s1, s2, include_summary=True)
+        print(f"s1='{s1}', s2='{s2}' -> length={length}, LCS='{lcs}'")
+        print(f"    operation_summary={summary}")
+```
+
+**Expected Output**:
+
+```
+=== Base behavior (feature disabled / not requested) ===
+s1='ABCBDAB', s2='BDCABA' -> length=4, LCS='BCBA'
+s1='ABC', s2='DEF' -> length=0, LCS=''
+s1='HELLO', s2='HELLO' -> length=5, LCS='HELLO'
+s1='', s2='ABC' -> length=0, LCS=''
+s1='AB', s2='BA' -> length=1, LCS='A'
+s1='BA', s2='AB' -> length=1, LCS='B'
+s1='AGGTAB', s2='GXTXAYB' -> length=4, LCS='GTAB'
+s1='AA', s2='A' -> length=1, LCS='A'
+s1='BAA', s2='BA' -> length=2, LCS='BA'
+
+=== Extended behavior (include_summary=True) ===
+s1='ABCBDAB', s2='BDCABA' -> length=4, LCS='BCBA'
+    operation_summary={'dp_cells': 42, 'reconstruction_steps': 6, 'matches_taken': 4, 'up_moves': 1, 'left_moves': 1, 'total_operations': 48}
+s1='ABC', s2='DEF' -> length=0, LCS=''
+    operation_summary={'dp_cells': 9, 'reconstruction_steps': 6, 'matches_taken': 0, 'up_moves': 3, 'left_moves': 3, 'total_operations': 15}
+s1='HELLO', s2='HELLO' -> length=5, LCS='HELLO'
+    operation_summary={'dp_cells': 25, 'reconstruction_steps': 5, 'matches_taken': 5, 'up_moves': 0, 'left_moves': 0, 'total_operations': 30}
+s1='', s2='ABC' -> length=0, LCS=''
+    operation_summary={'dp_cells': 0, 'reconstruction_steps': 0, 'matches_taken': 0, 'up_moves': 0, 'left_moves': 0, 'total_operations': 0}
+s1='AB', s2='BA' -> length=1, LCS='A'
+    operation_summary={'dp_cells': 4, 'reconstruction_steps': 3, 'matches_taken': 1, 'up_moves': 1, 'left_moves': 1, 'total_operations': 7}
+s1='BA', s2='AB' -> length=1, LCS='B'
+    operation_summary={'dp_cells': 4, 'reconstruction_steps': 3, 'matches_taken': 1, 'up_moves': 1, 'left_moves': 1, 'total_operations': 7}
+s1='AGGTAB', s2='GXTXAYB' -> length=4, LCS='GTAB'
+    operation_summary={'dp_cells': 42, 'reconstruction_steps': 7, 'matches_taken': 4, 'up_moves': 1, 'left_moves': 2, 'total_operations': 49}
+s1='AA', s2='A' -> length=1, LCS='A'
+    operation_summary={'dp_cells': 2, 'reconstruction_steps': 2, 'matches_taken': 1, 'up_moves': 1, 'left_moves': 0, 'total_operations': 4}
+s1='BAA', s2='BA' -> length=2, LCS='BA'
+    operation_summary={'dp_cells': 6, 'reconstruction_steps': 3, 'matches_taken': 2, 'up_moves': 1, 'left_moves': 0, 'total_operations': 9}
+```
+
+## Summary
+
+- **Original fields preserved**: `(lcs_length, lcs_string)` returned exactly as before when `include_summary=False` (the default). Existing tests, tie-breaking, DP logic, and standard-library-only constraint remain untouched.
+- **New feature added**: When `include_summary=True`, the return value gains a third element, `operation_summary`, a deterministic dict reporting the number of major computational decisions/operations:
+  - `dp_cells` — cells filled in the DP table.
+  - `reconstruction_steps` — decisions made during predecessor reconstruction.
+  - `matches_taken`, `up_moves`, `left_moves` — breakdown of those decisions.
+  - `total_operations` — `dp_cells + reconstruction_steps`, the total count of major operations.
+- **Deterministic**: All counters are derived directly from the fixed DP and the fixed tie-breaking rule — no randomness, no external state.
+- **Backward compatible**: Callers using the original signature receive the original 2-tuple; nothing about their behavior changes.

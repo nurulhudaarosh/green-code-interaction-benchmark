@@ -1,0 +1,219 @@
+"""
+Weighted Job Scheduler
+=======================
+
+Problem
+-------
+Given a collection of jobs, where each job has:
+    - start time
+    - finish time
+    - profit
+
+select a subset of mutually non-overlapping jobs with maximum total profit.
+
+Two jobs are compatible when the earlier job's finish time is less than or
+equal to the later job's start time. Therefore, jobs touching at endpoints
+are compatible.
+
+If multiple schedules have the same maximum profit, choose the schedule whose
+sequence of original job indices is lexicographically smallest.
+
+Constraints / assumptions
+--------------------------
+- Each job is represented as (start, finish, profit).
+- Jobs may have equal start/finish times.
+- Jobs may touch at endpoints.
+- Profit values may be any integers, including zero or negative values.
+- The empty schedule is allowed and has profit 0.
+- The solution is deterministic.
+- Only Python's standard library is used.
+- No network access, APIs, external services, or randomness are used.
+
+Required output
+---------------
+weighted_job_scheduler(jobs) returns a dictionary containing:
+    {
+        "max_profit": maximum achievable total profit,
+        "selected_jobs": original indices of the selected jobs
+    }
+
+Algorithm
+---------
+1. Attach each job's original index.
+2. Sort jobs by finish time.
+3. For every job, binary-search the latest earlier job whose finish time
+   is <= the current job's start time.
+4. Use dynamic programming:
+       dp[i] = best schedule using the first i sorted jobs.
+5. For each job, compare:
+       - skipping the job
+       - taking the job together with the best compatible schedule
+6. If profits are tied, select the lexicographically smaller sequence of
+   original indices.
+
+Time complexity:
+    Sorting:        O(n log n)
+    Predecessors:   O(n log n)
+    DP:             O(n) state transitions, with deterministic tuple
+                    comparison for tie-breaking.
+
+The tuple representation makes tie-breaking straightforward and exact.
+In the pathological case with many equal-profit schedules, comparing long
+index sequences can add extra cost; the scheduling/search structure itself
+remains O(n log n).
+"""
+
+from bisect import bisect_right
+from typing import Dict, List, Sequence, Tuple
+
+
+Job = Tuple[int, int, int]
+
+
+def weighted_job_scheduler(jobs: Sequence[Job]) -> Dict[str, object]:
+    """
+    Solve the weighted job scheduling problem.
+
+    Parameters
+    ----------
+    jobs:
+        A sequence of (start, finish, profit).
+
+    Returns
+    -------
+    dict
+        {
+            "max_profit": int,
+            "selected_jobs": List[int]
+        }
+
+    The indices in "selected_jobs" are the original zero-based indices of
+    the input jobs, sorted increasingly as a sequence of original indices.
+    """
+
+    n = len(jobs)
+
+    if n == 0:
+        return {
+            "max_profit": 0,
+            "selected_jobs": [],
+        }
+
+    # Validate input and attach original indices.
+    indexed_jobs = []
+
+    for index, job in enumerate(jobs):
+        if len(job) != 3:
+            raise ValueError(
+                f"Job at index {index} must contain "
+                f"(start, finish, profit)."
+            )
+
+        start, finish, profit = job
+
+        if start > finish:
+            raise ValueError(
+                f"Job at index {index} has start time greater than "
+                f"finish time."
+            )
+
+        if not isinstance(start, int):
+            raise TypeError(
+                f"Start time of job {index} must be an integer."
+            )
+
+        if not isinstance(finish, int):
+            raise TypeError(
+                f"Finish time of job {index} must be an integer."
+            )
+
+        if not isinstance(profit, int):
+            raise TypeError(
+                f"Profit of job {index} must be an integer."
+            )
+
+        indexed_jobs.append((start, finish, profit, index))
+
+    # Sort primarily by finish time.
+    # The remaining keys make ordering deterministic.
+    indexed_jobs.sort(
+        key=lambda job: (job[1], job[0], job[2], job[3])
+    )
+
+    # Finish times allow binary search for the latest compatible predecessor.
+    finish_times = [job[1] for job in indexed_jobs]
+
+    # predecessor[i] is the largest j < i such that
+    # finish_times[j] <= start_time_of_i.
+    predecessor = []
+
+    for i, (start, _, _, _) in enumerate(indexed_jobs):
+        j = bisect_right(finish_times, start, 0, i) - 1
+        predecessor.append(j)
+
+    # dp_profit[i] and dp_indices[i] describe the best solution using
+    # sorted jobs [0, i).
+    #
+    # dp_indices is stored as a tuple so lexicographic comparison gives
+    # deterministic tie-breaking.
+    dp_profit: List[int] = [0] * (n + 1)
+    dp_indices: List[Tuple[int, ...]] = [()] * (n + 1)
+
+    for i in range(1, n + 1):
+        start, finish, profit, original_index = indexed_jobs[i - 1]
+
+        # Option 1: skip the current job.
+        skip_profit = dp_profit[i - 1]
+        skip_indices = dp_indices[i - 1]
+
+        # Option 2: take the current job.
+        p = predecessor[i - 1]
+
+        take_profit = dp_profit[p + 1] + profit
+
+        # The final output sequence is defined by original job indices.
+        take_indices = tuple(
+            sorted(dp_indices[p + 1] + (original_index,))
+        )
+
+        # Select the higher-profit schedule.
+        if take_profit > skip_profit:
+            dp_profit[i] = take_profit
+            dp_indices[i] = take_indices
+
+        # On equal profit, choose the lexicographically smaller
+        # original-index sequence.
+        elif take_profit < skip_profit:
+            dp_profit[i] = skip_profit
+            dp_indices[i] = skip_indices
+
+        else:
+            if take_indices < skip_indices:
+                dp_profit[i] = take_profit
+                dp_indices[i] = take_indices
+            else:
+                dp_profit[i] = skip_profit
+                dp_indices[i] = skip_indices
+
+    return {
+        "max_profit": dp_profit[n],
+        "selected_jobs": list(dp_indices[n]),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Example usage
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    jobs = [
+        (1, 3, 50),
+        (2, 5, 20),
+        (3, 6, 70),
+        (6, 8, 60),
+        (5, 7, 30),
+    ]
+
+    result = weighted_job_scheduler(jobs)
+
+    print(result)

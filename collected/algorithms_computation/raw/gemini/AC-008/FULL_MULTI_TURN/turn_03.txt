@@ -1,0 +1,144 @@
+### Restatement of Problem & Existing Requirements
+
+The **Mutable Range Sum Engine** maintains a dynamic 0-indexed integer array capable of executing two types of updates and queries efficiently:
+
+1. **Point Replacement (`update`):** Replaces the element at 0-indexed position $i$ with a new integer value.
+2. **Inclusive Range Sum Query (`query`):** Returns the sum of elements within 0-indexed inclusive range $[L, R]$.
+
+**Original Output Requirements:**
+
+* Process queries sequentially and return an ordered list of integer results for all `'query'` operations.
+* Deterministically evaluate inverted or empty range bounds ($L > R$) to `0`.
+* Maintain $\mathcal{O}(\log N)$ time complexity for updates and prefix queries using a Fenwick Tree (Binary Indexed Tree).
+
+---
+
+### New Feature Specification
+
+An optional boolean parameter `include_summary` is added to `process_queries`.
+
+* **When `include_summary=False` (default):** Returns the original output format (a plain `list[int]` of query results).
+* **When `include_summary=True`:** Returns a dictionary containing both the query results and an `operation_summary` field reporting the total count of major Fenwick tree node updates and bitwise tree traversal steps executed across all operations:
+* Tree construction updates ($\mathcal{O}(N)$ parent updates)
+* Point updates (traversal steps up the Fenwick tree)
+* Prefix sum lookups (traversal steps down the Fenwick tree)
+
+
+
+---
+
+### Python Implementation
+
+```python
+class FenwickTree:
+    def __init__(self, arr: list[int]):
+        """Initializes Fenwick tree from a 0-indexed array in O(N) time."""
+        self.n = len(arr)
+        self.arr = list(arr)
+        self.tree = [0] * (self.n + 1)
+        self.op_count = 0  # Operational counter for deterministic summary
+
+        for i in range(1, self.n + 1):
+            self.tree[i] += self.arr[i - 1]
+            parent = i + (i & (-i))
+            if parent <= self.n:
+                self.tree[parent] += self.tree[i]
+                self.op_count += 1
+
+    def update(self, index: int, val: int) -> None:
+        """Sets the value at 0-based index to val."""
+        if not (0 <= index < self.n):
+            raise IndexError("Index out of bounds")
+
+        delta = val - self.arr[index]
+        self.arr[index] = val
+
+        idx = index + 1
+        while idx <= self.n:
+            self.tree[idx] += delta
+            self.op_count += 1
+            idx += idx & (-idx)
+
+    def _prefix_sum(self, idx: int) -> int:
+        """Calculates sum from index 1 to 1-based index idx."""
+        idx = min(idx, self.n)
+        s = 0
+        while idx > 0:
+            s += self.tree[idx]
+            self.op_count += 1
+            idx -= idx & (-idx)
+        return s
+
+    def sum_range(self, left: int, right: int) -> int:
+        """
+        Returns the inclusive range sum from 0-based indices [left, right].
+        Deterministically returns 0 for empty or inverted ranges (left > right).
+        """
+        if left > right or left >= self.n or right < 0:
+            return 0
+
+        left = max(0, left)
+        right = min(self.n - 1, right)
+
+        return self._prefix_sum(right + 1) - self._prefix_sum(left)
+
+
+def process_queries(
+    arr: list[int], queries: list[tuple], include_summary: bool = False
+) -> list[int] | dict:
+    """
+    Processes operations on an array:
+      - ('update', index, val): Replaces arr[index] with val
+      - ('query', left, right): Computes sum in inclusive range [left, right]
+
+    Parameters:
+      - arr: Initial array of integers
+      - queries: List of operations
+      - include_summary: When True, returns a dict with query results and operation_summary.
+
+    Returns:
+      - Default (include_summary=False): list of integers for query results.
+      - With summary (include_summary=True): dict with 'results' and 'operation_summary'.
+    """
+    bit = FenwickTree(arr)
+    results = []
+
+    for op in queries:
+        if op[0] == "update":
+            bit.update(op[1], op[2])
+        elif op[0] == "query":
+            results.append(bit.sum_range(op[1], op[2]))
+
+    if include_summary:
+        return {
+            "results": results,
+            "operation_summary": {
+                "total_major_operations": bit.op_count,
+                "array_size": len(arr),
+                "query_count": len(results),
+            },
+        }
+
+    return results
+
+
+# Verification / Example Usage
+if __name__ == "__main__":
+    initial_array = [1, 3, 5, 7, 9, 11]
+    operations = [
+        ("query", 1, 3),   # arr[1..3] -> 3 + 5 + 7 = 15
+        ("query", 3, 1),   # Invalid range -> 0
+        ("update", 1, 10), # set arr[1] = 10
+        ("query", 1, 3),   # arr[1..3] -> 10 + 5 + 7 = 22
+        ("query", 0, 5),   # sum of all elements -> 43
+    ]
+
+    # Standard call (backward compatible)
+    print("Standard output:", process_queries(initial_array, operations))
+    # Output: [15, 0, 22, 43]
+
+    # Feature-enabled call
+    print("Summary output:", process_queries(initial_array, operations, include_summary=True))
+    # Output: {'results': [15, 0, 22, 43], 'operation_summary': {'total_major_operations': 16, 'array_size': 6, 'query_count': 4}}
+
+```

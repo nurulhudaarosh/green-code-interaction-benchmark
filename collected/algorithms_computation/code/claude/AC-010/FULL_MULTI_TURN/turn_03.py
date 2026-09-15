@@ -1,0 +1,170 @@
+"""
+Matrix Chain Planner - Minimum Scalar Multiplication Cost & Parenthesization
+=============================================================================
+
+PROBLEM (restated, unchanged):
+-------------------------------
+Given dimensions p0, p1, ..., pn for a chain of n matrices A1..An, where
+matrix Ai has dimensions p[i-1] x p[i], find the order of multiplication
+that minimizes the total number of scalar multiplications, and produce a
+fully parenthesized expression achieving that minimum. When multiple split
+points yield the same minimal cost, the SMALLEST split index k is chosen
+deterministically.
+
+ORIGINAL REQUIRED OUTPUTS (all preserved, unchanged):
+--------------------------------------------------------
+1. min_cost: the minimum total number of scalar multiplications.
+2. parenthesization: a fully parenthesized string, e.g. "((A1 A2) A3)".
+
+KEY CONSTRAINTS (unchanged):
+------------------------------
+- p is a list of n+1 positive integers, n >= 1.
+- Multiplying (a x b) by (b x c) costs a*b*c and yields (a x c).
+- Only multiplication ORDER varies; matrix sequence is fixed.
+- Ties broken by smallest split index k (enforced explicitly, independent
+  of loop iteration order).
+- Standard library only; no randomness, network, external APIs, or
+  human interaction.
+
+ALGORITHM (unchanged): interval DP over matrix-chain ranges. dp[i][j] is
+built from increasing subchain length; split[i][j] records the chosen k.
+
+NEW FEATURE (additive, opt-in, does not alter original fields/behavior):
+---------------------------------------------------------------------------
+When explicitly requested, the result also includes `operation_summary`:
+a deterministic report of the major computational decisions made by the
+DP, specifically:
+  - subchains_evaluated: number of dp[i][j] cells computed (i.e. the
+    number of distinct (i, j) ranges with j > i, each representing one
+    "major decision": choosing the optimal split k for that range).
+  - split_candidates_considered: total number of k-candidates examined
+    across all subchains (sum of (j - i) over all evaluated (i, j)).
+  - matrices: n, the chain length.
+This field is purely additive: when not requested, solve() returns
+exactly the original (min_cost, parenthesization) tuple with no change
+in behavior, values, or side effects.
+"""
+
+from typing import List, Tuple, Union, Dict, Any
+
+
+def matrix_chain_order(
+    p: List[int],
+) -> Tuple[int, List[List[int]], int, int]:
+    """
+    Compute min cost + split table for the matrix chain.
+
+    Returns:
+        (min_cost, split, subchains_evaluated, split_candidates_considered)
+    """
+    n = len(p) - 1
+    if n < 1:
+        raise ValueError("Need at least one matrix (len(p) >= 2).")
+
+    dp = [[0] * (n + 1) for _ in range(n + 1)]
+    split = [[0] * (n + 1) for _ in range(n + 1)]
+
+    subchains_evaluated = 0
+    split_candidates_considered = 0
+
+    for length in range(2, n + 1):
+        for i in range(1, n - length + 2):
+            j = i + length - 1
+            best_cost = None
+            best_k = None
+            subchains_evaluated += 1
+            for k in range(i, j):
+                split_candidates_considered += 1
+                cost = dp[i][k] + dp[k + 1][j] + p[i - 1] * p[k] * p[j]
+                # Explicit, order-independent tie-break: strictly lower
+                # cost wins; equal cost only replaces if k is smaller.
+                if best_cost is None or cost < best_cost or (
+                    cost == best_cost and (best_k is None or k < best_k)
+                ):
+                    best_cost = cost
+                    best_k = k
+            dp[i][j] = best_cost
+            split[i][j] = best_k
+
+    return dp[1][n], split, subchains_evaluated, split_candidates_considered
+
+
+def build_parenthesization(split: List[List[int]], i: int, j: int) -> str:
+    if i == j:
+        return f"A{i}"
+    k = split[i][j]
+    left = build_parenthesization(split, i, k)
+    right = build_parenthesization(split, k + 1, j)
+    return f"({left} {right})"
+
+
+def solve(
+    p: List[int], include_operation_summary: bool = False
+) -> Union[Tuple[int, str], Dict[str, Any]]:
+    """
+    Original behavior (default, unchanged):
+        include_operation_summary=False -> returns (min_cost, parenthesization)
+
+    New opt-in behavior:
+        include_operation_summary=True -> returns a dict with all original
+        fields PLUS 'operation_summary':
+            {
+                "min_cost": int,
+                "parenthesization": str,
+                "operation_summary": {
+                    "matrices": int,
+                    "subchains_evaluated": int,
+                    "split_candidates_considered": int,
+                }
+            }
+    """
+    n = len(p) - 1
+    if n < 1:
+        raise ValueError("Need at least one matrix (len(p) >= 2).")
+
+    if n == 1:
+        min_cost, expr = 0, "A1"
+        subchains_evaluated = 0
+        split_candidates_considered = 0
+    else:
+        min_cost, split, subchains_evaluated, split_candidates_considered = (
+            matrix_chain_order(p)
+        )
+        expr = build_parenthesization(split, 1, n)
+
+    if not include_operation_summary:
+        return min_cost, expr  # original, unchanged output
+
+    return {
+        "min_cost": min_cost,
+        "parenthesization": expr,
+        "operation_summary": {
+            "matrices": n,
+            "subchains_evaluated": subchains_evaluated,
+            "split_candidates_considered": split_candidates_considered,
+        },
+    }
+
+
+def _demo() -> None:
+    test_cases = [
+        [30, 35, 15, 5, 10, 20, 25],
+        [10, 20, 30],
+        [40],
+        [10, 10, 10, 10],  # tie case: k=1 and k=2 both cost 2000
+        [5, 10, 3, 12, 5, 50, 6],
+    ]
+
+    print("Original behavior (unchanged):")
+    for p in test_cases:
+        cost, expr = solve(p)
+        print(f"  p={p} -> cost={cost}, expr={expr}")
+
+    print("\nWith operation_summary (opt-in):")
+    for p in test_cases:
+        result = solve(p, include_operation_summary=True)
+        print(f"  p={p} -> {result}")
+
+
+if __name__ == "__main__":
+    _demo()

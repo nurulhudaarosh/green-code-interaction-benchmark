@@ -1,0 +1,34 @@
+Yes — `file_size_bytes` should use `os.path.getsize(path)`, which reports the actual encoded file size on disk rather than the decoded pixel buffer size.
+
+```python
+import os
+from PIL import Image
+
+def extract_metadata(input_dir):
+    results = []
+
+    for filename in os.listdir(input_dir):
+        path = os.path.join(input_dir, filename)
+
+        if not os.path.isfile(path):
+            continue
+
+        try:
+            with Image.open(path) as img:
+                img.verify()
+
+            with Image.open(path) as img:
+                results.append({
+                    "filename": filename,
+                    "format": img.format,
+                    "mode": img.mode,
+                    "width": img.width,
+                    "height": img.height,
+                    "file_size_bytes": os.path.getsize(path)
+                })
+
+        except (OSError, Image.UnidentifiedImageError):
+            continue
+
+    return sorted(results, key=lambda x: x["filename"])
+```

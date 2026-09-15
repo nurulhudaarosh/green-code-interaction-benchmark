@@ -1,0 +1,501 @@
+```python
+# Maximum Flow Planner
+#
+# Original Problem
+# ----------------
+# Given a directed capacitated network, a source vertex s, and a sink vertex t,
+# compute the maximum possible flow from s to t and the flow carried by every
+# original edge.
+#
+# Existing Required Outputs
+# -------------------------
+# The original result must contain:
+#
+# {
+#     "max_flow": <maximum s-t flow>,
+#     "edge_flows": [<flow on original edge 0>,
+#                    <flow on original edge 1>,
+#                    ...]
+# }
+#
+# Requirements that remain unchanged:
+# - The graph is directed.
+# - Each capacity is a non-negative integer.
+# - Multiple parallel edges are allowed.
+# - `max_flow` is the maximum flow from s to t.
+# - `edge_flows[i]` is the flow on the i-th original input edge.
+# - Original edge order must be preserved in `edge_flows`.
+# - The implementation must use Dinic's blocking-flow algorithm.
+# - The result must be deterministic.
+# - Use only the Python standard library.
+# - No network access, APIs, external services, randomness, or human interaction.
+#
+# New Feature
+# -----------
+# Add an `operation_summary` field to the result.
+#
+# It reports a useful deterministic count of the major computational
+# decisions/operations performed by Dinic's algorithm.
+#
+# For this implementation, the summary contains:
+#
+# {
+#     "bfs_phases": <number of BFS level-graph constructions>,
+#     "blocking_flow_phases": <number of blocking-flow phases>,
+#     "edge_scans": <number of residual-edge examinations>,
+#     "augmentations": <number of successful flow-pushing operations>
+# }
+#
+# These counters are deterministic for a fixed input because adjacency lists
+# and edge traversal order are deterministic.
+#
+# If the feature is disabled/not requested, the original two output fields
+# remain unchanged. The implementation below exposes `include_operation_summary`
+# so callers can choose whether to include the new field.
+
+
+from collections import deque
+from typing import List, Tuple, Dict, Any
+
+
+def maximum_flow(
+    n: int,
+    edges: List[Tuple[int, int, int]],
+    s: int,
+    t: int,
+    include_operation_summary: bool = True
+) -> Dict[str, Any]:
+    """
+    Compute maximum s-t flow using Dinic's blocking-flow algorithm.
+
+    Original output:
+        {
+            "max_flow": int,
+            "edge_flows": List[int]
+        }
+
+    When include_operation_summary=True, an additional deterministic field is
+    returned:
+
+        "operation_summary": {
+            "bfs_phases": int,
+            "blocking_flow_phases": int,
+            "edge_scans": int,
+            "augmentations": int
+        }
+
+    Parameters
+    ----------
+    n:
+        Number of vertices, numbered 0 .. n-1.
+
+    edges:
+        Original directed edges represented as:
+        (u, v, capacity)
+
+    s:
+        Source vertex.
+
+    t:
+        Sink vertex.
+
+    include_operation_summary:
+        Whether to include the new operation_summary field.
+    """
+
+    # ------------------------------------------------------------
+    # Validate input
+    # ------------------------------------------------------------
+    if not isinstance(n, int) or n < 0:
+        raise ValueError("n must be a non-negative integer")
+
+    if not (0 <= s < n) or not (0 <= t < n):
+        raise ValueError("source and sink must be valid vertex indices")
+
+    if s == t:
+        raise ValueError("source and sink must be different")
+
+    for edge in edges:
+        if len(edge) != 3:
+            raise ValueError("each edge must be (u, v, capacity)")
+
+        u, v, capacity = edge
+
+        if not (0 <= u < n and 0 <= v < n):
+            raise ValueError("edge endpoint is outside the graph")
+
+        if not isinstance(capacity, int) or capacity < 0:
+            raise ValueError("capacity must be a non-negative integer")
+
+    # ------------------------------------------------------------
+    # Operation counters
+    # ------------------------------------------------------------
+    operation_summary = {
+        "bfs_phases": 0,
+        "blocking_flow_phases": 0,
+        "edge_scans": 0,
+        "augmentations": 0,
+    }
+
+    # ------------------------------------------------------------
+    # Residual graph
+    # ------------------------------------------------------------
+    class ResidualEdge:
+        __slots__ = (
+            "to",
+            "rev",
+            "capacity",
+            "original_capacity",
+            "original_index",
+        )
+
+        def __init__(
+            self,
+            to: int,
+            rev: int,
+            capacity: int,
+            original_capacity: int = 0,
+            original_index: int = -1,
+        ):
+            self.to = to
+            self.rev = rev
+            self.capacity = capacity
+            self.original_capacity = original_capacity
+            self.original_index = original_index
+
+    graph: List[List[ResidualEdge]] = [[] for _ in range(n)]
+
+    # Direct references to original forward edges.
+    # Their order exactly matches the input edge order.
+    original_edges: List[ResidualEdge] = []
+
+    def add_edge(
+        u: int,
+        v: int,
+        capacity: int,
+        original_index: int,
+    ) -> None:
+        forward = ResidualEdge(
+            to=v,
+            rev=len(graph[v]),
+            capacity=capacity,
+            original_capacity=capacity,
+            original_index=original_index,
+        )
+
+        reverse = ResidualEdge(
+            to=u,
+            rev=len(graph[u]),
+            capacity=0,
+        )
+
+        graph[u].append(forward)
+        graph[v].append(reverse)
+
+        original_edges.append(forward)
+
+    for index, (u, v, capacity) in enumerate(edges):
+        add_edge(u, v, capacity, index)
+
+    # ------------------------------------------------------------
+    # Dinic BFS: construct level graph
+    # ------------------------------------------------------------
+    def build_level_graph() -> List[int]:
+        operation_summary["bfs_phases"] += 1
+
+        level = [-1] * n
+        level[s] = 0
+
+        queue = deque([s])
+
+        while queue:
+            u = queue.popleft()
+
+            for edge in graph[u]:
+                operation_summary["edge_scans"] += 1
+
+                if edge.capacity > 0 and level[edge.to] == -1:
+                    level[edge.to] = level[u] + 1
+                    queue.append(edge.to)
+
+        return level
+
+    # ------------------------------------------------------------
+    # Dinic DFS: send flow in the blocking flow
+    # ------------------------------------------------------------
+    def send_flow(
+        u: int,
+        pushed: int,
+        level: List[int],
+        next_edge: List[int],
+    ) -> int:
+        if u == t:
+            return pushed
+
+        while next_edge[u] < len(graph[u]):
+            edge = graph[u][next_edge[u]]
+
+            operation_summary["edge_scans"] += 1
+
+            if edge.capacity > 0 and level[edge.to] == level[u] + 1:
+                flow = send_flow(
+                    edge.to,
+                    min(pushed, edge.capacity),
+                    level,
+                    next_edge,
+                )
+
+                if flow > 0:
+                    edge.capacity -= flow
+                    reverse = graph[edge.to][edge.rev]
+                    reverse.capacity += flow
+
+                    return flow
+
+            next_edge[u] += 1
+
+        return 0
+
+    # ------------------------------------------------------------
+    # Dinic main algorithm
+    # ------------------------------------------------------------
+    max_flow = 0
+
+    while True:
+        level = build_level_graph()
+
+        if level[t] == -1:
+            break
+
+        operation_summary["blocking_flow_phases"] += 1
+
+        # Current-arc optimization.
+        next_edge = [0] * n
+
+        while True:
+            pushed = send_flow(
+                s,
+                float("inf"),
+                level,
+                next_edge,
+            )
+
+            if pushed == 0:
+                break
+
+            max_flow += pushed
+            operation_summary["augmentations"] += 1
+
+    # ------------------------------------------------------------
+    # Recover flows on original edges
+    # ------------------------------------------------------------
+    #
+    # For each original forward edge:
+    #
+    #     flow = original_capacity - remaining_capacity
+    #
+    # original_edges was populated in input order, so edge_flows preserves
+    # the exact original input ordering.
+    edge_flows = [
+        edge.original_capacity - edge.capacity
+        for edge in original_edges
+    ]
+
+    # ------------------------------------------------------------
+    # Preserve original output when the feature is disabled
+    # ------------------------------------------------------------
+    result = {
+        "max_flow": max_flow,
+        "edge_flows": edge_flows,
+    }
+
+    if include_operation_summary:
+        result["operation_summary"] = operation_summary
+
+    return result
+
+
+# ============================================================
+# Tests
+# ============================================================
+
+if __name__ == "__main__":
+
+    # --------------------------------------------------------
+    # Test 1: Basic network
+    # --------------------------------------------------------
+    edges1 = [
+        (0, 1, 3),
+        (0, 2, 2),
+        (1, 3, 3),
+        (2, 3, 2),
+    ]
+
+    result1 = maximum_flow(
+        n=4,
+        edges=edges1,
+        s=0,
+        t=3,
+    )
+
+    assert result1["max_flow"] == 5
+    assert result1["edge_flows"] == [3, 2, 3, 2]
+
+    assert set(result1["operation_summary"]) == {
+        "bfs_phases",
+        "blocking_flow_phases",
+        "edge_scans",
+        "augmentations",
+    }
+
+    assert result1["operation_summary"]["bfs_phases"] >= 1
+    assert result1["operation_summary"]["blocking_flow_phases"] >= 1
+    assert result1["operation_summary"]["edge_scans"] > 0
+    assert result1["operation_summary"]["augmentations"] > 0
+
+    # --------------------------------------------------------
+    # Test 2: Parallel edges
+    # --------------------------------------------------------
+    # The two edges from 0 to 1 must remain separate in the output.
+    edges2 = [
+        (0, 1, 5),
+        (0, 1, 3),
+        (1, 2, 10),
+    ]
+
+    result2 = maximum_flow(
+        n=3,
+        edges=edges2,
+        s=0,
+        t=2,
+    )
+
+    assert result2["max_flow"] == 8
+    assert result2["edge_flows"] == [5, 3, 8]
+
+    # --------------------------------------------------------
+    # Test 3: Zero-capacity edge
+    # --------------------------------------------------------
+    edges3 = [
+        (0, 1, 0),
+        (0, 2, 4),
+        (2, 1, 4),
+        (1, 3, 4),
+    ]
+
+    result3 = maximum_flow(
+        n=4,
+        edges=edges3,
+        s=0,
+        t=3,
+    )
+
+    assert result3["max_flow"] == 4
+    assert result3["edge_flows"] == [0, 4, 4, 4]
+
+    # --------------------------------------------------------
+    # Test 4: No path from source to sink
+    # --------------------------------------------------------
+    edges4 = [
+        (0, 1, 7),
+        (2, 3, 9),
+    ]
+
+    result4 = maximum_flow(
+        n=4,
+        edges=edges4,
+        s=0,
+        t=3,
+    )
+
+    assert result4["max_flow"] == 0
+    assert result4["edge_flows"] == [0, 0]
+
+    # A BFS still occurs, but there is no blocking-flow phase.
+    assert result4["operation_summary"]["bfs_phases"] == 1
+    assert result4["operation_summary"]["blocking_flow_phases"] == 0
+    assert result4["operation_summary"]["augmentations"] == 0
+
+    # --------------------------------------------------------
+    # Test 5: Feature disabled
+    # --------------------------------------------------------
+    # The original output structure must remain exactly unchanged
+    # when the new feature is not requested.
+    result5 = maximum_flow(
+        n=4,
+        edges=edges1,
+        s=0,
+        t=3,
+        include_operation_summary=False,
+    )
+
+    assert result5 == {
+        "max_flow": 5,
+        "edge_flows": [3, 2, 3, 2],
+    }
+
+    assert "operation_summary" not in result5
+
+    # --------------------------------------------------------
+    # Test 6: Determinism
+    # --------------------------------------------------------
+    result6a = maximum_flow(
+        n=4,
+        edges=edges1,
+        s=0,
+        t=3,
+    )
+
+    result6b = maximum_flow(
+        n=4,
+        edges=edges1,
+        s=0,
+        t=3,
+    )
+
+    assert result6a == result6b
+
+    # --------------------------------------------------------
+    # Test 7: Every edge flow respects capacity
+    # --------------------------------------------------------
+    edges7 = [
+        (0, 1, 10),
+        (0, 2, 10),
+        (1, 2, 2),
+        (1, 3, 4),
+        (1, 4, 8),
+        (2, 4, 9),
+        (4, 3, 10),
+    ]
+
+    result7 = maximum_flow(
+        n=5,
+        edges=edges7,
+        s=0,
+        t=3,
+    )
+
+    assert result7["max_flow"] == 14
+    assert len(result7["edge_flows"]) == len(edges7)
+
+    for flow, (_, _, capacity) in zip(
+        result7["edge_flows"],
+        edges7,
+    ):
+        assert 0 <= flow <= capacity
+
+    # --------------------------------------------------------
+    # Test 8: Deterministic operation summary
+    # --------------------------------------------------------
+    result8a = maximum_flow(5, edges7, 0, 3)
+    result8b = maximum_flow(5, edges7, 0, 3)
+
+    assert result8a["operation_summary"] == result8b["operation_summary"]
+
+    print("All tests passed.")
+    print("Basic result:", result1)
+    print("Parallel-edge result:", result2)
+    print("No-path result:", result4)
+    print("Feature-disabled result:", result5)
+    print("Deterministic operation summary:", result8a["operation_summary"])
+```

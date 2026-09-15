@@ -1,0 +1,60 @@
+নিচে **একটাই Python fenced code block** দিলাম—শুরুতে `python` এবং শেষে closing fence আছে:
+
+```python
+def analyze_expenses(records):
+    expenses = []
+
+    for record in records:
+        parts = record.split(",")
+
+        if len(parts) != 3:
+            continue
+
+        category, description, amount = parts
+
+        try:
+            amount = float(amount)
+        except ValueError:
+            continue
+
+        expenses.append({
+            "category": category.strip(),
+            "description": description.strip(),
+            "amount": amount
+        })
+
+    total = sum(expense["amount"] for expense in expenses)
+
+    by_category = {}
+    for expense in expenses:
+        category = expense["category"]
+        by_category[category] = by_category.get(category, 0) + expense["amount"]
+
+    average = total / len(expenses) if expenses else 0
+
+    return {
+        "total_expenses": total,
+        "transaction_count": len(expenses),
+        "average_expense": average,
+        "by_category": by_category
+    }
+
+
+if __name__ == "__main__":
+    records = [
+        "Food,Lunch,12.50",
+        "Transport,Bus fare,3.00",
+        "Food,Dinner,18.75",
+        "Entertainment,Movie,10.00"
+    ]
+
+    result = analyze_expenses(records)
+
+    print(f"Total expenses: ${result['total_expenses']:.2f}")
+    print(f"Transaction count: {result['transaction_count']}")
+    print(f"Average expense: ${result['average_expense']:.2f}")
+
+    print("Expenses by category:")
+    for category, amount in result["by_category"].items():
+        print(f"  {category}: ${amount:.2f}")
+```

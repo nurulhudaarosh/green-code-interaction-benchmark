@@ -1,0 +1,339 @@
+# Dependency Build Planner
+#
+# Problem:
+# Given packages and prerequisite dependencies, produce a deterministic
+# valid build order and the number of dependency levels.
+#
+# A dependency (package, prerequisite) means:
+#     prerequisite must be built before package.
+#
+# Required behavior:
+# 1. Return a valid topological build order.
+# 2. Return the number of dependency levels.
+# 3. If a cycle exists, return ([], -1).
+# 4. When multiple packages are available, always choose the
+#    lexicographically smallest package using a min-heap.
+# 5. Repeated package values are treated as one package.
+# 6. Repeated dependency pairs are treated as one dependency.
+# 7. Output must remain deterministic.
+# 8. Use only the Python standard library.
+
+
+import heapq
+
+
+def dependency_build_planner(packages, dependencies):
+    """
+    Parameters
+    ----------
+    packages:
+        Iterable of package names. Repeated package values are ignored.
+
+    dependencies:
+        Iterable of (package, prerequisite) pairs.
+        Repeated dependency pairs are ignored.
+
+    Returns
+    -------
+    (build_order, dependency_levels)
+
+    If a cycle exists:
+        ([], -1)
+    """
+
+    # ---------------------------------------------------------
+    # Step 1: Remove repeated package values.
+    # ---------------------------------------------------------
+    package_set = set(packages)
+
+    # ---------------------------------------------------------
+    # Step 2: Normalize dependencies.
+    #
+    # A repeated dependency such as:
+    # ("B", "A")
+    # ("B", "A")
+    #
+    # represents only one prerequisite relationship.
+    # ---------------------------------------------------------
+    unique_dependencies = set()
+
+    for package, prerequisite in dependencies:
+        package_set.add(package)
+        package_set.add(prerequisite)
+        unique_dependencies.add((package, prerequisite))
+
+    # ---------------------------------------------------------
+    # Step 3: Build graph and indegree.
+    # ---------------------------------------------------------
+    graph = {package: [] for package in package_set}
+    indegree = {package: 0 for package in package_set}
+
+    for package, prerequisite in unique_dependencies:
+        graph[prerequisite].append(package)
+        indegree[package] += 1
+
+    # Sort adjacency lists to keep traversal deterministic.
+    for package in graph:
+        graph[package].sort()
+
+    # ---------------------------------------------------------
+    # Step 4: Track longest prerequisite depth.
+    #
+    # A package with no prerequisite starts at level 1.
+    # ---------------------------------------------------------
+    depth = {package: 1 for package in package_set}
+
+    # ---------------------------------------------------------
+    # Step 5: Put every package with indegree 0 into a min-heap.
+    #
+    # The min-heap guarantees deterministic tie-breaking:
+    # lexicographically smallest available package is selected.
+    # ---------------------------------------------------------
+    heap = []
+
+    for package in package_set:
+        if indegree[package] == 0:
+            heapq.heappush(heap, package)
+
+    build_order = []
+
+    # ---------------------------------------------------------
+    # Step 6: Kahn's topological sorting.
+    # ---------------------------------------------------------
+    while heap:
+        current = heapq.heappop(heap)
+        build_order.append(current)
+
+        for dependent in graph[current]:
+            # Track the longest prerequisite chain.
+            depth[dependent] = max(
+                depth[dependent],
+                depth[current] + 1
+            )
+
+            indegree[dependent] -= 1
+
+            if indegree[dependent] == 0:
+                heapq.heappush(heap, dependent)
+
+    # ---------------------------------------------------------
+    # Step 7: Detect a cycle.
+    #
+    # If not every unique package was processed, the graph
+    # contains a cycle.
+    # ---------------------------------------------------------
+    if len(build_order) != len(package_set):
+        return [], -1
+
+    # ---------------------------------------------------------
+    # Step 8: Number of dependency levels.
+    # ---------------------------------------------------------
+    dependency_levels = max(depth.values(), default=0)
+
+    return build_order, dependency_levels
+
+
+# =============================================================
+# TESTS
+# =============================================================
+
+def run_tests():
+
+    # ---------------------------------------------------------
+    # Test 1: Basic dependency graph
+    # ---------------------------------------------------------
+    packages = ["A", "B", "C", "D", "E"]
+
+    dependencies = [
+        ("B", "A"),
+        ("C", "A"),
+        ("D", "B"),
+        ("D", "C"),
+        ("E", "D"),
+    ]
+
+    result = dependency_build_planner(packages, dependencies)
+
+    assert result == (
+        ["A", "B", "C", "D", "E"],
+        4
+    )
+
+    # ---------------------------------------------------------
+    # Test 2: Repeated package values
+    #
+    # A, B, and C appear multiple times.
+    # They must be treated as unique packages.
+    # ---------------------------------------------------------
+    packages = [
+        "A",
+        "B",
+        "A",
+        "C",
+        "B",
+        "C",
+        "A"
+    ]
+
+    dependencies = [
+        ("B", "A"),
+        ("C", "B"),
+    ]
+
+    result = dependency_build_planner(packages, dependencies)
+
+    assert result == (
+        ["A", "B", "C"],
+        3
+    )
+
+    # ---------------------------------------------------------
+    # Test 3: Repeated dependency pairs
+    #
+    # ("B", "A") appears three times, but it represents
+    # only one dependency relationship.
+    # ---------------------------------------------------------
+    packages = ["A", "B", "C"]
+
+    dependencies = [
+        ("B", "A"),
+        ("B", "A"),
+        ("B", "A"),
+        ("C", "B"),
+        ("C", "B"),
+    ]
+
+    result = dependency_build_planner(packages, dependencies)
+
+    assert result == (
+        ["A", "B", "C"],
+        3
+    )
+
+    # ---------------------------------------------------------
+    # Test 4: Deterministic tie-breaking
+    #
+    # B and C are both available after A.
+    # B must be selected before C because B < C.
+    # ---------------------------------------------------------
+    packages = ["D", "C", "A", "B"]
+
+    dependencies = [
+        ("B", "A"),
+        ("C", "A"),
+    ]
+
+    result = dependency_build_planner(packages, dependencies)
+
+    assert result == (
+        ["A", "B", "C", "D"],
+        2
+    )
+
+    # ---------------------------------------------------------
+    # Test 5: Multiple deterministic ties
+    #
+    # A, B, and C are initially available.
+    # The min-heap must always select the smallest value.
+    # ---------------------------------------------------------
+    packages = ["C", "A", "B"]
+
+    dependencies = []
+
+    result = dependency_build_planner(packages, dependencies)
+
+    assert result == (
+        ["A", "B", "C"],
+        1
+    )
+
+    # ---------------------------------------------------------
+    # Test 6: Repeated values + deterministic ties together
+    # ---------------------------------------------------------
+    packages = [
+        "D",
+        "A",
+        "C",
+        "B",
+        "A",
+        "C",
+        "D",
+        "B"
+    ]
+
+    dependencies = [
+        ("C", "A"),
+        ("B", "A"),
+        ("C", "A"),  # repeated
+        ("B", "A"),  # repeated
+        ("D", "B"),
+        ("D", "C"),
+    ]
+
+    result = dependency_build_planner(packages, dependencies)
+
+    assert result == (
+        ["A", "B", "C", "D"],
+        3
+    )
+
+    # ---------------------------------------------------------
+    # Test 7: Cycle
+    # ---------------------------------------------------------
+    packages = ["A", "B", "C"]
+
+    dependencies = [
+        ("B", "A"),
+        ("C", "B"),
+        ("A", "C"),
+    ]
+
+    result = dependency_build_planner(packages, dependencies)
+
+    assert result == (
+        [],
+        -1
+    )
+
+    # ---------------------------------------------------------
+    # Test 8: Self-cycle
+    # ---------------------------------------------------------
+    packages = ["A", "B"]
+
+    dependencies = [
+        ("A", "A"),
+        ("B", "A"),
+    ]
+
+    result = dependency_build_planner(packages, dependencies)
+
+    assert result == (
+        [],
+        -1
+    )
+
+    # ---------------------------------------------------------
+    # Test 9: Repeated self-cycle
+    #
+    # Repetition does not change the fact that A has a cycle.
+    # ---------------------------------------------------------
+    packages = ["A", "A", "B"]
+
+    dependencies = [
+        ("A", "A"),
+        ("A", "A"),
+        ("B", "A"),
+    ]
+
+    result = dependency_build_planner(packages, dependencies)
+
+    assert result == (
+        [],
+        -1
+    )
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()

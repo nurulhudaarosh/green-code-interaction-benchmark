@@ -1,0 +1,113 @@
+### Problem Restatement & Expected Behavior
+
+Given two strings $S_1$ and $S_2$, compute the length of their Longest Common Subsequence (LCS) and reconstruct one LCS string.
+
+When reconstructing the string via dynamic programming, the decision rule specifies: **on equal DP scores, prefer advancing in $S_1$** (moving $i \to i-1$, which decrements the $S_1$ pointer).
+
+---
+
+### Defect Demonstration
+
+#### Why the Previous Code Fails
+
+In the initial implementation, the matching condition `if s1[i - 1] == s2[j - 1]` was checked **before** checking whether moving in $S_1$ (`dp[i - 1][j]`) yielded an equal or better DP score.
+
+When $S_1[i-1] == S_2[j-1]$ occurs, it is possible that skipping $S_1[i-1]$ (i.e. moving to `dp[i - 1][j]`) maintains the exact same optimal LCS length `dp[i][j]`. By immediately matching characters without checking `dp[i - 1][j] == dp[i][j]`, the algorithm forced a match early rather than preferring to advance in $S_1$.
+
+#### Example
+
+Let $S_1 = \text{"BA"}$ and $S_2 = \text{"A"}$.
+
+The DP table `dp[i][j]` is:
+
+| `dp` | `""` (0) | `"A"` (1) |
+| --- | --- | --- |
+| **`""` (0)** | 0 | 0 |
+| **`"B"` (1)** | 0 | 0 |
+| **`"A"` (2)** | 0 | **1** |
+
+Starting at `i = 2, j = 1`:
+
+* `dp[2][1] = 1`.
+* Top neighbor `dp[1][1] = dp["B"]["A"] = 0`.
+* Left neighbor `dp[2][0] = dp["BA"][""] = 0`.
+
+Here `dp[1][1] < dp[2][1]`, so matching $S_1[1]$ (`'A'`) and $S_2[0]$ (`'A'`) is necessary to achieve length 1.
+
+Now consider $S_1 = \text{"ABA"}$ and $S_2 = \text{"A"}$:
+
+| `dp` | `""` (0) | `"A"` (1) |
+| --- | --- | --- |
+| **`""` (0)** | 0 | 0 |
+| **`"A"` (1)** | 0 | **1** |
+| **`"B"` (2)** | 0 | **1** |
+| **`"A"` (3)** | 0 | **1** |
+
+At `i = 3, j = 1` ($S_1[2] = \text{'A'}$, $S_2[0] = \text{'A'}$):
+
+* `dp[3][1] = 1`.
+* Top neighbor `dp[2][1] = 1`. Equal score!
+
+**Expected Behavior:**
+Since `dp[i - 1][j] == dp[i][j]` ($1 == 1$), the rule requires advancing in $S_1$ first (moving to `i = 2, j = 1`).
+
+* At `i = 2, j = 1`: `dp[1][1] = 1`. Top score is equal again! Advance in $S_1$ to `i = 1, j = 1`.
+* At `i = 1, j = 1`: `dp[0][1] = 0 < dp[1][1]`. Now match $S_1[0]$ (`'A'`) with $S_2[0]$ (`'A'`).
+
+**Flawed Code Result:**
+Matches $S_1[2]$ immediately at $i=3$, selecting the *last* `'A'` instead of preferring to advance through $S_1$ to match the *first* `'A'`.
+
+---
+
+### Corrected Python Solution
+
+To enforce the tie-breaking preference during reconstruction:
+
+1. Check if advancing in $S_1$ retains the current cell's optimal score (`dp[i - 1][j] == dp[i][j]`). If so, decrement `i`.
+2. Otherwise, if matching characters yields `dp[i - 1][j - 1] + 1 == dp[i][j]`, take the match and move diagonally.
+3. Otherwise, advance in $S_2$ by decrementing `j`.
+
+```python
+def lcs_with_reconstruction(s1: str, s2: str) -> tuple[int, str]:
+    m, n = len(s1), len(s2)
+    
+    # 1. Build DP table using standard quadratic dynamic programming
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if s1[i - 1] == s2[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+                
+    lcs_length = dp[m][n]
+    
+    # 2. Reconstruct LCS strictly preferring advancing in s1 on equal scores
+    i, j = m, n
+    lcs_chars = []
+    
+    while i > 0 and j > 0:
+        # Rule check: If moving up in s1 preserves the target DP score, prioritize advancing in s1
+        if dp[i - 1][j] == dp[i][j]:
+            i -= 1
+        elif s1[i - 1] == s2[j - 1] and dp[i - 1][j - 1] + 1 == dp[i][j]:
+            lcs_chars.append(s1[i - 1])
+            i -= 1
+            j -= 1
+        else:
+            j -= 1
+            
+    lcs_string = "".join(reversed(lcs_chars))
+    return lcs_length, lcs_string
+
+
+if __name__ == "__main__":
+    # Test case demonstrating strict adherence to advancing in s1
+    str1 = "ABA"
+    str2 = "A"
+    length, lcs = lcs_with_reconstruction(str1, str2)
+    print(f"S1: '{str1}', S2: '{str2}'")
+    print(f"LCS Length: {length}, LCS String: '{lcs}'")
+
+```

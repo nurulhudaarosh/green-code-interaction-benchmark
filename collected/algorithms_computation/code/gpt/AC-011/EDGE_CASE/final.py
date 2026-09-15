@@ -1,0 +1,349 @@
+from typing import List, Tuple, Dict, Any
+
+
+def knapsack(
+    weights: List[int],
+    values: List[int],
+    capacity: int,
+) -> Dict[str, Any]:
+    """
+    Capacity-Constrained 0/1 Knapsack.
+
+    Returns:
+        {
+            "max_value": int,
+            "selected_indices": List[int]
+        }
+
+    Tie-breaking:
+        For equal maximum values, the lexicographically smallest
+        selected-index list is returned.
+    """
+
+    # Input validation.
+    if len(weights) != len(values):
+        raise ValueError("weights and values must have the same length")
+
+    if capacity < 0:
+        raise ValueError("capacity must be non-negative")
+
+    if any(weight < 0 for weight in weights):
+        raise ValueError("item weights must be non-negative")
+
+    n = len(weights)
+
+    # dp[c] stores:
+    #   (best_value, lexicographically_smallest_indices)
+    #
+    # for capacity c.
+    dp: List[Tuple[int, List[int]]] = [
+        (0, []) for _ in range(capacity + 1)
+    ]
+
+    for i in range(n):
+        weight = weights[i]
+        value = values[i]
+
+        # Descending update is required for 0/1 knapsack.
+        #
+        # range(capacity, weight - 1, -1)
+        # also correctly handles weight == 0.
+        for c in range(capacity, weight - 1, -1):
+            previous_value, previous_indices = dp[c - weight]
+
+            candidate_value = previous_value + value
+            candidate_indices = previous_indices + [i]
+
+            current_value, current_indices = dp[c]
+
+            if candidate_value > current_value:
+                dp[c] = (candidate_value, candidate_indices)
+
+            elif candidate_value == current_value:
+                if candidate_indices < current_indices:
+                    dp[c] = (candidate_value, candidate_indices)
+
+    max_value, selected_indices = dp[capacity]
+
+    return {
+        "max_value": max_value,
+        "selected_indices": selected_indices,
+    }
+
+
+# ----------------------------------------------------------------------
+# Tests
+# ----------------------------------------------------------------------
+
+def test_zero_capacity():
+    """
+    Boundary case:
+    capacity == 0.
+
+    Only zero-weight items can be selected.
+    """
+    result = knapsack(
+        weights=[1, 0, 2],
+        values=[100, 5, 200],
+        capacity=0,
+    )
+
+    assert result == {
+        "max_value": 5,
+        "selected_indices": [1],
+    }
+
+
+def test_empty_input():
+    """
+    Boundary case:
+    no items.
+    """
+    result = knapsack([], [], 0)
+
+    assert result == {
+        "max_value": 0,
+        "selected_indices": [],
+    }
+
+
+def test_zero_weight_items():
+    """
+    Boundary case:
+    items with weight == 0.
+
+    Every non-negative-value zero-weight item can be selected.
+    """
+    result = knapsack(
+        weights=[0, 0, 1],
+        values=[5, 7, 10],
+        capacity=0,
+    )
+
+    assert result == {
+        "max_value": 12,
+        "selected_indices": [0, 1],
+    }
+
+
+def test_zero_value_items():
+    """
+    Zero-value items should not be selected when they do not improve
+    the objective, because [] is lexicographically smaller.
+    """
+    result = knapsack(
+        weights=[1, 2],
+        values=[0, 0],
+        capacity=2,
+    )
+
+    assert result == {
+        "max_value": 0,
+        "selected_indices": [],
+    }
+
+
+def test_item_weight_equals_capacity():
+    """
+    Boundary case:
+    an item's weight is exactly the entire capacity.
+    """
+    result = knapsack(
+        weights=[10],
+        values=[25],
+        capacity=10,
+    )
+
+    assert result == {
+        "max_value": 25,
+        "selected_indices": [0],
+    }
+
+
+def test_all_items_fit_exactly():
+    """
+    Boundary case:
+    total weight is exactly equal to capacity.
+    """
+    result = knapsack(
+        weights=[2, 3, 5],
+        values=[4, 6, 10],
+        capacity=10,
+    )
+
+    assert result == {
+        "max_value": 20,
+        "selected_indices": [0, 1, 2],
+    }
+
+
+def test_all_weights_above_capacity():
+    """
+    Boundary case:
+    every item is too heavy.
+    """
+    result = knapsack(
+        weights=[11, 12, 13],
+        values=[100, 200, 300],
+        capacity=10,
+    )
+
+    assert result == {
+        "max_value": 0,
+        "selected_indices": [],
+    }
+
+
+def test_maximum_value_boundary():
+    """
+    Boundary-style large integer test.
+
+    Python integers safely support values larger than fixed-width
+    machine integers.
+    """
+    large_value = 10**18
+
+    result = knapsack(
+        weights=[1, 1],
+        values=[large_value, large_value],
+        capacity=2,
+    )
+
+    assert result == {
+        "max_value": 2 * large_value,
+        "selected_indices": [0, 1],
+    }
+
+
+def test_large_capacity_boundary():
+    """
+    Large valid capacity.
+
+    This checks that the DP remains deterministic when capacity
+    is large relative to the individual item weights.
+    """
+    result = knapsack(
+        weights=[1000, 2000, 3000],
+        values=[100, 250, 400],
+        capacity=6000,
+    )
+
+    assert result == {
+        "max_value": 750,
+        "selected_indices": [0, 1, 2],
+    }
+
+
+def test_lexicographic_tie():
+    """
+    Two different selections have the same maximum value.
+
+    [0, 3] and [1, 2] both have value 10.
+    Lexicographically:
+        [0, 3] < [1, 2]
+    """
+    result = knapsack(
+        weights=[2, 2, 3, 3],
+        values=[5, 5, 5, 5],
+        capacity=5,
+    )
+
+    assert result == {
+        "max_value": 10,
+        "selected_indices": [0, 1],
+    }
+
+
+def test_boundary_tie_prefers_lexicographically_smallest():
+    """
+    Multiple optimal solutions exist at the capacity boundary.
+
+    The solution with the smallest index list must be returned.
+    """
+    result = knapsack(
+        weights=[5, 1, 4, 5],
+        values=[10, 5, 5, 10],
+        capacity=5,
+    )
+
+    # Optimal value is 10.
+    # Candidate optimal index lists include [0] and [3].
+    # [0] is lexicographically smaller.
+    assert result == {
+        "max_value": 10,
+        "selected_indices": [0],
+    }
+
+
+def test_single_item_zero_weight_zero_value():
+    """
+    Boundary case:
+    one item with both weight and value equal to zero.
+    """
+    result = knapsack(
+        weights=[0],
+        values=[0],
+        capacity=0,
+    )
+
+    assert result == {
+        "max_value": 0,
+        "selected_indices": [],
+    }
+
+
+def test_invalid_negative_capacity():
+    """
+    Negative capacity is outside the valid input domain.
+    """
+    try:
+        knapsack([1], [1], -1)
+        assert False, "Expected ValueError"
+    except ValueError:
+        pass
+
+
+def test_invalid_negative_weight():
+    """
+    Negative item weights are outside the valid input domain.
+    """
+    try:
+        knapsack([-1], [10], 5)
+        assert False, "Expected ValueError"
+    except ValueError:
+        pass
+
+
+def test_mismatched_lengths():
+    """
+    weights and values must describe the same number of items.
+    """
+    try:
+        knapsack([1, 2], [10], 5)
+        assert False, "Expected ValueError"
+    except ValueError:
+        pass
+
+
+def run_tests():
+    test_zero_capacity()
+    test_empty_input()
+    test_zero_weight_items()
+    test_zero_value_items()
+    test_item_weight_equals_capacity()
+    test_all_items_fit_exactly()
+    test_all_weights_above_capacity()
+    test_maximum_value_boundary()
+    test_large_capacity_boundary()
+    test_lexicographic_tie()
+    test_boundary_tie_prefers_lexicographically_smallest()
+    test_single_item_zero_weight_zero_value()
+    test_invalid_negative_capacity()
+    test_invalid_negative_weight()
+    test_mismatched_lengths()
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()

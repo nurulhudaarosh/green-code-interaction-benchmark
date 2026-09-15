@@ -1,0 +1,347 @@
+"""
+Dependency Build Planner
+
+Problem Statement:
+Given a list of packages and their prerequisite dependencies, produce:
+1. A deterministic valid build order (topological sort)
+2. The number of dependency levels (longest chain of dependencies + 1)
+
+If a cycle exists, return an empty order and -1 levels.
+
+Key Constraints:
+- Packages are identified by strings
+- Dependencies are given as a list of (package, prerequisite) tuples
+- Each package can have multiple prerequisites
+- A package can only be built after all its prerequisites are built
+- The build order must be deterministic (use min-heap for alphabetical ordering)
+- If packages have the same alphabetical order, they are processed in the order they appear in the heap (which is still deterministic)
+- Dependency levels: the depth of the longest prerequisite chain + 1
+- A package's level = max(level[prereq]) + 1 for all prerequisites
+- Independent packages have level = 1
+
+Algorithm:
+1. Build adjacency list and indegree map from the dependency pairs
+2. Handle repeated dependency entries (duplicate edges) without affecting correctness
+3. Handle packages that appear only as dependencies but not in the initial package list
+4. Use Kahn's algorithm with a min-heap (priority queue) for deterministic ordering
+5. Track the level (depth) of each package as max(level[prereq]) + 1
+6. If all packages are processed, return order and max level
+7. If not all packages are processed, a cycle exists -> return [], -1
+
+Tie-breaking:
+- When multiple packages have indegree 0, they are processed in alphabetical order
+- If packages have the same name (impossible as packages are unique), they would be tied
+- Ties are deterministic due to the min-heap property
+"""
+
+import heapq
+from typing import List, Tuple, Dict, Set
+
+
+def find_build_order(packages: List[str], dependencies: List[Tuple[str, str]]) -> Tuple[List[str], int]:
+    """
+    Find a valid build order and the number of dependency levels.
+    
+    Args:
+        packages: List of all package names
+        dependencies: List of (package, prerequisite) tuples
+        
+    Returns:
+        Tuple of (build_order, levels)
+        - build_order: list of packages in build order, or [] if cycle
+        - levels: number of dependency levels, or -1 if cycle
+    """
+    # Handle empty package list
+    if not packages and not dependencies:
+        return [], 0
+    
+    # Build graph: package -> list of prerequisites
+    graph: Dict[str, List[str]] = {}
+    indegree: Dict[str, int] = {}
+    
+    # Initialize with all packages from the list
+    for pkg in packages:
+        if pkg not in graph:
+            graph[pkg] = []
+            indegree[pkg] = 0
+    
+    # Process dependencies and handle repeated values
+    for pkg, prereq in dependencies:
+        # Ensure both package and prerequisite exist in the graph
+        if pkg not in graph:
+            graph[pkg] = []
+            indegree[pkg] = 0
+        if prereq not in graph:
+            graph[prereq] = []
+            indegree[prereq] = 0
+        
+        # Check if this dependency already exists (handle repeated values)
+        # If it's a duplicate, don't increment indegree again
+        if prereq not in graph[pkg]:
+            graph[pkg].append(prereq)
+            indegree[pkg] += 1
+        # If it's already there, it's a duplicate, so we ignore it
+    
+    # Initialize min-heap with packages that have indegree 0
+    heap = [pkg for pkg, deg in indegree.items() if deg == 0]
+    heapq.heapify(heap)
+    
+    # Track levels (depth) for each package
+    levels: Dict[str, int] = {pkg: 1 for pkg in graph}
+    build_order: List[str] = []
+    
+    # Kahn's algorithm with level tracking
+    while heap:
+        # Pop the smallest package alphabetically (deterministic tie-breaking)
+        current = heapq.heappop(heap)
+        build_order.append(current)
+        
+        # Process all packages that depend on current (reverse dependencies)
+        for pkg in graph:
+            if current in graph[pkg]:
+                # current is a prerequisite of pkg
+                indegree[pkg] -= 1
+                # Update level: level[pkg] = max(level[pkg], level[current] + 1)
+                levels[pkg] = max(levels[pkg], levels[current] + 1)
+                if indegree[pkg] == 0:
+                    heapq.heappush(heap, pkg)
+    
+    # Check if all packages were processed (no cycle)
+    if len(build_order) != len(graph):
+        return [], -1
+    
+    # Calculate max level
+    max_level = max(levels.values()) if levels else 0
+    
+    return build_order, max_level
+
+
+def solve_build_order(packages: List[str], dependencies: List[Tuple[str, str]]) -> Tuple[List[str], int]:
+    """
+    Wrapper function that handles edge cases and provides the required output format.
+    
+    Args:
+        packages: List of all package names
+        dependencies: List of (package, prerequisite) tuples
+        
+    Returns:
+        Tuple of (build_order, levels)
+    """
+    # Handle edge cases
+    if not packages and not dependencies:
+        return [], 0
+    
+    # Remove duplicates from package list (keep first occurrence for deterministic behavior)
+    unique_packages = []
+    seen = set()
+    for pkg in packages:
+        if pkg not in seen:
+            unique_packages.append(pkg)
+            seen.add(pkg)
+    
+    # Call the main algorithm
+    return find_build_order(unique_packages, dependencies)
+
+
+# ==================== TEST CASES ====================
+def run_tests():
+    """Run comprehensive test suite for the Dependency Build Planner."""
+    
+    print("=" * 60)
+    print("DEPENDENCY BUILD PLANNER - TEST SUITE")
+    print("=" * 60)
+    
+    # Test 1: Simple linear dependency
+    print("\nTest 1: Simple linear dependency")
+    packages1 = ["A", "B", "C"]
+    deps1 = [("B", "A"), ("C", "B")]
+    order1, levels1 = solve_build_order(packages1, deps1)
+    print(f"  Packages: {packages1}")
+    print(f"  Dependencies: {deps1}")
+    print(f"  Result: {order1}, Levels: {levels1}")
+    assert order1 == ['A', 'B', 'C'], f"Expected ['A', 'B', 'C'], got {order1}"
+    assert levels1 == 3, f"Expected 3, got {levels1}"
+    print("  ✓ PASSED")
+    
+    # Test 2: Multiple dependencies
+    print("\nTest 2: Multiple dependencies")
+    packages2 = ["A", "B", "C", "D"]
+    deps2 = [("C", "A"), ("C", "B"), ("D", "C")]
+    order2, levels2 = solve_build_order(packages2, deps2)
+    print(f"  Packages: {packages2}")
+    print(f"  Dependencies: {deps2}")
+    print(f"  Result: {order2}, Levels: {levels2}")
+    # A and B are level 1, C is level 2, D is level 3
+    assert set(order2[:2]) == {'A', 'B'}, "First two should be A and B"
+    assert order2[2] == 'C', "Third should be C"
+    assert order2[3] == 'D', "Fourth should be D"
+    assert levels2 == 3, f"Expected 3, got {levels2}"
+    print("  ✓ PASSED")
+    
+    # Test 3: Cycle detection
+    print("\nTest 3: Cycle detection")
+    packages3 = ["A", "B", "C"]
+    deps3 = [("B", "A"), ("C", "B"), ("A", "C")]
+    order3, levels3 = solve_build_order(packages3, deps3)
+    print(f"  Packages: {packages3}")
+    print(f"  Dependencies: {deps3}")
+    print(f"  Result: {order3}, Levels: {levels3}")
+    assert order3 == [], f"Expected [], got {order3}"
+    assert levels3 == -1, f"Expected -1, got {levels3}"
+    print("  ✓ PASSED")
+    
+    # Test 4: Independent packages (tie-breaking)
+    print("\nTest 4: Independent packages with tie-breaking")
+    packages4 = ["C", "A", "B"]
+    deps4 = []
+    order4, levels4 = solve_build_order(packages4, deps4)
+    print(f"  Packages: {packages4}")
+    print(f"  Dependencies: {deps4}")
+    print(f"  Result: {order4}, Levels: {levels4}")
+    assert order4 == ['A', 'B', 'C'], f"Expected ['A', 'B', 'C'], got {order4}"
+    assert levels4 == 1, f"Expected 1, got {levels4}"
+    print("  ✓ PASSED")
+    
+    # Test 5: Package with multiple prerequisites
+    print("\nTest 5: Package with multiple prerequisites")
+    packages5 = ["A", "B", "C", "D"]
+    deps5 = [("C", "A"), ("C", "B"), ("D", "A"), ("D", "B")]
+    order5, levels5 = solve_build_order(packages5, deps5)
+    print(f"  Packages: {packages5}")
+    print(f"  Dependencies: {deps5}")
+    print(f"  Result: {order5}, Levels: {levels5}")
+    # A and B are level 1, C and D are level 2
+    assert set(order5[:2]) == {'A', 'B'}, "First two should be A and B"
+    assert set(order5[2:]) == {'C', 'D'}, "Last two should be C and D"
+    assert levels5 == 2, f"Expected 2, got {levels5}"
+    print("  ✓ PASSED")
+    
+    # Test 6: Package not in initial list but appears as dependency
+    print("\nTest 6: Package appears only as dependency")
+    packages6 = ["A", "C"]
+    deps6 = [("C", "B"), ("B", "A")]
+    order6, levels6 = solve_build_order(packages6, deps6)
+    print(f"  Packages: {packages6}")
+    print(f"  Dependencies: {deps6}")
+    print(f"  Result: {order6}, Levels: {levels6}")
+    assert order6 == ['A', 'B', 'C'], f"Expected ['A', 'B', 'C'], got {order6}"
+    assert levels6 == 3, f"Expected 3, got {levels6}"
+    print("  ✓ PASSED")
+    
+    # Test 7: Complex with alphabetical ordering (deterministic ties)
+    print("\nTest 7: Complex dependencies with deterministic ties")
+    packages7 = ["Z", "A", "M", "N"]
+    deps7 = [("Z", "A"), ("Z", "M"), ("N", "M")]
+    order7, levels7 = solve_build_order(packages7, deps7)
+    print(f"  Packages: {packages7}")
+    print(f"  Dependencies: {deps7}")
+    print(f"  Result: {order7}, Levels: {levels7}")
+    # A and M are level 1, N and Z are level 2
+    # Tie-breaking: A (level 1) comes before M (level 1)
+    # Then N (level 2) comes before Z (level 2) alphabetically
+    assert order7[0] == 'A', f"First should be A, got {order7[0]}"
+    assert order7[1] == 'M', f"Second should be M, got {order7[1]}"
+    assert order7[2] == 'N', f"Third should be N, got {order7[2]}"
+    assert order7[3] == 'Z', f"Fourth should be Z, got {order7[3]}"
+    assert levels7 == 2, f"Expected 2, got {levels7}"
+    print("  ✓ PASSED")
+    
+    # Test 8: Repeated dependencies (duplicate edges)
+    print("\nTest 8: Repeated dependencies (duplicate edges)")
+    packages8 = ["A", "B", "C"]
+    deps8 = [("B", "A"), ("B", "A"), ("C", "B")]
+    order8, levels8 = solve_build_order(packages8, deps8)
+    print(f"  Packages: {packages8}")
+    print(f"  Dependencies: {deps8}")
+    print(f"  Result: {order8}, Levels: {levels8}")
+    assert order8 == ['A', 'B', 'C'], f"Expected ['A', 'B', 'C'], got {order8}"
+    assert levels8 == 3, f"Expected 3, got {levels8}"
+    print("  ✓ PASSED")
+    
+    # Test 9: Repeated package names in input
+    print("\nTest 9: Repeated package names in input")
+    packages9 = ["A", "B", "A", "C"]
+    deps9 = [("B", "A"), ("C", "B")]
+    order9, levels9 = solve_build_order(packages9, deps9)
+    print(f"  Packages: {packages9}")
+    print(f"  Dependencies: {deps9}")
+    print(f"  Result: {order9}, Levels: {levels9}")
+    assert order9 == ['A', 'B', 'C'], f"Expected ['A', 'B', 'C'], got {order9}"
+    assert levels9 == 3, f"Expected 3, got {levels9}"
+    print("  ✓ PASSED")
+    
+    # Test 10: Multiple packages with same indegree 0 (more tie-breaking)
+    print("\nTest 10: Multiple roots with alphabetical tie-breaking")
+    packages10 = ["Z", "A", "M", "B"]
+    deps10 = [("Z", "A"), ("M", "B")]
+    order10, levels10 = solve_build_order(packages10, deps10)
+    print(f"  Packages: {packages10}")
+    print(f"  Dependencies: {deps10}")
+    print(f"  Result: {order10}, Levels: {levels10}")
+    # Roots: A and B (level 1), then their dependents
+    assert order10[0] == 'A', f"First should be A, got {order10[0]}"
+    assert order10[1] == 'B', f"Second should be B, got {order10[1]}"
+    assert levels10 == 2, f"Expected 2, got {levels10}"
+    print("  ✓ PASSED")
+    
+    # Test 11: Empty packages and dependencies
+    print("\nTest 11: Empty packages and dependencies")
+    packages11 = []
+    deps11 = []
+    order11, levels11 = solve_build_order(packages11, deps11)
+    print(f"  Packages: {packages11}")
+    print(f"  Dependencies: {deps11}")
+    print(f"  Result: {order11}, Levels: {levels11}")
+    assert order11 == [], f"Expected [], got {order11}"
+    assert levels11 == 0, f"Expected 0, got {levels11}"
+    print("  ✓ PASSED")
+    
+    # Test 12: Complex cycle with multiple nodes
+    print("\nTest 12: Complex cycle detection")
+    packages12 = ["A", "B", "C", "D", "E"]
+    deps12 = [("B", "A"), ("C", "B"), ("D", "C"), ("E", "D"), ("C", "E")]
+    order12, levels12 = solve_build_order(packages12, deps12)
+    print(f"  Packages: {packages12}")
+    print(f"  Dependencies: {deps12}")
+    print(f"  Result: {order12}, Levels: {levels12}")
+    assert order12 == [], f"Expected [], got {order12}"
+    assert levels12 == -1, f"Expected -1, got {levels12}"
+    print("  ✓ PASSED")
+    
+    # Test 13: Self-dependency (cycle of length 1)
+    print("\nTest 13: Self-dependency cycle")
+    packages13 = ["A", "B"]
+    deps13 = [("A", "A"), ("B", "A")]
+    order13, levels13 = solve_build_order(packages13, deps13)
+    print(f"  Packages: {packages13}")
+    print(f"  Dependencies: {deps13}")
+    print(f"  Result: {order13}, Levels: {levels13}")
+    assert order13 == [], f"Expected [], got {order13}"
+    assert levels13 == -1, f"Expected -1, got {levels13}"
+    print("  ✓ PASSED")
+    
+    # Test 14: Dependencies with multiple levels and tie-breaking
+    print("\nTest 14: Multiple levels with tie-breaking")
+    packages14 = ["A", "B", "C", "D", "E", "F"]
+    deps14 = [("C", "A"), ("C", "B"), ("D", "A"), ("E", "C"), ("E", "D"), ("F", "D")]
+    order14, levels14 = solve_build_order(packages14, deps14)
+    print(f"  Packages: {packages14}")
+    print(f"  Dependencies: {deps14}")
+    print(f"  Result: {order14}, Levels: {levels14}")
+    # Level 1: A, B
+    # Level 2: C, D (depends on A, B for C; depends on A for D)
+    # Level 3: E (depends on C, D), F (depends on D)
+    assert set(order14[:2]) == {'A', 'B'}, "First two should be A and B"
+    assert order14[2] == 'C', f"Third should be C, got {order14[2]}"
+    assert order14[3] == 'D', f"Fourth should be D, got {order14[3]}"
+    assert set(order14[4:]) == {'E', 'F'}, "Last two should be E and F"
+    assert levels14 == 3, f"Expected 3, got {levels14}"
+    print("  ✓ PASSED")
+    
+    print("\n" + "=" * 60)
+    print("ALL TESTS PASSED! ✓")
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    run_tests()

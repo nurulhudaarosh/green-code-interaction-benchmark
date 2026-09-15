@@ -1,0 +1,60 @@
+Here is the updated implementation returning a dictionary summary `{'processed_count': 0, 'skipped': []}` and cleanly handling directories with zero matching image files:
+
+```python
+import os
+from PIL import Image
+
+def batch_resize(input_dir, output_dir, target_size):
+    """
+    Resizes all PNG and JPEG images in input_dir to target_size and saves them to output_dir.
+    
+    :param input_dir: Path to the folder containing original images.
+    :param output_dir: Path to the folder where resized images will be saved.
+    :param target_size: A tuple of (width, height).
+    :return: A dict with 'processed_count' (int) and 'skipped' (list of filenames/reasons).
+    """
+    valid_extensions = {'.png', '.jpg', '.jpeg'}
+    result = {
+        'processed_count': 0,
+        'skipped': []
+    }
+    
+    # Handle missing directory edge case
+    if not os.path.exists(input_dir):
+        return result
+    
+    filenames = os.listdir(input_dir)
+    
+    # Check if empty or contains no valid images
+    valid_files = [
+        f for f in filenames 
+        if os.path.splitext(f)[1].lower() in valid_extensions
+    ]
+    
+    if not valid_files:
+        return result
+
+    # Only create output directory if there are valid files to process
+    os.makedirs(output_dir, exist_ok=True)
+    
+    for filename in valid_files:
+        ext = os.path.splitext(filename)[1].lower()
+        input_path = os.path.join(input_dir, filename)
+        output_path = os.path.join(output_dir, filename)
+        
+        try:
+            with Image.open(input_path) as img:
+                resized_img = img.resize(target_size, Image.Resampling.LANCZOS)
+                
+                # Convert RGBA/palette images if saving as JPEG
+                if ext in {'.jpg', '.jpeg'} and resized_img.mode in ('RGBA', 'P'):
+                    resized_img = resized_img.convert('RGB')
+                    
+                resized_img.save(output_path)
+                result['processed_count'] += 1
+        except Exception as e:
+            result['skipped'].append({'file': filename, 'error': str(e)})
+            
+    return result
+
+```

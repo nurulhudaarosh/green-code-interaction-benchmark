@@ -1,0 +1,121 @@
+"""
+Matrix Chain Multiplication - Minimum Scalar Multiplication Cost
+
+Problem:
+    Given dimensions p0, p1, ..., pn describing n matrices A1..An where
+    Ai has dimensions p[i-1] x p[i], determine the minimum number of
+    scalar multiplications needed to compute the product A1*A2*...*An,
+    and produce an optimal parenthesization.
+
+Key constraints:
+    - len(p) == n + 1 for n matrices; n >= 1.
+    - All dimensions p[i] must be positive integers.
+    - Matrix i (1-indexed) has shape p[i-1] x p[i]; consecutive matrices
+      must be conformable, which is guaranteed by this dimension scheme.
+    - When multiple split points k give the same minimum cost, choose
+      the smallest split index k (deterministic tie-breaking).
+
+Required output:
+    - m[1][n]: the minimum total number of scalar multiplications.
+    - A fully parenthesized expression string, e.g. "((A1 A2) (A3 A4))".
+
+Algorithm (interval DP over matrix-chain ranges):
+    Let m[i][j] = minimum cost to compute the product Ai * A(i+1) * ... * Aj.
+    Base case: m[i][i] = 0 (single matrix, no multiplication needed).
+    Recurrence, for i < j:
+        m[i][j] = min over k in [i, j-1] of:
+            m[i][k] + m[k+1][j] + p[i-1] * p[k] * p[j]
+    We fill the table by increasing chain length L = j - i + 1, from 2..n,
+    and for each (i, j) scan all valid split points k, keeping the first
+    k that achieves the minimum (smallest split index on ties).
+    We store s[i][j] = the chosen split k to reconstruct the optimal
+    parenthesization via a straightforward recursive traversal.
+    Time complexity: O(n^3). Space complexity: O(n^2).
+"""
+
+from typing import List, Tuple
+
+
+def matrix_chain_order(p: List[int]) -> Tuple[int, List[List[int]]]:
+    """Compute minimum cost table m and split table s for matrix chain
+    multiplication given dimension list p (length n+1 for n matrices).
+
+    Returns:
+        (min_cost, s) where min_cost is m[1][n] and s is the split table
+        (1-indexed, s[i][j] valid for i < j).
+    """
+    if len(p) < 2:
+        raise ValueError("p must have at least 2 dimensions (>=1 matrix).")
+    for d in p:
+        if not isinstance(d, int) or d <= 0:
+            raise ValueError("All dimensions in p must be positive integers.")
+
+    n = len(p) - 1  # number of matrices
+
+    # 1-indexed tables of size (n+1) x (n+1); index 0 unused.
+    m = [[0] * (n + 1) for _ in range(n + 1)]
+    s = [[0] * (n + 1) for _ in range(n + 1)]
+
+    # L = chain length (number of matrices in the subchain)
+    for L in range(2, n + 1):
+        for i in range(1, n - L + 2):
+            j = i + L - 1
+            m[i][j] = float("inf")
+            best_k = i
+            for k in range(i, j):
+                cost = m[i][k] + m[k + 1][j] + p[i - 1] * p[k] * p[j]
+                if cost < m[i][j]:
+                    m[i][j] = cost
+                    best_k = k
+                # if cost == m[i][j], keep the earlier (smaller) k:
+                # since k increases monotonically here, the first
+                # occurrence of the minimum is naturally kept because
+                # we only update on strict '<'.
+            s[i][j] = best_k
+
+    return m[1][n], s
+
+
+def build_parenthesization(s: List[List[int]], i: int, j: int) -> str:
+    """Recursively reconstruct the optimal parenthesization as a string
+    using matrix labels A{i}..A{j}."""
+    if i == j:
+        return f"A{i}"
+    k = s[i][j]
+    left = build_parenthesization(s, i, k)
+    right = build_parenthesization(s, k + 1, j)
+    return f"({left} {right})"
+
+
+def solve(p: List[int]) -> Tuple[int, str]:
+    """Convenience wrapper: returns (min_cost, parenthesization_string)."""
+    n = len(p) - 1
+    if n == 1:
+        return 0, "A1"
+    min_cost, s = matrix_chain_order(p)
+    expr = build_parenthesization(s, 1, n)
+    return min_cost, expr
+
+
+def _demo() -> None:
+    """Deterministic demonstration with a few classic test cases."""
+    test_cases = [
+        [30, 35, 15, 5, 10, 20, 25],  # classic CLRS example -> cost 15125
+        [10, 20, 30],                  # 2 matrices -> single split
+        [40, 20, 30, 10, 30],          # 4 matrices
+        [5],                            # degenerate: no matrices (n=0)
+    ]
+
+    for p in test_cases:
+        n = len(p) - 1
+        print(f"p = {p}  (n = {n} matrices)")
+        if n <= 0:
+            print("  No matrices to multiply.\n")
+            continue
+        cost, expr = solve(p)
+        print(f"  Minimum scalar multiplications: {cost}")
+        print(f"  Optimal parenthesization:       {expr}\n")
+
+
+if __name__ == "__main__":
+    _demo()

@@ -1,0 +1,237 @@
+def lcs(x: str, y: str) -> dict:
+    """
+    Compute the Longest Common Subsequence (LCS) of two strings.
+
+    Deterministic tie-breaking:
+        If dp[i-1][j] == dp[i][j-1], prefer advancing
+        in the first string (move "up").
+
+    Returns:
+        {
+            "length": int,
+            "lcs": str
+        }
+
+    Time:  O(n * m)
+    Space: O(n * m)
+    """
+
+    n = len(x)
+    m = len(y)
+
+    # dp[i][j] = LCS length of x[:i] and y[:j]
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+
+    # predecessor[i][j]:
+    #   "diag" -> (i-1, j-1)
+    #   "up"   -> (i-1, j)
+    #   "left" -> (i, j-1)
+    predecessor = [[None] * (m + 1) for _ in range(n + 1)]
+
+    # Fill DP table.
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            if x[i - 1] == y[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+                predecessor[i][j] = "diag"
+
+            elif dp[i - 1][j] >= dp[i][j - 1]:
+                # On an equal-score tie, advance in x.
+                dp[i][j] = dp[i - 1][j]
+                predecessor[i][j] = "up"
+
+            else:
+                dp[i][j] = dp[i][j - 1]
+                predecessor[i][j] = "left"
+
+    # Reconstruct LCS from predecessors.
+    result = []
+    i, j = n, m
+
+    while i > 0 and j > 0:
+        move = predecessor[i][j]
+
+        if move == "diag":
+            result.append(x[i - 1])
+            i -= 1
+            j -= 1
+
+        elif move == "up":
+            i -= 1
+
+        elif move == "left":
+            j -= 1
+
+        else:
+            break
+
+    result.reverse()
+
+    return {
+        "length": dp[n][m],
+        "lcs": "".join(result)
+    }
+
+
+# ============================================================
+# TESTS
+# ============================================================
+
+def run_tests():
+    # --------------------------------------------------------
+    # 1. Standard example
+    # --------------------------------------------------------
+    result = lcs("ABCBDAB", "BDCABA")
+    assert result == {
+        "length": 4,
+        "lcs": "BDAB"
+    }
+
+    # --------------------------------------------------------
+    # 2. Another standard example
+    # --------------------------------------------------------
+    result = lcs("AGGTAB", "GXTXAYB")
+    assert result == {
+        "length": 4,
+        "lcs": "GTAB"
+    }
+
+    # --------------------------------------------------------
+    # 3. Identical strings
+    # --------------------------------------------------------
+    result = lcs("ABCDEF", "ABCDEF")
+    assert result == {
+        "length": 6,
+        "lcs": "ABCDEF"
+    }
+
+    # --------------------------------------------------------
+    # 4. No common characters
+    # --------------------------------------------------------
+    result = lcs("ABC", "XYZ")
+    assert result == {
+        "length": 0,
+        "lcs": ""
+    }
+
+    # --------------------------------------------------------
+    # 5. Empty first string
+    # --------------------------------------------------------
+    result = lcs("", "ABC")
+    assert result == {
+        "length": 0,
+        "lcs": ""
+    }
+
+    # --------------------------------------------------------
+    # 6. Empty second string
+    # --------------------------------------------------------
+    result = lcs("ABC", "")
+    assert result == {
+        "length": 0,
+        "lcs": ""
+    }
+
+    # --------------------------------------------------------
+    # 7. Repeated characters
+    # --------------------------------------------------------
+    result = lcs("AAAA", "AA")
+    assert result == {
+        "length": 2,
+        "lcs": "AA"
+    }
+
+    # --------------------------------------------------------
+    # 8. Explicit deterministic tie case
+    #
+    # Both directions can have the same DP score.
+    # The implementation must prefer "up", meaning
+    # advancing in the first string.
+    # --------------------------------------------------------
+    result = lcs("ABC", "BAC")
+
+    # With the required deterministic rule, the result is "AC".
+    assert result == {
+        "length": 2,
+        "lcs": "AC"
+    }
+
+    # --------------------------------------------------------
+    # 9. Worst-case-like repeated alternating structure
+    #
+    # The DP must inspect every pair of positions.
+    # X = ABABAB...
+    # Y = BABABA...
+    #
+    # For length 100 each, the expected LCS length is 99.
+    # --------------------------------------------------------
+    x = "AB" * 50
+    y = "BA" * 50
+
+    result = lcs(x, y)
+
+    assert result["length"] == 99
+    assert len(result["lcs"]) == 99
+
+    # The result must actually be a subsequence of both strings.
+    def is_subsequence(subsequence, string):
+        pos = 0
+
+        for char in string:
+            if pos < len(subsequence) and subsequence[pos] == char:
+                pos += 1
+
+        return pos == len(subsequence)
+
+    assert is_subsequence(result["lcs"], x)
+    assert is_subsequence(result["lcs"], y)
+
+    # --------------------------------------------------------
+    # 10. Larger worst-case-like structure
+    #
+    # This exercises roughly 250,000 DP cells.
+    # It verifies that the implementation preserves the
+    # quadratic algorithm for larger valid inputs.
+    # --------------------------------------------------------
+    x = "AB" * 250
+    y = "BA" * 250
+
+    result = lcs(x, y)
+
+    assert result["length"] == 499
+    assert len(result["lcs"]) == 499
+    assert is_subsequence(result["lcs"], x)
+    assert is_subsequence(result["lcs"], y)
+
+    # --------------------------------------------------------
+    # 11. Highly repetitive strings
+    # --------------------------------------------------------
+    x = "A" * 100
+    y = "A" * 80
+
+    result = lcs(x, y)
+
+    assert result == {
+        "length": 80,
+        "lcs": "A" * 80
+    }
+
+    # --------------------------------------------------------
+    # 12. Determinism test
+    #
+    # Running the same input multiple times must produce
+    # exactly the same output.
+    # --------------------------------------------------------
+    x = "ABCDABCD"
+    y = "BACDBACD"
+
+    first = lcs(x, y)
+
+    for _ in range(10):
+        assert lcs(x, y) == first
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()

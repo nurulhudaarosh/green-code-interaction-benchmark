@@ -1,0 +1,165 @@
+import os
+import sys
+from PIL import Image
+from pathlib import Path
+
+def generate_thumbnails(input_dir, cache_dir, max_dim=128):
+    """
+    Recursively creates aspect-ratio-preserving thumbnails mirroring the input directory tree.
+    
+    Args:
+        input_dir (str): Path to the source directory containing images
+        cache_dir (str): Path to the destination directory for thumbnails
+        max_dim (int): Maximum dimension (width or height) for thumbnails. Defaults to 128.
+    
+    Returns:
+        tuple: (success_count, skip_count, error_count)
+    """
+    
+    # Convert to Path objects for easier handling
+    input_path = Path(input_dir)
+    cache_path = Path(cache_dir)
+    
+    # Supported image extensions
+    image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.tif', '.webp', '.ico'}
+    
+    # Statistics
+    success_count = 0
+    skip_count = 0
+    error_count = 0
+    
+    # Walk through the input directory recursively
+    for root, dirs, files in os.walk(input_path):
+        # Compute the relative path from input_dir
+        rel_path = Path(root).relative_to(input_path)
+        
+        # Create corresponding directory in cache
+        target_dir = cache_path / rel_path
+        target_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Process each file in the current directory
+        for filename in files:
+            file_path = Path(root) / filename
+            file_ext = file_path.suffix.lower()
+            
+            # Skip non-image files
+            if file_ext not in image_extensions:
+                continue
+            
+            # Construct target thumbnail path (preserve original filename)
+            thumbnail_path = target_dir / filename
+            
+            # Skip if thumbnail already exists and is newer than source
+            if thumbnail_path.exists():
+                try:
+                    source_mtime = file_path.stat().st_mtime
+                    thumb_mtime = thumbnail_path.stat().st_mtime
+                    if thumb_mtime >= source_mtime:
+                        skip_count += 1
+                        continue
+                except (OSError, FileNotFoundError):
+                    # If we can't stat, just regenerate
+                    pass
+            
+            # Generate thumbnail
+            try:
+                with Image.open(file_path) as img:
+                    # Calculate aspect-ratio-preserving dimensions
+                    original_width, original_height = img.size
+                    
+                    # Determine scaling factor
+                    if original_width > original_height:
+                        new_width = max_dim
+                        new_height = int(original_height * (max_dim / original_width))
+                    else:
+                        new_height = max_dim
+                        new_width = int(original_width * (max_dim / original_height))
+                    
+                    # Ensure minimum size of 1 pixel
+                    new_width = max(1, new_width)
+                    new_height = max(1, new_height)
+                    
+                    # Use high-quality resampling
+                    resample_filter = Image.Resampling.LANCZOS
+                    
+                    # Create thumbnail
+                    img_thumb = img.resize((new_width, new_height), resample_filter)
+                    
+                    # Convert RGBA to RGB for JPEG (but preserve alpha for PNG/GIF)
+                    if file_ext.lower() in {'.jpg', '.jpeg'}:
+                        # JPEG doesn't support alpha
+                        if img_thumb.mode in ('RGBA', 'LA', 'P'):
+                            img_thumb = img_thumb.convert('RGB')
+                    elif file_ext.lower() in {'.png', '.gif'}:
+                        # Preserve transparency for PNG/GIF
+                        if img_thumb.mode in ('RGBA', 'LA'):
+                            pass  # Keep as is
+                        elif img_thumb.mode == 'P':
+                            # Palette mode might have transparency
+                            img_thumb = img_thumb.convert('RGBA')
+                    
+                    # Determine save format
+                    save_kwargs = {}
+                    if file_ext.lower() in {'.jpg', '.jpeg'}:
+                        save_kwargs['quality'] = 85
+                        save_kwargs['optimize'] = True
+                    elif file_ext.lower() == '.png':
+                        save_kwargs['optimize'] = True
+                    elif file_ext.lower() == '.gif':
+                        save_kwargs['optimize'] = True
+                    
+                    # Save thumbnail
+                    img_thumb.save(thumbnail_path, **save_kwargs)
+                    success_count += 1
+                    
+            except Exception as e:
+                error_count += 1
+                print(f"Error processing {file_path}: {e}", file=sys.stderr)
+    
+    return success_count, skip_count, error_count
+
+
+# Example usage and CLI wrapper
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="Generate aspect-ratio-preserving thumbnails recursively"
+    )
+    parser.add_argument("input_dir", help="Source directory containing images")
+    parser.add_argument("cache_dir", help="Destination directory for thumbnails")
+    parser.add_argument(
+        "--max-dim", 
+        type=int, 
+        default=128,
+        help="Maximum dimension for thumbnails (default: 128)"
+    )
+    
+    args = parser.parse_args()
+    
+    # Validate directories
+    if not os.path.exists(args.input_dir):
+        print(f"Error: Input directory '{args.input_dir}' does not exist", file=sys.stderr)
+        sys.exit(1)
+    
+    if not os.path.isdir(args.input_dir):
+        print(f"Error: '{args.input_dir}' is not a directory", file=sys.stderr)
+        sys.exit(1)
+    
+    # Create cache directory if it doesn't exist
+    os.makedirs(args.cache_dir, exist_ok=True)
+    
+    # Generate thumbnails
+    success, skipped, errors = generate_thumbnails(
+        args.input_dir, 
+        args.cache_dir, 
+        args.max_dim
+    )
+    
+    # Print summary
+    print(f"Thumbnails generated: {success}")
+    print(f"Skipped (up to date): {skipped}")
+    print(f"Errors: {errors}")
+    
+    if errors > 0:
+        sys.exit(1)

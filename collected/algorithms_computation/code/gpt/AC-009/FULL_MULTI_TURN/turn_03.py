@@ -1,0 +1,395 @@
+"""
+Minimum Coin Construction
+
+Original problem:
+Given coin denominations and a target amount, find a combination of coins
+that produces the target using the minimum possible number of coins.
+Coins may be reused unlimited times.
+
+Original required output:
+    (minimum_coin_count, coin_combination)
+
+If impossible:
+    (-1, [])
+
+New optional feature:
+    include_operation_summary=True
+
+When the feature is disabled (default), the original output is preserved:
+    (count, combination)
+
+When enabled, the result becomes:
+    {
+        "count": count,
+        "combination": combination,
+        "operation_summary": {
+            "dp_decisions": number_of_major_dp_decisions
+        }
+    }
+
+Definition of dp_decisions:
+Each reachable DP transition considered for a denomination is counted as
+one major computational decision. This count is deterministic because the
+coins are processed in sorted order and amounts are processed from 1 to
+target.
+
+Algorithm:
+- One-dimensional unbounded coin-change DP.
+- dp[a] stores the minimum number of coins required to construct amount a.
+- choice[a] stores the deterministic coin selected for reconstruction.
+- Ties are resolved by choosing the smaller denomination.
+- Reconstruction follows choice[] backwards from target.
+
+Complexity:
+    Time:  O(target * number_of_usable_denominations)
+    Space: O(target)
+"""
+
+
+from typing import List, Tuple, Dict, Union, Any
+
+
+def minimum_coin_construction(
+    coins: List[int],
+    target: int,
+    include_operation_summary: bool = False
+) -> Union[
+    Tuple[int, List[int]],
+    Dict[str, Any]
+]:
+    """
+    Construct the minimum-coin solution.
+
+    Parameters:
+        coins:
+            Positive integer coin denominations.
+
+        target:
+            Non-negative target amount.
+
+        include_operation_summary:
+            False -> preserve the original output:
+                (count, combination)
+
+            True -> return:
+                {
+                    "count": count,
+                    "combination": combination,
+                    "operation_summary": {
+                        "dp_decisions": ...
+                    }
+                }
+
+    Returns:
+        Original format when include_operation_summary=False:
+            (count, combination)
+
+        Extended format when include_operation_summary=True:
+            {
+                "count": count,
+                "combination": combination,
+                "operation_summary": {
+                    "dp_decisions": ...
+                }
+            }
+    """
+
+    if target < 0:
+        raise ValueError("target must be non-negative")
+
+    # ---------------------------------------------------------------
+    # Target 0
+    # ---------------------------------------------------------------
+    if target == 0:
+        if include_operation_summary:
+            return {
+                "count": 0,
+                "combination": [],
+                "operation_summary": {
+                    "dp_decisions": 0
+                }
+            }
+
+        # Original behavior is preserved.
+        return 0, []
+
+    # ---------------------------------------------------------------
+    # Validate and normalize denominations.
+    # Sorting gives deterministic tie handling independent of input order.
+    # ---------------------------------------------------------------
+    unique_coins = sorted(set(coins))
+
+    if any(coin <= 0 for coin in unique_coins):
+        raise ValueError("coin denominations must be positive")
+
+    usable_coins = [
+        coin for coin in unique_coins
+        if coin <= target
+    ]
+
+    if not usable_coins:
+        if include_operation_summary:
+            return {
+                "count": -1,
+                "combination": [],
+                "operation_summary": {
+                    "dp_decisions": 0
+                }
+            }
+
+        # Original behavior is preserved.
+        return -1, []
+
+    # ---------------------------------------------------------------
+    # One-dimensional unbounded coin-change DP.
+    # ---------------------------------------------------------------
+
+    INF = target + 1
+
+    # dp[amount] = minimum number of coins required.
+    dp = [INF] * (target + 1)
+
+    # choice[amount] = selected denomination.
+    choice = [None] * (target + 1)
+
+    dp[0] = 0
+
+    # Number of major DP decisions.
+    dp_decisions = 0
+
+    for amount in range(1, target + 1):
+
+        for coin in usable_coins:
+
+            if coin > amount:
+                break
+
+            # This is a valid DP transition that we evaluate.
+            dp_decisions += 1
+
+            if dp[amount - coin] == INF:
+                continue
+
+            candidate = dp[amount - coin] + 1
+
+            # Better solution.
+            if candidate < dp[amount]:
+                dp[amount] = candidate
+                choice[amount] = coin
+
+            # Equal solution:
+            # choose the smaller denomination.
+            elif candidate == dp[amount]:
+                if (
+                    choice[amount] is None
+                    or coin < choice[amount]
+                ):
+                    choice[amount] = coin
+
+    # ---------------------------------------------------------------
+    # Impossible target.
+    # ---------------------------------------------------------------
+
+    if dp[target] == INF:
+
+        if include_operation_summary:
+            return {
+                "count": -1,
+                "combination": [],
+                "operation_summary": {
+                    "dp_decisions": dp_decisions
+                }
+            }
+
+        # Original behavior is preserved.
+        return -1, []
+
+    # ---------------------------------------------------------------
+    # Deterministic reconstruction.
+    # ---------------------------------------------------------------
+
+    combination = []
+    current = target
+
+    while current > 0:
+        coin = choice[current]
+
+        if coin is None:
+            # Defensive safeguard.
+            if include_operation_summary:
+                return {
+                    "count": -1,
+                    "combination": [],
+                    "operation_summary": {
+                        "dp_decisions": dp_decisions
+                    }
+                }
+
+            return -1, []
+
+        combination.append(coin)
+        current -= coin
+
+    # ---------------------------------------------------------------
+    # Original output or extended output.
+    # ---------------------------------------------------------------
+
+    if not include_operation_summary:
+        # EXACTLY preserve the original output format.
+        return dp[target], combination
+
+    return {
+        "count": dp[target],
+        "combination": combination,
+        "operation_summary": {
+            "dp_decisions": dp_decisions
+        }
+    }
+
+
+# -------------------------------------------------------------------
+# Tests
+# -------------------------------------------------------------------
+
+def run_tests() -> None:
+
+    # ---------------------------------------------------------------
+    # Original behavior remains unchanged.
+    # ---------------------------------------------------------------
+
+    assert minimum_coin_construction(
+        [1, 3, 4], 6
+    ) == (2, [3, 3])
+
+    # Impossible target.
+    assert minimum_coin_construction(
+        [2, 4], 7
+    ) == (-1, [])
+
+    # Smallest valid input.
+    assert minimum_coin_construction(
+        [1], 1
+    ) == (1, [1])
+
+    # Target zero.
+    assert minimum_coin_construction(
+        [1, 2, 5], 0
+    ) == (0, [])
+
+    # Reusable coins.
+    assert minimum_coin_construction(
+        [2, 5], 10
+    ) == (2, [5, 5])
+
+    # Deterministic tie handling.
+    #
+    # For target 6:
+    #   [3, 3] = 2 coins
+    #   [2, 4] = 2 coins
+    #
+    # The smaller denomination is preferred during reconstruction.
+    assert minimum_coin_construction(
+        [4, 3, 2], 6
+    ) == (2, [2, 4])
+
+    # Input order does not change the deterministic result.
+    assert minimum_coin_construction(
+        [2, 4, 3], 6
+    ) == (2, [2, 4])
+
+    assert minimum_coin_construction(
+        [3, 2, 4], 6
+    ) == (2, [2, 4])
+
+    # Duplicate denominations.
+    assert minimum_coin_construction(
+        [1, 1, 3], 6
+    ) == (2, [3, 3])
+
+    # No usable denomination.
+    assert minimum_coin_construction(
+        [5, 7], 3
+    ) == (-1, [])
+
+    # ---------------------------------------------------------------
+    # New feature: operation_summary.
+    # ---------------------------------------------------------------
+
+    result = minimum_coin_construction(
+        [1, 3, 4],
+        6,
+        include_operation_summary=True
+    )
+
+    assert result["count"] == 2
+    assert result["combination"] == [3, 3]
+
+    assert "operation_summary" in result
+    assert "dp_decisions" in result["operation_summary"]
+
+    # For coins [1, 3, 4] and target 6:
+    #
+    # amount 1:  coin 1                         -> 1 decision
+    # amount 2:  coin 1                         -> 1
+    # amount 3:  coins 1, 3                    -> 2
+    # amount 4:  coins 1, 3, 4                 -> 3
+    # amount 5:  coins 1, 3, 4                 -> 3
+    # amount 6:  coins 1, 3, 4                 -> 3
+    #
+    # Total = 13.
+    assert result["operation_summary"]["dp_decisions"] == 13
+
+    # ---------------------------------------------------------------
+    # Summary for an impossible case.
+    # ---------------------------------------------------------------
+
+    result = minimum_coin_construction(
+        [2, 4],
+        7,
+        include_operation_summary=True
+    )
+
+    assert result["count"] == -1
+    assert result["combination"] == []
+    assert result["operation_summary"]["dp_decisions"] == 10
+
+    # ---------------------------------------------------------------
+    # Summary for target zero.
+    # ---------------------------------------------------------------
+
+    result = minimum_coin_construction(
+        [1, 2, 5],
+        0,
+        include_operation_summary=True
+    )
+
+    assert result == {
+        "count": 0,
+        "combination": [],
+        "operation_summary": {
+            "dp_decisions": 0
+        }
+    }
+
+    # ---------------------------------------------------------------
+    # Verify that the summary does not affect the actual solution.
+    # ---------------------------------------------------------------
+
+    original = minimum_coin_construction([1, 5, 10], 12)
+
+    extended = minimum_coin_construction(
+        [1, 5, 10],
+        12,
+        include_operation_summary=True
+    )
+
+    assert original == (
+        extended["count"],
+        extended["combination"]
+    )
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()

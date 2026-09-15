@@ -1,0 +1,57 @@
+import csv
+import sys
+
+SEVERITY_ORDER = {
+    "CRITICAL": 5,
+    "ERROR": 4,
+    "WARNING": 3,
+    "INFO": 2,
+    "DEBUG": 1,
+}
+
+def severity_rank(value):
+    if value is None:
+        return 0
+    v = value.strip()
+    if v.upper() in SEVERITY_ORDER:
+        return SEVERITY_ORDER[v.upper()]
+    try:
+        return float(v)
+    except ValueError:
+        return 0
+
+def sort_csv(input_path, output_path,
+             timestamp_field="timestamp", severity_field="severity"):
+    with open(input_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames
+        rows = list(reader)
+
+    indexed_rows = [
+        (i, row) for i, row in enumerate(rows)
+    ]
+
+    indexed_rows.sort(
+        key=lambda item: (
+            item[1].get(timestamp_field, ""),
+            -severity_rank(item[1].get(severity_field, "")),
+            item[0],
+        )
+    )
+
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=fieldnames,
+            quoting=csv.QUOTE_MINIMAL,
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        for _, row in indexed_rows:
+            writer.writerow(row)
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: python log_sorter.py <input.csv> <output.csv>")
+        sys.exit(1)
+    sort_csv(sys.argv[1], sys.argv[2])

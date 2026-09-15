@@ -1,0 +1,49 @@
+import csv
+import sys
+
+def severity_value(value):
+    levels = {
+        "DEBUG": 1,
+        "INFO": 2,
+        "WARNING": 3,
+        "ERROR": 4,
+        "CRITICAL": 5
+    }
+    return levels.get(value.strip().upper(), 0)
+
+def sort_logs(input_file, output_file):
+    rows = []
+
+    with open(input_file, "r", newline="", encoding="utf-8") as infile:
+        reader = csv.DictReader(infile)
+
+        fieldnames = reader.fieldnames or []
+
+        for sequence, row in enumerate(reader):
+            row["sequence"] = sequence
+            rows.append(row)
+
+    rows.sort(
+        key=lambda row: (
+            row.get("timestamp", ""),
+            -severity_value(row.get("severity", "")),
+            row["sequence"]
+        )
+    )
+
+    output_fields = fieldnames + ["sequence"]
+
+    with open(output_file, "w", newline="", encoding="utf-8") as outfile:
+        writer = csv.DictWriter(
+            outfile,
+            fieldnames=output_fields,
+            quoting=csv.QUOTE_MINIMAL
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        sys.exit(1)
+
+    sort_logs(sys.argv[1], sys.argv[2])

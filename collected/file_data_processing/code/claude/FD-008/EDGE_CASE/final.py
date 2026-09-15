@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""
+Offline duplicate .txt file finder.
+
+Recursively scans a directory for regular .txt files. Symlinks (files,
+directories, or anything else) are ignored entirely so they can't cause
+infinite loops or escape the tree. Non-text files are detected and skipped.
+Content is Unicode-normalized (NFC), case-folded, and whitespace-normalized
+before SHA-256 hashing so semantically identical files match regardless of
+encoding quirks or formatting differences.
+"""
+
+import argparse
+import hashlib
+import re
+import sys
+import unicodedata
+from pathlib import Path
+
+WHITESPACE_RE = re.compile(r"\s+")
+
+# Heuristic: if a chunk of "text" decodes but contains NUL bytes or too many
+# non-printable/control characters, treat it as binary rather than text.
+CONTROL_CHARS_ALLOWED = {"\t", "\n", "\r", "\v", "\f"}
+MAX_CONTROL_RATIO = 0.30
+SAMPLE_SIZE = 8192
+
+
+def looks_like_binary(raw: bytes) -> bool:
+    """Cheap heuristic to detect non-text content before attempting decode."""
+    if b"\x00" in raw:
+        return True
+    sample = raw[:SAMPLE_SIZE]
+    if not sample:
+        return False
+    control_count = sum(
+        1
+        for b in sample
+        if b < 0x20 and chr(b) not in CONTROL_CHARS_ALLOWED
+    )
+    return (control_count / len(sample)) > MAX_CONTROL_RATIO
+
+
+def decode_text(raw: bytes) -> str | None:
+    """Try a sequence of encodings; return None if content isn't decodable text."""
+    if looks_like_binary(raw):
+        return None
+    for encoding in ("utf-8-sig", "utf-8", "utf-16", "latin-1"):
+        try:
+            return raw.decode(encoding)
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+    return None
+
+
+def normalize_content(text: str) -> str:
+    """Unicode-normalize (NFC), case-fold, and collapse/trim whitespace."""
+    text = unicodedata.normalize("NFC", text)
+    text = text.casefold()
+    text = WHITESPACE_RE.sub(" ", text)
+    return text.strip()
+
+
+def hash_file(path: Path) -> str | None:
+    """Read, decode, normalize, and SHA-256 hash a file's content.
+
+    Returns None if the file can't be read or doesn't look like text.
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError as e:
+        print(f"warning: could not read {path}: {e}", file=sys.stderr)
+        return None
+
+    text = decode_text(raw)
+    if text is None:
+        print(f"warning: skipping non-text or undecodable file: {path}", file=sys.stderr)
+        return None
+
+    normalized = normalize_content(text)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def iter_txt_files(root: Path):
+    """
+    Walk the tree under root, yielding regular .txt files.
+
+    Symlinks (to files OR directories) are never followed and never yielded,
+    which also protects against symlink cycles and deeply-linked structures.
+    Deep nesting is handled with an explicit stack instead of recursion, so
+    there's no Python recursion-depth limit on directory depth.
+    """
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        try:
+            entries = sorted(current.iterdir())
+        except OSError as e:
+            print(f"warning: could not list {current}: {e}", file=sys.stderr)
+            continue
+
+        for entry in entries:
+            # Skip all symlinks outright (files, dirs, broken links, whatever).
+            if entry.is_symlink():
+                continue
+            try:
+                if entry.is_dir():
+                    stack.append(entry)
+                elif entry.is_file():
+                    if entry.suffix == ".txt":
+                        yield entry
+            except OSError as e:
+                print(f"warning: could not stat {entry}: {e}", file=sys.stderr)
+                continue
+
+
+def find_duplicates(root: Path) -> dict[str, list[Path]]:
+    """Return mapping of content-hash -> sorted list of duplicate file paths (groups of size >= 2)."""
+    hash_to_paths: dict[str, list[Path]] = {}
+
+    for path in iter_txt_files(root):
+        digest = hash_file(path)
+        if digest is None:
+            continue
+        hash_to_paths.setdefault(digest, []).append(path)
+
+    duplicates = {
+        digest: sorted(paths)
+        for digest, paths in hash_to_paths.items()
+        if len(paths) > 1
+    }
+    return duplicates
+
+
+def report(duplicates: dict[str, list[Path]]) -> None:
+    if not duplicates:
+        print("No duplicate .txt files found.")
+        return
+
+    # Deterministic ordering: sort groups by hash string.
+    for i, digest in enumerate(sorted(duplicates.keys()), start=1):
+        paths = duplicates[digest]
+        print(f"Group {i} (sha256={digest}):")
+        for p in paths:
+            print(f"  {p}")
+        print()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Find duplicate .txt files by normalized content hash."
+    )
+    parser.add_argument(
+        "directory",
+        nargs="?",
+        default=".",
+        help="Root directory to scan (default: current directory)",
+    )
+    args = parser.parse_args()
+
+    root = Path(args.directory).resolve()
+    if not root.is_dir() or root.is_symlink():
+        print(f"error: {root} is not a real (non-symlink) directory", file=sys.stderr)
+        return 1
+
+    duplicates = find_duplicates(root)
+    report(duplicates)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

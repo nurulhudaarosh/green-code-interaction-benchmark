@@ -1,0 +1,124 @@
+from collections import deque
+from typing import List, Tuple
+
+class Dinic:
+    def __init__(self, n: int):
+        self.n = n
+        self.graph = [[] for _ in range(n)]
+        self.edges = []  # Stores (u, v, capacity, original_edge_idx)
+
+    def add_edge(self, u: int, v: int, cap: float, original_idx: int):
+        """Adds a directed edge and its residual counterpart."""
+        # Forward edge
+        e1 = [u, v, cap, 0.0, len(self.graph[v]), original_idx]
+        # Reverse edge (capacity 0, marker idx -1)
+        e2 = [v, u, 0.0, 0.0, len(self.graph[u]), -1]
+        
+        self.graph[u].append(e1)
+        self.graph[v].append(e2)
+        
+        # Keep track of original forward edges
+        self.edges.append(e1)
+
+    def _bfs(self, s: int, t: int, level: List[int]) -> bool:
+        for i in range(self.n):
+            level[i] = -1
+        level[s] = 0
+        queue = deque([s])
+        
+        while queue:
+            u = queue.popleft()
+            for edge in self.graph[u]:
+                v, cap, flow = edge[1], edge[2], edge[3]
+                if cap - flow > 1e-9 and level[v] < 0:
+                    level[v] = level[u] + 1
+                    queue.append(v)
+                    
+        return level[t] >= 0
+
+    def _dfs(self, u: int, t: int, pushed: float, level: List[int], ptr: List[int]) -> float:
+        if pushed <= 0 or u == t:
+            return pushed
+
+        for cid in range(ptr[u], len(self.graph[u])):
+            ptr[u] = cid
+            edge = self.graph[u][cid]
+            v = edge[1]
+
+            if level[u] + 1 != level[v] or edge[2] - edge[3] <= 1e-9:
+                continue
+
+            tr = self._dfs(v, t, min(pushed, edge[2] - edge[3]), level, ptr)
+            if tr <= 1e-9:
+                continue
+
+            # Push flow: increase forward flow, decrease reverse flow
+            edge[3] += tr
+            rev_idx = edge[4]
+            self.graph[v][rev_idx][3] -= tr
+            return tr
+
+        return 0.0
+
+    def max_flow(self, s: int, t: int) -> float:
+        flow = 0.0
+        level = [-1] * self.n
+        
+        while self._bfs(s, t, level):
+            ptr = [0] * self.n
+            while True:
+                pushed = self._dfs(s, t, float('inf'), level, ptr)
+                if pushed <= 1e-9:
+                    break
+                flow += pushed
+
+        return flow
+
+
+def solve_max_flow(n: int, s: int, t: int, edge_list: List[Tuple[int, int, float]]) -> Tuple[float, List[float]]:
+    """
+    Computes max flow and flow on each original edge in original input order.
+    
+    :param n: Number of vertices (0-indexed: 0 to n-1)
+    :param s: Source node index
+    :param t: Sink node index
+    :param edge_list: List of (u, v, capacity) tuples
+    :return: (max_flow_value, list_of_edge_flows)
+    """
+    solver = Dinic(n)
+    
+    for idx, (u, v, cap) in enumerate(edge_list):
+        solver.add_edge(u, v, float(cap), idx)
+        
+    max_flow_val = solver.max_flow(s, t)
+    
+    # Preserve original order of edge flows
+    edge_flows = [0.0] * len(edge_list)
+    for edge in solver.edges:
+        orig_idx = edge[5]
+        edge_flows[orig_idx] = edge[3]
+
+    return max_flow_val, edge_flows
+
+
+# --- Example Usage ---
+if __name__ == "__main__":
+    num_nodes = 4
+    source = 0
+    sink = 3
+    
+    # Edges defined as (u, v, capacity)
+    edges = [
+        (0, 1, 10.0),  # Edge 0
+        (0, 2, 10.0),  # Edge 1
+        (1, 2, 2.0),   # Edge 2
+        (1, 3, 8.0),   # Edge 3
+        (2, 3, 10.0)   # Edge 4
+    ]
+    
+    max_flow, edge_flows = solve_max_flow(num_nodes, source, sink, edges)
+    
+    print(f"Maximum Flow Value: {max_flow}")
+    print("Flow on each original edge (in input order):")
+    for i, (u, v, cap) in enumerate(edges):
+        print(f"Edge {i} ({u} -> {v}): Flow = {edge_flows[i]} / Capacity = {cap}")

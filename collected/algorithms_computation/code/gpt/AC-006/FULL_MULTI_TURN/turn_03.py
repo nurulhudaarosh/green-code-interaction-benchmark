@@ -1,0 +1,283 @@
+from typing import List, Optional, Tuple, Union
+
+Coordinate = Tuple[int, int]
+OriginalResult = Tuple[int, int, Optional[Coordinate]]
+ExtendedResult = Tuple[int, int, Optional[Coordinate], int]
+
+
+def largest_threshold_region(
+    grid: List[List[float]],
+    T: float,
+    include_operation_summary: bool = False,
+) -> Union[OriginalResult, ExtendedResult]:
+    """
+    Find the largest 4-connected region of cells with value >= T.
+
+    Original result:
+        (size, perimeter, smallest_coordinate)
+
+    Extended result when include_operation_summary=True:
+        (size, perimeter, smallest_coordinate, operation_summary)
+
+    Tie-breaking:
+        1. Larger size.
+        2. Larger perimeter.
+        3. Smaller lexicographical coordinate.
+
+    operation_summary:
+        A deterministic count of major flood-fill operations:
+            - one operation for processing each qualifying cell;
+            - four neighbor-side decisions for each processed cell.
+
+        Therefore:
+            operation_summary = processed_cells * 5
+
+    Empty grid / no qualifying cells:
+        Original mode:
+            (0, 0, None)
+
+        Extended mode:
+            (0, 0, None, 0)
+    """
+
+    # Preserve original empty-grid behavior.
+    if not grid or not grid[0]:
+        if include_operation_summary:
+            return (0, 0, None, 0)
+        return (0, 0, None)
+
+    rows = len(grid)
+    cols = len(grid[0])
+
+    # Preserve rectangular-grid validation.
+    if any(len(row) != cols for row in grid):
+        raise ValueError("grid must be rectangular")
+
+    visited = [[False] * cols for _ in range(rows)]
+
+    directions = (
+        (-1, 0),  # up
+        (1, 0),   # down
+        (0, -1),  # left
+        (0, 1),   # right
+    )
+
+    best_size = 0
+    best_perimeter = 0
+    best_coordinate: Optional[Coordinate] = None
+
+    # Counts major operations for the requested optional feature.
+    operation_summary = 0
+
+    for start_row in range(rows):
+        for start_col in range(cols):
+
+            if visited[start_row][start_col]:
+                continue
+
+            if grid[start_row][start_col] < T:
+                continue
+
+            # Iterative flood fill.
+            stack = [(start_row, start_col)]
+            visited[start_row][start_col] = True
+
+            region_size = 0
+            region_perimeter = 0
+            region_smallest = (start_row, start_col)
+
+            while stack:
+                row, col = stack.pop()
+
+                # Major operation: process one qualifying cell.
+                region_size += 1
+                operation_summary += 1
+
+                current_coordinate = (row, col)
+
+                if current_coordinate < region_smallest:
+                    region_smallest = current_coordinate
+
+                # Examine every side exactly once.
+                for d_row, d_col in directions:
+                    # Major operation: examine one neighboring side.
+                    operation_summary += 1
+
+                    neighbor_row = row + d_row
+                    neighbor_col = col + d_col
+
+                    # Outside grid -> exposed side.
+                    if (
+                        neighbor_row < 0
+                        or neighbor_row >= rows
+                        or neighbor_col < 0
+                        or neighbor_col >= cols
+                    ):
+                        region_perimeter += 1
+                        continue
+
+                    # Below threshold -> exposed side.
+                    if grid[neighbor_row][neighbor_col] < T:
+                        region_perimeter += 1
+                        continue
+
+                    # Qualifying, unvisited neighbor -> flood fill.
+                    if not visited[neighbor_row][neighbor_col]:
+                        visited[neighbor_row][neighbor_col] = True
+                        stack.append((neighbor_row, neighbor_col))
+
+            # Deterministic tie-breaking.
+            if best_coordinate is None:
+                better = True
+            elif region_size > best_size:
+                better = True
+            elif (
+                region_size == best_size
+                and region_perimeter > best_perimeter
+            ):
+                better = True
+            elif (
+                region_size == best_size
+                and region_perimeter == best_perimeter
+                and region_smallest < best_coordinate
+            ):
+                better = True
+            else:
+                better = False
+
+            if better:
+                best_size = region_size
+                best_perimeter = region_perimeter
+                best_coordinate = region_smallest
+
+    if include_operation_summary:
+        return (
+            best_size,
+            best_perimeter,
+            best_coordinate,
+            operation_summary,
+        )
+
+    # Original output remains completely unchanged.
+    return (
+        best_size,
+        best_perimeter,
+        best_coordinate,
+    )
+
+
+# ------------------------------------------------------------------
+# Tests
+# ------------------------------------------------------------------
+
+def run_tests() -> None:
+
+    # Original behavior: exactly three fields.
+    grid = [
+        [5, 5],
+        [5, 5],
+    ]
+
+    assert largest_threshold_region(grid, 5) == (4, 8, (0, 0))
+
+    # New feature: four fields.
+    #
+    # 4 cells are processed.
+    # Each has 4 side examinations.
+    # Total = 4 + (4 * 4) = 20.
+    assert largest_threshold_region(
+        grid,
+        5,
+        include_operation_summary=True,
+    ) == (4, 8, (0, 0), 20)
+
+    # No qualifying cells.
+    assert largest_threshold_region(
+        [[1, 2], [3, 4]],
+        5,
+        include_operation_summary=True,
+    ) == (0, 0, None, 0)
+
+    # Empty grid.
+    assert largest_threshold_region(
+        [],
+        5,
+        include_operation_summary=True,
+    ) == (0, 0, None, 0)
+
+    # 4-connectivity only.
+    grid = [
+        [5, 1],
+        [1, 5],
+    ]
+
+    assert largest_threshold_region(grid, 5) == (1, 4, (0, 0))
+
+    assert largest_threshold_region(
+        grid,
+        5,
+        include_operation_summary=True,
+    ) == (1, 4, (0, 0), 5)
+
+    # Threshold is inclusive.
+    grid = [
+        [5, 5],
+        [4, 5],
+    ]
+
+    assert largest_threshold_region(grid, 5) == (3, 8, (0, 0))
+
+    assert largest_threshold_region(
+        grid,
+        5,
+        include_operation_summary=True,
+    ) == (3, 8, (0, 0), 15)
+
+    # Equal-size regions: larger perimeter wins.
+    grid = [
+        [5, 5, 1, 5],
+        [5, 5, 1, 5],
+        [1, 1, 1, 5],
+        [1, 1, 1, 5],
+    ]
+
+    assert largest_threshold_region(grid, 5) == (4, 10, (0, 3))
+
+    # Equal size and perimeter: smaller coordinate wins.
+    grid = [
+        [5, 5, 1, 5, 5],
+        [1, 1, 1, 1, 1],
+        [5, 5, 1, 5, 5],
+    ]
+
+    assert largest_threshold_region(grid, 5) == (2, 6, (0, 0))
+
+    # Repeated values.
+    grid = [
+        [7, 7, 1],
+        [7, 7, 1],
+        [1, 1, 7],
+    ]
+
+    assert largest_threshold_region(grid, 7) == (4, 8, (0, 0))
+
+    # Deterministic operation count:
+    # 5 qualifying cells -> 5 * 5 = 25.
+    assert largest_threshold_region(
+        grid,
+        7,
+        include_operation_summary=True,
+    ) == (4, 8, (0, 0), 25)
+
+    # Non-rectangular grids remain invalid.
+    try:
+        largest_threshold_region([[5, 5], [5]], 5)
+        assert False, "Expected ValueError"
+    except ValueError:
+        pass
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()

@@ -1,0 +1,11 @@
+{
+  "task_id": "AC-004",
+  "model": "claude",
+  "interaction": "BUG_FIX",
+  "turn": 1,
+  "saved_at": "2026-09-05T06:57:57.879681+00:00",
+  "response_sha256": "9c8aed635595bc090501ad7de6c344e04ac2b8ada8ad72c4532a081ed4a769fe",
+  "code_sha256": "e36144e01ffe1a90466327679938666f8ad354394c839ce4eef51250c45058d9",
+  "raw_file": ".collection/raw/claude/AC-004/BUG_FIX/turn_01.txt",
+  "code_file": ".collection/code/claude/AC-004/BUG_FIX/initial.py"
+}

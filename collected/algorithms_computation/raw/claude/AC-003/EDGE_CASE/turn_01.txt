@@ -1,0 +1,97 @@
+## Problem
+
+Given a directed graph with non-negative edge weights and a source vertex, compute the shortest-path distance from the source to every vertex. Vertices unreachable from the source get distance `-1`.
+
+**Key constraints:**
+- Edge weights are non-negative (required for Dijkstra's correctness).
+- Graph may be disconnected; unreachable vertices output `-1`.
+- Graph is directed (edges are one-way).
+- Must be deterministic — same input always produces same output.
+
+**Required output:** A distance value (or `-1`) for every vertex in the graph, keyed by vertex.
+
+**Algorithm:** Build an adjacency list mapping each vertex to its `(neighbor, weight)` pairs. Run Dijkstra's algorithm using a binary min-heap (Python's `heapq`): initialize source distance to 0 and all others to infinity, repeatedly pop the vertex with smallest tentative distance, relax its outgoing edges, and skip stale heap entries. At the end, convert any vertex still at infinity to `-1`.
+
+```python
+import heapq
+from typing import Dict, List, Tuple, Hashable
+
+def dijkstra(
+    adjacency: Dict[Hashable, List[Tuple[Hashable, float]]],
+    source: Hashable
+) -> Dict[Hashable, float]:
+    """
+    Compute shortest distances from `source` to all vertices in a directed
+    graph with non-negative edge weights.
+
+    adjacency: maps vertex -> list of (neighbor, weight) tuples.
+               All vertices (including those with no outgoing edges) must
+               appear as keys.
+    source: the starting vertex. Must be a key in adjacency.
+
+    Returns: dict mapping every vertex to its shortest distance from source,
+             or -1 if unreachable.
+    """
+    if source not in adjacency:
+        raise ValueError(f"Source vertex {source!r} not in graph")
+
+    dist = {v: float('inf') for v in adjacency}
+    dist[source] = 0
+
+    # (distance, vertex) — heapq compares tuples, distance first, deterministic
+    # tie-breaking requires vertices be comparable OR we avoid comparing them
+    # by using a counter as a tiebreaker.
+    counter = 0
+    heap: List[Tuple[float, int, Hashable]] = [(0, counter, source)]
+    visited = set()
+
+    while heap:
+        d, _, u = heapq.heappop(heap)
+        if u in visited:
+            continue
+        visited.add(u)
+
+        for v, w in adjacency.get(u, []):
+            if w < 0:
+                raise ValueError("Edge weights must be non-negative")
+            if v not in dist:
+                dist[v] = float('inf')
+            new_dist = d + w
+            if new_dist < dist[v]:
+                dist[v] = new_dist
+                counter += 1
+                heapq.heappush(heap, (new_dist, counter, v))
+
+    # Convert unreachable (inf) distances to -1
+    return {v: (-1 if d == float('inf') else d) for v, d in dist.items()}
+
+
+if __name__ == "__main__":
+    # Deterministic example graph
+    graph = {
+        'A': [('B', 4), ('C', 1)],
+        'B': [('D', 1)],
+        'C': [('B', 2), ('D', 5)],
+        'D': [],
+        'E': [],  # unreachable from A
+    }
+
+    result = dijkstra(graph, 'A')
+    for vertex in sorted(result.keys()):
+        print(f"{vertex}: {result[vertex]}")
+```
+
+**Expected output:**
+```
+A: 0
+B: 3
+C: 1
+D: 4
+E: -1
+```
+
+**Notes on determinism and correctness:**
+- The counter used as a heap tiebreaker ensures no ambiguous comparisons between vertices of possibly non-comparable types (e.g., mixed types), and guarantees stable, reproducible ordering when distances tie.
+- The `visited` set ensures each vertex is finalized exactly once, giving Dijkstra's standard `O((V + E) log V)` complexity with a binary heap.
+- Negative weights are explicitly rejected since Dijkstra's algorithm is not correct in their presence.
+- No randomness, I/O, network calls, or external dependencies are used — only `heapq` from the standard library.

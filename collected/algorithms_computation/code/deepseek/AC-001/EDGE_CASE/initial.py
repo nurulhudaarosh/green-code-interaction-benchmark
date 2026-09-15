@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""
+Find the maximum number of simultaneously active half-open meetings [start, end)
+and the sorted times at which that maximum begins.
+
+Key constraints:
+- Intervals are half-open: [start, end)
+- End events at the same timestamp are processed before start events
+- Return: (max_count, sorted_list_of_start_times_when_max_occurs)
+
+Algorithm:
+1. Create events: (time, type) where type=0 for end, type=1 for start
+2. Sort events by (time, type) so ends come before starts at same time
+3. Sweep through events maintaining current active count
+4. Track maximum count and times when it begins
+"""
+
+from typing import List, Tuple
+
+
+def max_active_meetings(intervals: List[Tuple[int, int]]) -> Tuple[int, List[int]]:
+    """
+    Find maximum simultaneously active meetings and start times when max occurs.
+
+    Args:
+        intervals: List of [start, end) meeting intervals
+
+    Returns:
+        Tuple of (max_count, sorted_list_of_times_when_max_begins)
+    """
+    if not intervals:
+        return 0, []
+
+    # Create events: (time, type) where type=0 for end, 1 for start
+    # End events processed before start events at same timestamp
+    events = []
+    for start, end in intervals:
+        events.append((start, 1))   # start event
+        events.append((end, 0))     # end event (processed first at same time)
+
+    # Sort by time, then by type (end before start)
+    events.sort(key=lambda x: (x[0], x[1]))
+
+    max_count = 0
+    current_count = 0
+    max_start_times = []
+
+    i = 0
+    while i < len(events):
+        time = events[i][0]
+
+        # Process all events at this timestamp (end events first due to sorting)
+        while i < len(events) and events[i][0] == time:
+            if events[i][1] == 0:  # end event
+                current_count -= 1
+            else:  # start event
+                current_count += 1
+            i += 1
+
+        # After processing all events at this time, check current count
+        if current_count > max_count:
+            max_count = current_count
+            max_start_times = [time]
+        elif current_count == max_count and current_count > 0:
+            # Only add if this time doesn't duplicate previous
+            # Since we process each timestamp once, no need to check duplicates
+            max_start_times.append(time)
+
+    return max_count, max_start_times
+
+
+def main():
+    """Test the implementation with various cases."""
+    # Test case 1: Basic overlapping intervals
+    intervals1 = [(0, 5), (1, 3), (2, 7), (4, 6)]
+    count1, times1 = max_active_meetings(intervals1)
+    print(f"Intervals: {intervals1}")
+    print(f"Max active: {count1}, at times: {times1}")
+    print()
+
+    # Test case 2: Intervals that meet at endpoints (half-open)
+    intervals2 = [(0, 2), (2, 4), (1, 3)]
+    count2, times2 = max_active_meetings(intervals2)
+    print(f"Intervals: {intervals2}")
+    print(f"Max active: {count2}, at times: {times2}")
+    print("Note: At time 2, [0,2) ends and [2,4) starts, so max is 2 at time 1")
+    print()
+
+    # Test case 3: All disjoint
+    intervals3 = [(0, 1), (2, 3), (4, 5)]
+    count3, times3 = max_active_meetings(intervals3)
+    print(f"Intervals: {intervals3}")
+    print(f"Max active: {count3}, at times: {times3}")
+    print()
+
+    # Test case 4: Empty input
+    intervals4 = []
+    count4, times4 = max_active_meetings(intervals4)
+    print(f"Intervals: {intervals4}")
+    print(f"Max active: {count4}, at times: {times4}")
+    print()
+
+    # Test case 5: All overlapping
+    intervals5 = [(0, 10), (1, 9), (2, 8), (3, 7)]
+    count5, times5 = max_active_meetings(intervals5)
+    print(f"Intervals: {intervals5}")
+    print(f"Max active: {count5}, at times: {times5}")
+    print()
+
+    # Test case 6: Multiple max intervals
+    intervals6 = [(0, 2), (1, 3), (2, 4), (3, 5)]
+    count6, times6 = max_active_meetings(intervals6)
+    print(f"Intervals: {intervals6}")
+    print(f"Max active: {count6}, at times: {times6}")
+    print("Note: At time 1, count=2; at time 2, [0,2) ends, [2,4) starts so still 2")
+    print()
+
+    # Test case 7: Same start and end times
+    intervals7 = [(1, 4), (1, 3), (2, 5), (2, 4)]
+    count7, times7 = max_active_meetings(intervals7)
+    print(f"Intervals: {intervals7}")
+    print(f"Max active: {count7}, at times: {times7}")
+
+
+if __name__ == "__main__":
+    main()

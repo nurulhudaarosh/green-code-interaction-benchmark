@@ -1,0 +1,59 @@
+from pathlib import Path
+from PIL import Image, UnidentifiedImageError
+
+def extract_metadata(input_dir: str) -> list[dict]:
+    input_path = Path(input_dir)
+    metadata_list = []
+    
+    for file_path in input_path.iterdir():
+        if file_path.is_file():
+            file_size = file_path.stat().st_size
+            
+            # Catch zero-byte files explicitly before attempting to open
+            if file_size == 0:
+                metadata_list.append({
+                    "filename": file_path.name,
+                    "format": None,
+                    "mode": None,
+                    "width": None,
+                    "height": None,
+                    "file_size_bytes": 0,
+                    "error": True,
+                    "error_message": "Empty file (0 bytes)"
+                })
+                continue
+            
+            try:
+                with Image.open(file_path) as img:
+                    # Force loading pixel data to detect truncation/corruption early
+                    img.verify()
+                    
+                # Re-open image because verify() modifies file pointer state in Pillow
+                with Image.open(file_path) as img:
+                    width, height = img.size
+                    metadata_list.append({
+                        "filename": file_path.name,
+                        "format": img.format,
+                        "mode": img.mode,
+                        "width": width,
+                        "height": height,
+                        "file_size_bytes": file_size,
+                        "error": False
+                    })
+            except UnidentifiedImageError:
+                # File is not a supported image format
+                continue
+            except Exception as e:
+                # Catch truncated streams, corrupted headers, or IO errors
+                metadata_list.append({
+                    "filename": file_path.name,
+                    "format": None,
+                    "mode": None,
+                    "width": None,
+                    "height": None,
+                    "file_size_bytes": file_size,
+                    "error": True,
+                    "error_message": str(e)
+                })
+
+    return sorted(metadata_list, key=lambda x: x["filename"])

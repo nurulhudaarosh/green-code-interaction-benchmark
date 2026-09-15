@@ -1,0 +1,85 @@
+from dataclasses import dataclass
+from typing import Optional
+from collections import defaultdict
+from statistics import mean, median
+
+
+@dataclass
+class Transaction:
+    date: str
+    category: str
+    amount: float
+    description: str = ""
+
+
+class TransactionAnalyzer:
+    def __init__(self, transactions: list[Transaction]):
+        self.transactions = transactions
+        self.min_amount: Optional[float] = None  # filter threshold
+
+    # ---------- Filtering ----------
+    def set_min_amount(self, min_amount: float):
+        """Set a minimum-amount threshold; transactions below it are excluded from analysis."""
+        if min_amount < 0:
+            raise ValueError("min_amount cannot be negative")
+        self.min_amount = min_amount
+        return self
+
+    def clear_min_amount(self):
+        self.min_amount = None
+        return self
+
+    def _filtered(self) -> list[Transaction]:
+        if self.min_amount is None:
+            return self.transactions
+        return [t for t in self.transactions if t.amount >= self.min_amount]
+
+    # ---------- Analysis ----------
+    def total(self) -> float:
+        return sum(t.amount for t in self._filtered())
+
+    def average(self) -> float:
+        data = self._filtered()
+        return mean(t.amount for t in data) if data else 0.0
+
+    def median_amount(self) -> float:
+        data = self._filtered()
+        return median(t.amount for t in data) if data else 0.0
+
+    def by_category(self) -> dict[str, float]:
+        totals = defaultdict(float)
+        for t in self._filtered():
+            totals[t.category] += t.amount
+        return dict(totals)
+
+    def top_transactions(self, n: int = 5) -> list[Transaction]:
+        return sorted(self._filtered(), key=lambda t: t.amount, reverse=True)[:n]
+
+    def count(self) -> int:
+        return len(self._filtered())
+
+    def summary(self) -> dict:
+        return {
+            "count": self.count(),
+            "total": round(self.total(), 2),
+            "average": round(self.average(), 2),
+            "median": round(self.median_amount(), 2),
+            "by_category": {k: round(v, 2) for k, v in self.by_category().items()},
+            "min_amount_filter": self.min_amount,
+        }
+
+
+if __name__ == "__main__":
+    sample = [
+        Transaction("2026-01-01", "groceries", 42.50),
+        Transaction("2026-01-02", "rent", 1200.00),
+        Transaction("2026-01-03", "coffee", 4.75),
+        Transaction("2026-01-04", "utilities", 88.20),
+        Transaction("2026-01-05", "coffee", 3.90),
+    ]
+
+    analyzer = TransactionAnalyzer(sample)
+    print("No filter:", analyzer.summary())
+
+    analyzer.set_min_amount(10)
+    print("Min amount >= 10:", analyzer.summary())

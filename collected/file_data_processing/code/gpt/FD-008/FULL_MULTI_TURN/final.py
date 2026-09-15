@@ -1,0 +1,62 @@
+id="73184"
+import os
+import re
+import hashlib
+from collections import defaultdict
+
+def normalize_text(text):
+    text = text.casefold()
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+def find_duplicates(root):
+    groups = defaultdict(list)
+
+    for dirpath, dirnames, filenames in os.walk(
+        root, topdown=True, followlinks=False
+    ):
+        dirnames[:] = sorted(
+            d for d in dirnames
+            if not os.path.islink(os.path.join(dirpath, d))
+        )
+
+        for filename in sorted(filenames):
+            path = os.path.join(dirpath, filename)
+
+            if not filename.casefold().endswith(".txt"):
+                continue
+
+            if os.path.islink(path) or not os.path.isfile(path):
+                continue
+
+            try:
+                with open(path, "r", encoding="utf-8") as file:
+                    normalized = normalize_text(file.read())
+
+                digest = hashlib.sha256(
+                    normalized.encode("utf-8")
+                ).hexdigest()
+
+                groups[digest].append(os.path.normpath(path))
+
+            except (OSError, UnicodeError):
+                continue
+
+    duplicate_groups = [
+        sorted(paths)
+        for paths in groups.values()
+        if len(paths) >= 2
+    ]
+
+    duplicate_groups.sort(key=lambda group: tuple(group))
+
+    return duplicate_groups
+
+if __name__ == "__main__":
+    root_directory = input("Enter directory: ").strip()
+
+    for group in find_duplicates(root_directory):
+        print("Duplicate group:")
+        for path in group:
+            print(path)
+        print()

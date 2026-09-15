@@ -1,0 +1,140 @@
+class DisjointSetUnion:
+    """Disjoint-Set Union (DSU) with path compression and rank optimization."""
+
+    def __init__(self, n: int):
+        self.parent = list(range(n))
+        self.rank = [0] * n
+        self.find_count = 0
+
+    def find(self, i: int) -> int:
+        self.find_count += 1
+        if self.parent[i] != i:
+            self.parent[i] = self.find(self.parent[i])  # Path compression
+        return self.parent[i]
+
+    def union(self, i: int, j: int) -> bool:
+        root_i = self.find(i)
+        root_j = self.find(j)
+
+        if root_i != root_j:
+            # Union by rank
+            if self.rank[root_i] < self.rank[root_j]:
+                root_i, root_j = root_j, root_i
+            self.parent[root_j] = root_i
+            if self.rank[root_i] == self.rank[root_j]:
+                self.rank[root_i] += 1
+            return True
+        return False
+
+
+def minimum_spanning_forest(
+    num_vertices: int,
+    edges: list[tuple[int, int, int, int]],
+    return_summary: bool = False,
+) -> tuple[int, list[int]] | tuple[int, list[int], dict[str, int]]:
+    """Computes the Minimum Spanning Forest (MSF) of an undirected weighted graph.
+
+    Parameters:
+        num_vertices (int): Total number of vertices (0-indexed).
+        edges (list of tuple): List of edges as (edge_id, u, v, weight).
+        return_summary (bool): If True, returns an additional `operation_summary` dict.
+
+    Returns:
+        If return_summary is False:
+            (total_cost, selected_edge_ids)
+        If return_summary is True:
+            (total_cost, selected_edge_ids, operation_summary)
+    """
+    # Boundary guard: negative vertex count check
+    if num_vertices < 0:
+        raise ValueError("num_vertices cannot be negative")
+
+    # Boundary guard: empty graph or no vertices
+    if num_vertices == 0 or not edges:
+        summary = {
+            "edges_processed": 0,
+            "dsu_find_calls": 0,
+            "dsu_unions_attempted": 0,
+            "edges_accepted": 0,
+            "edges_rejected": 0,
+        }
+        return (0, [], summary) if return_summary else (0, [])
+
+    # Deterministic sort: Primary key = weight ascending, Secondary key = edge_id ascending
+    sorted_edges = sorted(edges, key=lambda x: (x[3], x[0]))
+
+    dsu = DisjointSetUnion(num_vertices)
+    total_cost = 0
+    selected_edge_ids = []
+
+    edges_processed = 0
+    edges_rejected = 0
+
+    for edge_id, u, v, weight in sorted_edges:
+        # Out of bounds check for vertex indices
+        if u < 0 or u >= num_vertices or v < 0 or v >= num_vertices:
+            raise IndexError(f"Vertex index out of bounds: ({u}, {v}) for num_vertices={num_vertices}")
+
+        edges_processed += 1
+        if dsu.union(u, v):
+            total_cost += weight
+            selected_edge_ids.append(edge_id)
+        else:
+            edges_rejected += 1
+
+    if return_summary:
+        summary = {
+            "edges_processed": edges_processed,
+            "dsu_find_calls": dsu.find_count,
+            "dsu_unions_attempted": edges_processed,
+            "edges_accepted": len(selected_edge_ids),
+            "edges_rejected": edges_rejected,
+        }
+        return total_cost, selected_edge_ids, summary
+
+    return total_cost, selected_edge_ids
+
+
+# Unit Tests for Boundary Cases
+def run_tests():
+    # Test 1: Empty graph (num_vertices = 0)
+    cost, ids = minimum_spanning_forest(0, [])
+    assert (cost, ids) == (0, []), f"Failed Test 1: got {(cost, ids)}"
+
+    # Test 2: Single vertex, no edges
+    cost, ids = minimum_spanning_forest(1, [])
+    assert (cost, ids) == (0, []), f"Failed Test 2: got {(cost, ids)}"
+
+    # Test 3: Multiple vertices, no edges
+    cost, ids = minimum_spanning_forest(5, [])
+    assert (cost, ids) == (0, []), f"Failed Test 3: got {(cost, ids)}"
+
+    # Test 4: Negative and Zero Edge Weights
+    # Vertices: 0-1 (weight -5, id 0), 1-2 (weight 0, id 1), 0-2 (weight 2, id 2)
+    edges = [(0, 0, 1, -5), (1, 1, 2, 0), (2, 0, 2, 2)]
+    cost, ids = minimum_spanning_forest(3, edges)
+    assert (cost, ids) == (-5, [0, 1]), f"Failed Test 4: got {(cost, ids)}"
+
+    # Test 5: Self-loops and Multi-edges with tie-breaking
+    # Edge 0: self loop on 0 (rejected)
+    # Edge 1 & 2: multi-edge between 0 and 1, same weight 10 -> ID 1 selected first
+    edges = [
+        (0, 0, 0, 5),   # Self-loop
+        (2, 0, 1, 10),  # Multi-edge (id 2)
+        (1, 0, 1, 10),  # Multi-edge (id 1, lower ID -> wins)
+    ]
+    cost, ids = minimum_spanning_forest(2, edges)
+    assert (cost, ids) == (10, [1]), f"Failed Test 5: got {(cost, ids)}"
+
+    # Test 6: Operation summary output on boundary case
+    cost, ids, summary = minimum_spanning_forest(3, [(0, 0, 1, 1)], return_summary=True)
+    assert cost == 1
+    assert ids == [0]
+    assert summary["edges_processed"] == 1
+    assert summary["edges_accepted"] == 1
+
+    print("All boundary condition tests passed successfully!")
+
+
+if __name__ == "__main__":
+    run_tests()

@@ -1,0 +1,109 @@
+### Problem Identification & Understanding
+
+The problem is the classic **Weighted Interval Scheduling Problem**. Given a set of $n$ jobs where each job $i$ has a start time $S_i$, a finish time $F_i$, and a profit $P_i$, the goal is to find a subset of mutually non-overlapping jobs that maximizes total profit.
+
+Two jobs are compatible if one finishes at or before the other starts (i.e., $F_i \le S_j$). To guarantee a deterministic output, any ties in maximum profit are broken by choosing the lexicographically smallest sequence of original job indices.
+
+---
+
+### Key Constraints & Required Output
+
+* **Endpoint Compatibility:** Jobs meeting at endpoints (e.g., Job A finishes at 5, Job B starts at 5) do not overlap and can both be selected.
+* **Deterministic Tie-Breaking:** If multiple job subsets achieve the same maximum profit, select the set whose original indices form the lexicographically smallest sequence (e.g., `[0, 2]` beats `[1, 2]`).
+* **Output:** Return a tuple `(max_profit, selected_indices)` containing the maximum achievable profit and a sorted list of the original zero-based indices of the selected jobs.
+
+---
+
+### Algorithm Description
+
+1. **Preprocessing & Sorting:**
+Store each job alongside its original 0-based index. Sort the jobs primarily by their **finish time** ($F_i$) in ascending order. To ensure deterministic binary searching, sort secondary by **start time** ($S_i$) and tertiary by **original index**.
+2. **Predecessor Lookup via Binary Search:**
+For each job $i$ in the sorted list, use binary search (`bisect_right`) to find the latest job $j < i$ such that $F_j \le S_i$.
+3. **Dynamic Programming with Lexicographical Tie-Breaking:**
+Maintain a DP state for each prefix $i$ (from $0$ to $n$):
+* `dp[i]` stores `(profit, job_index_sequence)`.
+* **Option 1 (Exclude Job $i$):** Take `dp[i - 1]`.
+* **Option 2 (Include Job $i$):** Combine the profit and index sequence of `dp[pred + 1]` with job $i$.
+* Compare both options: choose the one with higher profit. If profits are equal, choose the one with the lexicographically smaller list of job indices.
+
+
+
+---
+
+### Python Implementation
+
+```python
+from bisect import bisect_right
+
+def max_profit_weighted_interval_scheduling(jobs):
+    """
+    Finds a non-overlapping subset of jobs maximizing profit.
+    
+    Parameters:
+        jobs (list of tuples): Each element is (start_time, finish_time, profit)
+        
+    Returns:
+        tuple: (max_profit, selected_original_indices)
+    """
+    if not jobs:
+        return 0, []
+
+    # Store jobs with their original indices: (start, finish, profit, original_index)
+    indexed_jobs = [
+        (s, f, p, i) for i, (s, f, p) in enumerate(jobs)
+    ]
+    
+    # Sort primarily by finish time, secondarily by start time, then original index
+    indexed_jobs.sort(key=lambda x: (x[1], x[0], x[3]))
+    
+    n = len(indexed_jobs)
+    finish_times = [job[1] for job in indexed_jobs]
+    
+    # dp[i] stores (max_profit, tuple_of_selected_original_indices) for first i jobs
+    dp = [(0, ())] * (n + 1)
+    
+    for i in range(1, n + 1):
+        s_i, f_i, p_i, idx_i = indexed_jobs[i - 1]
+        
+        # Binary search for the latest non-overlapping job (finish_time <= start_time)
+        pred = bisect_right(finish_times, s_i, hi=i - 1) - 1
+        
+        # Option 1: Exclude job i-1
+        excl_profit, excl_indices = dp[i - 1]
+        
+        # Option 2: Include job i-1
+        pred_profit, pred_indices = dp[pred + 1]
+        incl_profit = pred_profit + p_i
+        
+        # Keep original indices sorted for lexicographical comparison
+        incl_indices = tuple(sorted(pred_indices + (idx_i,)))
+        
+        # Deterministic choice: Maximize profit, break ties via lexicographical index order
+        if incl_profit > excl_profit:
+            dp[i] = (incl_profit, incl_indices)
+        elif excl_profit > incl_profit:
+            dp[i] = (excl_profit, excl_indices)
+        else:
+            # Equal profit: select the lexicographically smaller sequence of original indices
+            dp[i] = min((excl_profit, excl_indices), (incl_profit, incl_indices), key=lambda x: x[1])
+
+    max_profit, selected_indices = dp[n]
+    return max_profit, list(selected_indices)
+
+
+# Example Usage
+if __name__ == "__main__":
+    # Jobs represented as (start, finish, profit)
+    sample_jobs = [
+        (1, 3, 50),  # Job 0
+        (2, 5, 20),  # Job 1
+        (3, 6, 50),  # Job 2
+        (6, 8, 30)   # Job 3
+    ]
+
+    total_profit, chosen_jobs = max_profit_weighted_interval_scheduling(sample_jobs)
+    print(f"Maximum Profit: {total_profit}")
+    print(f"Selected Job Indices: {chosen_jobs}")
+
+```

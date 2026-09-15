@@ -1,0 +1,44 @@
+from pathlib import Path
+from PIL import Image
+
+def batch_resize(input_dir, output_dir, target_size, resample_filter=Image.Resampling.LANCZOS):
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    valid_extensions = {".png", ".jpg", ".jpeg"}
+
+    filters = {
+        "NEAREST": Image.Resampling.NEAREST,
+        "BILINEAR": Image.Resampling.BILINEAR,
+        "BICUBIC": Image.Resampling.BICUBIC,
+        "LANCZOS": Image.Resampling.LANCZOS,
+    }
+
+    # Allow callers to pass either a filter name or a Pillow resampling filter
+    if isinstance(resample_filter, str):
+        filter_name = resample_filter.upper()
+        if filter_name not in filters:
+            raise ValueError(
+                "resample_filter must be one of: NEAREST, BILINEAR, BICUBIC, LANCZOS"
+            )
+        resample_filter = filters[filter_name]
+
+    processed_count = 0
+
+    for image_path in input_path.iterdir():
+        if not image_path.is_file() or image_path.suffix.lower() not in valid_extensions:
+            continue
+
+        try:
+            with Image.open(image_path) as img:
+                resized_img = img.resize(target_size, resample=resample_filter)
+                output_file = output_path / image_path.name
+                resized_img.save(output_file)
+
+            processed_count += 1
+
+        except (OSError, ValueError):
+            continue
+
+    return processed_count

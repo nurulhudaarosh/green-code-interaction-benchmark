@@ -1,0 +1,54 @@
+import csv
+from collections import defaultdict
+from decimal import Decimal, InvalidOperation
+
+def aggregate_sales(input_path, output_path):
+    totals = defaultdict(lambda: {'units': 0, 'revenue': Decimal('0')})
+
+    with open(input_path, newline='', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                region = (row.get('region') or '').strip()
+                category = (row.get('category') or '').strip()
+                units_raw = (row.get('units') or '').strip()
+                price_raw = (row.get('unit_price') or '').strip()
+
+                if not region or not category:
+                    continue
+
+                units = int(units_raw)
+                price = Decimal(price_raw)
+
+                if units <= 0 or price <= 0:
+                    continue
+
+                key = (region, category)
+                totals[key]['units'] += units
+                totals[key]['revenue'] += price * units
+            except (ValueError, InvalidOperation, TypeError):
+                continue
+
+    rows = []
+    for (region, category), data in totals.items():
+        units = data['units']
+        revenue = data['revenue']
+        weighted_avg = (revenue / units) if units else Decimal('0')
+        rows.append({
+            'region': region,
+            'category': category,
+            'total_units': units,
+            'total_revenue': f"{revenue.quantize(Decimal('0.01'))}",
+            'weighted_avg_unit_price': f"{weighted_avg.quantize(Decimal('0.01'))}",
+        })
+
+    rows.sort(key=lambda r: (r['region'], r['category']))
+
+    with open(output_path, 'w', newline='', encoding='utf-8') as f:
+        fieldnames = ['region', 'category', 'total_units', 'total_revenue', 'weighted_avg_unit_price']
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+if __name__ == '__main__':
+    aggregate_sales('sales.csv', 'sales_aggregated.csv')

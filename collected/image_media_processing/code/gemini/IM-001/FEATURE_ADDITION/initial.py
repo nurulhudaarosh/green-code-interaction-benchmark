@@ -1,0 +1,36 @@
+from pathlib import Path
+from PIL import Image
+
+def batch_resize(input_dir: str | Path, output_dir: str | Path, target_size: tuple[int, int]) -> int:
+    """
+    Resizes all PNG and JPEG images in input_dir to target_size and saves them to output_dir.
+    
+    Args:
+        input_dir: Path to directory containing source images.
+        output_dir: Path to destination directory.
+        target_size: (width, height) tuple for the output dimensions.
+        
+    Returns:
+        The number of successfully processed images.
+    """
+    in_path = Path(input_dir)
+    out_path = Path(output_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+    
+    valid_extensions = {".jpg", ".jpeg", ".png"}
+    processed_count = 0
+    
+    for file_path in in_path.iterdir():
+        if file_path.is_file() and file_path.suffix.lower() in valid_extensions:
+            try:
+                with Image.open(file_path) as img:
+                    # Lanczos provides high-quality downsampling and upsampling
+                    resized_img = img.resize(target_size, Image.Resampling.LANCZOS)
+                    
+                    save_dest = out_path / file_path.name
+                    resized_img.save(save_dest)
+                    processed_count += 1
+            except Exception as e:
+                print(f"Skipping {file_path.name}: {e}")
+                
+    return processed_count

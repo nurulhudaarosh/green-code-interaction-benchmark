@@ -1,0 +1,110 @@
+### Problem Statement & Analysis
+
+The goal is to maintain a 0-indexed integer array $A$ of length $N$ under two types of operations:
+
+1. **Point Update:** Replace the element at a specific index $i$ with a new value $val$ ($A[i] \leftarrow val$).
+2. **Range Sum Query:** Compute the inclusive range sum $\sum_{k=L}^{R} A[k]$ for $0 \le L \le R < N$.
+
+### Key Constraints & Output
+
+* **Array Size ($N$):** Typically up to $10^5$ elements.
+* **Queries ($Q$):** Up to $10^5$ operations.
+* **Output:** An array/list containing the results of all range-sum queries in their original relative order.
+
+---
+
+### Algorithm
+
+A **Fenwick Tree (Binary Indexed Tree)** maintains prefix sums $\text{prefix}(x) = \sum_{k=0}^{x-1} A[k]$ in $O(\log N)$ time per update and query using $1$-based indexing and bitwise low-bit operations (`x & -x`).
+
+1. **Initialization:** Construct a Fenwick tree of size $N + 1$ initialized to zero.
+2. **Point Update (`update(i, val)`):**
+* Compute the delta: $\Delta = val - A[i]$.
+* Update $A[i] = val$.
+* Add $\Delta$ to the Fenwick tree at position $i + 1$.
+
+
+3. **Range Query (`query(L, R)`):**
+* Compute $\text{prefix}(R + 1) - \text{prefix}(L)$, where $\text{prefix}(k)$ sums elements from index $0$ to $k - 1$.
+
+
+
+Both operations run in $O(\log N)$ time, giving an overall time complexity of $O((N + Q) \log N)$ and space complexity of $O(N)$.
+
+---
+
+### Python Implementation
+
+```python
+class FenwickTree:
+    def __init__(self, size: int):
+        self.n = size
+        self.tree = [0] * (size + 1)
+
+    def add(self, index: int, delta: int) -> None:
+        """Adds delta to 1-based index."""
+        i = index
+        while i <= self.n:
+            self.tree[i] += delta
+            i += i & -i
+
+    def query(self, index: int) -> int:
+        """Returns prefix sum from 1 to index (inclusive)."""
+        s = 0
+        i = index
+        while i > 0:
+            s += self.tree[i]
+            i -= i & -i
+        return s
+
+
+class NumArray:
+    def __init__(self, nums: list[int]):
+        self.nums = list(nums)
+        self.n = len(nums)
+        self.bit = FenwickTree(self.n)
+        for i, val in enumerate(self.nums):
+            self.bit.add(i + 1, val)
+
+    def update(self, index: int, val: int) -> None:
+        """Point replacement: set nums[index] = val."""
+        delta = val - self.nums[index]
+        self.nums[index] = val
+        self.bit.add(index + 1, delta)
+
+    def sum_range(self, left: int, right: int) -> int:
+        """Returns inclusive range sum from left to right."""
+        return self.bit.query(right + 1) - self.bit.query(left)
+
+
+def process_operations(nums: list[int], operations: list[tuple]) -> list[int]:
+    """
+    Executes a sequence of operations.
+    Operations format:
+      - ("update", index, val)
+      - ("query", left, right)
+    Returns list of query results.
+    """
+    ds = NumArray(nums)
+    results = []
+    for op in operations:
+        if op[0] == "update":
+            _, idx, val = op
+            ds.update(idx, val)
+        elif op[0] == "query":
+            _, left, right = op
+            results.append(ds.sum_range(left, right))
+    return results
+
+
+# Example Usage
+if __name__ == "__main__":
+    arr = [1, 3, 5]
+    ops = [
+        ("query", 0, 2),  # sum(1, 3, 5) = 9
+        ("update", 1, 2), # arr becomes [1, 2, 5]
+        ("query", 0, 2),  # sum(1, 2, 5) = 8
+    ]
+    print("Query Results:", process_operations(arr, ops))
+
+```

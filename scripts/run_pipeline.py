@@ -55,32 +55,24 @@ def log_failure(stage, detail):
 def step(name, argv, allow_fail=False, resilient=None, timeout=None):
     print(f"\n{'=' * 60}\n[{name}] {' '.join(str(a) for a in argv)}\n{'=' * 60}",
           flush=True)
+    t0 = time.time()
     try:
-        r = subprocess.run([str(a) for a in argv], cwd=REPO,
-                           capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired as e:
-        out = e.stdout or ""
-        err = e.stderr or ""
-        if isinstance(out, bytes):
-            out = out.decode(errors="replace")
-        if isinstance(err, bytes):
-            err = err.decode(errors="replace")
-        sys.stdout.write(out)
-        sys.stderr.write(err)
+        # No output capture: the child writes straight to the terminal so
+        # you see every download/file/progress line live.
+        r = subprocess.run([str(a) for a in argv], cwd=REPO, timeout=timeout)
+    except subprocess.TimeoutExpired:
         log_failure(name, f"TIMEOUT after {timeout}s cmd={' '.join(str(a) for a in argv)}")
-        print(f"[{name}] TIMEOUT after {timeout}s", file=sys.stderr)
+        print(f"[{name}] TIMEOUT after {timeout}s", file=sys.stderr, flush=True)
         return -1
-    if r.stdout:
-        sys.stdout.write(r.stdout)
-    if r.stderr:
-        sys.stderr.write(r.stderr)
+    dur = time.time() - t0
     if r.returncode != 0:
-        tail = (r.stderr or r.stdout or "").strip().splitlines()[-1:] 
-        log_failure(name, f"rc={r.returncode} cmd={' '.join(str(a) for a in argv)}"
-                          f" last={' '.join(tail)[:300]}")
-        print(f"[{name}] failed (rc={r.returncode})", file=sys.stderr)
+        log_failure(name, f"rc={r.returncode} cmd={' '.join(str(a) for a in argv)}")
+        print(f"[{name}] failed (rc={r.returncode}) in {dur:.1f}s", file=sys.stderr,
+              flush=True)
         if not allow_fail and not (RESILIENT if resilient is None else resilient):
             raise SystemExit(r.returncode)
+    else:
+        print(f"[{name}] done in {dur:.1f}s", flush=True)
     return r.returncode
 
 
@@ -110,17 +102,24 @@ def pipeline(args):
     for i, u in enumerate(units, 1):
         print(f"\n--- [{i}/{len(units)}] {u['category']} {u['task_id']} "
               f"{u['model']} {u['interaction']} ---", flush=True)
-        r = subprocess.run(
+        # Stream the unit runner's stdout+stderr live; the final JSON line
+        # (printed last by measure_unit.py) carries the result status.
+        proc = subprocess.Popen(
             [PY, "runner/measure_unit.py", "--unit", json.dumps(u)],
-            cwd=REPO, capture_output=True, text=True)
-        sys.stdout.write(r.stdout)
+            cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True)
+        last_json = ""
+        for line in proc.stdout:
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            if line.strip().startswith("{"):
+                last_json = line
+        proc.wait()
         parsed = None
-        for line in reversed(r.stdout.strip().splitlines()):
-            try:
-                parsed = json.loads(line)
-                break
-            except json.JSONDecodeError:
-                continue
+        try:
+            parsed = json.loads(last_json)
+        except json.JSONDecodeError:
+            pass
         status = (parsed or {}).get("status", "error")
         done[status if status in done else "error"] += 1
         if status == "error":
@@ -136,8 +135,6 @@ def pipeline(args):
             log_failure(
                 f"MEASURE {u['category']}/{u['task_id']}/{u['model']}/{u['interaction']}",
                 f"reason={reason[:300]}")
-        if r.returncode != 0:
-            sys.stderr.write(r.stderr[-1000:])
 
     step("5/5 ANALYZE", [PY, "analysis/aggregate.py"], allow_fail=True)
     step("5/5 ANALYZE", [PY, "analysis/energy_analysis.py"], allow_fail=True)

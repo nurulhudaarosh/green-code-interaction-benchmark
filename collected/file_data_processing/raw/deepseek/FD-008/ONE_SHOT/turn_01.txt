@@ -1,0 +1,135 @@
+```python
+#!/usr/bin/env python3
+"""
+Offline duplicate .txt file finder.
+
+- Recursively scans a directory tree
+- Considers only regular files with a .txt extension (case-insensitive)
+- Ignores symlinks entirely
+- Normalizes content: Unicode case-fold + whitespace collapsing
+- Hashes normalized content with SHA-256
+- Reports deterministic duplicate groups (sorted)
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import os
+import sys
+import unicodedata
+from collections import defaultdict
+from pathlib import Path
+from typing import Dict, Iterable, List, Tuple
+
+
+def normalize_text(text: str) -> str:
+    """Case-fold and whitespace-normalize text deterministically."""
+    # Unicode case-fold
+    folded = text.casefold()
+    # Normalize unicode form for stability
+    folded = unicodedata.normalize("NFKC", folded)
+    # Collapse all whitespace runs (spaces, tabs, newlines, etc.) into single space
+    # and strip leading/trailing whitespace.
+    return " ".join(folded.split())
+
+
+def hash_normalized_text(text: str) -> str:
+    """SHA-256 hex digest of the normalized text (UTF-8 encoded)."""
+    normalized = normalize_text(text)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def iter_txt_files(root: Path) -> Iterable[Path]:
+    """Yield regular .txt files under root, skipping symlinks."""
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        # Skip symlinked directories by pruning them
+        dirnames[:] = [
+            d for d in dirnames
+            if not os.path.islink(os.path.join(dirpath, d))
+        ]
+        for name in filenames:
+            full = os.path.join(dirpath, name)
+            # Skip symlinks (files)
+            if os.path.islink(full):
+                continue
+            # Must be a regular file
+            if not os.path.isfile(full):
+                continue
+            # .txt extension, case-insensitive
+            if not name.lower().endswith(".txt"):
+                continue
+            yield Path(full)
+
+
+def read_text(path: Path) -> str:
+    """Read file as text. Try UTF-8, fall back to latin-1 for robustness."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return path.read_text(encoding="latin-1")
+
+
+def find_duplicates(root: Path) -> Dict[str, List[Path]]:
+    """Return mapping: hash -> list of paths sharing that normalized content."""
+    groups: Dict[str, List[Path]] = defaultdict(list)
+    for path in iter_txt_files(root):
+        try:
+            content = read_text(path)
+        except OSError as e:
+            print(f"warning: cannot read {path}: {e}", file=sys.stderr)
+            continue
+        digest = hash_normalized_text(content)
+        groups[digest].append(path)
+    return groups
+
+
+def report(groups: Dict[str, List[Path]], min_group_size: int = 2) -> int:
+    """Print deterministic duplicate groups. Returns number of duplicate groups."""
+    dup_groups = [
+        (digest, sorted(paths, key=lambda p: str(p)))
+        for digest, paths in groups.items()
+        if len(paths) >= min_group_size
+    ]
+    dup_groups.sort(key=lambda item: (item[1][0].as_posix(), item[0]))
+
+    if not dup_groups:
+        print("No duplicate .txt files found.")
+        return 0
+
+    for i, (digest, paths) in enumerate(dup_groups, start=1):
+        print(f"Group {i} (sha256={digest}, {len(paths)} files):")
+        for p in paths:
+            print(f"  {p}")
+        print()
+    return len(dup_groups)
+
+
+def parse_args(argv: List[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Find duplicate .txt files by normalized content (offline)."
+    )
+    parser.add_argument(
+        "root",
+        nargs="?",
+        default=".",
+        help="Root directory to scan (default: current directory).",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: List[str] | None = None) -> int:
+    args = parse_args(argv if argv is not None else sys.argv[1:])
+    root = Path(args.root)
+    if not root.is_dir():
+        print(f"error: not a directory: {root}", file=sys.stderr)
+        return 2
+
+    groups = find_duplicates(root)
+    count = report(groups)
+    return 0 if count == 0 else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+```

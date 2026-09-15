@@ -1,0 +1,61 @@
+```python
+import os
+from pathlib import Path
+from PIL import Image
+import numpy as np
+
+
+def preprocess_images(input_dir, output_dir):
+    """
+    Grayscale and min-max normalize every image in input_dir to the full
+    0-255 range, saving results as PNG in output_dir.
+
+    Returns:
+        dict: {filename: {"min": original_min, "max": original_max}}
+              where min/max are the pixel values of the grayscale image
+              *before* normalization.
+    """
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    valid_ext = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+    stats = {}
+
+    for file in sorted(input_dir.iterdir()):
+        if not file.is_file() or file.suffix.lower() not in valid_ext:
+            continue
+
+        try:
+            img = Image.open(file).convert("L")  # grayscale
+        except Exception as e:
+            print(f"Skipping {file.name}: {e}")
+            continue
+
+        arr = np.asarray(img, dtype=np.float64)
+
+        orig_min = float(arr.min())
+        orig_max = float(arr.max())
+
+        if orig_max > orig_min:
+            norm = (arr - orig_min) / (orig_max - orig_min) * 255.0
+        else:
+            # Constant-value image: avoid divide-by-zero, output flat 0s
+            norm = np.zeros_like(arr)
+
+        norm = np.clip(norm, 0, 255).astype(np.uint8)
+
+        out_name = file.stem + ".png"
+        out_path = output_dir / out_name
+        Image.fromarray(norm, mode="L").save(out_path, format="PNG")
+
+        stats[file.name] = {"min": orig_min, "max": orig_max}
+
+    return stats
+
+
+if __name__ == "__main__":
+    result = preprocess_images("input_images", "output_images")
+    for fname, s in result.items():
+        print(f"{fname}: min={s['min']}, max={s['max']}")
+```

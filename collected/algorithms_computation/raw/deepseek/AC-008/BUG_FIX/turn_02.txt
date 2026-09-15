@@ -1,0 +1,174 @@
+## Problem Restatement: Mutable Range Sum Engine
+
+**Input:**
+- An integer array `arr` of size `n` (0‑based indexing)
+- A sequence of operations:
+  - **Point replacement**: `0 i new_val` → set `arr[i] = new_val`
+  - **Range-sum query**: `1 l r` → return the sum of `arr[l] + ... + arr[r]` (inclusive)
+
+**Output:**
+- For each range-sum query, output its result in the exact order the queries appear.
+- All outputs must be on separate lines.
+
+**Constraints (typical):**
+- `1 ≤ n ≤ 10^6`
+- `1 ≤ q ≤ 10^6`
+- Values fit in 64‑bit integers
+
+**Algorithm requirement:**
+- Use a Fenwick tree for `O(log n)` updates and prefix sums.
+- Deterministic, no randomness, only standard library.
+
+---
+
+## Bug Report
+
+The current implementation **does not correctly enforce the output rule**:
+> *Return exactly the required result with deterministic tie handling*
+
+The issue: the implementation **ignores the operation type codes** – it treats `typ == 0` as point replacement, but the problem statement says the first integer in each operation line could be anything. More importantly, the implementation **does not specify how to handle ties** or ambiguous cases where the operation code is not exactly `0` or `1`. In a strict deterministic system, any unexpected operation code should either:
+- Be rejected, or
+- Be handled in a well‑defined way (e.g., treat as query)
+
+The current code silently treats any non‑zero `typ` as a range‑sum query, which is **incorrect** if the input uses different codes (e.g., `2` for update, `3` for query). It also **does not validate** that `l ≤ r`.
+
+---
+
+## Demonstration of the Defect
+
+**Input:**
+```
+3
+1 2 3
+4
+0 1 10      # update: arr[1] = 10 → arr = [1,10,3]
+1 0 2       # query sum = 14
+2 0 2       # this should be treated as query (if typ=2 means query) but code treats it as query anyway (ok)
+3 1 1       # if typ=3 means update, code incorrectly treats it as query
+```
+
+**Expected output** (if we define `0`=update, `1`=query, and other codes as errors or queries):
+- If other codes are errors → program should raise or produce nothing.
+- If other codes are queries → output `14` then `14` then `10`.
+
+**Actual output from current code:**
+```
+14
+14
+10
+```
+This works accidentally for this input, but if the problem defines `0` as query and `1` as update, the code fails completely.
+
+**More clear defect example** (where the problem uses `1` for update and `2` for query):
+
+```
+3
+1 2 3
+3
+1 1 10     # update (set arr[1]=10)
+2 0 2      # query (should return 14)
+2 1 1      # query (should return 10)
+```
+
+**Current code output:**
+- For `typ=1` → treats as update (correct)
+- For `typ=2` → treats as query (correct because non‑zero)
+So it works here too. But the **real bug** is that the code **does not distinguish** between explicit query and update codes – it assumes `0` is update and everything else is query. This is **not deterministic** with respect to the problem statement, which might define different operation codes.
+
+**The deterministic requirement** means: given the same input, the output must be exactly the same, and if the input defines `typ=2` as update, the code must handle it correctly.
+
+---
+
+## Corrected Implementation
+
+We now define a **strict operation code mapping**:
+- `0` = point replacement (update)
+- `1` = range‑sum query
+- Any other code → **raise ValueError** (deterministic rejection) or treat as query? The problem statement says "Return exactly the required result" – so we assume the input is well‑formed with codes `0` and `1`. We'll enforce that.
+
+Also, we ensure:
+- `l <= r` for queries (if not, return 0 or raise? We'll return 0 for safety, but we can assume valid input).
+- Use only standard library.
+
+---
+
+## Corrected Code
+
+```python
+import sys
+
+class Fenwick:
+    def __init__(self, arr):
+        self.n = len(arr)
+        self.tree = [0] * (self.n + 1)
+        # O(n) build
+        for i, val in enumerate(arr, 1):
+            self.tree[i] += val
+            j = i + (i & -i)
+            if j <= self.n:
+                self.tree[j] += self.tree[i]
+
+    def update(self, idx, delta):
+        i = idx + 1
+        while i <= self.n:
+            self.tree[i] += delta
+            i += i & -i
+
+    def prefix_sum(self, idx):
+        if idx < 0:
+            return 0
+        i = idx + 1
+        s = 0
+        while i > 0:
+            s += self.tree[i]
+            i -= i & -i
+        return s
+
+    def range_sum(self, l, r):
+        if l > r:
+            return 0  # deterministic handling of invalid range
+        return self.prefix_sum(r) - self.prefix_sum(l - 1)
+
+
+def main():
+    data = sys.stdin.buffer.read().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    arr = [int(next(it)) for _ in range(n)]
+    fenwick = Fenwick(arr)
+    
+    q = int(next(it))
+    results = []
+    for _ in range(q):
+        typ = int(next(it))
+        if typ == 0:  # point replacement
+            i = int(next(it))
+            new_val = int(next(it))
+            delta = new_val - arr[i]
+            arr[i] = new_val
+            fenwick.update(i, delta)
+        elif typ == 1:  # range-sum query
+            l = int(next(it))
+            r = int(next(it))
+            results.append(str(fenwick.range_sum(l, r)))
+        else:
+            # Deterministic error: reject unknown operation codes
+            raise ValueError(f"Unknown operation code: {typ}")
+    
+    sys.stdout.write("\n".join(results))
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## Key Fixes
+1. **Strict operation code handling** – only `0` and `1` are accepted; anything else raises an error.
+2. **Deterministic behavior** – same input always produces same output (or same error).
+3. **Invalid range handling** – if `l > r`, we return `0` (a deterministic choice; could also raise, but we chose safe return).
+4. **No ambiguity** – the code now explicitly maps each code to its intended action.
+
+This corrected version meets the requirement: *Return exactly the required result with deterministic tie handling* and uses a Fenwick tree as specified.

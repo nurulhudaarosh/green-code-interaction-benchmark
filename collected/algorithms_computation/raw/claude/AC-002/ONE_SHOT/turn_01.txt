@@ -1,0 +1,182 @@
+```python
+#!/usr/bin/env python3
+"""
+Deterministic Build Order Resolver
+===================================
+
+Problem
+-------
+Given a set of packages and a list of prerequisite dependencies (an edge
+(package, prerequisite) meaning `prerequisite` must be built before
+`package`), produce:
+
+    1. A deterministic, valid build order of all packages such that every
+       package appears after all of its prerequisites.
+    2. The number of distinct "dependency levels" in that build order
+       (i.e. 1 + the length of the longest prerequisite chain).
+
+If the dependency graph contains a cycle, no valid build order exists, so
+the function must return an empty order and -1 for the level count.
+
+Key constraints
+---------------
+- The package set and dependency list are provided up front (no interactive
+  input, no network/API calls).
+- The algorithm must be deterministic: given the same input, it must always
+  produce the same output, even when multiple valid orderings exist. This
+  rules out relying on arbitrary set/dict iteration order or randomness.
+- Packages with no prerequisites must be resolvable (level 0).
+- A package that depends on itself, directly or transitively, makes the
+  whole graph invalid -> ([], -1).
+- Must use only the Python standard library.
+
+Required output
+----------------
+A tuple `(build_order, num_levels)`:
+    - build_order: list[str] — deterministic topological order of all
+      packages, or [] if a cycle exists.
+    - num_levels: int — 1 + longest prerequisite-chain length, or -1 if a
+      cycle exists.
+
+Algorithm
+---------
+Kahn's algorithm (BFS-based topological sort) using a min-heap instead of
+a plain queue/set for the frontier of "ready" nodes (in-degree 0). Popping
+the lexicographically smallest ready package at each step, instead of an
+arbitrary one, makes the resulting order deterministic regardless of input
+ordering or dict/set iteration order.
+
+While relaxing edges, we simultaneously track each package's "depth" —
+the length of the longest prerequisite chain leading into it
+(depth = 0 for packages with no prerequisites, depth = max(depth of
+prerequisites) + 1 otherwise). The number of dependency levels is
+1 + the maximum depth observed. If Kahn's algorithm cannot consume all
+nodes (some remain with in-degree > 0), the graph has a cycle, so we
+report ([], -1).
+"""
+
+import heapq
+from collections import defaultdict
+from typing import Dict, List, Tuple
+
+
+def build_order(
+    packages: List[str],
+    dependencies: List[Tuple[str, str]],
+) -> Tuple[List[str], int]:
+    """
+    Compute a deterministic build order and the number of dependency levels.
+
+    Args:
+        packages: list of all package names (must be unique).
+        dependencies: list of (package, prerequisite) pairs meaning
+            `prerequisite` must be built before `package`.
+
+    Returns:
+        (build_order, num_levels):
+            build_order: deterministic topological order of `packages`,
+                or [] if a cycle is detected.
+            num_levels: 1 + longest prerequisite-chain length, or -1 if a
+                cycle is detected.
+    """
+    # Validate & de-duplicate packages while preserving a stable universe.
+    package_set = set(packages)
+    if len(package_set) != len(packages):
+        # Duplicate package names are treated as a data error, not a cycle,
+        # but we still fail closed and deterministically.
+        return [], -1
+
+    graph: Dict[str, List[str]] = defaultdict(list)
+    in_degree: Dict[str, int] = {pkg: 0 for pkg in packages}
+
+    for pkg, prereq in dependencies:
+        if pkg not in package_set or prereq not in package_set:
+            raise ValueError(
+                f"Dependency references unknown package: ({pkg!r}, {prereq!r})"
+            )
+        if pkg == prereq:
+            # Self-dependency is trivially a cycle.
+            return [], -1
+        graph[prereq].append(pkg)
+        in_degree[pkg] += 1
+
+    # Sort adjacency lists so edge-relaxation order is also deterministic.
+    for prereq in graph:
+        graph[prereq].sort()
+
+    depth: Dict[str, int] = {pkg: 0 for pkg in packages}
+
+    # Min-heap seeded with all packages that have no prerequisites,
+    # in lexicographic order, guaranteeing deterministic tie-breaking.
+    ready_heap: List[str] = [pkg for pkg in packages if in_degree[pkg] == 0]
+    heapq.heapify(ready_heap)
+
+    order: List[str] = []
+
+    while ready_heap:
+        current = heapq.heappop(ready_heap)
+        order.append(current)
+
+        for dependent in graph[current]:
+            # A build order that depends on `current` is at least one
+            # level deeper than `current` itself.
+            if depth[current] + 1 > depth[dependent]:
+                depth[dependent] = depth[current] + 1
+
+            in_degree[dependent] -= 1
+            if in_degree[dependent] == 0:
+                heapq.heappush(ready_heap, dependent)
+
+    if len(order) != len(packages):
+        # Some packages never reached in-degree 0 -> a cycle exists among
+        # the remaining packages.
+        return [], -1
+
+    num_levels = (max(depth.values()) + 1) if packages else 0
+    return order, num_levels
+
+
+def _demo() -> None:
+    """Small self-contained demonstration / smoke test."""
+    print("=== Valid DAG ===")
+    packages = ["a", "b", "c", "d", "e"]
+    # (package, prerequisite): package depends on prerequisite
+    dependencies = [
+        ("b", "a"),  # b needs a
+        ("c", "a"),  # c needs a
+        ("d", "b"),  # d needs b
+        ("d", "c"),  # d needs c
+        ("e", "d"),  # e needs d
+    ]
+    order, levels = build_order(packages, dependencies)
+    print("Build order:", order)
+    print("Levels:", levels)
+    assert order == ["a", "b", "c", "d", "e"]
+    assert levels == 4
+
+    print("\n=== Same graph, packages listed in different order ===")
+    # Determinism check: shuffled input package list must yield same order.
+    packages2 = ["e", "d", "c", "b", "a"]
+    order2, levels2 = build_order(packages2, dependencies)
+    print("Build order:", order2)
+    print("Levels:", levels2)
+    assert order2 == order and levels2 == levels
+
+    print("\n=== Graph with a cycle ===")
+    cyclic_packages = ["x", "y", "z"]
+    cyclic_dependencies = [
+        ("y", "x"),  # y needs x
+        ("z", "y"),  # z needs y
+        ("x", "z"),  # x needs z  -> cycle x -> y -> z -> x
+    ]
+    order3, levels3 = build_order(cyclic_packages, cyclic_dependencies)
+    print("Build order:", order3)
+    print("Levels:", levels3)
+    assert order3 == [] and levels3 == -1
+
+    print("\nAll demo assertions passed.")
+
+
+if __name__ == "__main__":
+    _demo()
+```

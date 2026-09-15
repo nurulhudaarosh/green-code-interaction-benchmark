@@ -1,0 +1,107 @@
+```python
+Sweep-line solution: maximum simultaneous meetings and the sorted
+start-times at which that maximum is reached, for half-open intervals [start, end).
+
+Rule: at any timestamp, END events are applied before START events,
+since [start, end) means a meeting ending at t does not overlap one
+starting at t.
+
+Deterministic, standard-library only. No network, no randomness, no I/O input.
+"""
+
+from collections import defaultdict
+from typing import List, Tuple, Sequence
+
+
+def max_concurrent_meetings(
+    intervals: Sequence[Tuple[float, float]]
+) -> Tuple[int, List[float]]:
+    """
+    Args:
+        intervals: sequence of (start, end) pairs, half-open [start, end).
+                   start/end may be int or float. Intervals with
+                   start >= end are ignored (zero or negative duration).
+
+    Returns:
+        (max_count, start_times)
+        max_count   : maximum number of meetings active at once (0 if no
+                      valid intervals).
+        start_times : sorted list of distinct meeting-start timestamps at
+                      which the active count equals max_count immediately
+                      after that timestamp's events are processed.
+    ```
+    delta_end = defaultdict(int)
+    delta_start = defaultdict(int)
+
+    for start, end in intervals:
+        if start >= end:
+            continue  # not a real interval, contributes no overlap
+        delta_start[start] += 1
+        delta_end[end] += 1
+
+    if not delta_start:
+        return 0, []
+
+    all_times = sorted(set(delta_start) | set(delta_end))
+
+    count = 0
+    max_count = 0
+    count_after_time = {}  # timestamp -> count right after processing it
+
+    for t in all_times:
+        # Ends before starts at the same instant (half-open semantics)
+        count -= delta_end.get(t, 0)
+        count += delta_start.get(t, 0)
+        count_after_time[t] = count
+        if count > max_count:
+            max_count = count
+
+    start_times = sorted(
+        t for t in delta_start
+        if count_after_time[t] == max_count
+    )
+
+    return max_count, start_times
+
+
+def welcome():
+    print("Welcome to Python!")
+
+
+def _self_test() -> None:
+    """A few deterministic sanity checks (no randomness, no I/O)."""
+    # Case 1: classic overlap, half-open boundary excludes touching meetings
+    meetings = [(1, 5), (2, 6), (5, 8), (4, 7)]
+    result = max_concurrent_meetings(meetings)
+    assert result == (3, [4]), result
+
+    # Case 2: touching intervals never overlap under [start, end)
+    meetings = [(1, 3), (3, 5), (5, 7)]
+    result = max_concurrent_meetings(meetings)
+    assert result == (1, [1, 3, 5]), result
+
+    # Case 3: multiple times achieve the same maximum
+    meetings = [(0, 10), (0, 10), (5, 15), (20, 25), (20, 25)]
+    result = max_concurrent_meetings(meetings)
+    assert result == (2, [0, 20]), result
+
+    # Case 4: empty input
+    assert max_concurrent_meetings([]) == (0, [])
+
+    # Case 5: invalid interval ignored
+    meetings = [(3, 3), (1, 2)]
+    result = max_concurrent_meetings(meetings)
+    assert result == (1, [1]), result
+
+    print("All self-tests passed.")
+
+
+if __name__ == "__main__":
+    welcome()
+    _self_test()
+
+    example = [(1, 5), (2, 6), (5, 8), (4, 7)]
+    max_count, start_times = max_concurrent_meetings(example)
+    print(f"Meetings: {example}")
+    print(f"Max concurrent meetings: {max_count}")
+    print(f"Start times achieving max: {start_times}")

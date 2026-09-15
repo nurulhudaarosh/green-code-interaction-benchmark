@@ -1,0 +1,253 @@
+#!/usr/bin/env python3
+"""
+Customer Event CSV Utility
+
+This script processes customer event CSV files with the following operations:
+1. Remove duplicate records (same customer_id and timestamp) by keeping the last occurrence
+2. Select the chronologically latest record for each customer
+3. Calculate count and total amount by status using retained records
+4. Write deterministic output sorted by customer_id
+
+Usage:
+    python customer_event_utility.py input.csv output.csv
+
+Input CSV format: customer_id,timestamp,status,amount
+Output CSV format: customer_id,timestamp,status,amount
+
+The script also prints summary statistics by status to stdout.
+"""
+
+import csv
+import sys
+from collections import defaultdict
+from datetime import datetime
+
+
+def parse_csv_file(file_path):
+    """
+    Parse CSV file and return list of records.
+    
+    Expected format: customer_id,timestamp,status,amount
+    """
+    records = []
+    try:
+        with open(file_path, 'r', newline='', encoding='utf-8') as csvfile:
+            reader = csv.reader(csvfile)
+            
+            # Try to detect if header exists
+            first_row = next(reader, None)
+            if first_row is None:
+                return records
+            
+            # Check if first row looks like header (contains text instead of numbers)
+            # We'll try to parse it as data, if it fails, treat as header
+            try:
+                # Try to parse as data
+                customer_id = int(first_row[0].strip())
+                timestamp = first_row[1].strip()
+                status = first_row[2].strip()
+                amount = float(first_row[3].strip())
+                records.append({
+                    'customer_id': customer_id,
+                    'timestamp': timestamp,
+                    'status': status,
+                    'amount': amount
+                })
+            except (ValueError, IndexError):
+                # First row is likely header, skip it
+                pass
+            
+            # Read remaining rows
+            for row in reader:
+                if len(row) < 4:
+                    continue  # Skip incomplete rows
+                
+                try:
+                    customer_id = int(row[0].strip())
+                    timestamp = row[1].strip()
+                    status = row[2].strip()
+                    amount = float(row[3].strip())
+                    
+                    records.append({
+                        'customer_id': customer_id,
+                        'timestamp': timestamp,
+                        'status': status,
+                        'amount': amount
+                    })
+                except (ValueError, IndexError):
+                    # Skip invalid rows
+                    continue
+                    
+    except FileNotFoundError:
+        print(f"Error: File '{file_path}' not found.", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error reading file '{file_path}': {e}", file=sys.stderr)
+        sys.exit(1)
+    
+    return records
+
+
+def remove_duplicates_keep_last(records):
+    """
+    Remove duplicate records (same customer_id and timestamp) keeping the last occurrence.
+    Uses a dictionary with (customer_id, timestamp) as key to track last occurrence.
+    """
+    # Dictionary to store the last occurrence of each (customer_id, timestamp) pair
+    unique_records = {}
+    
+    for record in records:
+        key = (record['customer_id'], record['timestamp'])
+        unique_records[key] = record
+    
+    return list(unique_records.values())
+
+
+def select_latest_per_customer(records):
+    """
+    Select the chronologically latest record for each customer.
+    Compares timestamps as strings (ISO format works for lexicographic comparison).
+    """
+    latest_per_customer = {}
+    
+    for record in records:
+        customer_id = record['customer_id']
+        timestamp = record['timestamp']
+        
+        if customer_id not in latest_per_customer:
+            latest_per_customer[customer_id] = record
+        else:
+            # Compare timestamps (assuming ISO format or comparable string format)
+            current_latest = latest_per_customer[customer_id]
+            if timestamp > current_latest['timestamp']:
+                latest_per_customer[customer_id] = record
+    
+    return list(latest_per_customer.values())
+
+
+def calculate_stats_by_status(records):
+    """
+    Calculate count and total amount grouped by status.
+    """
+    stats = defaultdict(lambda: {'count': 0, 'total_amount': 0.0})
+    
+    for record in records:
+        status = record['status']
+        stats[status]['count'] += 1
+        stats[status]['total_amount'] += record['amount']
+    
+    return dict(stats)
+
+
+def write_csv_output(records, output_file):
+    """
+    Write records to CSV file sorted by customer_id.
+    """
+    try:
+        with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.writer(csvfile)
+            
+            # Write header
+            writer.writerow(['customer_id', 'timestamp', 'status', 'amount'])
+            
+            # Sort records by customer_id for deterministic output
+            sorted_records = sorted(records, key=lambda x: x['customer_id'])
+            
+            for record in sorted_records:
+                writer.writerow([
+                    record['customer_id'],
+                    record['timestamp'],
+                    record['status'],
+                    f"{record['amount']:.2f}"
+                ])
+                
+    except Exception as e:
+        print(f"Error writing to file '{output_file}': {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def print_status_summary(stats, total_records):
+    """
+    Print summary statistics by status including percentages.
+    """
+    print("\n" + "="*70)
+    print("STATUS SUMMARY - RETAINED RECORDS")
+    print("="*70)
+    print(f"{'Status':<20} {'Count':>10} {'Total Amount':>15} {'% of Total':>12}")
+    print("-"*70)
+    
+    total_amount = sum(stats[status]['total_amount'] for status in stats)
+    
+    for status in sorted(stats.keys()):
+        count = stats[status]['count']
+        total_amount_status = stats[status]['total_amount']
+        
+        # Calculate percentages
+        count_pct = (count / total_records * 100) if total_records > 0 else 0
+        amount_pct = (total_amount_status / total_amount * 100) if total_amount > 0 else 0
+        
+        print(f"{status:<20} {count:>10} {total_amount_status:>15.2f} "
+              f"{count_pct:>5.1f}% records, {amount_pct:>5.1f}% amount")
+    
+    print("="*70)
+    print(f"{'TOTAL':<20} {total_records:>10} {total_amount:>15.2f} {'100.0%':>12}")
+    print("="*70)
+
+
+def print_processing_summary(original_count, dedup_count, latest_count):
+    """
+    Print processing summary showing record counts at each stage.
+    """
+    print("\n" + "-"*50)
+    print("PROCESSING SUMMARY")
+    print("-"*50)
+    print(f"Original records read:           {original_count}")
+    print(f"After removing duplicates:       {dedup_count} (removed {original_count - dedup_count})")
+    print(f"After selecting latest per customer: {latest_count} (removed {dedup_count - latest_count})")
+    print("-"*50)
+
+
+def main():
+    # Check command line arguments
+    if len(sys.argv) != 3:
+        print("Usage: python customer_event_utility.py input.csv output.csv", file=sys.stderr)
+        sys.exit(1)
+    
+    input_file = sys.argv[1]
+    output_file = sys.argv[2]
+    
+    print(f"Processing input file: {input_file}")
+    
+    # Step 1: Parse input CSV
+    records = parse_csv_file(input_file)
+    
+    if not records:
+        print("No valid records found in input file.", file=sys.stderr)
+        sys.exit(1)
+    
+    original_count = len(records)
+    
+    # Step 2: Remove duplicates (keep last occurrence)
+    deduplicated_records = remove_duplicates_keep_last(records)
+    dedup_count = len(deduplicated_records)
+    
+    # Step 3: Select latest record per customer
+    latest_records = select_latest_per_customer(deduplicated_records)
+    latest_count = len(latest_records)
+    
+    # Print processing summary
+    print_processing_summary(original_count, dedup_count, latest_count)
+    
+    # Step 4: Calculate statistics by status
+    stats = calculate_stats_by_status(latest_records)
+    
+    # Step 5: Print status summary
+    print_status_summary(stats, latest_count)
+    
+    # Step 6: Write output sorted by customer_id
+    write_csv_output(latest_records, output_file)
+    print(f"\nOutput written to: {output_file}")
+
+
+if __name__ == "__main__":
+    main()

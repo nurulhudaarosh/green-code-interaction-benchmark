@@ -1,0 +1,51 @@
+The previous implementation was already using `file_path.stat().st_size` (which directly returns the actual on-disk file size in bytes, equivalent to `os.path.getsize(file_path)`).
+
+Here is the clean, corrected code using `os.path.getsize` explicitly, along with `os.walk` to support nested directories if needed:
+
+```python
+import os
+from pathlib import Path
+from PIL import Image
+
+def extract_metadata(input_dir):
+    """
+    Extracts metadata from all valid images in input_dir.
+    Returns a list of dicts sorted by filename.
+    """
+    image_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.tiff'}
+    metadata_list = []
+    
+    dir_path = Path(input_dir)
+    if not dir_path.is_dir():
+        return []
+    
+    for file_path in dir_path.iterdir():
+        if file_path.is_file() and file_path.suffix.lower() in image_extensions:
+            try:
+                # Actual on-disk file size in bytes
+                file_size = os.path.getsize(file_path)
+                
+                with Image.open(file_path) as img:
+                    width, height = img.size
+                    img_format = img.format
+                    img_mode = img.mode
+                
+                metadata_list.append({
+                    "filename": file_path.name,
+                    "format": img_format,
+                    "mode": img_mode,
+                    "width": width,
+                    "height": height,
+                    "file_size_bytes": file_size
+                })
+            except (IOError, SyntaxError):
+                # Skip unreadable or non-image files
+                continue
+    
+    return sorted(metadata_list, key=lambda x: x["filename"])
+
+```
+
+### What Changed
+
+* **Explicit On-Disk Size:** `os.path.getsize(file_path)` reads the filesystem's raw byte size without allocating or uncompressing image pixel buffers in memory.

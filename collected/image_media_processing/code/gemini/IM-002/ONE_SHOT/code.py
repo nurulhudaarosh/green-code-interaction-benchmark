@@ -1,0 +1,64 @@
+import os
+from pathlib import Path
+from PIL import Image, ImageOps
+
+
+def generate_thumbnails(input_dir, cache_dir, max_dim=128):
+    """Recursively generates aspect-ratio-preserving thumbnails mirroring input_dir tree.
+
+    Args:
+        input_dir (str or Path): Path to the source directory containing images.
+        cache_dir (str or Path): Path to the output directory for thumbnails.
+        max_dim (int): Maximum width or height of the generated thumbnails.
+    """
+    input_path = Path(input_dir).resolve()
+    cache_path = Path(cache_dir).resolve()
+
+    # Common image extensions supported by Pillow
+    valid_extensions = {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+        ".bmp",
+        ".tiff",
+        ".gif",
+    }
+
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input directory does not exist: {input_path}")
+
+    for file_path in input_path.rglob("*"):
+        if file_path.is_file() and file_path.suffix.lower() in valid_extensions:
+            # Recreate relative path structure in the destination folder
+            relative_path = file_path.relative_to(input_path)
+            output_path = cache_path / relative_path
+
+            # Create destination folder if it doesn't exist
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Skip generation if thumbnail is up to date relative to source file
+            if (
+                output_path.exists()
+                and output_path.stat().st_mtime >= file_path.stat().st_mtime
+            ):
+                continue
+
+            try:
+                with Image.open(file_path) as img:
+                    # Correct EXIF orientation (e.g., photos taken from mobile phones)
+                    img = ImageOps.exif_transpose(img)
+
+                    # Preserve transparency for PNG/WebP by converting RGBA appropriately
+                    if img.mode in ("RGBA", "P"):
+                        img = img.convert("RGBA")
+                    else:
+                        img = img.convert("RGB")
+
+                    # Resize in-place maintaining aspect ratio (LANCZOS resampling default)
+                    img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+
+                    # Save preserving image format
+                    img.save(output_path)
+            except Exception as e:
+                print(f"Skipping {file_path} due to error: {e}")

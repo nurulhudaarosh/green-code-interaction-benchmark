@@ -1,0 +1,134 @@
+from collections import defaultdict
+from decimal import Decimal, InvalidOperation
+
+
+def reconcile_inventory(expected_inventory, physical_inventory, tolerance=0):
+    """Reconcile inventory while handling duplicate SKUs and invalid quantities."""
+
+    def normalize(records, source):
+        inventory = defaultdict(Decimal)
+        errors = []
+
+        if isinstance(records, dict):
+            records = [
+                {"sku": sku, "quantity": quantity}
+                for sku, quantity in records.items()
+            ]
+
+        for index, record in enumerate(records):
+            if not isinstance(record, dict):
+                errors.append({
+                    "source": source,
+                    "index": index,
+                    "error": "Record must be a dictionary"
+                })
+                continue
+
+            sku = str(record.get("sku", "")).strip()
+
+            if not sku:
+                errors.append({
+                    "source": source,
+                    "index": index,
+                    "error": "Missing SKU"
+                })
+                continue
+
+            try:
+                quantity = Decimal(str(record.get("quantity", "")))
+
+                if not quantity.is_finite():
+                    raise InvalidOperation
+
+                if quantity < 0:
+                    raise ValueError("Quantity cannot be negative")
+
+            except (InvalidOperation, ValueError, TypeError):
+                errors.append({
+                    "source": source,
+                    "index": index,
+                    "sku": sku,
+                    "error": "Invalid quantity"
+                })
+                continue
+
+            # Duplicate SKUs are aggregated instead of silently overwriting.
+            inventory[sku] += quantity
+
+        return inventory, errors
+
+    tolerance = Decimal(str(tolerance))
+    if tolerance < 0:
+        raise ValueError("Tolerance cannot be negative")
+
+    expected, expected_errors = normalize(expected_inventory, "expected")
+    physical, physical_errors = normalize(physical_inventory, "physical")
+
+    all_skus = sorted(set(expected) | set(physical))
+    reconciliation = []
+
+    for sku in all_skus:
+        expected_qty = expected.get(sku, Decimal("0"))
+        physical_qty = physical.get(sku, Decimal("0"))
+        variance = physical_qty - expected_qty
+
+        if abs(variance) <= tolerance:
+            status = "MATCH"
+        elif expected_qty == 0:
+            status = "EXTRA"
+        elif physical_qty == 0:
+            status = "MISSING"
+        elif variance > 0:
+            status = "OVERAGE"
+        else:
+            status = "SHORTAGE"
+
+        reconciliation.append({
+            "sku": sku,
+            "expected_quantity": expected_qty,
+            "physical_quantity": physical_qty,
+            "variance": variance,
+            "status": status
+        })
+
+    return {
+        "reconciliation": reconciliation,
+        "errors": expected_errors + physical_errors,
+        "summary": {
+            "total_skus": len(all_skus),
+            "matched": sum(r["status"] == "MATCH" for r in reconciliation),
+            "shortages": sum(r["status"] == "SHORTAGE" for r in reconciliation),
+            "overages": sum(r["status"] == "OVERAGE" for r in reconciliation),
+            "missing": sum(r["status"] == "MISSING" for r in reconciliation),
+            "extra": sum(r["status"] == "EXTRA" for r in reconciliation),
+            "invalid_records": len(expected_errors) + len(physical_errors)
+        }
+    }
+
+
+# Example
+expected = [
+    {"sku": "A101", "quantity": 100},
+    {"sku": "A101", "quantity": 20},   # duplicate SKU -> aggregated to 120
+    {"sku": "B202", "quantity": 50},
+    {"sku": "C303", "quantity": "invalid"}  # invalid -> reported as error
+]
+
+physical = [
+    {"sku": "A101", "quantity": 115},
+    {"sku": "B202", "quantity": 50},
+    {"sku": "D404", "quantity": 10}
+]
+
+report = reconcile_inventory(expected, physical)
+
+print("Reconciliation:")
+for item in report["reconciliation"]:
+    print(item)
+
+print("\nErrors:")
+for error in report["errors"]:
+    print(error)
+
+print("\nSummary:")
+print(report["summary"])

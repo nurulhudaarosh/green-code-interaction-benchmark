@@ -1,0 +1,169 @@
+"""
+Longest Common Subsequence (LCS)
+
+Original problem:
+    Given two strings A and B, compute the length of their Longest Common
+    Subsequence (LCS) and reconstruct one LCS.
+
+Original required outputs:
+    - length: the LCS length
+    - lcs: one deterministic LCS
+
+Deterministic rule:
+    During reconstruction, if advancing in A and advancing in B have equal
+    DP scores, prefer advancing in the first string A.
+
+New feature:
+    If include_operation_summary=True, return an additional
+    "operation_summary" field containing a deterministic summary of the
+    major computational decisions/operations made by the algorithm.
+
+    The summary reports:
+    - "dp_cell_operations": number of DP cells evaluated
+    - "reconstruction_steps": number of backtracking steps
+    - "total_major_operations": their sum
+
+When include_operation_summary=False (the default), the original result
+format is preserved.
+
+Complexity:
+    Time:  O(n * m)
+    Space: O(n * m)
+
+Only the Python standard library is used.
+"""
+
+
+def lcs(
+    a: str,
+    b: str,
+    include_operation_summary: bool = False,
+) -> dict:
+    """
+    Compute the LCS length and reconstruct one deterministic LCS.
+
+    Args:
+        a: First input string.
+        b: Second input string.
+        include_operation_summary:
+            If True, include the additional operation_summary field.
+
+    Returns:
+        If include_operation_summary=False:
+            {
+                "length": int,
+                "lcs": str
+            }
+
+        If include_operation_summary=True:
+            {
+                "length": int,
+                "lcs": str,
+                "operation_summary": {
+                    "dp_cell_operations": int,
+                    "reconstruction_steps": int,
+                    "total_major_operations": int
+                }
+            }
+    """
+
+    n = len(a)
+    m = len(b)
+
+    # DP table:
+    # dp[i][j] = LCS length of a[:i] and b[:j]
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+
+    # Predecessor table:
+    # "diag" -> characters matched
+    # "up"   -> advance in first string A
+    # "left" -> advance in second string B
+    predecessor = [[None] * (m + 1) for _ in range(n + 1)]
+
+    # Count each evaluated non-boundary DP cell as one major operation.
+    dp_cell_operations = 0
+
+    # Build DP table.
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            dp_cell_operations += 1
+
+            if a[i - 1] == b[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+                predecessor[i][j] = "diag"
+
+            elif dp[i - 1][j] > dp[i][j - 1]:
+                dp[i][j] = dp[i - 1][j]
+                predecessor[i][j] = "up"
+
+            elif dp[i - 1][j] < dp[i][j - 1]:
+                dp[i][j] = dp[i][j - 1]
+                predecessor[i][j] = "left"
+
+            else:
+                # Equal DP scores.
+                #
+                # The final reconstruction rule must prefer advancing
+                # in the first string A.
+                dp[i][j] = dp[i - 1][j]
+                predecessor[i][j] = "up"
+
+    # Reconstruct the LCS.
+    result = []
+    i, j = n, m
+    reconstruction_steps = 0
+
+    while i > 0 and j > 0:
+        reconstruction_steps += 1
+
+        if predecessor[i][j] == "diag":
+            result.append(a[i - 1])
+            i -= 1
+            j -= 1
+
+        elif predecessor[i][j] == "up":
+            i -= 1
+
+        else:  # "left"
+            j -= 1
+
+    result.reverse()
+    lcs_string = "".join(result)
+
+    # Preserve the original output when the feature is not requested.
+    output = {
+        "length": dp[n][m],
+        "lcs": lcs_string,
+    }
+
+    # Add the new field only when explicitly requested.
+    if include_operation_summary:
+        output["operation_summary"] = {
+            "dp_cell_operations": dp_cell_operations,
+            "reconstruction_steps": reconstruction_steps,
+            "total_major_operations": (
+                dp_cell_operations + reconstruction_steps
+            ),
+        }
+
+    return output
+
+
+if __name__ == "__main__":
+    # Original behavior: only "length" and "lcs".
+    print(lcs("ABCBDAB", "BDCABA"))
+
+    # New behavior: includes operation_summary.
+    print(
+        lcs(
+            "ABCBDAB",
+            "BDCABA",
+            include_operation_summary=True,
+        )
+    )
+
+    # Additional tests.
+    print(lcs("AGGTAB", "GXTXAYB", include_operation_summary=True))
+    print(lcs("ABC", "AC", include_operation_summary=True))
+    print(lcs("ABC", "DEF", include_operation_summary=True))
+    print(lcs("", "ABC", include_operation_summary=True))

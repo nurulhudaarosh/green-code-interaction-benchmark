@@ -1,0 +1,168 @@
+"""
+Package Build Order with Dependency Levels
+
+Problem:
+Given a list of packages and their prerequisite dependencies, produce:
+1. A deterministic valid build order (topological sort)
+2. The number of dependency levels (longest path depth)
+
+If a cycle exists, return an empty order and -1 levels.
+
+Algorithm:
+- Build adjacency list and in-degree count from dependencies
+- Use Kahn's algorithm with a min-heap for deterministic ordering
+- Track the maximum depth (level) for each node during processing
+- If the number of processed nodes < total packages, a cycle exists
+
+Time Complexity: O(P + D) where P = number of packages, D = number of dependencies
+Space Complexity: O(P + D)
+"""
+
+import heapq
+from collections import defaultdict, deque
+from typing import List, Dict, Set, Tuple, Optional
+
+
+def find_build_order(packages: List[str], dependencies: List[Tuple[str, str]]) -> Tuple[List[str], int]:
+    """
+    Find a deterministic build order and the number of dependency levels.
+
+    Args:
+        packages: List of package names (all unique)
+        dependencies: List of (dependent, prerequisite) tuples
+                      meaning prerequisite must be built before dependent
+
+    Returns:
+        Tuple of (build_order, levels)
+        - If successful: (ordered list of packages, number of levels)
+        - If cycle: ([], -1)
+
+    Example:
+        packages = ['A', 'B', 'C', 'D']
+        dependencies = [('A', 'B'), ('A', 'C'), ('B', 'D')]
+        # D -> B -> A, C -> A
+        # Possible build order: ['D', 'C', 'B', 'A'] with levels 3
+    """
+    if not packages:
+        return [], 0
+
+    # Build graph: adjacency list and in-degree count
+    graph: Dict[str, List[str]] = defaultdict(list)
+    in_degree: Dict[str, int] = {pkg: 0 for pkg in packages}
+
+    # Validate that all packages in dependencies exist
+    package_set = set(packages)
+    for dependent, prerequisite in dependencies:
+        if dependent not in package_set:
+            raise ValueError(f"Package '{dependent}' not in packages list")
+        if prerequisite not in package_set:
+            raise ValueError(f"Package '{prerequisite}' not in packages list")
+        graph[prerequisite].append(dependent)
+        in_degree[dependent] += 1
+
+    # Min-heap for deterministic ordering (lexicographical)
+    # Initialize with all packages that have in-degree 0
+    min_heap = [pkg for pkg in packages if in_degree[pkg] == 0]
+    heapq.heapify(min_heap)
+
+    # Track depth levels (longest prerequisite chain)
+    # Depth of a package = 1 + max(depth of its prerequisites)
+    depth: Dict[str, int] = {pkg: 0 for pkg in packages}
+    max_depth = 0
+    build_order = []
+
+    # Kahn's algorithm
+    while min_heap:
+        current = heapq.heappop(min_heap)
+        build_order.append(current)
+        max_depth = max(max_depth, depth[current])
+
+        # Process neighbors
+        for neighbor in graph[current]:
+            in_degree[neighbor] -= 1
+            # Update depth: current package is a prerequisite of neighbor
+            depth[neighbor] = max(depth[neighbor], depth[current] + 1)
+            if in_degree[neighbor] == 0:
+                heapq.heappush(min_heap, neighbor)
+
+    # Check for cycle: if not all packages were processed
+    if len(build_order) != len(packages):
+        return [], -1
+
+    # Levels = max_depth + 1 (since root packages are at level 1)
+    return build_order, max_depth + 1
+
+
+def main():
+    """Example usage and test cases"""
+    # Test Case 1: Valid DAG
+    print("Test Case 1: Valid DAG")
+    packages1 = ['A', 'B', 'C', 'D']
+    deps1 = [('A', 'B'), ('A', 'C'), ('B', 'D')]
+    order1, levels1 = find_build_order(packages1, deps1)
+    print(f"Order: {order1}")
+    print(f"Levels: {levels1}")
+    print()
+
+    # Test Case 2: More complex DAG
+    print("Test Case 2: Complex DAG")
+    packages2 = ['A', 'B', 'C', 'D', 'E', 'F']
+    deps2 = [
+        ('A', 'B'),
+        ('A', 'C'),
+        ('B', 'D'),
+        ('C', 'D'),
+        ('E', 'B'),
+        ('F', 'E'),
+        ('F', 'D')
+    ]
+    order2, levels2 = find_build_order(packages2, deps2)
+    print(f"Order: {order2}")
+    print(f"Levels: {levels2}")
+    print()
+
+    # Test Case 3: Cycle
+    print("Test Case 3: Cycle")
+    packages3 = ['A', 'B', 'C']
+    deps3 = [('A', 'B'), ('B', 'C'), ('C', 'A')]
+    order3, levels3 = find_build_order(packages3, deps3)
+    print(f"Order: {order3}")
+    print(f"Levels: {levels3}")
+    print()
+
+    # Test Case 4: Disconnected components
+    print("Test Case 4: Disconnected components")
+    packages4 = ['A', 'B', 'C', 'D', 'E']
+    deps4 = [('A', 'B'), ('C', 'D')]
+    order4, levels4 = find_build_order(packages4, deps4)
+    print(f"Order: {order4}")
+    print(f"Levels: {levels4}")
+    print()
+
+    # Test Case 5: No dependencies
+    print("Test Case 5: No dependencies")
+    packages5 = ['Z', 'Y', 'X']
+    deps5 = []
+    order5, levels5 = find_build_order(packages5, deps5)
+    print(f"Order: {order5}")
+    print(f"Levels: {levels5}")
+    print()
+
+    # Test Case 6: Self-dependency (cycle)
+    print("Test Case 6: Self-dependency")
+    packages6 = ['A', 'B']
+    deps6 = [('A', 'A')]
+    order6, levels6 = find_build_order(packages6, deps6)
+    print(f"Order: {order6}")
+    print(f"Levels: {levels6}")
+    print()
+
+    # Test Case 7: Empty input
+    print("Test Case 7: Empty input")
+    order7, levels7 = find_build_order([], [])
+    print(f"Order: {order7}")
+    print(f"Levels: {levels7}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,647 @@
+Here's the complete expense analyzer with robust handling of malformed transaction records:
+
+```python
+import csv
+import os
+import re
+from datetime import datetime
+from collections import defaultdict
+
+try:
+    import matplotlib.pyplot as plt
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+    print("Note: matplotlib not installed. Visualizations will be disabled.")
+
+
+class ExpenseAnalyzer:
+    """Expense analyzer with robust handling of malformed transaction records."""
+
+    VALID_CATEGORIES = ['Food', 'Transport', 'Entertainment', 'Bills', 'Shopping', 'Other']
+    DATE_FORMAT = '%Y-%m-%d'
+    HEADER = ['Date', 'Category', 'Description', 'Amount']
+
+    def __init__(self, filename='expenses.csv'):
+        self.filename = filename
+        self.expenses = []
+        self.rejected_records = []  # track malformed records for reporting
+        self._initialize_file()
+        self.load_expenses()
+
+    def _initialize_file(self):
+        """Create the CSV file with a header if it doesn't exist."""
+        if not os.path.exists(self.filename):
+            with open(self.filename, 'w', newline='', encoding='utf-8') as f:
+                csv.writer(f).writerow(self.HEADER)
+
+    # ------------------------------------------------------------------
+    # Validation helpers
+    # ------------------------------------------------------------------
+    def _parse_date(self, raw):
+        """Return a normalized date string or raise ValueError."""
+        if raw is None:
+            raise ValueError("missing date")
+        raw = str(raw).strip()
+        if not raw:
+            raise ValueError("empty date")
+        # Accept a few common formats
+        for fmt in (self.DATE_FORMAT, '%Y/%m/%d', '%m/%d/%Y', '%d-%m-%Y'):
+            try:
+                return datetime.strptime(raw, fmt).strftime(self.DATE_FORMAT)
+            except ValueError:
+                continue
+        raise ValueError(f"unrecognized date format: {raw!r}")
+
+    def _parse_amount(self, raw):
+        """Return a positive float amount or raise ValueError."""
+        if raw is None:
+            raise ValueError("missing amount")
+        # Strip currency symbols, commas, and whitespace
+        cleaned = re.sub(r'[^\d.\-]', '', str(raw).strip())
+        if cleaned in ('', '-', '.', '-.'):
+            raise ValueError(f"invalid amount: {raw!r}")
+        try:
+            amount = float(cleaned)
+        except ValueError:
+            raise ValueError(f"invalid amount: {raw!r}")
+        if amount != amount:  # NaN check
+            raise ValueError("amount is NaN")
+        if amount <= 0:
+            raise ValueError(f"amount must be positive, got {amount}")
+        # Guard against absurdly large values (likely data-entry error)
+        if amount > 1_000_000_000:
+            raise ValueError(f"amount too large: {amount}")
+        return round(amount, 2)
+
+    def _parse_category(self, raw):
+        """Return a canonical category or raise ValueError."""
+        if raw is None:
+            raise ValueError("missing category")
+        raw = str(raw).strip()
+        if not raw:
+            raise ValueError("empty category")
+        # Case-insensitive match against known categories
+        for cat in self.VALID_CATEGORIES:
+            if raw.lower() == cat.lower():
+                return cat
+        # Unknown category -> bucket into 'Other' rather than reject?
+        # Rejecting is safer for integrity; keep strict and let caller decide.
+        raise ValueError(f"unknown category: {raw!r}")
+
+    def _parse_description(self, raw):
+        """Return a cleaned description string or raise ValueError."""
+        if raw is None:
+            raise ValueError("missing description")
+        # Remove control characters and normalize whitespace
+        cleaned = re.sub(r'[\x00-\x1f\x7f]', '', str(raw)).strip()
+        cleaned = re.sub(r'\s+', ' ', cleaned)
+        if not cleaned:
+            raise ValueError("empty description")
+        if len(cleaned) > 200:
+            cleaned = cleaned[:200]
+        return cleaned
+
+    def _validate_record(self, record):
+        """
+        Validate a raw record (dict or list).
+        Returns (cleaned_dict, None) on success or (None, error_message) on failure.
+        """
+        try:
+            # Support both dict-like rows and list rows
+            if isinstance(record, dict):
+                date_raw = record.get('Date', record.get('date'))
+                cat_raw = record.get('Category', record.get('category'))
+                desc_raw = record.get('Description', record.get('description'))
+                amt_raw = record.get('Amount', record.get('amount'))
+            elif isinstance(record, (list, tuple)):
+                if len(record) < 4:
+                    return None, f"expected 4 fields, got {len(record)}"
+                date_raw, cat_raw, desc_raw, amt_raw = record[:4]
+            else:
+                return None, f"unsupported record type: {type(record).__name__}"
+
+            date = self._parse_date(date_raw)
+            category = self._parse_category(cat_raw)
+            description = self._parse_description(desc_raw)
+            amount = self._parse_amount(amt_raw)
+
+            return {
+                'date': date,
+                'category': category,
+                'description': description,
+                'amount': amount,
+            }, None
+
+        except ValueError as e:
+            return None, str(e)
+        except Exception as e:  # catch-all so one bad row can't crash loading
+            return None, f"unexpected error: {e}"
+
+    # ------------------------------------------------------------------
+    # Requirement 1: Add expenses with validation
+    # ------------------------------------------------------------------
+    def add_expense(self, date, category, description, amount):
+        """Validate and append a new expense to the CSV and in-memory list."""
+        cleaned, error = self._validate_record([date, category, description, amount])
+        if error:
+            print(f"✗ Rejected: {error}")
+            self.rejected_records.append({
+                'record': [date, category, description, amount],
+                'error': error,
+                'source': 'user_input',
+            })
+            return False
+
+        try:
+            with open(self.filename, 'a', newline='', encoding='utf-8') as f:
+                csv.writer(f).writerow([
+                    cleaned['date'], cleaned['category'],
+                    cleaned['description'], cleaned['amount']
+                ])
+        except OSError as e:
+            print(f"✗ Could not write to file: {e}")
+            return False
+
+        self.expenses.append(cleaned)
+        print(f"✓ Added: {cleaned['description']} - ${cleaned['amount']:.2f} "
+              f"[{cleaned['category']}] on {cleaned['date']}")
+        return True
+
+    # ------------------------------------------------------------------
+    # Requirement 2: Load and display expenses (with malformed handling)
+    # ------------------------------------------------------------------
+    def load_expenses(self):
+        """
+        Load expenses from CSV, skipping and reporting malformed rows
+        instead of crashing or silently corrupting the dataset.
+        """
+        self.expenses = []
+        self.rejected_records = []
+
+        if not os.path.exists(self.filename):
+            return
+
+        try:
+            with open(self.filename, 'r', newline='', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                if reader.fieldnames is None:
+                    print("⚠ File is empty; no header found.")
+                    return
+
+                # Verify header integrity (allow case-insensitive match)
+                normalized = [h.strip().lower() if h else '' for h in reader.fieldnames]
+                required = {'date', 'category', 'description', 'amount'}
+                missing = required - set(normalized)
+                if missing:
+                    print(f"⚠ Header missing required columns: {missing}. "
+                          f"Attempting to continue anyway.")
+
+                for line_num, row in enumerate(reader, start=2):  # start=2 because line 1 is header
+                    # Detect extra columns (row length > header length)
+                    extras = None
+                    if None in row:  # csv puts extra fields under the None key
+                        extras = row.pop(None)
+                    if extras:
+                        self.rejected_records.append({
+                            'record': row,
+                            'error': f"extra columns: {extras}",
+                            'source': f'line {line_num}',
+                        })
+                        continue
+
+                    cleaned, error = self._validate_record(row)
+                    if error:
+                        self.rejected_records.append({
+                            'record': row,
+                            'error': error,
+                            'source': f'line {line_num}',
+                        })
+                        continue
+
+                    self.expenses.append(cleaned)
+
+        except csv.Error as e:
+            print(f"⚠ CSV parsing error: {e}")
+        except OSError as e:
+            print(f"⚠ Could not read file: {e}")
+
+        if self.rejected_records:
+            print(f"⚠ Skipped {len(self.rejected_records)} malformed record(s). "
+                  f"Use 'View Rejected Records' to inspect them.")
+
+    def display_expenses(self, limit=None):
+        """Display expenses in a formatted table."""
+        if not self.expenses:
+            print("No valid expenses recorded.")
+            return
+
+        rows = self.expenses[-limit:] if limit else self.expenses
+
+        print("\n" + "=" * 72)
+        print(f"{'Date':<12} {'Category':<15} {'Description':<28} {'Amount':>10}")
+        print("-" * 72)
+        for exp in rows:
+            desc = exp['description']
+            if len(desc) > 27:
+                desc = desc[:24] + '...'
+            print(f"{exp['date']:<12} {exp['category']:<15} {desc:<28} "
+                  f"${exp['amount']:>9.2f}")
+        print("=" * 72)
+
+    def display_rejected_records(self):
+        """Show all malformed records that were skipped during load."""
+        if not self.rejected_records:
+            print("No rejected records. All data is clean.")
+            return
+
+        print("\n" + "=" * 72)
+        print(f"REJECTED RECORDS ({len(self.rejected_records)})")
+        print("=" * 72)
+        for i, item in enumerate(self.rejected_records, 1):
+            print(f"\n[{i}] Source: {item['source']}")
+            print(f"    Reason: {item['error']}")
+            print(f"    Raw:    {item['record']}")
+        print("=" * 72)
+
+    # ------------------------------------------------------------------
+    # Requirement 3: Statistics
+    # ------------------------------------------------------------------
+    def calculate_statistics(self):
+        if not self.expenses:
+            return {}
+
+        total = sum(e['amount'] for e in self.expenses)
+        avg = total / len(self.expenses)
+
+        category_totals = defaultdict(float)
+        category_counts = defaultdict(int)
+        monthly_totals = defaultdict(float)
+
+        for e in self.expenses:
+            category_totals[e['category']] += e['amount']
+            category_counts[e['category']] += 1
+            monthly_totals[e['date'][:7]] += e['amount']
+
+        return {
+            'total': total,
+            'average': avg,
+            'count': len(self.expenses),
+            'category_totals': dict(category_totals),
+            'category_counts': dict(category_counts),
+            'monthly_totals': dict(monthly_totals),
+            'max_expense': max(self.expenses, key=lambda x: x['amount']),
+            'min_expense': min(self.expenses, key=lambda x: x['amount']),
+        }
+
+    def print_statistics(self):
+        stats = self.calculate_statistics()
+        if not stats:
+            print("No valid expenses to analyze.")
+            return
+
+        print("\n" + "=" * 55)
+        print("EXPENSE STATISTICS")
+        print("=" * 55)
+        print(f"Total Expenses:        ${stats['total']:.2f}")
+        print(f"Transactions:          {stats['count']}")
+        print(f"Average Expense:       ${stats['average']:.2f}")
+        print(f"Largest Expense:       ${stats['max_expense']['amount']:.2f} "
+              f"({stats['max_expense']['description']})")
+        print(f"Smallest Expense:      ${stats['min_expense']['amount']:.2f} "
+              f"({stats['min_expense']['description']})")
+
+        print("\nBy Category:")
+        print("-" * 55)
+        for cat, tot in sorted(stats['category_totals'].items(),
+                               key=lambda x: x[1], reverse=True):
+            pct = (tot / stats['total']) * 100
+            print(f"  {cat:<15} ${tot:>9.2f}  ({pct:>5.1f}%)  "
+                  f"x{stats['category_counts'][cat]}")
+
+        print("\nBy Month:")
+        print("-" * 55)
+        for month, tot in sorted(stats['monthly_totals'].items()):
+            print(f"  {month}  ${tot:.2f}")
+
+    # ------------------------------------------------------------------
+    # Requirement 4: Filter and search
+    # ------------------------------------------------------------------
+    def filter_expenses(self, category=None, start_date=None, end_date=None,
+                        min_amount=None, max_amount=None):
+        """Filter valid expenses. Silently ignores invalid filter values."""
+        result = list(self.expenses)
+
+        if category:
+            try:
+                cat = self._parse_category(category)
+                result = [e for e in result if e['category'] == cat]
+            except ValueError as e:
+                print(f"⚠ Ignoring invalid category filter: {e}")
+
+        if start_date:
+            try:
+                sd = self._parse_date(start_date)
+                result = [e for e in result if e['date'] >= sd]
+            except ValueError as e:
+                print(f"⚠ Ignoring invalid start_date: {e}")
+
+        if end_date:
+            try:
+                ed = self._parse_date(end_date)
+                result = [e for e in result if e['date'] <= ed]
+            except ValueError as e:
+                print(f"⚠ Ignoring invalid end_date: {e}")
+
+        for label, val, cmp_fn in (
+            ('min_amount', min_amount, lambda a, v: a >= v),
+            ('max_amount', max_amount, lambda a, v: a <= v),
+        ):
+            if val is None or val == '':
+                continue
+            try:
+                v = self._parse_amount(val)
+                result = [e for e in result if cmp_fn(e['amount'], v)]
+            except ValueError as e:
+                print(f"⚠ Ignoring invalid {label}: {e}")
+
+        return result
+
+    def search_expenses(self, keyword):
+        if not keyword:
+            return list(self.expenses)
+        kw = keyword.lower()
+        return [e for e in self.expenses if kw in e['description'].lower()]
+
+    # ------------------------------------------------------------------
+    # Requirement 5: Visualization
+    # ------------------------------------------------------------------
+    def visualize_expenses(self, chart_type='category'):
+        if not MATPLOTLIB_AVAILABLE:
+            print("✗ matplotlib not installed; cannot visualize.")
+            return
+        if not self.expenses:
+            print("No data to visualize.")
+            return
+
+        stats = self.calculate_statistics()
+
+        if chart_type == 'category':
+            labels = list(stats['category_totals'].keys())
+            values = list(stats['category_totals'].values())
+            plt.figure(figsize=(9, 6))
+            plt.pie(values, labels=labels, autopct='%1.1f%%', startangle=90)
+            plt.title('Expenses by Category')
+            plt.axis('equal')
+            plt.tight_layout()
+            plt.show()
+
+        elif chart_type == 'monthly':
+            months = list(stats['monthly_totals'].keys())
+            values = list(stats['monthly_totals'].values())
+            plt.figure(figsize=(10, 6))
+            plt.bar(months, values, color='steelblue')
+            plt.xlabel('Month')
+            plt.ylabel('Amount ($)')
+            plt.title('Monthly Expenses')
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            plt.show()
+
+        elif chart_type == 'trend':
+            ordered = sorted(self.expenses, key=lambda e: e['date'])
+            dates = [datetime.strptime(e['date'], self.DATE_FORMAT) for e in ordered]
+            amounts = [e['amount'] for e in ordered]
+            plt.figure(figsize=(11, 6))
+            plt.plot(dates, amounts, marker='o', linestyle='-',
+                     color='green', alpha=0.7)
+            plt.xlabel('Date')
+            plt.ylabel('Amount ($)')
+            plt.title('Expense Trend Over Time')
+            plt.grid(True, alpha=0.3)
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            plt.show()
+        else:
+            print(f"Unknown chart type: {chart_type}")
+
+    # ------------------------------------------------------------------
+    # Bonus: export report
+    # ------------------------------------------------------------------
+    def export_report(self, filename='expense_report.txt'):
+        stats = self.calculate_statistics()
+        try:
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write("EXPENSE ANALYZER REPORT\n")
+                f.write("=" * 60 + "\n")
+                f.write(f"Generated: {datetime.now():%Y-%m-%d %H:%M:%S}\n\n")
+
+                if not stats:
+                    f.write("No valid expenses.\n")
+                else:
+                    f.write(f"Total: ${stats['total']:.2f}\n")
+                    f.write(f"Count: {stats['count']}\n")
+                    f.write(f"Average: ${stats['average']:.2f}\n\n")
+
+                    f.write("By Category:\n")
+                    for cat, tot in sorted(stats['category_totals'].items(),
+                                           key=lambda x: x[1], reverse=True):
+                        f.write(f"  {cat:<15} ${tot:.2f}\n")
+
+                    f.write("\nAll Valid Expenses:\n")
+                    for e in self.expenses:
+                        f.write(f"  {e['date']} | {e['category']:<15} | "
+                                f"{e['description']:<30} | ${e['amount']:.2f}\n")
+
+                if self.rejected_records:
+                    f.write(f"\n\nREJECTED RECORDS: {len(self.rejected_records)}\n")
+                    for r in self.rejected_records:
+                        f.write(f"  [{r['source']}] {r['error']} -> {r['record']}\n")
+
+            print(f"✓ Report written to {filename}")
+        except OSError as e:
+            print(f"✗ Could not write report: {e}")
+
+
+# ----------------------------------------------------------------------
+# Demo: build analyzer, seed data, then deliberately inject malformed rows
+# ----------------------------------------------------------------------
+def _seed_demo_file(filename='expenses.csv'):
+    """Write a CSV containing both valid and malformed rows for testing."""
+    rows = [
+        ['Date', 'Category', 'Description', 'Amount'],           # header
+        ['2024-01-15', 'Food', 'Groceries', '85.50'],            # valid
+        ['2024-01-16', 'Transport', 'Gas', '45.00'],             # valid
+        ['2024-01-17', 'Entertainment', 'Movie tickets', '25'],  # valid (int)
+        ['not-a-date', 'Food', 'Bad date row', '10.00'],         # bad date
+        ['2024-01-19', 'Unknown', 'Bad category', '12.00'],      # bad category
+        ['2024-01-20', 'Food', '', '15.00'],                     # empty description
+        ['2024-01-21', 'Food', 'Negative amount', '-5.00'],      # negative amount
+        ['2024-01-22', 'Bills', 'Zero amount', '0'],             # zero amount
+        ['2024-01-23', 'Food', 'Non-numeric', 'abc'],            # non-numeric
+        ['2024-01-24', 'Shopping', 'Too many columns', '99.00', 'EXTRA'],  # extra col
+        ['2024-01-25', 'Food'],                                  # missing fields
+        ['2024-01-26', 'Transport', 'Subway pass', '$50.00'],    # currency symbol
+        ['2024-01-27', 'Food', 'Weird    spaces   here', '20.00'],  # cleanup test
+        ['2024-01-28', 'Bills', 'Control\x01char', '30.00'],     # control char
+        ['2024-02-01', 'Shopping', 'Clothes', '150.00'],         # valid
+        ['2024-02-05', 'Transport', 'Bus pass', '50'],           # valid
+        ['2024-02-10', 'Food', 'Groceries', '95.00'],            # valid
+        ['2024-02-14', 'Entertainment', 'Concert', '80'],        # valid
+        ['2024-02-15', 'Bills', 'Internet', '60.00'],            # valid
+    ]
+    with open(filename, 'w', newline='', encoding='utf-8') as f:
+        csv.writer(f).writerows(rows)
+
+
+def main():
+    filename = 'expenses.csv'
+
+    # Re-seed only if the file doesn't exist, so real user data isn't clobbered
+    if not os.path.exists(filename):
+        print("Seeding demo data (including intentionally malformed rows)...")
+        _seed_demo_file(filename)
+
+    analyzer = ExpenseAnalyzer(filename)
+
+    print(f"\nLoaded {len(analyzer.expenses)} valid expense(s).")
+    print(f"Skipped {len(analyzer.rejected_records)} malformed record(s).\n")
+
+    while True:
+        print("\n" + "=" * 50)
+        print(" EXPENSE ANALYZER ")
+        print("=" * 50)
+        print(" 1. Add Expense")
+        print(" 2. View All Expenses")
+        print(" 3. View Statistics")
+        print(" 4. Filter Expenses")
+        print(" 5. Search Expenses")
+        print(" 6. Visualize Data")
+        print(" 7. View Rejected (Malformed) Records")
+        print(" 8. Export Report")
+        print(" 9. Exit")
+        print("-" * 50)
+
+        choice = input("Choice (1-9): ").strip()
+
+        if choice == '1':
+            date = input("Date (YYYY-MM-DD): ").strip()
+            print(f"Categories: {', '.join(ExpenseAnalyzer.VALID_CATEGORIES)}")
+            category = input("Category: ").strip()
+            description = input("Description: ").strip()
+            amount = input("Amount: ").strip()
+            analyzer.add_expense(date, category, description, amount)
+
+        elif choice == '2':
+            raw = input("Show last N (Enter for all): ").strip()
+            try:
+                limit = int(raw) if raw else None
+            except ValueError:
+                print("⚠ Invalid number, showing all.")
+                limit = None
+            analyzer.display_expenses(limit)
+
+        elif choice == '3':
+            analyzer.print_statistics()
+
+        elif choice == '4':
+            cat = input("Category (blank to skip): ").strip() or None
+            sd = input("Start date (blank): ").strip() or None
+            ed = input("End date (blank): ").strip() or None
+            mn = input("Min amount (blank): ").strip()
+            mx = input("Max amount (blank): ").strip()
+            results = analyzer.filter_expenses(cat, sd, ed, mn or None, mx or None)
+
+            print(f"\n{len(results)} match(es):")
+            for e in results:
+                print(f"  {e['date']} | {e['category']:<15} | "
+                      f"{e['description']:<25} | ${e['amount']:.2f}")
+
+        elif choice == '5':
+            kw = input("Keyword: ").strip()
+            results = analyzer.search_expenses(kw)
+            print(f"\n{len(results)} match(es):")
+            for e in results:
+                print(f"  {e['date']} | {e['category']:<15} | "
+                      f"{e['description']:<25} | ${e['amount']:.2f}")
+
+        elif choice == '6':
+            print("1. Category pie  2. Monthly bar  3. Trend line")
+            c = input("Chart type (1-3): ").strip()
+            analyzer.visualize_expenses(
+                {'1': 'category', '2': 'monthly', '3': 'trend'}.get(c, 'category')
+            )
+
+        elif choice == '7':
+            analyzer.display_rejected_records()
+
+        elif choice == '8':
+            fn = input("Filename (default: expense_report.txt): ").strip() or 'expense_report.txt'
+            analyzer.export_report(fn)
+
+        elif choice == '9':
+            print("Goodbye!")
+            break
+        else:
+            print("Invalid choice.")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## What was broken before, and how it's fixed
+
+The previous version silently mishandled malformed rows in several ways. Here's every defect and its fix:
+
+### 1. **Crashes on non-numeric amounts**
+**Before:** `row['amount'] = float(row['amount'])` inside `load_expenses()` — one bad row (e.g. `"abc"`) raises `ValueError` and aborts the entire load.
+
+**After:** `_parse_amount()` strips currency symbols/commas, checks for empty/NaN/negative/zero/absurd values, and the caller catches the error per-row and records it in `self.rejected_records` instead of aborting.
+
+### 2. **No date validation on load**
+**Before:** `date` was stored as a raw string. Bad dates like `"not-a-date"` silently entered the dataset, then crashed `visualize_expenses()` later when `datetime.strptime()` was called.
+
+**After:** `_parse_date()` normalizes via a list of accepted formats (`%Y-%m-%d`, `%Y/%m/%d`, `%m/%d/%Y`, `%d-%m-%Y`) and returns a canonical ISO string, or rejects the row.
+
+### 3. **Unknown categories were accepted**
+**Before:** `add_expense()` validated categories but `load_expenses()` did not — an external CSV could inject `"Unknown"` or `""`.
+
+**After:** `_parse_category()` enforces the whitelist case-insensitively. Bad categories are rejected on **both** the load and add paths.
+
+### 4. **Extra columns silently corrupted data**
+**Before:** `csv.DictReader` puts extra fields under the `None` key. The old code ignored this, so a row with 5 columns loaded without the trailing value and no warning.
+
+**After:** `load_expenses()` explicitly pops and checks for `row[None]` and records the row as rejected with reason `"extra columns: [...]"`.
+
+### 5. **Short rows raised an `IndexError`**
+**Before:** A row like `['2024-01-25', 'Food']` would crash when accessed by field name.
+
+**After:** The dict path uses `.get()` (yielding `None` → clean `"missing X"` error), and the list path checks `len(record) < 4` first.
+
+### 6. **Empty / whitespace-only descriptions accepted**
+**Before:** `"   "` was stored verbatim and displayed as a blank line.
+
+**After:** `_parse_description()` strips control characters and collapses whitespace; empty results are rejected.
+
+### 7. **No audit trail**
+**Before:** Malformed data vanished with no way to see what was skipped.
+
+**After:** Every rejection is stored with its source (user input vs. line number) and reason, viewable via menu option **7** and included in exported reports.
+
+### 8. **Silent filter crashes**
+**Before:** `filter_expenses(min_amount="abc")` raised `ValueError` and killed the program.
+
+**After:** Each filter criterion is wrapped in its own try/except; bad filter values print a warning and are skipped rather than crashing.
+
+### 9. **NaN / infinity slipped through**
+**Before:** `float("nan")` passes `> 0` is `False`... actually `nan > 0` is `False` so it'd be rejected — but `float("inf")` was accepted and poisoned all statistics.
+
+**After:** Explicit NaN check (`amount != amount`) plus a `> 1e9` upper bound.
+
+### 10. **File/IO errors terminated the app**
+**Before:** No try/except around `open()`, `writerow()`, or report writing.
+
+**After:** `OSError` and `csv.Error` are caught and reported without crashing.
+
+Run the script — it seeds a demo file containing 10 deliberately malformed rows (bad date, bad category, missing fields, extra columns, negative amount, zero amount, non-numeric, control character, currency symbol, whitespace). You'll see it load only the valid records, list the rejected ones with reasons, and continue working normally through every other feature.

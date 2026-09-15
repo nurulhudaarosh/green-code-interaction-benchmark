@@ -1,0 +1,400 @@
+```python
+"""
+One-Dimensional K-Cluster Partition
+===================================
+
+Problem Restatement
+-------------------
+Given one-dimensional points, sort them and divide the sorted points into
+exactly k contiguous, non-empty clusters.
+
+For each cluster, calculate the sum of squared deviations of its points from
+the cluster mean. The objective is to minimize the total of these costs over
+all k clusters.
+
+The required result is exactly:
+
+{
+    "cost": <minimum total squared-deviation cost>,
+    "boundaries": <optimal cluster-ending indices>
+}
+
+Indices are zero-based, and the final boundary is always n - 1.
+
+Expected Behavior
+-----------------
+1. Sort the input points.
+2. Create exactly k non-empty contiguous clusters.
+3. Minimize the total within-cluster squared-deviation cost.
+4. Use prefix sums to calculate each interval cost efficiently.
+5. Use interval-cost dynamic programming to find the optimal partition.
+6. If multiple partitions have the same minimum cost, choose the
+   lexicographically smallest list of boundary indices.
+7. Return only the required result fields:
+       "cost"
+       "boundaries"
+8. Keep the implementation deterministic and use only the standard library.
+
+
+Bug Demonstration
+-----------------
+A common bug is to update the DP state whenever a candidate has cost
+LESS THAN OR EQUAL TO the current best:
+
+    if candidate_cost <= best_cost:
+        best_cost = candidate_cost
+        best_boundaries = candidate_boundaries
+
+The <= causes a later equally-good partition to overwrite an earlier one.
+That violates the deterministic tie rule.
+
+Small valid example:
+
+    points = [0, 2, 4]
+    k = 2
+
+Two optimal partitions exist:
+
+    boundaries [0, 2]
+        clusters: [0] and [2, 4]
+        cost = 0 + ((2-3)^2 + (4-3)^2) = 2
+
+    boundaries [1, 2]
+        clusters: [0, 2] and [4]
+        cost = ((0-1)^2 + (2-1)^2) + 0 = 2
+
+Both have cost 2.
+
+The required deterministic answer is:
+
+    {
+        "cost": 2,
+        "boundaries": [0, 2]
+    }
+
+because [0, 2] is lexicographically smaller than [1, 2].
+
+The correction is to explicitly compare boundary lists when costs are equal.
+
+
+Correct Algorithm
+-----------------
+For a sorted interval [L, R]:
+
+    count = R - L + 1
+    sum_x = sum of points in [L, R]
+    sum_x2 = sum of squared points in [L, R]
+
+The interval cost is:
+
+    sum_x2 - sum_x^2 / count
+
+Prefix sums allow sum_x and sum_x2 to be obtained in O(1).
+
+Let:
+
+    dp[c][i]
+
+be the minimum cost of partitioning the first i points into exactly c
+clusters.
+
+For every possible previous boundary j:
+
+    dp[c][i] =
+        min(dp[c-1][j] + cost(j, i-1))
+
+When costs are equal, compare the complete boundary lists and keep the
+lexicographically smaller one.
+
+Complexity
+----------
+Sorting: O(n log n)
+Prefix sums: O(n)
+Dynamic programming: O(k * n^2)
+Space: O(k * n)
+
+Only Python's standard library is used.
+No network access, APIs, external services, randomness, or human interaction.
+"""
+
+from fractions import Fraction
+
+
+def cluster_points(points, k):
+    """
+    Return the optimal one-dimensional k-cluster partition.
+
+    Result:
+        {
+            "cost": minimum total squared-deviation cost,
+            "boundaries": lexicographically smallest optimal boundary list
+        }
+
+    Boundaries are zero-based ending indices of the clusters.
+    """
+
+    n = len(points)
+
+    if n == 0:
+        if k == 0:
+            return {
+                "cost": 0,
+                "boundaries": []
+            }
+        raise ValueError("Cannot create clusters from an empty point set.")
+
+    if not 1 <= k <= n:
+        raise ValueError("k must satisfy 1 <= k <= number of points.")
+
+    # Sort the one-dimensional points.
+    x = sorted(points)
+
+    # Prefix sums of x and x^2.
+    prefix_sum = [0] * (n + 1)
+    prefix_square_sum = [0] * (n + 1)
+
+    for i, value in enumerate(x):
+        prefix_sum[i + 1] = prefix_sum[i] + value
+        prefix_square_sum[i + 1] = (
+            prefix_square_sum[i] + value * value
+        )
+
+    def interval_cost(left, right):
+        """Return exact SSE for sorted points x[left:right+1]."""
+        count = right - left + 1
+
+        total = prefix_sum[right + 1] - prefix_sum[left]
+        total_square = (
+            prefix_square_sum[right + 1]
+            - prefix_square_sum[left]
+        )
+
+        return Fraction(
+            total_square * count - total * total,
+            count
+        )
+
+    # dp_cost[c][i] = minimum cost for first i points in c clusters.
+    dp_cost = [
+        [None] * (n + 1)
+        for _ in range(k + 1)
+    ]
+
+    # dp_boundaries[c][i] = lexicographically smallest boundary list
+    # among minimum-cost solutions for that state.
+    dp_boundaries = [
+        [None] * (n + 1)
+        for _ in range(k + 1)
+    ]
+
+    dp_cost[0][0] = Fraction(0)
+    dp_boundaries[0][0] = []
+
+    for clusters in range(1, k + 1):
+        for i in range(clusters, n + 1):
+
+            best_cost = None
+            best_boundaries = None
+
+            # j points belong to the previous c-1 clusters.
+            # Current cluster is j .. i-1.
+            for j in range(clusters - 1, i):
+
+                previous_cost = dp_cost[clusters - 1][j]
+
+                if previous_cost is None:
+                    continue
+
+                candidate_cost = (
+                    previous_cost +
+                    interval_cost(j, i - 1)
+                )
+
+                candidate_boundaries = (
+                    dp_boundaries[clusters - 1][j] +
+                    [i - 1]
+                )
+
+                if best_cost is None:
+                    best_cost = candidate_cost
+                    best_boundaries = candidate_boundaries
+
+                # Strictly better cost.
+                elif candidate_cost < best_cost:
+                    best_cost = candidate_cost
+                    best_boundaries = candidate_boundaries
+
+                # Equal cost: deterministic tie-breaking.
+                #
+                # IMPORTANT:
+                # Do NOT simply overwrite on equality.
+                # Keep the lexicographically smaller boundary list.
+                elif (
+                    candidate_cost == best_cost
+                    and candidate_boundaries < best_boundaries
+                ):
+                    best_boundaries = candidate_boundaries
+
+            dp_cost[clusters][i] = best_cost
+            dp_boundaries[clusters][i] = best_boundaries
+
+    return {
+        "cost": dp_cost[k][n],
+        "boundaries": dp_boundaries[k][n]
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+def run_tests():
+
+    # ---------------------------------------------------------------
+    # 1. Demonstrate the tie-handling case from the bug report.
+    # ---------------------------------------------------------------
+    result = cluster_points([0, 2, 4], 2)
+
+    assert result == {
+        "cost": Fraction(2),
+        "boundaries": [0, 2]
+    }
+
+
+    # ---------------------------------------------------------------
+    # 2. One cluster.
+    # ---------------------------------------------------------------
+    result = cluster_points([1, 2, 3], 1)
+
+    assert result == {
+        "cost": Fraction(2),
+        "boundaries": [2]
+    }
+
+
+    # ---------------------------------------------------------------
+    # 3. Clearly separated clusters.
+    # ---------------------------------------------------------------
+    result = cluster_points([1, 2, 10, 11], 2)
+
+    assert result == {
+        "cost": Fraction(2),
+        "boundaries": [1, 3]
+    }
+
+
+    # ---------------------------------------------------------------
+    # 4. Input is not initially sorted.
+    # ---------------------------------------------------------------
+    result = cluster_points([10, 1, 11, 2], 2)
+
+    assert result == {
+        "cost": Fraction(2),
+        "boundaries": [1, 3]
+    }
+
+
+    # ---------------------------------------------------------------
+    # 5. Each point becomes its own cluster.
+    # ---------------------------------------------------------------
+    result = cluster_points([5, 1, 9], 3)
+
+    assert result == {
+        "cost": Fraction(0),
+        "boundaries": [0, 1, 2]
+    }
+
+
+    # ---------------------------------------------------------------
+    # 6. Smallest permitted input.
+    # ---------------------------------------------------------------
+    result = cluster_points([42], 1)
+
+    assert result == {
+        "cost": 0,
+        "boundaries": [0]
+    }
+
+
+    # ---------------------------------------------------------------
+    # 7. Duplicate points.
+    # ---------------------------------------------------------------
+    result = cluster_points([5, 5, 5, 5], 2)
+
+    # Every possible partition has cost 0.
+    # The lexicographically smallest valid boundary list is [0, 3].
+    assert result == {
+        "cost": Fraction(0),
+        "boundaries": [0, 3]
+    }
+
+
+    # ---------------------------------------------------------------
+    # 8. Non-integer cluster mean.
+    # ---------------------------------------------------------------
+    result = cluster_points([0, 1, 3], 1)
+
+    assert result == {
+        "cost": Fraction(14, 3),
+        "boundaries": [2]
+    }
+
+
+    # ---------------------------------------------------------------
+    # 9. Negative values.
+    # ---------------------------------------------------------------
+    result = cluster_points([-5, -4, 10, 11], 2)
+
+    assert result == {
+        "cost": Fraction(2),
+        "boundaries": [1, 3]
+    }
+
+
+    # ---------------------------------------------------------------
+    # 10. Empty input with zero clusters.
+    # ---------------------------------------------------------------
+    result = cluster_points([], 0)
+
+    assert result == {
+        "cost": 0,
+        "boundaries": []
+    }
+
+
+    # ---------------------------------------------------------------
+    # 11. Invalid empty input.
+    # ---------------------------------------------------------------
+    try:
+        cluster_points([], 1)
+        assert False, "Expected ValueError"
+    except ValueError:
+        pass
+
+
+    # ---------------------------------------------------------------
+    # 12. Invalid k > n.
+    # ---------------------------------------------------------------
+    try:
+        cluster_points([1, 2, 3], 4)
+        assert False, "Expected ValueError"
+    except ValueError:
+        pass
+
+
+    # ---------------------------------------------------------------
+    # 13. Invalid k < 1 for non-empty input.
+    # ---------------------------------------------------------------
+    try:
+        cluster_points([1, 2, 3], 0)
+        assert False, "Expected ValueError"
+    except ValueError:
+        pass
+
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()
+```

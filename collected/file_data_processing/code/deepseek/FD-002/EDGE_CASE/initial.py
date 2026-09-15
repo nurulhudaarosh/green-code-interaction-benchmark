@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+"""
+Offline NDJSON Analyzer
+Extracts nested user and request fields from NDJSON logs.
+Handles malformed JSON gracefully with counting.
+Produces deterministic JSON output sorted by user ID.
+"""
+
+import json
+import sys
+from collections import defaultdict
+from typing import Dict, List, Optional, Any
+import argparse
+
+
+class NDJSONAnalyzer:
+    def __init__(self):
+        self.users: Dict[str, Dict] = defaultdict(lambda: {
+            'request_count': 0,
+            'error_count': 0,
+            'total_latency': 0,
+            'endpoints': defaultdict(int),
+            'valid_entries': 0
+        })
+        self.malformed_count = 0
+        self.total_lines = 0
+        self.errors = []
+    
+    def extract_field(self, obj: Dict, path: List[str]) -> Optional[Any]:
+        """
+        Extract a nested field from a JSON object using a path.
+        Returns None if any part of the path is missing.
+        """
+        current = obj
+        for key in path:
+            if isinstance(current, dict) and key in current:
+                current = current[key]
+            else:
+                return None
+        return current
+    
+    def process_line(self, line: str) -> bool:
+        """
+        Process a single NDJSON line.
+        Returns True if successfully processed, False if malformed.
+        """
+        self.total_lines += 1
+        line = line.strip()
+        
+        if not line:
+            self.malformed_count += 1
+            self.errors.append(f"Line {self.total_lines}: Empty line")
+            return False
+        
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError as e:
+            self.malformed_count += 1
+            self.errors.append(f"Line {self.total_lines}: {str(e)}")
+            return False
+        
+        # Extract user and request fields
+        user = self.extract_field(data, ['user', 'id'])
+        if user is None:
+            user = self.extract_field(data, ['user'])
+        
+        if user is None:
+            self.malformed_count += 1
+            self.errors.append(f"Line {self.total_lines}: Missing user field")
+            return False
+        
+        # Ensure user is a string (handle if it's a dict with id field)
+        if isinstance(user, dict) and 'id' in user:
+            user = user['id']
+        user = str(user)
+        
+        # Extract request info
+        endpoint = self.extract_field(data, ['request', 'endpoint'])
+        if endpoint is None:
+            endpoint = self.extract_field(data, ['endpoint'])
+        
+        latency = self.extract_field(data, ['request', 'latency'])
+        if latency is None:
+            latency = self.extract_field(data, ['latency'])
+        
+        # Check for error
+        is_error = False
+        error_field = self.extract_field(data, ['error'])
+        if error_field is not None:
+            is_error = True
+        
+        # Try to determine error from status code if present
+        status = self.extract_field(data, ['response', 'status'])
+        if status is None:
+            status = self.extract_field(data, ['status'])
+        
+        if status is not None and isinstance(status, (int, str)):
+            try:
+                status_int = int(status)
+                if status_int >= 400:
+                    is_error = True
+            except (ValueError, TypeError):
+                pass
+        
+        # Now process the user data
+        user_data = self.users[user]
+        user_data['valid_entries'] += 1
+        user_data['request_count'] += 1
+        
+        if is_error:
+            user_data['error_count'] += 1
+        
+        # Calculate latency
+        if latency is not None:
+            try:
+                latency_float = float(latency)
+                user_data['total_latency'] += latency_float
+            except (ValueError, TypeError):
+                pass
+        
+        # Count endpoints
+        if endpoint is not None:
+            user_data['endpoints'][str(endpoint)] += 1
+        
+        return True
+    
+    def process_file(self, file_path: str) -> None:
+        """
+        Process an NDJSON file.
+        """
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    self.process_line(line)
+        except FileNotFoundError:
+            print(f"Error: File '{file_path}' not found.", file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            print(f"Error reading file: {e}", file=sys.stderr)
+            sys.exit(1)
+    
+    def process_stdin(self) -> None:
+        """
+        Process NDJSON from stdin.
+        """
+        for line in sys.stdin:
+            self.process_line(line)
+    
+    def calculate_average_latency(self, user_data: Dict) -> Optional[float]:
+        """
+        Calculate average latency for a user.
+        """
+        if user_data['valid_entries'] == 0:
+            return None
+        
+        # Only calculate average if there's latency data
+        if user_data['total_latency'] == 0:
+            return None
+        
+        avg = user_data['total_latency'] / user_data['valid_entries']
+        return round(avg, 2)
+    
+    def get_most_requested_endpoint(self, endpoints: Dict[str, int]) -> Optional[str]:
+        """
+        Get the most requested endpoint with lexical tie-breaking.
+        """
+        if not endpoints:
+            return None
+        
+        max_count = max(endpoints.values())
+        candidates = [ep for ep, count in endpoints.items() if count == max_count]
+        
+        # Lexicographical tie-breaking (ascending)
+        return sorted(candidates)[0]
+    
+    def generate_summary(self) -> Dict:
+        """
+        Generate the summary JSON as specified.
+        """
+        summary = {}
+        
+        for user_id in sorted(self.users.keys()):
+            user_data = self.users[user_id]
+            
+            user_summary = {
+                'user_id': user_id,
+                'request_count': user_data['request_count'],
+                'error_count': user_data['error_count'],
+                'average_latency': self.calculate_average_latency(user_data),
+                'most_requested_endpoint': self.get_most_requested_endpoint(user_data['endpoints'])
+            }
+            
+            summary[user_id] = user_summary
+        
+        return {
+            'summary': summary,
+            'metadata': {
+                'total_lines_processed': self.total_lines,
+                'malformed_lines': self.malformed_count,
+                'unique_users': len(self.users),
+                'total_requests': sum(u['request_count'] for u in self.users.values())
+            }
+        }
+    
+    def print_summary(self, pretty: bool = True) -> None:
+        """
+        Print the summary as JSON.
+        """
+        summary = self.generate_summary()
+        
+        if pretty:
+            print(json.dumps(summary, indent=2, sort_keys=True))
+        else:
+            print(json.dumps(summary, sort_keys=True))
+        
+        # Print errors if any
+        if self.errors and len(self.errors) <= 10:
+            print("\nErrors encountered:", file=sys.stderr)
+            for error in self.errors:
+                print(f"  {error}", file=sys.stderr)
+        elif self.errors:
+            print(f"\n{len(self.errors)} errors encountered (showing first 10):", file=sys.stderr)
+            for error in self.errors[:10]:
+                print(f"  {error}", file=sys.stderr)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Analyze NDJSON logs and extract user and request statistics.'
+    )
+    parser.add_argument(
+        'file',
+        nargs='?',
+        help='NDJSON file to analyze (if not provided, reads from stdin)'
+    )
+    parser.add_argument(
+        '--pretty',
+        action='store_true',
+        default=True,
+        help='Pretty print JSON output'
+    )
+    parser.add_argument(
+        '--compact',
+        action='store_true',
+        help='Compact JSON output (no pretty printing)'
+    )
+    
+    args = parser.parse_args()
+    
+    analyzer = NDJSONAnalyzer()
+    
+    if args.file:
+        analyzer.process_file(args.file)
+    else:
+        analyzer.process_stdin()
+    
+    pretty = not args.compact
+    analyzer.print_summary(pretty=pretty)
+
+
+if __name__ == '__main__':
+    main()

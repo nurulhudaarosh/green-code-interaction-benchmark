@@ -1,0 +1,109 @@
+### Problem Restatement & Baseline Requirements
+
+The **Matrix Chain Planner** problem requires finding the optimal parenthesization of a chain of $n$ matrices $M_1, M_2, \dots, M_n$ with given dimensions $p_0, p_1, \dots, p_n$ (where matrix $M_i$ has dimensions $p_{i-1} \times p_i$) to minimize the total scalar multiplications required for their product.
+
+* **Equal-Cost Tie-Breaking Rule:** If multiple split points yield the exact same scalar multiplication cost, strictly prefer the smallest split index $k$.
+* **Original Required Outputs:**
+1. `min_cost`: An integer representing the minimum total scalar multiplication cost.
+2. `expression`: A fully parenthesized string representation of the optimal multiplication order (e.g., `((A1 A2) A3)`).
+
+
+
+---
+
+### Extended Feature Specification
+
+* **Feature Addition:** Return an additional optional/extended field `operation_summary`.
+* **Definition:** The `operation_summary` tracks the exact number of major computational decisions/evaluations performed during interval dynamic programming. Specifically, it counts the total number of split candidate evaluations ($k$-split checks) performed across all subproblem chain lengths $L = 2 \dots n$.
+* **Mathematical Formula:** For a sequence of $n$ matrices, the number of split evaluations is deterministically given by:
+
+$$\text{evaluations} = \sum_{L=2}^{n} (n - L + 1) \times (L - 1) = \frac{n(n - 1)(n + 1)}{6} = \binom{n + 1}{3}$$
+
+
+* **Backward Compatibility:** All baseline behaviors, minimum cost outputs, and expression string formats remain strictly preserved.
+
+---
+
+### Python Solution
+
+```python
+def matrix_chain_planner(p, include_summary=False):
+    """
+    Computes the optimal matrix chain multiplication cost and parenthesization.
+    
+    :param p: List of dimensions where matrix M_i has dimension p[i-1] x p[i].
+    :param include_summary: If True, includes 'operation_summary' in the returned dictionary.
+    :return: Dictionary containing 'min_cost', 'expression', and optionally 'operation_summary'.
+    """
+    n = len(p) - 1
+    if n <= 0:
+        res = {"min_cost": 0, "expression": ""}
+        if include_summary:
+            res["operation_summary"] = {"total_split_evaluations": 0}
+        return res
+
+    if n == 1:
+        res = {"min_cost": 0, "expression": "A1"}
+        if include_summary:
+            res["operation_summary"] = {"total_split_evaluations": 0}
+        return res
+
+    # m[i][j]: minimum scalar multiplication cost for M_i...M_j
+    # s[i][j]: optimal split point index k
+    m = [[0] * (n + 1) for _ in range(n + 1)]
+    s = [[0] * (n + 1) for _ in range(n + 1)]
+    
+    split_evaluations_count = 0
+
+    # Interval Dynamic Programming over subproblem chain lengths L
+    for L in range(2, n + 1):
+        for i in range(1, n - L + 2):
+            j = i + L - 1
+            m[i][j] = float('inf')
+            
+            for k in range(i, j):
+                split_evaluations_count += 1
+                cost = m[i][k] + m[k + 1][j] + p[i - 1] * p[k] * p[j]
+                
+                # Dynamic Programming update: strictly smaller cost updates best.
+                # Since k loops in increasing order, using '<' breaks ties in 
+                # favor of the smallest split index k.
+                if cost < m[i][j]:
+                    m[i][j] = cost
+                    s[i][j] = k
+
+    def construct_expression(i, j):
+        if i == j:
+            return f"A{i}"
+        k = s[i][j]
+        left = construct_expression(i, k)
+        right = construct_expression(k + 1, j)
+        return f"({left} {right})"
+
+    result = {
+        "min_cost": m[1][n],
+        "expression": construct_expression(1, n)
+    }
+
+    if include_summary:
+        result["operation_summary"] = {
+            "total_split_evaluations": split_evaluations_count,
+            "formula_check": (n * (n - 1) * (n + 1)) // 6
+        }
+
+    return result
+
+
+if __name__ == "__main__":
+    # Test case with 6 matrices (7 dimension parameters)
+    dimensions = [30, 35, 15, 5, 10, 20, 25]
+
+    # Standard run without feature flag
+    base_res = matrix_chain_planner(dimensions)
+    print("Default Output:", base_res)
+
+    # Run with feature flag enabled
+    extended_res = matrix_chain_planner(dimensions, include_summary=True)
+    print("Extended Output:", extended_res)
+
+```

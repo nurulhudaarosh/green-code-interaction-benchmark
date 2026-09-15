@@ -1,0 +1,60 @@
+Here's the fix. The key change is replacing any decoded-pixel-buffer measurement with `os.path.getsize(filepath)` (or `entry.stat().st_size`, which is equivalent and avoids a second syscall when using `os.scandir`).
+
+```python
+import os
+from PIL import Image, UnidentifiedImageError
+
+
+def extract_metadata(input_dir):
+    """
+    Extract metadata from all images in input_dir.
+
+    Returns a sorted list of dicts (sorted by filename), each containing:
+        filename, format, mode, width, height, file_size_bytes
+
+    file_size_bytes is the actual on-disk file size, equal to
+    os.path.getsize(path), NOT the decoded pixel buffer size.
+    """
+    results = []
+
+    for entry in os.scandir(input_dir):
+        if not entry.is_file():
+            continue
+
+        filepath = entry.path
+        try:
+            with Image.open(filepath) as img:
+                # Read metadata from the header without decoding pixels.
+                fmt = img.format
+                mode = img.mode
+                width, height = img.size
+
+            # Actual on-disk size, matching os.path.getsize(filepath).
+            file_size = os.path.getsize(filepath)
+
+            results.append({
+                "filename": entry.name,
+                "format": fmt,
+                "mode": mode,
+                "width": width,
+                "height": height,
+                "file_size_bytes": file_size,
+            })
+        except (UnidentifiedImageError, OSError):
+            continue
+
+    return sorted(results, key=lambda d: d["filename"])
+```
+
+What changed and why:
+
+- **`file_size_bytes` now comes from `os.path.getsize(filepath)`** — the real byte count of the file on disk. This matches what `os.path.getsize` returns exactly, including header/metadata bytes, compressed data, and any container overhead.
+- The value is **not** derived from `len(img.tobytes())` (which is `width * height * channels` for the *decoded* image) or from any compressed-buffer size. Those would be wrong: `tobytes()` reflects the raw uncompressed pixel array, which is unrelated to the on-disk size.
+- I moved `os.path.getsize` **outside** the `with Image.open(...)` block so the file handle is released before the stat call — harmless either way on POSIX, but this avoids holding the handle during an unrelated syscall and makes the intent clearer.
+
+Performance note:
+
+- Since you're already using `os.scandir`, you could use `entry.stat().st_size` instead of `os.path.getsize(filepath)`. They return the same value, but `entry.stat()` reuses the cached `DirEntry` stat on most platforms, saving a syscall. Both are correct; `os.path.getsize` is shown here to match your requirement literally.
+
+
+One caveat worth flagging: if a file is being written concurrently, `getsize` and the `Image.open` header read may observe different points in time, so the size could reflect a partially written file. For a static directory this is a non-issue.

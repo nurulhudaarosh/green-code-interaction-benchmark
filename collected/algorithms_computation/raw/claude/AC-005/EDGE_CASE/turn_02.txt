@@ -1,0 +1,97 @@
+## Restated Problem: Longest Increasing Route
+
+Given an integer sequence `a[0..n-1]`, find a strictly increasing **route** through it — a subsequence whose values strictly increase while preserving original left-to-right order — of **maximum length**. Among all routes achieving that maximum length, return the one whose **original-index route** is lexicographically smallest.
+
+**Constraints, including difficult edge cases:**
+- Input may be **empty** (`n = 0`) — the smallest permitted route has length 0.
+- Input may be a **singleton** (`n = 1`) — trivially a route of length 1, index `[0]`.
+- Input may be **disconnected** (no pair of positions forms a valid increasing step — e.g. all equal values, or strictly decreasing values). Every element is then its own isolated length-1 route, and the tie-break must select the lexicographically smallest single index, `[0]`.
+- Ties are broken on the **index route**, never on values.
+
+**Output:** `(length, indices)` — `indices` listed in increasing order.
+
+**Algorithm (unchanged):** O(n²) DP — `dp[i]` = best route length ending at `i`, `pred[i]` = chosen predecessor. Predecessors are chosen as the **smallest index** achieving the max `dp[j]`; the final endpoint is the **smallest index** achieving the global max `dp` value. These two rules guarantee the lexicographically smallest index route among all optimal answers.
+
+```python
+#!/usr/bin/env python3
+"""Longest Increasing Route — O(n^2) DP with lexicographically smallest
+index-route tie-breaking, and explicit handling of empty/singleton/
+disconnected inputs. Standard library only."""
+
+from typing import List, Sequence, Tuple
+
+
+def longest_increasing_subsequence_indices(a: Sequence[int]) -> Tuple[int, List[int]]:
+    n = len(a)
+
+    if n == 0:                     # smallest permitted input
+        return 0, []
+    if n == 1:                     # singleton route
+        return 1, [0]
+
+    dp = [1] * n
+    pred = [-1] * n
+
+    for i in range(n):
+        best_len, best_pred = 1, -1
+        for j in range(i):         # smallest-index j wins ties (strict '>' only)
+            if a[j] < a[i]:
+                cand = dp[j] + 1
+                if cand > best_len:
+                    best_len, best_pred = cand, j
+        dp[i], pred[i] = best_len, best_pred
+
+    max_len = max(dp)
+    end = next(i for i in range(n) if dp[i] == max_len)  # smallest max-len endpoint
+
+    idxs = []
+    cur = end
+    while cur != -1:
+        idxs.append(cur)
+        cur = pred[cur]
+    idxs.reverse()
+    return max_len, idxs
+
+
+def _brute_force_reference(a: Sequence[int]) -> Tuple[int, List[int]]:
+    n = len(a)
+    best_len, best_idx = 0, []
+
+    def rec(pos, last_val, chosen):
+        nonlocal best_len, best_idx
+        if pos == n:
+            if len(chosen) > best_len or (len(chosen) == best_len and chosen < best_idx):
+                best_len, best_idx = len(chosen), list(chosen)
+            return
+        rec(pos + 1, last_val, chosen)
+        if last_val is None or a[pos] > last_val:
+            chosen.append(pos)
+            rec(pos + 1, a[pos], chosen)
+            chosen.pop()
+
+    rec(0, None, [])
+    return best_len, best_idx
+
+
+if __name__ == "__main__":
+    tests = [
+        [1, 2, 3, 4], [4, 3, 2, 1], [3, 1, 4, 1, 5, 9, 2, 6],
+        [10, 9, 2, 5, 3, 7, 101, 18], [2, 2, 2, 2], [1, 3, 2, 4, 3, 5],
+        [0, 1, 0, 1, 0, 1, 0, 1],
+        [], [5], [7, 7, 7, 7, 7], [9, 8, 7, 6, 5], [-3],
+        [5, -5], [-5, 5], [1, 2, 1, 2, 1, 2, 1],
+    ]
+    for t in tests:
+        got = longest_increasing_subsequence_indices(t)
+        ref = _brute_force_reference(t)
+        print(t, "->", got, "OK" if got == ref else f"MISMATCH ref={ref}")
+
+    assert longest_increasing_subsequence_indices([]) == (0, [])
+    assert longest_increasing_subsequence_indices([5]) == (1, [0])
+    assert longest_increasing_subsequence_indices([7, 7, 7, 7, 7]) == (1, [0])
+    assert longest_increasing_subsequence_indices([9, 8, 7, 6, 5]) == (1, [0])
+    assert longest_increasing_subsequence_indices([-5, 5]) == (2, [0, 1])
+    print("All edge-case assertions passed.")
+```
+
+The downloadable file above and this code block are identical and already verified to pass all 15 tests (7 original + 8 edge cases) against the brute-force reference.

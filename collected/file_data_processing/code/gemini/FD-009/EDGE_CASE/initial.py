@@ -1,0 +1,61 @@
+from collections import defaultdict
+import math
+
+
+def analyze_transactions(transactions):
+    """Analyzes transactions grouped and ordered per account.
+
+    Calculates rolling statistics (mean and population standard deviation) from up
+    to 5 immediately preceding transaction amounts. Flags transactions where the
+    amount is strictly greater than mean + (3 * population_std_dev).
+
+    Rule: If population_std_dev == 0, the threshold becomes mean itself (amount >
+    mean).
+    """
+    # Group transactions deterministically by account while preserving order
+    account_groups = defaultdict(list)
+    for tx in transactions:
+        account_groups[tx["account_id"]].append(tx)
+
+    analyzed_transactions = []
+
+    # Process each account's transactions sequentially
+    for account_id in sorted(account_groups.keys()):
+        account_txs = account_groups[account_id]
+        window = []
+
+        for tx in account_txs:
+            amount = float(tx["amount"])
+
+            if not window:
+                mean = 0.0
+                pop_std = 0.0
+                is_anomaly = False
+            else:
+                n = len(window)
+                mean = sum(window) / n
+                variance = sum((x - mean) ** 2 for x in window) / n
+                pop_std = math.sqrt(variance)
+
+                if pop_std == 0.0:
+                    is_anomaly = amount > mean
+                else:
+                    threshold = mean + (3.0 * pop_std)
+                    is_anomaly = amount > threshold
+
+            analyzed_tx = dict(tx)
+            analyzed_tx.update(
+                {
+                    "rolling_mean": round(mean, 4),
+                    "rolling_pop_std": round(pop_std, 4),
+                    "is_anomaly": is_anomaly,
+                }
+            )
+            analyzed_transactions.append(analyzed_tx)
+
+            # Maintain moving window of maximum 5 immediately preceding amounts
+            window.append(amount)
+            if len(window) > 5:
+                window.pop(0)
+
+    return analyzed_transactions

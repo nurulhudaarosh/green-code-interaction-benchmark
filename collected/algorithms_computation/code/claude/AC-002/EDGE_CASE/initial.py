@@ -1,0 +1,190 @@
+"""
+Deterministic Build Order Solver
+=================================
+
+Problem
+-------
+Given a set of packages and prerequisite dependency pairs (a, b) meaning
+"a must be built before b", produce:
+  1. A deterministic valid build order of all packages.
+  2. The number of dependency levels (the length of the longest chain
+     of prerequisites, i.e. the "depth" of the dependency DAG).
+
+If the dependency graph contains a cycle, no valid build order exists,
+so the function must return an empty order and -1 for the number of
+levels.
+
+Key constraints
+----------------
+- The output order must respect all prerequisite constraints (a before b).
+- The order must be deterministic: given the same input, the same output
+  must be produced every time, regardless of dictionary/set iteration
+  order or insertion order. This rules out naive use of unordered sets
+  or arbitrary tie-breaking.
+- Packages not involved in any dependency must still appear in the
+  output.
+- Cycle detection must be correct and reported via the (-1, []) result
+  (order empty, levels -1).
+- No external/randomized/network/human-interaction behavior: pure,
+  deterministic, standard-library-only computation.
+
+Required output
+----------------
+A tuple (build_order, num_levels):
+  - build_order: list[str] — a valid topological order of all packages,
+    deterministic via lexicographic tie-breaking.
+  - num_levels: int — length of the longest prerequisite chain (number
+    of "levels" in the DAG), or -1 if a cycle exists (in which case
+    build_order is []).
+
+Algorithm
+---------
+Kahn's algorithm for topological sorting, using a min-heap (heapq) in
+place of a plain queue/deque so that whenever multiple packages become
+"ready" (in-degree zero) at the same time, we always pick the
+lexicographically smallest one next. This guarantees a single
+deterministic output order instead of one that depends on hash/set
+iteration order.
+
+While popping nodes from the heap, we also track each node's "depth":
+depth(node) = 0 if it has no prerequisites,
+otherwise 1 + max(depth(prereq) for prereq in its prerequisites).
+This is computed incrementally as we relax edges (similar to longest
+path in a DAG via topological order). The number of levels is
+1 + max(depth) over all nodes (so a single package with no edges has
+1 level), or 0 if there are no packages at all.
+
+If, after processing, not all packages have been output, a cycle exists
+among the remaining packages -> return ([], -1).
+
+Complexity: O((V + E) log V) due to heap operations.
+"""
+
+import heapq
+from collections import defaultdict
+
+
+def build_order(packages, dependencies):
+    """
+    Compute a deterministic build order and dependency level count.
+
+    Args:
+        packages: iterable of package name strings (all packages that
+            must appear in the build order, including isolated ones).
+        dependencies: iterable of (prereq, package) tuples meaning
+            `prereq` must be built before `package`.
+
+    Returns:
+        (order, num_levels):
+            order: list[str] - deterministic topological build order,
+                   or [] if a cycle is detected.
+            num_levels: int - number of dependency levels (>=0 for a
+                   valid DAG, 1 for a single node with no edges, 0 for
+                   no packages at all), or -1 if a cycle is detected.
+    """
+    all_packages = set(packages)
+
+    graph = defaultdict(set)   # prereq -> set of dependents
+    in_degree = {pkg: 0 for pkg in all_packages}
+
+    for prereq, package in dependencies:
+        all_packages.add(prereq)
+        all_packages.add(package)
+        if package not in in_degree:
+            in_degree[package] = 0
+        if prereq not in in_degree:
+            in_degree[prereq] = 0
+        if package not in graph[prereq]:
+            graph[prereq].add(package)
+            in_degree[package] += 1
+
+    if not all_packages:
+        return [], 0
+
+    depth = {pkg: 0 for pkg in all_packages}
+
+    heap = sorted(pkg for pkg in all_packages if in_degree[pkg] == 0)
+    heapq.heapify(heap)
+
+    order = []
+    visited_count = 0
+
+    while heap:
+        node = heapq.heappop(heap)
+        order.append(node)
+        visited_count += 1
+
+        for neighbor in sorted(graph[node]):
+            if depth[node] + 1 > depth[neighbor]:
+                depth[neighbor] = depth[node] + 1
+            in_degree[neighbor] -= 1
+            if in_degree[neighbor] == 0:
+                heapq.heappush(heap, neighbor)
+
+    if visited_count != len(all_packages):
+        # Cycle detected: not all nodes could be processed.
+        return [], -1
+
+    num_levels = max(depth.values()) + 1
+    return order, num_levels
+
+
+def _run_self_tests():
+    # Simple linear chain: A -> B -> C
+    order, levels = build_order(
+        ["A", "B", "C"], [("A", "B"), ("B", "C")]
+    )
+    assert order == ["A", "B", "C"], order
+    assert levels == 3, levels
+
+    # Diamond dependency: A -> B, A -> C, B -> D, C -> D
+    order, levels = build_order(
+        ["A", "B", "C", "D"],
+        [("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")],
+    )
+    assert order == ["A", "B", "C", "D"], order
+    assert levels == 3, levels
+
+    # Disconnected + isolated node, deterministic tie-break by name
+    order, levels = build_order(
+        ["X", "Y", "Z", "W"], [("Y", "Z")]
+    )
+    assert order == ["W", "X", "Y", "Z"], order
+    assert levels == 2, levels
+
+    # No packages at all
+    order, levels = build_order([], [])
+    assert order == [] and levels == 0
+
+    # Single isolated package
+    order, levels = build_order(["A"], [])
+    assert order == ["A"] and levels == 1
+
+    # Cycle: A -> B -> A
+    order, levels = build_order(["A", "B"], [("A", "B"), ("B", "A")])
+    assert order == [] and levels == -1
+
+    # Larger cycle mixed with valid part: A->B->C->A, D independent
+    order, levels = build_order(
+        ["A", "B", "C", "D"],
+        [("A", "B"), ("B", "C"), ("C", "A")],
+    )
+    assert order == [] and levels == -1
+
+    print("All self-tests passed.")
+
+
+if __name__ == "__main__":
+    _run_self_tests()
+
+    demo_packages = ["libc", "compiler", "linker", "app", "utils"]
+    demo_deps = [
+        ("libc", "compiler"),
+        ("libc", "linker"),
+        ("compiler", "app"),
+        ("linker", "app"),
+        ("utils", "app"),
+    ]
+    result_order, result_levels = build_order(demo_packages, demo_deps)
+    print("Build order:", result_order)
+    print("Levels:", result_levels)

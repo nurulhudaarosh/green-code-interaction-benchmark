@@ -1,0 +1,145 @@
+## Problem
+
+Given a directed graph with non-negative edge weights and a source vertex, compute the shortest-path distance from the source to every vertex, reporting `-1` for vertices unreachable from the source.
+
+## Key Constraints
+
+- Edge weights are **non-negative** (required for Dijkstra's correctness).
+- The graph is **directed** — an edge `u → v` does not imply `v → u`.
+- The graph may be disconnected; some vertices may be unreachable.
+- Vertex labels can be arbitrary hashable values, not just `0..n-1`.
+
+## Required Output
+
+A mapping from every vertex to its shortest distance from the source: `0` for the source, the shortest total edge weight for reachable vertices, and `-1` for unreachable ones.
+
+## Algorithm
+
+Build an adjacency list, then run Dijkstra's algorithm with a binary min-heap (`heapq`): repeatedly pop the vertex with smallest tentative distance, skip stale entries, relax outgoing edges, and push improved distances. Runs in `O((V+E) log V)`. Any vertex still at infinity at the end is unreachable → `-1`.
+
+```python
+"""
+Single-source shortest paths on a directed, non-negatively weighted graph
+using Dijkstra's algorithm with a binary heap (heapq).
+
+Unreachable vertices are reported with distance -1.
+Standard library only. No randomness, no network access, fully deterministic.
+"""
+
+import heapq
+from collections import defaultdict
+from typing import Dict, Hashable, Iterable, List, Tuple
+
+
+class Graph:
+    """A directed graph represented as an adjacency list."""
+
+    def __init__(self) -> None:
+        self._adj: Dict[Hashable, List[Tuple[Hashable, float]]] = defaultdict(list)
+        self._vertices: set = set()
+
+    def add_vertex(self, v: Hashable) -> None:
+        self._vertices.add(v)
+        _ = self._adj[v]  # ensure it appears even with no outgoing edges
+
+    def add_edge(self, u: Hashable, v: Hashable, weight: float) -> None:
+        if weight < 0:
+            raise ValueError(
+                f"Edge ({u!r} -> {v!r}) has negative weight {weight!r}; "
+                "Dijkstra's algorithm requires non-negative weights."
+            )
+        self.add_vertex(u)
+        self.add_vertex(v)
+        self._adj[u].append((v, weight))
+
+    def vertices(self) -> Iterable[Hashable]:
+        return self._vertices
+
+    def neighbors(self, v: Hashable) -> List[Tuple[Hashable, float]]:
+        return self._adj.get(v, [])
+
+
+def dijkstra(graph: Graph, source: Hashable) -> Dict[Hashable, int]:
+    """
+    Compute shortest distances from `source` to every vertex in `graph`.
+    Returns vertex -> distance, with -1 for unreachable vertices.
+    """
+    if source not in graph.vertices():
+        raise ValueError(f"Source vertex {source!r} is not in the graph.")
+
+    INF = float("inf")
+    dist: Dict[Hashable, float] = {v: INF for v in graph.vertices()}
+    dist[source] = 0
+
+    heap: List[Tuple[float, Hashable]] = [(0, source)]
+    visited: set = set()
+
+    while heap:
+        d, u = heapq.heappop(heap)
+
+        if u in visited:
+            continue  # stale entry: a shorter distance was already finalized
+        visited.add(u)
+
+        for v, w in graph.neighbors(u):
+            nd = d + w
+            if nd < dist[v]:
+                dist[v] = nd
+                heapq.heappush(heap, (nd, v))
+
+    result: Dict[Hashable, int] = {}
+    for v, d in dist.items():
+        if d == INF:
+            result[v] = -1
+        else:
+            result[v] = int(d) if float(d).is_integer() else d
+    return result
+
+
+def build_graph(edges: Iterable[Tuple[Hashable, Hashable, float]],
+                 vertices: Iterable[Hashable] = ()) -> Graph:
+    """Convenience constructor from an edge list plus optional isolated vertices."""
+    g = Graph()
+    for v in vertices:
+        g.add_vertex(v)
+    for u, v, w in edges:
+        g.add_edge(u, v, w)
+    return g
+
+
+def _demo() -> None:
+    """Deterministic self-contained demonstration."""
+    edges = [
+        ("A", "B", 4),
+        ("A", "C", 1),
+        ("C", "B", 2),
+        ("B", "D", 5),
+        ("C", "D", 8),
+        ("D", "E", 3),
+        ("G", "F", 1),  # F/G unreachable from A
+    ]
+    g = build_graph(edges, vertices=["F"])
+
+    source = "A"
+    distances = dijkstra(g, source)
+
+    print(f"Shortest distances from source '{source}':")
+    for v in sorted(distances.keys(), key=str):
+        print(f"  {v}: {distances[v]}")
+
+
+if __name__ == "__main__":
+    _demo()
+```
+
+Expected output:
+```
+Shortest distances from source 'A':
+  A: 0
+  B: 3
+  C: 1
+  D: 8
+  E: 11
+  F: -1
+  G: -1
+```

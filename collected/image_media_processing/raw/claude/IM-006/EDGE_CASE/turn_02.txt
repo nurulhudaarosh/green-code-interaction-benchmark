@@ -1,0 +1,59 @@
+```python
+import os
+from PIL import Image
+
+def extract_metadata(input_dir):
+    """
+    Scan input_dir for image files and return metadata for each.
+
+    Returns a list of dicts sorted by filename, each containing:
+        filename, format, mode, width, height, file_size_bytes
+    Corrupt/truncated/zero-byte files are reported as:
+        {"filename": ..., "error": True}
+    instead of crashing the scan.
+    """
+    valid_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp'}
+    results = []
+
+    for entry in os.listdir(input_dir):
+        path = os.path.join(input_dir, entry)
+        if not os.path.isfile(path):
+            continue
+        if os.path.splitext(entry)[1].lower() not in valid_extensions:
+            continue
+
+        # Zero-byte files are trivially corrupt - no need to even try opening.
+        if os.path.getsize(path) == 0:
+            results.append({"filename": entry, "error": True})
+            continue
+
+        try:
+            with Image.open(path) as img:
+                # Image.open() is lazy: it only reads the header, so a
+                # truncated file won't raise until the pixel data is
+                # actually decoded. Force a full decode to catch that here.
+                img.load()
+
+                results.append({
+                    "filename": entry,
+                    "format": img.format,
+                    "mode": img.mode,
+                    "width": img.width,
+                    "height": img.height,
+                    "file_size_bytes": os.path.getsize(path),
+                })
+        except Exception:
+            # Covers UnidentifiedImageError, OSError ("truncated"),
+            # struct.error, and anything else raised during open/decode.
+            results.append({"filename": entry, "error": True})
+
+    return sorted(results, key=lambda d: d["filename"])
+```
+
+Key changes:
+- **Zero-byte check up front** — avoids even attempting to open a file guaranteed to fail, and sidesteps some edge cases where `Image.open` on a 0-byte file raises a different exception type than on a truncated one.
+- **`img.load()` inside the try block** — this is the important part. `Image.open()` only parses the header lazily; it won't detect truncated pixel data until you actually decode it. Without `.load()`, a truncated JPEG/PNG could pass `Image.open()` successfully and then blow up later when something else tries to use the image, outside this function's error handling.
+- **Broad `except Exception`** rather than catching only `UnidentifiedImageError` — truncated files typically raise `OSError` (e.g. "image file is truncated") rather than `UnidentifiedImageError`, so a narrower catch would miss exactly the case you asked about.
+- Error entries only carry `filename` and `error: True`, so downstream code can check `if d.get("error")` before touching the other fields — accessing `d["width"]` on a good entry still works the same as before.
+
+One judgment call: sorting mixes error dicts and normal dicts together by `filename`, which works fine since both have that key. Let me know if you'd rather separate them into two lists (e.g., `{"images": [...], "errors": [...]}`) instead of one flat sorted list.

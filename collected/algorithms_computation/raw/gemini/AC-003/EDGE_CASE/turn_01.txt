@@ -1,0 +1,93 @@
+### Problem Identification & Understanding
+
+Given a directed graph represented with non-negative edge weights and a designated source vertex, the goal is to compute the shortest path distance from the source vertex to every other vertex in the graph. If a vertex cannot be reached from the source vertex, its distance should be reported as `-1`.
+
+### Key Constraints & Required Output
+
+* **Edge Weights:** All edge weights are non-negative ($w \ge 0$).
+* **Graph Type:** Directed graph (edges have a specific direction).
+* **Unreachable Vertices:** Must be assigned a distance of `-1`.
+* **Output:** A mapping or list containing the shortest distance from the source vertex to every vertex $0, 1, \dots, V-1$.
+
+---
+
+### Algorithm Description
+
+Because all edge weights are non-negative, **Dijkstra's Algorithm** with a **Binary Min-Heap** (via Python's `heapq` module) is optimal:
+
+1. Initialize an array/list `distances` of size $V$ with $\infty$ (infinity), and set `distances[source] = 0`.
+2. Push `(0, source)` into a min-priority queue storing pairs of `(distance, vertex)`.
+3. While the priority queue is not empty, extract the pair `(d, u)` with the smallest distance.
+4. If $d > \text{distances}[u]$, skip it (stale entry).
+5. For each outgoing neighbor $v$ with weight $w$ from vertex $u$, check if $d + w < \text{distances}[v]$. If so, update `distances[v] = d + w` and push `(distances[v], v)` into the priority queue.
+6. Replace any remaining $\infty$ values in `distances` with `-1` before returning.
+
+**Time Complexity:** $\mathcal{O}((V + E) \log V)$
+
+**Space Complexity:** $\mathcal{O}(V + E)$ for adjacency list and priority queue.
+
+---
+
+### Python Implementation
+
+```python
+import heapq
+
+def dijkstra_shortest_paths(num_vertices: int, edges: list[tuple[int, int, int]], source: int) -> list[int]:
+    """
+    Computes the shortest path from source to all vertices using Dijkstra's algorithm.
+    
+    :param num_vertices: Total number of vertices V (indexed 0 to V-1)
+    :param edges: List of tuples (u, v, weight) representing directed edges
+    :param source: Starting vertex
+    :return: List of shortest distances where index i is the distance to vertex i (-1 if unreachable)
+    """
+    # Build adjacency list: graph[u] = [(v, weight), ...]
+    graph = [[] for _ in range(num_vertices)]
+    for u, v, weight in edges:
+        graph[u].append((v, weight))
+    
+    # Initialize distances with infinity
+    distances = [float('inf')] * num_vertices
+    distances[source] = 0
+    
+    # Min-priority queue storing tuples of (distance_to_u, u)
+    pq = [(0, source)]
+    
+    while pq:
+        current_dist, u = heapq.heappop(pq)
+        
+        # Skip stale entries in the priority queue
+        if current_dist > distances[u]:
+            continue
+            
+        # Relax edges
+        for v, weight in graph[u]:
+            distance_via_u = current_dist + weight
+            
+            if distance_via_u < distances[v]:
+                distances[v] = distance_via_u
+                heapq.heappush(pq, (distance_via_u, v))
+    
+    # Convert unreachable vertices (infinity) to -1
+    return [d if d != float('inf') else -1 for d in distances]
+
+
+# --- Example Usage ---
+if __name__ == "__main__":
+    V = 5
+    # Edges: (u, v, weight)
+    edges = [
+        (0, 1, 4),
+        (0, 2, 1),
+        (2, 1, 2),
+        (1, 3, 1),
+        (2, 3, 5),
+    ]
+    source = 0
+    
+    result = dijkstra_shortest_paths(V, edges, source)
+    print(f"Shortest distances from source {source}: {result}")
+    # Output: Shortest distances from source 0: [0, 3, 1, 4, -1]
+
+```

@@ -1,0 +1,90 @@
+```python
+class StudentPerformanceAnalyzer:
+    def __init__(self, subjects):
+        self.subjects = subjects
+
+    def _validate_score(self, score):
+        if not isinstance(score, (int, float)) or isinstance(score, bool):
+            raise ValueError("Score must be a number.")
+        if score < 0 or score > 100:
+            raise ValueError("Score must be between 0 and 100.")
+        return float(score)
+
+    def _validate_weight(self, weight):
+        if not isinstance(weight, (int, float)) or isinstance(weight, bool):
+            raise ValueError("Weight must be a number.")
+        if weight <= 0:
+            raise ValueError("Weight must be greater than 0.")
+        return float(weight)
+
+    def calculate_weighted_average(self, scores):
+        if not scores:
+            return 0.0
+
+        if len(scores) != len(self.subjects):
+            raise ValueError("Scores and subjects must have the same length.")
+
+        total_weight = 0.0
+        weighted_total = 0.0
+
+        for subject, score_data in zip(self.subjects, scores):
+            if isinstance(score_data, dict):
+                score = score_data.get("score")
+                weight = score_data.get("weight", 1)
+            else:
+                score = score_data
+                weight = 1
+
+            score = self._validate_score(score)
+            weight = self._validate_weight(weight)
+
+            weighted_total += score * weight
+            total_weight += weight
+
+        return weighted_total / total_weight
+
+    def get_grade(self, average):
+        average = self._validate_score(average)
+
+        if average >= 80:
+            return "A+"
+        elif average >= 70:
+            return "A"
+        elif average >= 60:
+            return "B"
+        elif average >= 50:
+            return "C"
+        elif average >= 40:
+            return "D"
+        return "F"
+
+    def analyze(self, scores):
+        average = self.calculate_weighted_average(scores)
+
+        return {
+            "average": round(average, 2),
+            "grade": self.get_grade(average),
+            "status": "Pass" if average >= 40 else "Fail"
+        }
+
+
+# Example
+subjects = ["Math", "Physics", "English"]
+
+scores = [
+    {"score": 85, "weight": 3},
+    {"score": 72, "weight": 2},
+    {"score": 90, "weight": 1}
+]
+
+analyzer = StudentPerformanceAnalyzer(subjects)
+print(analyzer.analyze(scores))
+
+# Invalid-score examples:
+# analyzer.analyze([{"score": -5, "weight": 1}, {"score": 70, "weight": 1}, {"score": 80, "weight": 1}])
+# analyzer.analyze([{"score": 105, "weight": 1}, {"score": 70, "weight": 1}, {"score": 80, "weight": 1}])
+
+# Invalid-weight examples:
+# analyzer.analyze([{"score": 85, "weight": 0}, {"score": 70, "weight": 1}, {"score": 80, "weight": 1}])
+# analyzer.analyze([{"score": 85, "weight": -2}, {"score": 70, "weight": 1}, {"score": 80, "weight": 1}])
+```

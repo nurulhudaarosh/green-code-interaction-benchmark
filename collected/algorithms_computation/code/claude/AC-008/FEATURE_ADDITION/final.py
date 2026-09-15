@@ -1,0 +1,159 @@
+"""
+Fenwick Tree (Binary Indexed Tree) for point updates and inclusive
+range-sum queries, with an optional deterministic operation_summary.
+
+Deterministic: no randomness, no I/O, no network access, no external
+dependencies (standard library only).
+"""
+
+from typing import List, Sequence, Tuple, Union, Dict
+
+
+class FenwickTree:
+    """1-indexed Fenwick tree storing point values, supporting prefix sums."""
+
+    def __init__(self, values: Sequence[int]):
+        self.n = len(values)
+        self.tree = [0] * (self.n + 1)      # tree[1..n], tree[0] unused
+        self.current = [0] * self.n         # current value at each 0-indexed pos
+        self.node_visits = 0                # counts major algorithmic steps
+
+        for idx, val in enumerate(values):
+            self.current[idx] = val
+
+        # O(n) build: each position pushes its value to its immediate parent.
+        for i in range(1, self.n + 1):
+            self.tree[i] += self.current[i - 1]
+            parent = i + (i & -i)
+            if parent <= self.n:
+                self.tree[parent] += self.tree[i]
+
+    def _add(self, i: int, delta: int) -> None:
+        """Add delta to 1-indexed position i. Each loop step = one node visit."""
+        while i <= self.n:
+            self.tree[i] += delta
+            self.node_visits += 1
+            i += i & -i
+
+    def _prefix_sum(self, i: int) -> int:
+        """Sum of the first i elements (1-indexed i). Each loop step = one node visit."""
+        total = 0
+        while i > 0:
+            total += self.tree[i]
+            self.node_visits += 1
+            i -= i & -i
+        return total
+
+    def update(self, index: int, value: int) -> None:
+        """Set a[index] = value (0-indexed)."""
+        if not (0 <= index < self.n):
+            raise IndexError(f"index {index} out of range [0, {self.n - 1}]")
+        delta = value - self.current[index]
+        if delta != 0:
+            self.current[index] = value
+            self._add(index + 1, delta)
+
+    def range_sum(self, left: int, right: int) -> int:
+        """Return sum(a[left..right]) inclusive, 0-indexed."""
+        if not (0 <= left <= right < self.n):
+            raise IndexError(f"invalid range [{left}, {right}] for size {self.n}")
+        return self._prefix_sum(right + 1) - self._prefix_sum(left)
+
+
+def process_operations(
+    initial: Sequence[int],
+    operations: Sequence[Tuple],
+    include_summary: bool = False,
+) -> Union[List[int], Dict[str, object]]:
+    """
+    Apply a sequence of operations to `initial` and return query results in order.
+
+    Each operation is one of:
+        ("update", index, value)
+        ("query", left, right)
+
+    Args:
+        initial: starting array values.
+        operations: sequence of operations as described above.
+        include_summary: if False (default), behavior and return type are
+            UNCHANGED from the original version — returns List[int].
+            If True, returns a dict with the original results plus an
+            'operation_summary' field.
+
+    Returns:
+        If include_summary is False:
+            List[int] — the result of each "query" operation, in order.
+        If include_summary is True:
+            {
+                "results": List[int],
+                "operation_summary": {
+                    "num_updates": int,
+                    "num_queries": int,
+                    "num_fenwick_node_visits": int,
+                    "total_operations": int,
+                }
+            }
+    """
+    fenwick = FenwickTree(initial)
+    results: List[int] = []
+    num_updates = 0
+    num_queries = 0
+
+    for op in operations:
+        kind = op[0]
+        if kind == "update":
+            _, index, value = op
+            fenwick.update(index, value)
+            num_updates += 1
+        elif kind == "query":
+            _, left, right = op
+            results.append(fenwick.range_sum(left, right))
+            num_queries += 1
+        else:
+            raise ValueError(f"Unknown operation: {op!r}")
+
+    if not include_summary:
+        return results
+
+    return {
+        "results": results,
+        "operation_summary": {
+            "num_updates": num_updates,
+            "num_queries": num_queries,
+            "num_fenwick_node_visits": fenwick.node_visits,
+            "total_operations": num_updates + num_queries,
+        },
+    }
+
+
+if __name__ == "__main__":
+    initial_array = [1, 3, 5, 7, 9, 11]
+
+    ops = [
+        ("query", 0, 5),
+        ("update", 2, 100),
+        ("query", 0, 5),
+        ("query", 1, 3),
+        ("update", 0, 0),
+        ("query", 0, 0),
+    ]
+
+    # Original behavior unchanged
+    output = process_operations(initial_array, ops)
+    print("Query results:", output)
+
+    naive = list(initial_array)
+    naive_results = []
+    for op in ops:
+        if op[0] == "update":
+            _, idx, val = op
+            naive[idx] = val
+        else:
+            _, l, r = op
+            naive_results.append(sum(naive[l : r + 1]))
+    assert output == naive_results
+    print("Verification against naive approach: OK")
+
+    # New feature enabled
+    detailed = process_operations(initial_array, ops, include_summary=True)
+    print("Detailed output:", detailed)

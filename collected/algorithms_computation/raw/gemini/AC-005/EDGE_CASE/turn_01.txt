@@ -1,0 +1,101 @@
+### Problem Identification & Understanding
+
+The problem asks us to find a strictly increasing subsequence of maximum length from a given integer sequence. When multiple strictly increasing subsequences achieve this maximum length, we must select the one whose sequence of **original 0-based indices** is **lexicographically smallest**.
+
+---
+
+### Key Constraints & Required Output
+
+* **Input:** A list or sequence of integers, e.g., $A = [a_0, a_1, \dots, a_{n-1}]$.
+* **Strictly Increasing:** For indices $i_1 < i_2 < \dots < i_k$, the values must satisfy $A[i_1] < A[i_2] < \dots < A[i_k]$.
+* **Maximum Length:** $k$ must be as large as possible.
+* **Tie-Breaking:** If multiple index sequences $[i_1, i_2, \dots, i_k]$ produce a strictly increasing subsequence of length $k$, choose the index sequence that is lexicographically smallest.
+* **Output:** The lexicographically smallest sequence of **original indices** $[i_1, i_2, \dots, i_k]$.
+
+---
+
+### Algorithm Description
+
+We use a **quadratic dynamic programming** approach with $O(N^2)$ time complexity:
+
+1. **DP State Definition:**
+* `dp[i]` stores the length of the longest strictly increasing subsequence ending at index `i`.
+* `parent[i]` stores the index of the predecessor of element $A[i]$ in the optimal subsequence ending at $i$.
+
+
+2. **Transitions & Tie-Breaking:**
+* For each element at index `i` from $0$ to $N-1$:
+* Base case: `dp[i] = 1`, `parent[i] = -1`.
+* Iterate over all previous indices `j` from $0$ to $i-1$:
+* If $A[j] < A[i]$:
+* If `dp[j] + 1 > dp[i]`, we update `dp[i] = dp[j] + 1` and `parent[i] = j`.
+* If `dp[j] + 1 == dp[i]`, to ensure the lexicographically smallest index sequence, we pick the candidate predecessor `j` that produces a lexicographically smaller sequence of indices leading to `i`. Comparing index sub-paths iteratively guarantees the lexicographically minimal path.
+
+
+
+
+
+
+
+
+3. **Global Optima Selection:**
+* After computing all `dp[i]`, identify the maximum length $L = \max(dp)$.
+* Find all indices $i$ where `dp[i] == L`. Reconstruct the full index path for each such candidate end index and select the index sequence that is lexicographically smallest.
+
+
+
+---
+
+### Python Solution
+
+```python
+def get_lexicographically_smallest_lis_indices(arr: list[int]) -> list[int]:
+    """
+    Finds a strictly increasing subsequence of maximum length from `arr`
+    and returns the lexicographically smallest sequence of original indices.
+    
+    Time Complexity: O(N^2)
+    Space Complexity: O(N^2)
+    """
+    n = len(arr)
+    if n == 0:
+        return []
+
+    dp = [1] * n
+    # Stores the optimal predecessor path for each index to reconstruct the sequence easily
+    paths = [[i] for i in range(n)]
+
+    for i in range(n):
+        for j in range(i):
+            if arr[j] < arr[i]:
+                candidate_path = paths[j] + [i]
+                candidate_len = len(candidate_path)
+
+                if candidate_len > dp[i]:
+                    dp[i] = candidate_len
+                    paths[i] = candidate_path
+                elif candidate_len == dp[i]:
+                    # Tie-breaking: keep the lexicographically smaller index path
+                    if candidate_path < paths[i]:
+                        paths[i] = candidate_path
+
+    # Find the maximum LIS length
+    max_len = max(dp)
+
+    # Gather all candidate paths that achieve max_len and pick the lexicographically smallest
+    best_path = min(path for path in paths if len(path) == max_len)
+
+    return best_path
+
+
+# Example usage
+if __name__ == "__main__":
+    sample_input = [10, 22, 9, 33, 21, 50, 41, 60, 80]
+    indices = get_lexicographically_smallest_lis_indices(sample_input)
+    values = [sample_input[i] for i in indices]
+    
+    print(f"Input Array: {sample_input}")
+    print(f"Optimal Original Indices: {indices}")
+    print(f"Corresponding Subsequence Values: {values}")
+
+```

@@ -1,0 +1,122 @@
+from typing import Tuple, Dict, Union
+
+
+def lcs_with_reconstruction(
+    s1: str, s2: str, include_summary: bool = False
+) -> Union[Tuple[int, str], Tuple[int, str, Dict[str, int]]]:
+    """
+    Computes LCS length and deterministic LCS string reconstruction using 
+    quadratic dynamic programming and iterative predecessor reconstruction.
+    
+    Tie-breaking rule: Prefers advancing in s1 (i -> i - 1) whenever 
+    dp[i - 1][j] == dp[i][j].
+    """
+    m, n = len(s1), len(s2)
+    
+    # 1. Build DP Table - O(m * n) time and space
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    dp_cell_updates = 0
+    
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            dp_cell_updates += 1
+            if s1[i - 1] == s2[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+                
+    lcs_length = dp[m][n]
+    
+    # 2. Reconstruct LCS with deterministic tie-handling
+    i, j = m, n
+    lcs_chars = []
+    
+    reconstruction_steps = 0
+    s1_advancements = 0
+    s2_advancements = 0
+    character_matches = 0
+    
+    while i > 0 and j > 0:
+        reconstruction_steps += 1
+        
+        # Rule check: Prioritize advancing in s1 if it preserves the target DP score
+        if dp[i - 1][j] == dp[i][j]:
+            s1_advancements += 1
+            i -= 1
+        elif s1[i - 1] == s2[j - 1] and dp[i - 1][j - 1] + 1 == dp[i][j]:
+            character_matches += 1
+            lcs_chars.append(s1[i - 1])
+            i -= 1
+            j -= 1
+        else:
+            s2_advancements += 1
+            j -= 1
+            
+    lcs_string = "".join(reversed(lcs_chars))
+    
+    if include_summary:
+        operation_summary = {
+            "dp_table_cell_updates": dp_cell_updates,
+            "reconstruction_steps": reconstruction_steps,
+            "s1_advancements": s1_advancements,
+            "s2_advancements": s2_advancements,
+            "character_matches": character_matches,
+        }
+        return lcs_length, lcs_string, operation_summary
+        
+    return lcs_length, lcs_string
+
+
+# =====================================================================
+# Test Suite for Edge, Worst-Case, and Structural Performance Cases
+# =====================================================================
+
+def run_tests():
+    print("Running LCS Verification Tests...\n")
+    
+    # Test 1: Deterministic Tie-Breaking (ABA vs A)
+    s1, s2 = "ABA", "A"
+    length, lcs = lcs_with_reconstruction(s1, s2)
+    assert length == 1 and lcs == "A", f"Test 1 Failed: {length}, {lcs}"
+    print("[PASS] Test 1: Tie-breaking priority on s1")
+
+    # Test 2: Completely Disjoint Alphabet (Worst-Case Sparsity / All Zeros DP)
+    s1, s2 = "A" * 500, "B" * 500
+    length, lcs, summary = lcs_with_reconstruction(s1, s2, include_summary=True)
+    assert length == 0 and lcs == "", f"Test 2 Failed: {length}, {lcs}"
+    assert summary["dp_table_cell_updates"] == 250000
+    assert summary["s1_advancements"] == 500
+    assert summary["character_matches"] == 0
+    print("[PASS] Test 2: Disjoint Alphabet Worst-Case (500x500)")
+
+    # Test 3: Dense Subsequence Lattice with Alternating Patterns
+    s1, s2 = "AB" * 250, "BA" * 250
+    length, lcs = lcs_with_reconstruction(s1, s2)
+    assert length == 499, f"Test 3 Length Failed: expected 499, got {length}"
+    assert len(lcs) == 499, f"Test 3 Reconstructed Length Failed: {len(lcs)}"
+    print("[PASS] Test 3: Interleaved Subsequence Lattice (500x500)")
+
+    # Test 4: Empty String Edge Cases
+    assert lcs_with_reconstruction("", "ABC") == (0, "")
+    assert lcs_with_reconstruction("ABC", "") == (0, "")
+    assert lcs_with_reconstruction("", "") == (0, "")
+    print("[PASS] Test 4: Empty String Edge Cases")
+
+    # Test 5: Identical Strings (Best-Case Diagonal Path)
+    s1, s2 = "XYZ" * 100, "XYZ" * 100
+    length, lcs, summary = lcs_with_reconstruction(s1, s2, include_summary=True)
+    assert length == 300 and lcs == "XYZ" * 100
+    assert summary["character_matches"] == 300
+    print("[PASS] Test 5: Identical Large Inputs (300x300)")
+
+    # Test 6: Backward Compatibility Check for Output Signature
+    res_tuple = lcs_with_reconstruction("CAT", "CUT")
+    assert isinstance(res_tuple, tuple) and len(res_tuple) == 2
+    assert res_tuple == (2, "CT")
+    print("[PASS] Test 6: Standard Return Signature Compatibility")
+
+    print("\nAll tests successfully passed!")
+
+
+if __name__ == "__main__":
+    run_tests()

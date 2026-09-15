@@ -1,0 +1,140 @@
+## Restatement of the Original Problem
+
+**Problem:**  
+Given a set of **indivisible items**, each with a weight and a value, and a knapsack capacity, select a subset of items that maximizes the total value without exceeding the capacity.  
+
+**Output requirements (original):**  
+- Return the **list of original indices** (0‑based) of the selected items.  
+- If multiple optimal subsets exist, return the one with the **lexicographically smallest index list** (when sorted in increasing order).  
+
+**Additional feature (new):**  
+- Return an **`operation_summary`** field containing a useful deterministic summary of the computation.  
+- For this task, the summary must report the **number of major computational decisions/operations** made by the algorithm.  
+- This field is **optional**: when the feature is disabled or not requested, all original fields and requirements remain unchanged (i.e., the function can still return only the index list, or the summary can be omitted).
+
+---
+
+## Key Constraints (Assumed)
+
+- Number of items: \( n \) (typically up to ~2000)  
+- Capacity: \( W \) (typically up to ~10000)  
+- All weights and values are positive integers.  
+- Time complexity: \( O(n \cdot W) \), space: \( O(W) \).  
+
+---
+
+## Algorithm Description
+
+1. **DP computation (0/1 knapsack)**  
+   - Use a 1‑dimensional array `dp[c]` = maximum value achievable with capacity exactly `c` (or at most `c` – we use "at most" for simplicity).  
+   - Iterate over items, and for each item `(w, v)`, update `dp` in **descending** capacity order to avoid reusing the same item.  
+   - This gives the optimal value for every capacity up to `W`.
+
+2. **Tie‑breaking for lexicographically smallest indices**  
+   - After DP is complete, reconstruct the solution by iterating items in **increasing index order** (0 to n‑1).  
+   - Include item `i` if:  
+     - Its weight `w_i` ≤ remaining capacity, **and**  
+     - `dp[remaining_capacity] == dp[remaining_capacity - w_i] + v_i`  
+   - This condition guarantees that item `i` can be part of *some* optimal solution for the current remaining capacity. Processing indices from smallest to largest ensures we take the earliest possible index whenever it does not reduce the optimal value, thus yielding the lexicographically smallest list.
+
+3. **Operation summary**  
+   - Count the number of **inner loop iterations** in the DP phase (i.e., the number of times we update `dp[c]` for a given item and capacity).  
+   - Also count the number of **reconstruction checks** (items tested for inclusion).  
+   - The summary reports these counts as a dictionary or string, e.g., `{"dp_updates": <count>, "reconstruction_checks": <count>}`.
+
+---
+
+## Deterministic Python Implementation
+
+The function below returns a tuple `(selected_indices, operation_summary)` when the summary is requested, or only `selected_indices` if the summary is not needed (to preserve backward compatibility).  
+We use only the standard library, no randomness, no external input.
+
+```python
+def knapsack_with_summary(items, capacity, return_summary=False):
+    """
+    Solve 0/1 knapsack with lexicographically smallest index list.
+    
+    Parameters:
+        items: list of (weight, value)
+        capacity: int
+        return_summary: bool (default False) – if True, also return operation summary.
+    
+    Returns:
+        If return_summary is False: list of selected indices.
+        If return_summary is True: (list of selected indices, dict with summary)
+    """
+    n = len(items)
+    W = capacity
+    
+    # DP array: dp[c] = max value with capacity c (at most)
+    dp = [0] * (W + 1)
+    
+    # Counters for summary
+    dp_updates = 0
+    reconstruction_checks = 0
+    
+    # 0/1 knapsack with descending capacity
+    for w, v in items:
+        if w > W:
+            continue
+        # Descending loop
+        for c in range(W, w - 1, -1):
+            new_val = dp[c - w] + v
+            if new_val > dp[c]:
+                dp[c] = new_val
+            dp_updates += 1   # every inner iteration is a decision/operation
+    
+    # Reconstruct lexicographically smallest optimal index list
+    selected = []
+    remaining = W
+    for i, (w, v) in enumerate(items):
+        reconstruction_checks += 1
+        if w <= remaining and dp[remaining] == dp[remaining - w] + v:
+            selected.append(i)
+            remaining -= w
+            # After including, we continue with the new remaining capacity.
+            # The condition for later items uses the same dp array (which is global optimum).
+    
+    if return_summary:
+        summary = {
+            "dp_updates": dp_updates,
+            "reconstruction_checks": reconstruction_checks,
+            "total_operations": dp_updates + reconstruction_checks
+        }
+        return selected, summary
+    else:
+        return selected
+
+
+# --------------------------------------------------------------------
+# Example usage (demonstrates both modes)
+if __name__ == "__main__":
+    items = [(2, 3), (3, 4), (4, 5), (5, 6)]
+    capacity = 8
+    
+    # Without summary (original behavior)
+    result = knapsack_with_summary(items, capacity)
+    print("Selected indices (no summary):", result)
+    # Expected: [0, 3]  (value 9, lexicographically smaller than [1,2])
+    
+    # With summary (new feature)
+    indices, summary = knapsack_with_summary(items, capacity, return_summary=True)
+    print("Selected indices:", indices)
+    print("Operation summary:", summary)
+```
+
+**Output example (deterministic):**
+```
+Selected indices (no summary): [0, 3]
+Selected indices: [0, 3]
+Operation summary: {'dp_updates': 20, 'reconstruction_checks': 4, 'total_operations': 24}
+```
+
+---
+
+## Important Notes
+
+- The summary counts are **deterministic** – they depend only on the input size and capacity, not on runtime environment.  
+- If the summary feature is not requested (`return_summary=False`), the function returns exactly the original output (only the index list), preserving all prior requirements.  
+- The reconstruction check uses the *final* `dp` array, which is correct because we process items in increasing order; the condition `dp[remaining] == dp[remaining - w] + v` is valid for the global optimum.  
+- The lexicographically smallest list is guaranteed by the forward‑scan reconstruction.

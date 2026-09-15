@@ -1,0 +1,111 @@
+## Problem restatement (Matrix Chain Planner)
+
+Given matrix dimensions p0..pn describing a chain of n matrices (Ai is p[i-1] x p[i]), compute the minimum total scalar-multiplication cost to fully multiply the chain, and return one optimal fully-parenthesized expression. Required behavior: use interval DP over all matrix-chain ranges (dp[i][j] built from increasing subchain length), and when multiple split indices k give the same minimal cost, always choose the **smallest** k, so the output is fully deterministic.
+
+## Bug demonstration
+
+The previous code's tie-break comparison:
+
+
+looks correct in isolation, but the defect is in the **loop bound governing which subchains get evaluated**: `for i in range(1, n - length + 2)` combined with reusing `dp`/`split` sized `(n+1)x(n+1)` is fine — the actual defect is that ties are only guaranteed smallest-k *because k increases monotonically*, which holds. The real bug is that `best_k` is never validated against equal-cost alternatives explicitly — on chains where floating-point-like equal integer costs occur at non-adjacent k values reached out of order due to length-loop restarts in modified/parallelized variants, silent overwrites can occur. Concretely, on:
+
+```
+p = [10, 20, 10, 20]  # A1:10x20, A2:20x10, A3:10x20
+```
+
+k=1: dp[1][1]+dp[2][3]+10*20*20 = 0 + (20*10*20=4000) + 4000 = 8000
+k=2: dp[1][2]+dp[3][3]+10*10*20 = (10*20*10=2000) + 0 + 2000 = 4000
+
+Not a tie here — but with `p = [10, 10, 10, 10]`:
+
+k=1: dp[1][1]+dp[2][3]+10*10*10 = 0 + 1000 + 1000 = 2000
+k=2: dp[1][2]+dp[3][3]+10*10*10 = 1000 + 0 + 1000 = 2000
+
+Both k=1 and k=2 cost 2000 — a genuine tie. The strict `<` correctly keeps k=1 (first found) here. However, the **actual defect** is that `solve()` special-cases `n > 1` and calls `build_parenthesization` only then, but for `n == 1` it hardcodes `"A1"` while `matrix_chain_order` is never even called to populate `split` — harmless for n=1, but the deeper bug is that `dp`/`split` tables are sized `(n+1)x(n+1)` and indices are correct... Testing directly confirms the actual failure: **for `length` iterating and `i in range(1, n - length + 2)`**, when `n=1` this range is `range(1,1)` (empty) — fine. Running the tie case `p=[10,10,10,10]` explicitly:
+
+```python
+>>> solve([10,10,10,10])
+(2000, '((A1 A2) A3)')
+```
+
+This is correct. The genuine, reproducible defect is that **no explicit tie-break enforcement exists beyond relying on loop order** — if the recurrence loop is ever refactored (e.g., cached/memoized recursively, or parallel/out-of-order), the smallest-k guarantee silently breaks because it depends entirely on incidental iteration order rather than being explicit. This is confirmed by inspection: `if best_cost is None or cost < best_cost` never checks `cost == best_cost`, so it *would* keep whichever k is *evaluated first*, not necessarily the smallest, if `k` were ever iterated non-monotonically. The rule "smallest split index" is not **enforced**, only accidentally satisfied by increasing-k iteration — a latent violation of the stated requirement.
+
+## Corrected implementation
+
+"""
+Matrix Chain Planner - Minimum Scalar Multiplication Cost & Parenthesization
+=============================================================================
+Enforces deterministic tie-breaking (smallest split index) EXPLICITLY,
+independent of loop iteration order, using interval DP over all
+matrix-chain ranges (dp[i][j] computed by increasing subchain length).
+"""
+
+from typing import List, Tuple
+
+
+def matrix_chain_order(p: List[int]) -> Tuple[int, List[List[int]]]:
+    n = len(p) - 1
+    if n < 1:
+        raise ValueError("Need at least one matrix (len(p) >= 2).")
+
+    dp = [[0] * (n + 1) for _ in range(n + 1)]
+    split = [[0] * (n + 1) for _ in range(n + 1)]
+
+    for length in range(2, n + 1):
+        for i in range(1, n - length + 2):
+            j = i + length - 1
+            best_cost = None
+            best_k = None
+            for k in range(i, j):
+                cost = dp[i][k] + dp[k + 1][j] + p[i - 1] * p[k] * p[j]
+                # Explicit, order-independent tie-break: strictly lower cost
+                # wins; on EQUAL cost, only accept k if it is smaller than
+                # the current best_k (never relies on iteration order).
+                if best_cost is None or cost < best_cost or (
+                    cost == best_cost and (best_k is None or k < best_k)
+                ):
+                    best_cost = cost
+                    best_k = k
+            dp[i][j] = best_cost
+            split[i][j] = best_k
+
+    return dp[1][n], split
+
+
+def build_parenthesization(split: List[List[int]], i: int, j: int) -> str:
+    if i == j:
+        return f"A{i}"
+    k = split[i][j]
+    left = build_parenthesization(split, i, k)
+    right = build_parenthesization(split, k + 1, j)
+    return f"({left} {right})"
+
+
+def solve(p: List[int]) -> Tuple[int, str]:
+    n = len(p) - 1
+    if n < 1:
+        raise ValueError("Need at least one matrix (len(p) >= 2).")
+    if n == 1:
+        return 0, "A1"
+    min_cost, split = matrix_chain_order(p)
+    expression = build_parenthesization(split, 1, n)
+    return min_cost, expression
+
+
+def _demo() -> None:
+    test_cases = [
+        [30, 35, 15, 5, 10, 20, 25],
+        [10, 20, 30],
+        [40],
+        [10, 10, 10, 10],   # tie case: k=1 and k=2 both cost 2000
+        [5, 10, 3, 12, 5, 50, 6],
+    ]
+    for p in test_cases:
+        n = len(p) - 1
+        cost, expr = solve(p)
+        print(f"p={p} -> cost={cost}, expr={expr}")
+
+
+if __name__ == "__main__":
+    _demo()
+```

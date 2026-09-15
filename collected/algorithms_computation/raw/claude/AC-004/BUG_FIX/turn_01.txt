@@ -1,0 +1,198 @@
+Here's a complete, self-contained solution to the Weighted Job Scheduling problem, with the problem framing, constraints, and algorithm explained in the docstring/comments, followed by a deterministic implementation and built-in self-checks.
+
+```python
+"""
+Weighted Job Scheduling (Weighted Interval Scheduling) with Deterministic Tie-Breaking
+=======================================================================================
+
+PROBLEM
+-------
+We are given a list of jobs, each described by (start, finish, profit). Two jobs
+are "compatible" (non-overlapping) if one finishes at or before the other starts
+(i.e. jobs that only touch at a shared endpoint are allowed to coexist). The goal
+is to choose a subset of mutually compatible jobs whose total profit is as large
+as possible.
+
+Because several different subsets of jobs may achieve the same maximum profit,
+the problem also specifies a deterministic tie-breaking rule: among all subsets
+that achieve the maximum total profit, we must return the one whose *sorted
+sequence of original input indices* is lexicographically smallest (compared
+element-by-element as a sequence of integers).
+
+KEY CONSTRAINTS
+----------------
+1. Each job has a start time, a finish time (start <= finish), and a profit.
+2. Two selected jobs i and j (i != j) are compatible only if
+   finish[i] <= start[j]  or  finish[j] <= start[i]  (touching endpoints are OK).
+3. The selected subset must be pairwise compatible.
+4. Among all subsets achieving the maximum total profit, the returned subset must
+   be the one whose original indices, sorted increasing, form the
+   lexicographically smallest sequence of any other maximum-profit subset's
+   sorted index sequence.
+
+REQUIRED OUTPUT
+----------------
+- The maximum achievable total profit.
+- The list of original 0-based job indices selected, sorted increasing,
+  representing the lexicographically-smallest maximum-profit solution.
+
+ALGORITHM
+---------
+1. Sort jobs by finish time (ties broken by original index for a fully
+   deterministic order).
+2. For each job i (in this finish-time order), binary search (bisect) for the
+   rightmost earlier job p(i) whose finish time is <= the start time of job i.
+   This is the latest compatible predecessor.
+3. Dynamic programming over the finish-time-sorted order:
+       dp[i] = best( dp[i-1],                      # exclude job i
+                      combine(job_i, dp[p(i)]) )    # include job i
+   where "best" first maximizes total profit, and, on a tie, chooses the
+   option whose resulting sorted-by-original-index tuple of job indices is
+   lexicographically smaller. Each dp state is stored as
+   (total_profit, sorted_index_tuple) and compared via the key
+   (-total_profit, sorted_index_tuple), taking the minimum key.
+4. dp[n] (n = number of jobs) already IS the final answer: no separate
+   backtracking pass is needed, since every dp state carries the fully,
+   correctly tie-broken solution built from its sub-solutions.
+
+Runs in O(n log n) for sorting/predecessor search, and up to O(n^2) for the DP
+in the worst case (tuple copying dominates, not the number of transitions).
+Exact optimality plus a fully specified tie-break rule are prioritized over
+raw asymptotic performance.
+
+The implementation is deterministic and self-contained: standard library only
+(`bisect`, `dataclasses`, `typing`), no network access, no external services,
+no randomness, no human interaction.
+"""
+
+from bisect import bisect_right
+from dataclasses import dataclass
+from typing import List, Tuple
+
+
+@dataclass(frozen=True)
+class Job:
+    start: int
+    finish: int
+    profit: int
+    index: int  # original 0-based index, used for output and tie-breaking
+
+
+def schedule_jobs(jobs: List[Tuple[int, int, int]]) -> Tuple[int, List[int]]:
+    """
+    Solve the weighted job scheduling problem.
+
+    Parameters
+    ----------
+    jobs : list of (start, finish, profit) tuples.
+
+    Returns
+    -------
+    (max_profit, selected_indices)
+        max_profit: the maximum achievable total profit.
+        selected_indices: sorted list of original 0-based indices of jobs in
+        the lexicographically-smallest maximum-profit solution.
+    """
+    if not jobs:
+        return 0, []
+
+    job_objs = []
+    for idx, (s, f, p) in enumerate(jobs):
+        if s > f:
+            raise ValueError(f"Job {idx} has start > finish: ({s}, {f})")
+        job_objs.append(Job(start=s, finish=f, profit=p, index=idx))
+
+    # Step 1: sort by finish time, breaking ties by original index so the
+    # ordering itself is fully deterministic.
+    job_objs.sort(key=lambda j: (j.finish, j.index))
+    n = len(job_objs)
+    finishes = [j.finish for j in job_objs]
+
+    # Step 2: for each job, binary-search the latest compatible predecessor
+    # (the rightmost earlier job whose finish time <= this job's start time).
+    def latest_compatible_predecessor(i: int) -> int:
+        pos = bisect_right(finishes, job_objs[i].start, 0, i)
+        return pos - 1  # -1 means "no compatible predecessor"
+
+    # Step 3: DP where each state stores (total_profit, sorted_index_tuple).
+    EMPTY: Tuple[int, Tuple[int, ...]] = (0, tuple())
+    dp: List[Tuple[int, Tuple[int, ...]]] = [EMPTY] * (n + 1)
+
+    def better(a: Tuple[int, Tuple[int, ...]],
+               b: Tuple[int, Tuple[int, ...]]) -> Tuple[int, Tuple[int, ...]]:
+        # Prefer higher profit; on a tie, prefer the lexicographically
+        # smaller tuple of original indices.
+        key_a = (-a[0], a[1])
+        key_b = (-b[0], b[1])
+        return a if key_a <= key_b else b
+
+    def merge_sorted(existing: Tuple[int, ...], new_index: int) -> Tuple[int, ...]:
+        pos = bisect_right(existing, new_index)
+        return existing[:pos] + (new_index,) + existing[pos:]
+
+    for i in range(1, n + 1):
+        job = job_objs[i - 1]
+        exclude = dp[i - 1]
+        pred = latest_compatible_predecessor(i - 1)
+        pred_profit, pred_indices = dp[pred + 1]
+        include = (pred_profit + job.profit,
+                   merge_sorted(pred_indices, job.index))
+        dp[i] = better(exclude, include)
+
+    max_profit, selected_indices = dp[n]
+    return max_profit, list(selected_indices)
+
+
+def _self_check() -> None:
+    """Hand-verified sanity checks, run automatically when this file is executed."""
+    # Simple non-overlapping set, unique optimum.
+    profit, chosen = schedule_jobs([(1, 3, 5), (3, 5, 6), (0, 6, 4)])
+    assert (profit, chosen) == (11, [0, 1]), (profit, chosen)
+
+    # Touching endpoints are compatible (should not conflict).
+    profit, chosen = schedule_jobs([(1, 4, 3), (4, 6, 2)])
+    assert (profit, chosen) == (5, [0, 1]), (profit, chosen)
+
+    # Classic weighted interval scheduling example.
+    jobs = [(1, 2, 50), (3, 5, 20), (6, 19, 100), (2, 100, 200)]
+    profit, chosen = schedule_jobs(jobs)
+    assert (profit, chosen) == (250, [0, 3]), (profit, chosen)
+
+    # Two disjoint equal-profit jobs beat one overlapping alternative.
+    jobs = [(0, 1, 10), (2, 3, 10), (0, 3, 10)]
+    profit, chosen = schedule_jobs(jobs)
+    assert (profit, chosen) == (20, [0, 1]), (profit, chosen)
+
+    # Three mutually compatible jobs: take all of them.
+    jobs = [(5, 10, 10), (0, 3, 10), (20, 30, 10)]
+    profit, chosen = schedule_jobs(jobs)
+    assert (profit, chosen) == (30, [0, 1, 2]), (profit, chosen)
+
+    # Genuine tie: job0/job1 overlap (same profit), job2 is independent.
+    # Both {0,2} and {1,2} give profit 15 -- the lexicographically smaller
+    # index sequence [0, 2] must be returned.
+    jobs = [(0, 5, 10), (1, 6, 10), (10, 15, 5)]
+    profit, chosen = schedule_jobs(jobs)
+    assert (profit, chosen) == (15, [0, 2]), (profit, chosen)
+
+    print("All self-checks passed.")
+
+
+if __name__ == "__main__":
+    _self_check()
+
+    example_jobs = [
+        (1, 3, 50),    # index 0
+        (3, 5, 20),    # index 1
+        (6, 19, 100),  # index 2
+        (2, 100, 200), # index 3
+    ]
+    total_profit, indices = schedule_jobs(example_jobs)
+    print("\nExample run")
+    print("-----------")
+    print(f"Jobs: {example_jobs}")
+    print(f"Maximum profit: {total_profit}")
+    print(f"Selected original indices (lexicographically smallest on ties): {indices}")
+```
+
+**How the tie-break works:** instead of storing just the best profit at each DP step, each state stores `(profit, sorted_tuple_of_original_indices)`. When comparing "include this job" vs. "exclude it," ties in profit are broken by comparing the resulting index tuples directly (Python compares tuples lexicographically by default), so the DP always propagates the correct, fully tie-broken optimal solution — no separate backtracking pass is needed.

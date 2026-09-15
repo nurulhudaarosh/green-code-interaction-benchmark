@@ -1,0 +1,169 @@
+# Maximum s-t Flow via Dinic's Algorithm
+
+## Problem Understanding
+
+**Input:** A directed capacitated network given as a list of edges, each with:
+- a source node `u`
+- a target node `v`
+- a non-negative integer capacity `cap`
+
+Plus a source node `s` and sink node `t`.
+
+**Goal:** Compute the **maximum s-t flow** and report the flow value on each **original edge** (in the same order the edges were given).
+
+## Key Constraints
+
+1. **Capacity constraint:** For every edge `e = (u, v)`, `0 ≤ f(e) ≤ cap(e)`.
+2. **Flow conservation:** For every node `w ∉ {s, t}`, `Σ_in f = Σ_out f`.
+3. **Skew symmetry:** Flow on the reverse residual edge is the negative of the flow on the forward edge.
+4. **Non-negativity:** Flow values on original edges must be `≥ 0`.
+5. **Determinism:** Same input must always produce the same output (no randomness).
+6. **Order preservation:** Output flows must correspond to the original edge list order.
+7. **No external dependencies:** Only the Python standard library.
+
+## Algorithm — Dinic's Blocking-Flow
+
+Dinic's algorithm runs in phases. In each phase:
+
+1. **Build a level graph (BFS)** from `s` over residual edges (edges with residual capacity > 0). If `t` is unreachable, stop.
+2. **Find a blocking flow** in the level graph using DFS with an `iter` pointer per node (current-arc optimization) to avoid re-scanning dead edges.
+3. **Augment** along found paths, updating residual capacities and (implicitly) flows.
+4. Repeat until `t` is unreachable.
+
+**Complexity:** `O(V² · E)` general; `O(E · √V)` for unit-capacity networks.
+
+**Flow recovery:** Each original edge `i` has a paired residual edge. The flow on edge `i` equals `cap - residual_capacity_forward`, which is equivalent to the residual capacity on its reverse edge.
+
+## Python Implementation
+
+```python
+import sys
+from collections import deque
+
+def max_flow(n, edges, s, t):
+    """
+    n     : number of nodes (0 .. n-1)
+    edges : list of (u, v, cap) in ORIGINAL order
+    s, t  : source and sink
+    returns: (max_flow_value, list_of_flows_per_original_edge)
+    """
+    # ---- Build residual graph with paired edges -----------------------
+    # For each original edge i: forward arc = 2*i, reverse arc = 2*i+1
+    to      = []
+    cap     = []          # residual capacity
+    orig_id = []          # original edge index (or -1 for reverse arcs)
+
+    graph = [[] for _ in range(n)]
+
+    for i, (u, v, c) in enumerate(edges):
+        # forward arc
+        graph[u].append(len(to))
+        to.append(v); cap.append(c); orig_id.append(i)
+        # reverse arc
+        graph[v].append(len(to))
+        to.append(u); cap.append(0); orig_id.append(i)
+
+    # ---- Dinic's algorithm --------------------------------------------
+    flow_value = 0
+    level = [-1] * n
+    it    = [0]  * n
+
+    def bfs():
+        for i in range(n):
+            level[i] = -1
+        level[s] = 0
+        q = deque([s])
+        while q:
+            u = q.popleft()
+            for eid in graph[u]:
+                if cap[eid] > 0 and level[to[eid]] < 0:
+                    level[to[eid]] = level[u] + 1
+                    q.append(to[eid])
+        return level[t] >= 0
+
+    sys.setrecursionlimit(1_000_000)
+
+    def dfs(u, pushed):
+        if u == t:
+            return pushed
+        while it[u] < len(graph[u]):
+            eid = graph[u][it[u]]
+            v = to[eid]
+            if cap[eid] > 0 and level[v] == level[u] + 1:
+                d = dfs(v, min(pushed, cap[eid]))
+                if d > 0:
+                    cap[eid] -= d
+                    cap[eid ^ 1] += d   # reverse arc is paired via XOR 1
+                    return d
+            it[u] += 1
+        return 0
+
+    INF = float('inf')
+    while bfs():
+        for i in range(n):
+            it[i] = 0
+        while True:
+            pushed = dfs(s, INF)
+            if pushed == 0:
+                break
+            flow_value += pushed
+
+    # ---- Recover flow on each ORIGINAL edge ---------------------------
+    # Flow on forward arc 2*i equals cap[2*i+1] (residual on reverse arc).
+    result = [0] * len(edges)
+    for i in range(len(edges)):
+        result[i] = cap[2 * i + 1]
+
+    return flow_value, result
+
+
+# --------------------------- Example / self-test -----------------------
+if __name__ == "__main__":
+    # Classic CLRS-style example
+    # Nodes 0..5, s = 0, t = 5
+    edges = [
+        (0, 1, 16),
+        (0, 2, 13),
+        (1, 2, 10),
+        (2, 1,  4),
+        (1, 3, 12),
+        (3, 2,  9),
+        (2, 4, 14),
+        (4, 3,  7),
+        (3, 5, 20),
+        (4, 5,  4),
+    ]
+    n, s, t = 6, 0, 5
+    val, flows = max_flow(n, edges, s, t)
+
+    print(f"Maximum flow value = {val}")
+    print("Flow per original edge (in input order):")
+    for (u, v, c), f in zip(edges, flows):
+        print(f"  ({u} -> {v}, cap={c}) : flow = {f}")
+```
+
+**Expected output for the example:**
+
+```
+Maximum flow value = 23
+Flow per original edge (in input order):
+  (0 -> 1, cap=16) : flow = 12
+  (0 -> 2, cap=13) : flow = 11
+  (1 -> 2, cap=10) : flow = 0
+  (2 -> 1, cap=4)  : flow = 0
+  (1 -> 3, cap=12) : flow = 12
+  (3 -> 2, cap=9)  : flow = 0
+  (2 -> 4, cap=14) : flow = 11
+  (4 -> 3, cap=7)  : flow = 7
+  (3 -> 5, cap=20) : flow = 19
+  (4 -> 5, cap=4)  : flow = 4
+```
+
+(Any valid max flow may differ; Dinic's deterministic ordering yields a specific one. The total `23` matches the known max for this network.)
+
+## Correctness Notes
+
+- **Residual pairing via XOR (`eid ^ 1`):** ensures forward/reverse arcs are always adjacent in the `to`/`cap` arrays, so recovering the flow on original edge `i` is simply `cap[2*i + 1]` (residual capacity of its reverse arc).
+- **Current-arc (`it`) optimization:** each edge in a level graph is scanned at most once per phase, guaranteeing blocking-flow time `O(V·E)` per phase.
+- **BFS reset:** `level` is reset each phase so only shortest augmenting paths in the current residual graph are used.
+- **Termination:** when `t` is unreachable in the residual graph, no augmenting path exists, so by max-flow/min-cut the flow is maximum.

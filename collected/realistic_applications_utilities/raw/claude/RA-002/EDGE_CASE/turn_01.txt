@@ -1,0 +1,85 @@
+```python
+def inventory_utility(records, reorder_levels):
+    # Handle empty input
+    if not records or not reorder_levels:
+        return {"inventory": [], "low_stock": []}
+
+    inventory = {}
+
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+
+        sku = record.get("sku")
+        quantity = record.get("quantity")
+
+        # Invalid SKU
+        if not isinstance(sku, str) or not sku.strip():
+            continue
+
+        # Invalid quantity
+        if (
+            not isinstance(quantity, (int, float))
+            or isinstance(quantity, bool)
+            or quantity < 0
+        ):
+            continue
+
+        sku = sku.strip()
+
+        # Unknown SKU
+        if sku not in reorder_levels:
+            continue
+
+        # Duplicate SKU: latest valid record wins
+        inventory[sku] = quantity
+
+    low_stock = []
+
+    for sku, quantity in inventory.items():
+        reorder_level = reorder_levels.get(sku)
+
+        # Valid reorder level only
+        if (
+            not isinstance(reorder_level, (int, float))
+            or isinstance(reorder_level, bool)
+            or reorder_level < 0
+        ):
+            continue
+
+        # Zero stock is valid; boundary is inclusive
+        if quantity <= reorder_level:
+            low_stock.append({
+                "sku": sku,
+                "quantity": quantity,
+                "reorder_level": reorder_level
+            })
+
+    return {
+        "inventory": [
+            {"sku": sku, "quantity": quantity}
+            for sku, quantity in inventory.items()
+        ],
+        "low_stock": low_stock
+    }
+
+
+# Tests
+print(inventory_utility([], {}))  # Empty data
+
+records = [
+    {"sku": "A101", "quantity": 10},
+    {"sku": "B202", "quantity": 0},   # Zero stock
+    {"sku": "C303", "quantity": 5},   # Exactly reorder level
+    {"sku": "A101", "quantity": 4},   # Duplicate -> latest wins
+    {"sku": "X999", "quantity": 10}   # Unknown SKU
+]
+
+reorder_levels = {
+    "A101": 4,
+    "B202": 3,
+    "C303": 5
+}
+
+print(inventory_utility(records, reorder_levels))
+```

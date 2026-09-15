@@ -1,0 +1,61 @@
+```python
+import csv
+import re
+import sys
+
+
+def normalize_email(email):
+    return email.strip().lower()
+
+
+def normalize_phone(phone):
+    return re.sub(r"\D", "", phone)
+
+
+def completeness(record):
+    return sum(1 for value in record.values() if value.strip())
+
+
+def main():
+    input_file = "customers.csv"
+    output_file = "normalized_customers.csv"
+
+    groups = {}
+
+    with open(input_file, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+
+        for row_number, row in enumerate(reader):
+            email = normalize_email(row.get("email", ""))
+            phone = normalize_phone(row.get("phone", ""))
+
+            row["email"] = email
+            row["phone"] = phone
+
+            if email not in groups:
+                groups[email] = []
+
+            groups[email].append((row_number, row))
+
+    selected = []
+
+    for email, records in groups.items():
+        best = max(
+            records,
+            key=lambda item: (completeness(item[1]), -item[0])
+        )
+        selected.append(best[1])
+
+    selected.sort(key=lambda row: row.get("email", ""))
+
+    fieldnames = list(selected[0].keys()) if selected else []
+
+    with open(output_file, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(selected)
+
+
+if __name__ == "__main__":
+    main()
+```

@@ -1,0 +1,57 @@
+Here’s a standard Pillow-based implementation of **average hash (aHash)**. It converts the image to grayscale, resizes it to `hash_size × hash_size`, compares each pixel to the **mean pixel value**, and returns a binary hash.
+
+```python
+from PIL import Image
+
+
+def compute_ahash(image_path, hash_size=8):
+    """
+    Compute the classic average hash (aHash) of an image.
+
+    Parameters:
+        image_path (str): Path to the image file.
+        hash_size (int): Size of the hash grid (default: 8).
+
+    Returns:
+        str: Binary hash string of length hash_size * hash_size.
+    """
+    if not isinstance(hash_size, int) or hash_size <= 0:
+        raise ValueError("hash_size must be a positive integer")
+
+    with Image.open(image_path) as img:
+        # Convert to grayscale and resize.
+        gray = img.convert("L").resize((hash_size, hash_size))
+
+        # Get grayscale pixel values.
+        pixels = list(gray.getdata())
+
+        # Calculate the average pixel value.
+        average = sum(pixels) / len(pixels)
+
+        # Build binary hash:
+        # 1 if pixel >= average, otherwise 0.
+        return "".join("1" if pixel >= average else "0"
+                       for pixel in pixels)
+
+
+def hamming_distance(hash_a, hash_b):
+    """
+    Calculate the Hamming distance between two binary hashes.
+
+    Parameters:
+        hash_a (str): First binary hash.
+        hash_b (str): Second binary hash.
+
+    Returns:
+        int: Number of differing bits.
+    """
+    if len(hash_a) != len(hash_b):
+        raise ValueError("Hashes must have the same length")
+
+    if any(bit not in "01" for bit in hash_a + hash_b):
+        raise ValueError("Hashes must contain only '0' and '1'")
+
+    return sum(a != b for a, b in zip(hash_a, hash_b))
+```
+
+For an `8 × 8` hash, the result contains **64 bits**. A Hamming distance of `0` means the hashes are identical; larger distances indicate greater perceptual difference.

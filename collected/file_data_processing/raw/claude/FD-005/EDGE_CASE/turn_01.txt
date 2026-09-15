@@ -1,0 +1,60 @@
+```python
+import csv
+import sys
+
+def sort_csv_log(input_path, output_path,
+                  timestamp_field="timestamp",
+                  severity_field="severity",
+                  severity_order=None):
+    # Higher number = higher priority when sorting "severity descending"
+    if severity_order is None:
+        severity_order = {
+            "CRITICAL": 5,
+            "ERROR": 4,
+            "WARNING": 3,
+            "INFO": 2,
+            "DEBUG": 1,
+        }
+
+    with open(input_path, newline="", encoding="utf-8") as infile:
+        reader = csv.DictReader(infile)
+        fieldnames = reader.fieldnames
+        rows = list(reader)
+
+    # Assign zero-based sequence numbers
+    for idx, row in enumerate(rows):
+        row["_seq"] = idx
+
+    def sort_key(row):
+        timestamp = row.get(timestamp_field, "")
+        severity_raw = (row.get(severity_field, "") or "").strip().upper()
+        severity_rank = severity_order.get(severity_raw, 0)
+        return (
+            timestamp,            # ascending
+            -severity_rank,       # descending (via negation)
+            row["_seq"],          # ascending, stable tiebreaker
+        )
+
+    rows.sort(key=sort_key)
+
+    for row in rows:
+        del row["_seq"]
+
+    with open(output_path, "w", newline="", encoding="utf-8") as outfile:
+        writer = csv.DictWriter(
+            outfile,
+            fieldnames=fieldnames,
+            quoting=csv.QUOTE_MINIMAL,
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: python sort_csv_log.py <input.csv> <output.csv>")
+        sys.exit(1)
+
+    sort_csv_log(sys.argv[1], sys.argv[2])
+```

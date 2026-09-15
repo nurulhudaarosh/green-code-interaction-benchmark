@@ -1,0 +1,50 @@
+def min_coin_combination(coins, target):
+    """
+    Returns (min_coins, combination) where:
+    - min_coins: minimum number of coins needed to make target, or -1 if impossible
+    - combination: list of coin values achieving that minimum, or [] if impossible
+    
+    Coins may be reused unlimited times.
+    Deterministic tie-breaking: prefers coins appearing earlier in the input list.
+    Uses 1D unbounded coin-change DP with deterministic reconstruction.
+    """
+    # Edge cases
+    if target < 0:
+        return -1, []
+    if target == 0:
+        return 0, []
+
+    # Filter coins that could potentially be used
+    useful_coins = [c for c in coins if c <= target]
+    if not useful_coins:
+        return -1, []
+
+    INF = float('inf')
+    dp = [INF] * (target + 1)
+    dp[0] = 0
+
+    # 1D unbounded coin-change DP
+    # Using <= ensures deterministic tie-breaking: first coin in list wins
+    for coin in useful_coins:
+        for amt in range(coin, target + 1):
+            if dp[amt - coin] + 1 <= dp[amt]:
+                dp[amt] = dp[amt - coin] + 1
+
+    # If target is unreachable
+    if dp[target] == INF:
+        return -1, []
+
+    # Deterministic reconstruction
+    combination = []
+    remaining = target
+    while remaining > 0:
+        for coin in useful_coins:
+            if remaining >= coin and dp[remaining] == dp[remaining - coin] + 1:
+                combination.append(coin)
+                remaining -= coin
+                break
+        else:
+            # Safety guard - should never happen with correct DP
+            raise RuntimeError("Reconstruction failed: inconsistent DP state")
+
+    return dp[target], combination

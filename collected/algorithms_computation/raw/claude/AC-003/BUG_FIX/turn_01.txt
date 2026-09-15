@@ -1,0 +1,218 @@
+```python
+"""
+Single-Source Shortest Path on a Directed Weighted Graph
+==========================================================
+
+PROBLEM
+-------
+Given a directed graph with non-negative edge weights and a source
+vertex, compute the shortest distance from the source to every vertex
+in the graph. If a vertex is not reachable from the source, its
+distance should be reported as -1.
+
+KEY CONSTRAINTS
+----------------
+1. The graph is directed: an edge (u, v, w) allows travel from u to v
+   only (not v to u), with cost w.
+2. All edge weights are non-negative (w >= 0). This is what makes
+   Dijkstra's algorithm valid (a negative edge could invalidate the
+   greedy "settle the closest vertex" property).
+3. There may be multiple edges between the same pair of vertices
+   (parallel edges) and self-loops; the algorithm must still work
+   correctly (it naturally picks the minimum-cost option).
+4. Vertices unreachable from the source must be reported with
+   distance -1, not "infinity" or an error.
+5. The algorithm must be deterministic: given the same graph and
+   source, it always produces the same output, with no reliance on
+   randomness, wall-clock time, network access, or external services.
+
+REQUIRED OUTPUT
+----------------
+A mapping (dictionary) from every vertex in the graph to the length
+of the shortest path from the source to that vertex, using -1 for
+vertices that cannot be reached from the source. The source vertex's
+distance to itself is 0.
+
+ALGORITHM
+---------
+We use Dijkstra's algorithm with a binary min-heap (Python's `heapq`):
+
+1. Build an adjacency list: for each vertex u, store a list of
+   (v, w) pairs representing directed edges u -> v with weight w.
+2. Initialize distances: dist[source] = 0, dist[v] = infinity for
+   all other vertices.
+3. Use a min-heap of (distance, vertex) pairs, starting with
+   (0, source). Also keep a `visited`/`finalized` set.
+4. Repeatedly pop the minimum-distance entry from the heap. If the
+   vertex has already been finalized (a stale heap entry, since we
+   don't support decrease-key directly in `heapq`), skip it.
+   Otherwise, finalize it, and relax all of its outgoing edges:
+   for each neighbor v with weight w, if dist[u] + w < dist[v],
+   update dist[v] and push (dist[v], v) onto the heap.
+5. When the heap is empty, every reachable vertex has been finalized
+   with its true shortest distance. Any vertex still at infinity is
+   unreachable, so its result is reported as -1.
+
+Complexity: O((V + E) log V) with a binary heap, using adjacency
+lists for O(1) amortized access to a vertex's outgoing edges.
+
+Ties in the heap are broken deterministically because Python's
+`heapq` compares tuples element-wise: equal distances fall back to
+comparing the vertex label itself, so behavior does not depend on
+insertion order or hashing, keeping the algorithm fully deterministic.
+"""
+
+import heapq
+from typing import Dict, Hashable, Iterable, List, Tuple
+
+Vertex = Hashable
+Edge = Tuple[Vertex, Vertex, float]
+
+
+def build_adjacency_list(
+    vertices: Iterable[Vertex], edges: Iterable[Edge]
+) -> Dict[Vertex, List[Tuple[Vertex, float]]]:
+    """
+    Build a directed adjacency list from a list of vertices and edges.
+
+    Args:
+        vertices: an iterable of all vertex labels in the graph.
+        edges: an iterable of (u, v, w) tuples meaning a directed
+            edge from u to v with non-negative weight w.
+
+    Returns:
+        A dict mapping each vertex to a list of (neighbor, weight)
+        pairs representing its outgoing edges.
+
+    Raises:
+        ValueError: if any edge weight is negative.
+    """
+    adj: Dict[Vertex, List[Tuple[Vertex, float]]] = {v: [] for v in vertices}
+
+    for (u, v, w) in edges:
+        if w < 0:
+            raise ValueError(
+                f"Negative edge weight ({w}) on edge ({u} -> {v}) is not "
+                "allowed: Dijkstra's algorithm requires non-negative weights."
+            )
+        # Ensure both endpoints exist as keys, even if not in `vertices`.
+        adj.setdefault(u, [])
+        adj.setdefault(v, [])
+        adj[u].append((v, w))
+
+    return adj
+
+
+def dijkstra(
+    adj: Dict[Vertex, List[Tuple[Vertex, float]]], source: Vertex
+) -> Dict[Vertex, float]:
+    """
+    Run Dijkstra's algorithm with a binary heap on a directed graph
+    with non-negative edge weights.
+
+    Args:
+        adj: adjacency list, mapping each vertex to a list of
+            (neighbor, weight) pairs.
+        source: the vertex to compute shortest distances from.
+
+    Returns:
+        A dict mapping each vertex present in `adj` to the shortest
+        distance from `source`, using -1 for unreachable vertices.
+        The source itself maps to 0.
+
+    Raises:
+        ValueError: if `source` is not a vertex in `adj`.
+    """
+    if source not in adj:
+        raise ValueError(f"Source vertex {source!r} is not in the graph.")
+
+    INF = float("inf")
+    dist: Dict[Vertex, float] = {v: INF for v in adj}
+    dist[source] = 0
+
+    finalized = set()
+    # Min-heap of (distance, vertex). Tuple comparison falls back to
+    # comparing vertices on ties, which requires vertices to be
+    # mutually comparable OR simply never actually gets compared
+    # because heapq only compares the second element when the first
+    # elements are equal AND it needs to break the tie -- to avoid
+    # relying on vertex comparability (e.g. mixed types), we instead
+    # use a stable tie-breaker: insertion order counter.
+    counter = 0
+    heap: List[Tuple[float, int, Vertex]] = [(0, counter, source)]
+
+    while heap:
+        d, _, u = heapq.heappop(heap)
+
+        if u in finalized:
+            # Stale entry (we already found a better/equal path earlier).
+            continue
+        finalized.add(u)
+
+        for (v, w) in adj.get(u, []):
+            if v in finalized:
+                continue
+            new_dist = d + w
+            if new_dist < dist[v]:
+                dist[v] = new_dist
+                counter += 1
+                heapq.heappush(heap, (new_dist, counter, v))
+
+    # Convert unreachable (still-infinite) distances to -1.
+    result: Dict[Vertex, float] = {
+        v: (-1 if dist[v] == INF else dist[v]) for v in adj
+    }
+    return result
+
+
+def shortest_distances(
+    vertices: Iterable[Vertex], edges: Iterable[Edge], source: Vertex
+) -> Dict[Vertex, float]:
+    """
+    Convenience wrapper: builds the adjacency list and runs Dijkstra.
+
+    Args:
+        vertices: all vertex labels in the graph.
+        edges: (u, v, w) directed, non-negative-weight edges.
+        source: the source vertex.
+
+    Returns:
+        Dict mapping every vertex to its shortest distance from
+        `source`, with -1 for unreachable vertices.
+    """
+    adj = build_adjacency_list(vertices, edges)
+    return dijkstra(adj, source)
+
+
+def _demo() -> None:
+    """Small deterministic self-check / usage example."""
+    vertices = ["A", "B", "C", "D", "E"]
+    edges: List[Edge] = [
+        ("A", "B", 4),
+        ("A", "C", 1),
+        ("C", "B", 2),
+        ("B", "D", 1),
+        ("C", "D", 5),
+        ("D", "E", 3),
+        # "F" is intentionally absent / disconnected to demonstrate -1.
+    ]
+
+    source = "A"
+    result = shortest_distances(vertices, edges, source)
+
+    print(f"Shortest distances from '{source}':")
+    for v in vertices:
+        print(f"  {v}: {result[v]}")
+
+    # Expected: A=0, C=1, B=3 (A->C->B), D=4 (A->C->B->D), E=7
+
+
+if __name__ == "__main__":
+    _demo()
+```
+
+**How it works, in brief:**
+- `build_adjacency_list` turns a vertex/edge list into a directed adjacency list, rejecting negative weights up front since Dijkstra's correctness depends on non-negativity.
+- `dijkstra` runs the classic binary-heap version: pop the closest unfinalized vertex, relax its outgoing edges, push improved distances back onto the heap, and skip stale heap entries. A monotonically increasing counter breaks ties in the heap so behavior never depends on vertex type or hashing — keeping it fully deterministic.
+- Any vertex still at infinite distance after the heap empties is unreachable and gets mapped to `-1` in the final result.
+- `shortest_distances` is the one-call entry point; `_demo()` shows example usage and expected output when run directly.

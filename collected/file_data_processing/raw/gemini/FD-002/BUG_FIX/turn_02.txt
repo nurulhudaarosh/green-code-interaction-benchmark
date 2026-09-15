@@ -1,0 +1,100 @@
+```python
+import json
+from collections import defaultdict
+
+
+def analyze_ndjson(input_filepath, output_filepath):
+    user_stats = defaultdict(
+        lambda: {"requests": 0, "errors": 0, "total_latency": 0.0, "endpoints": defaultdict(int)}
+    )
+
+    malformed_count = 0
+
+    with open(input_filepath, "r", encoding="utf-8") as infile:
+        for line in infile:
+            line = line.strip()
+            if not line:
+                continue
+
+            # Skip malformed lines and track count
+            try:
+                data = json.loads(line)
+            except (json.JSONDecodeError, TypeError):
+                malformed_count += 1
+                continue
+
+            # Validate top-level data structure
+            if not isinstance(data, dict):
+                malformed_count += 1
+                continue
+
+            user_data = data.get("user")
+            request_data = data.get("request")
+
+            if not isinstance(user_data, dict) or not isinstance(request_data, dict):
+                malformed_count += 1
+                continue
+
+            user_id = user_data.get("id")
+            endpoint = request_data.get("endpoint")
+            status = request_data.get("status")
+            latency = request_data.get("latency")
+
+            # Validate required field presence
+            if user_id is None or endpoint is None or status is None or latency is None:
+                malformed_count += 1
+                continue
+
+            # Validate data types
+            try:
+                status = int(status)
+                latency = float(latency)
+                user_id = str(user_id)
+                endpoint = str(endpoint)
+            except (ValueError, TypeError):
+                malformed_count += 1
+                continue
+
+            # Record valid entry statistics
+            stats = user_stats[user_id]
+            stats["requests"] += 1
+            if status >= 400:
+                stats["errors"] += 1
+            stats["total_latency"] += latency
+            stats["endpoints"][endpoint] += 1
+
+    formatted_users = []
+
+    # Process aggregated stats deterministically sorted by user_id
+    for user_id in sorted(user_stats.keys()):
+        stats = user_stats[user_id]
+        total_requests = stats["requests"]
+        avg_latency = stats["total_latency"] / total_requests if total_requests > 0 else 0.0
+
+        # Most requested endpoint with alphabetical tie-breaking
+        most_requested_endpoint = min(
+            stats["endpoints"].items(), key=lambda item: (-item[1], item[0])
+        )[0]
+
+        formatted_users.append(
+            {
+                "user_id": user_id,
+                "total_requests": total_requests,
+                "error_count": stats["errors"],
+                "average_latency": round(avg_latency, 4),
+                "most_requested_endpoint": most_requested_endpoint,
+            }
+        )
+
+    output_data = {"malformed_lines": malformed_count, "users": formatted_users}
+
+    with open(output_filepath, "w", encoding="utf-8") as outfile:
+        json.dump(output_data, outfile, indent=2, sort_keys=False)
+
+
+if __name__ == "__main__":
+    input_file = "input.ndjson"
+    output_file = "summary.json"
+    analyze_ndjson(input_file, output_file)
+
+```

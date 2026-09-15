@@ -1,0 +1,116 @@
+### Problem Statement
+
+The problem is the **Weighted Interval Scheduling Problem**. You are given $n$ jobs, where each job $i$ has a start time $s_i$, a finish time $f_i$, and a profit $p_i$. The objective is to select a subset of mutually compatible (non-overlapping) jobs that maximizes total profit.
+
+Two jobs $i$ and $j$ are compatible if they do not overlap; jobs touching at endpoints ($f_i \le s_j$ or $f_j \le s_i$) are considered compatible. If multiple job subsets achieve the same maximum profit, the tie is broken lexicographically by choosing the subset with the smallest sequence of original 0-based job indices.
+
+### Key Constraints & Required Output
+
+* **Time Compatibility:** $f_i \le s_j$ or $f_j \le s_i$.
+* **Original Indexing:** Input order defines original indices $0, 1, \dots, n-1$.
+* **Tie-Breaking:** If total profits are equal, favor the subset whose chosen original index sequence is lexicographically smaller.
+* **Output:** A tuple/struct containing:
+1. `max_profit`: The maximum achievable total profit.
+2. `selected_jobs`: A sorted list of original job indices included in the optimal solution.
+
+
+
+### Algorithm Description
+
+1. **Sort:** Sort all jobs primarily by their finish time $f_i$ ascending, and secondarily by their start time $s_i$ ascending and original index ascending.
+2. **Predecessors (Binary Search):** For each sorted job $i$, find the latest preceding job $p(i)$ such that $f_{p(i)} \le s_i$ using binary search (`bisect_right`).
+3. **Dynamic Programming:**
+* Let $\text{dp}[i]$ store the tuple `(max_profit, lexicographically_smallest_index_sequence)` considering a subset of the first $i$ sorted jobs.
+* Base Case: $\text{dp}[0] = (0, [])$.
+* Transitions for job $i$ (1-indexed in DP):
+* **Exclude job $i$:** `dp[i - 1]`
+* **Include job $i$:** `(dp[p(i)][0] + profit_i, sorted(dp[p(i)][1] + [original_index_i]))`
+
+
+* Select the choice that maximizes profit. If profits are equal, select the option with the lexicographically smaller sequence of original indices.
+
+
+
+---
+
+### Python Implementation
+
+```python
+from bisect import bisect_right
+from typing import List, Tuple, Dict, Any
+
+def max_profit_weighted_interval_scheduling(jobs: List[Dict[str, int]]) -> Tuple[int, List[int]]:
+    """
+    Solves the Weighted Interval Scheduling problem with deterministic tie-breaking.
+    
+    :param jobs: List of dicts, each with 'start', 'finish', and 'profit'.
+    :return: Tuple containing (max_profit, list_of_selected_original_indices)
+    """
+    if not jobs:
+        return 0, []
+
+    # Attach original index to each job
+    indexed_jobs = []
+    for orig_idx, job in enumerate(jobs):
+        indexed_jobs.append({
+            'start': job['start'],
+            'finish': job['finish'],
+            'profit': job['profit'],
+            'orig_idx': orig_idx
+        })
+
+    # Sort primarily by finish time, secondarily by start time and original index
+    indexed_jobs.sort(key=lambda j: (j['finish'], j['start'], j['orig_idx']))
+    
+    n = len(indexed_jobs)
+    finish_times = [j['finish'] for j in indexed_jobs]
+
+    # dp[i] = (max_profit, selected_orig_indices_list) for considering first i sorted jobs
+    dp: List[Tuple[int, List[int]]] = [(0, [])] * (n + 1)
+
+    for i in range(1, n + 1):
+        current_job = indexed_jobs[i - 1]
+        
+        # Binary search for the latest job that finishes <= current_job['start']
+        # bisect_right returns index in finish_times where current_job['start'] can be inserted
+        pred_idx = bisect_right(finish_times, current_job['start'])
+
+        # Option 1: Exclude the current job
+        profit_exclude, seq_exclude = dp[i - 1]
+
+        # Option 2: Include the current job
+        profit_pred, seq_pred = dp[pred_idx]
+        profit_include = profit_pred + current_job['profit']
+        
+        # Maintain sorted order of original indices for deterministic comparison
+        seq_include = sorted(seq_pred + [current_job['orig_idx']])
+
+        # Compare options: Maximize profit, break ties with lexicographically smaller index list
+        if profit_include > profit_exclude:
+            dp[i] = (profit_include, seq_include)
+        elif profit_exclude > profit_include:
+            dp[i] = (profit_exclude, seq_exclude)
+        else:
+            # Profits are equal -> pick lexicographically smaller original index sequence
+            if seq_include < seq_exclude:
+                dp[i] = (profit_include, seq_include)
+            else:
+                dp[i] = (profit_exclude, seq_exclude)
+
+    return dp[n]
+
+
+# Example Usage
+if __name__ == "__main__":
+    job_list = [
+        {"start": 1, "finish": 3, "profit": 50},  # Index 0
+        {"start": 2, "finish": 5, "profit": 20},  # Index 1
+        {"start": 3, "finish": 6, "profit": 100}, # Index 2
+        {"start": 6, "finish": 9, "profit": 60}   # Index 3
+    ]
+
+    max_profit, selected_indices = max_profit_weighted_interval_scheduling(job_list)
+    print(f"Maximum Profit: {max_profit}")
+    print(f"Selected Job Indices: {selected_indices}")
+
+```

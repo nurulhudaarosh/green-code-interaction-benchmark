@@ -9,6 +9,7 @@
     "realistic_applications_utilities"
   ],
   "tasks_per_category": 20,
+  "max_tasks_per_category": 25,
   "interaction_conditions": [
     "ONE_SHOT",
     "BUG_FIX",

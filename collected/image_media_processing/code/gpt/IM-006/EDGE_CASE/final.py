@@ -1,0 +1,40 @@
+import os
+from PIL import Image
+
+
+def extract_metadata(input_dir):
+    metadata = []
+
+    for filename in sorted(os.listdir(input_dir)):
+        path = os.path.join(input_dir, filename)
+
+        if not os.path.isfile(path):
+            continue
+
+        file_size = os.path.getsize(path)
+
+        try:
+            if file_size == 0:
+                raise OSError("Zero-byte image file")
+
+            with Image.open(path) as img:
+                img.verify()
+
+            with Image.open(path) as img:
+                metadata.append({
+                    "filename": filename,
+                    "format": img.format,
+                    "mode": img.mode,
+                    "width": img.width,
+                    "height": img.height,
+                    "file_size_bytes": file_size,
+                    "error": False,
+                })
+
+        except (OSError, ValueError):
+            metadata.append({
+                "filename": filename,
+                "error": True,
+            })
+
+    return sorted(metadata, key=lambda x: x["filename"])

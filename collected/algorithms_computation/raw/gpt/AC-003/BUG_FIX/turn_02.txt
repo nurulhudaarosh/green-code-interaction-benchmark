@@ -1,0 +1,180 @@
+The bug is mainly about **deterministic tie handling**. Dijkstra must return the required shortest distances, and when multiple heap entries have the same distance, processing should be deterministic. The corrected implementation below keeps the original requirements unchanged: directed graph, non-negative weights, adjacency lists, binary heap, and `-1` for unreachable vertices.
+
+### Problem restatement
+
+**Single-Source Route Analyzer** receives a directed graph with non-negative edge weights and one source vertex. It must compute the shortest distance from the source to every vertex.
+
+Expected behavior:
+
+* `distance[source] = 0`
+* Return the minimum total weight from the source to every reachable vertex.
+* Return `-1` for unreachable vertices.
+* Use an **adjacency list**.
+* Use **Dijkstra's algorithm with a binary heap**.
+* Results must be deterministic.
+* Do not change unrelated input/output requirements.
+
+### Small defect example
+
+Consider:
+
+```text
+4 4
+0 1 1
+0 2 1
+1 3 1
+2 3 1
+0
+```
+
+There are two equally short routes from `0` to `3`:
+
+```text
+0 -> 1 -> 3 = 2
+0 -> 2 -> 3 = 2
+```
+
+A correct distance result is:
+
+```text
+0 1 1 2
+```
+
+The important deterministic rule is that equal-priority heap entries must have a defined ordering. Using only an unordered structure for pending vertices, or relying on incidental adjacency/insertion behavior, can make equal-distance processing depend on input/order details. The fix is to use heap entries as `(distance, vertex)`, so Python's binary heap deterministically uses the vertex ID as the tie-breaker.
+
+### Corrected single-file implementation
+
+```python
+"""
+Single-Source Route Analyzer
+
+Problem:
+Given a directed graph with non-negative edge weights and a source vertex,
+compute the shortest distance from the source to every vertex.
+
+Expected behavior:
+- Vertices are numbered 0 through n-1.
+- The graph is directed.
+- Edge weights are non-negative.
+- The source has distance 0.
+- Unreachable vertices have distance -1.
+- Use an adjacency list.
+- Use Dijkstra's algorithm with a binary heap.
+- Equal-distance heap entries are handled deterministically by vertex ID.
+- Return exactly the required list of distances.
+
+Input format:
+    n m
+    u v w
+    u v w
+    ...
+    source
+
+Output format:
+    n space-separated shortest distances.
+
+Example:
+Input:
+    4 4
+    0 1 1
+    0 2 1
+    1 3 1
+    2 3 1
+    0
+
+Output:
+    0 1 1 2
+"""
+
+import sys
+import heapq
+
+
+def dijkstra(n, edges, source):
+    """Compute shortest distances from source using Dijkstra's algorithm."""
+
+    # Build adjacency list.
+    graph = [[] for _ in range(n)]
+
+    for u, v, weight in edges:
+        graph[u].append((v, weight))
+
+    # Sort neighbors so equal-distance relaxation order is deterministic.
+    for neighbors in graph:
+        neighbors.sort(key=lambda item: (item[0], item[1]))
+
+    INF = float("inf")
+    distances = [INF] * n
+    distances[source] = 0
+
+    # (distance, vertex)
+    #
+    # The vertex ID is the deterministic tie-breaker when two vertices
+    # have the same tentative distance.
+    heap = [(0, source)]
+
+    while heap:
+        current_distance, u = heapq.heappop(heap)
+
+        # Ignore stale entries.
+        if current_distance != distances[u]:
+            continue
+
+        for v, weight in graph[u]:
+            new_distance = current_distance + weight
+
+            if new_distance < distances[v]:
+                distances[v] = new_distance
+                heapq.heappush(heap, (new_distance, v))
+
+    return [
+        -1 if distance == INF else distance
+        for distance in distances
+    ]
+
+
+def solve():
+    data = sys.stdin.buffer.read().split()
+
+    if not data:
+        return
+
+    pos = 0
+
+    n = int(data[pos])
+    pos += 1
+
+    m = int(data[pos])
+    pos += 1
+
+    edges = []
+
+    for _ in range(m):
+        u = int(data[pos])
+        v = int(data[pos + 1])
+        weight = int(data[pos + 2])
+        pos += 3
+
+        if not (0 <= u < n and 0 <= v < n):
+            raise ValueError("Vertex out of range.")
+
+        if weight < 0:
+            raise ValueError("Edge weights must be non-negative.")
+
+        edges.append((u, v, weight))
+
+    source = int(data[pos])
+
+    if not (0 <= source < n):
+        raise ValueError("Source vertex out of range.")
+
+    result = dijkstra(n, edges, source)
+
+    sys.stdout.write(" ".join(map(str, result)))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+**What changed:** only the tie-handling behavior was made explicit and deterministic by using `(distance, vertex)` heap entries and deterministic adjacency ordering. The required result, Dijkstra approach, adjacency-list representation, input/output behavior, and unreachable-vertex handling remain unchanged.

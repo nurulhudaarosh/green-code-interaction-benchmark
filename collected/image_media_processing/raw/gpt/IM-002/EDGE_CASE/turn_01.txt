@@ -1,0 +1,48 @@
+```python
+from pathlib import Path
+from PIL import Image
+
+def generate_thumbnails(input_dir, cache_dir, max_dim=128):
+    """
+    Recursively generate aspect-ratio-preserving thumbnails.
+
+    The output directory mirrors the input directory tree.
+
+    Args:
+        input_dir: Root directory containing images.
+        cache_dir: Root directory where thumbnails are stored.
+        max_dim: Maximum size of the longest thumbnail side.
+
+    Returns:
+        Number of thumbnails successfully generated.
+    """
+    input_dir = Path(input_dir)
+    cache_dir = Path(cache_dir)
+
+    valid_extensions = {".png", ".jpg", ".jpeg"}
+    processed_count = 0
+
+    for src_path in input_dir.rglob("*"):
+        if not src_path.is_file() or src_path.suffix.lower() not in valid_extensions:
+            continue
+
+        # Mirror the input directory structure.
+        relative_path = src_path.relative_to(input_dir)
+        dst_path = cache_dir / relative_path
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            with Image.open(src_path) as img:
+                # Preserve aspect ratio; longest side will be <= max_dim.
+                thumbnail = img.copy()
+                thumbnail.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+
+                thumbnail.save(dst_path)
+                processed_count += 1
+
+        except (OSError, ValueError):
+            # Skip files that Pillow cannot process.
+            continue
+
+    return processed_count
+```

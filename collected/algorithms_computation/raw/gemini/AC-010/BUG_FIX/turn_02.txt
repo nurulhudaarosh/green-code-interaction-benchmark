@@ -1,0 +1,94 @@
+### Problem & Expected Behavior
+
+The **Matrix Chain Planner** takes a sequence of matrix dimensions $P = [p_0, p_1, \dots, p_n]$ representing $n$ matrices $A_1, A_2, \dots, A_n$ (where $A_i$ has dimensions $p_{i-1} \times p_i$) and determines the optimal multiplication order using interval dynamic programming.
+
+**Expected Behavior:**
+
+1. Compute the exact minimum scalar multiplication cost.
+2. Construct the fully parenthesized string representation of the optimal multiplication order.
+3. **Deterministic Tie-Breaking:** Whenever multiple split choices $k$ ($i \le k < j$) produce the *same minimal cost* for a subchain $A_{i..j}$, the algorithm **must** select the smallest split index $k$.
+
+---
+
+### Bug Demonstration
+
+In the previous implementation, when $n=1$, it returns `"A1"`, but when $n > 1$, subchains build strings without outer parentheses around single matrices (e.g., `(A1A2)` instead of `((A1)(A2))` or standard formatted parenthesizations).
+
+More importantly, let's examine tie-handling and parenthesization formatting. Consider a case with equal dimensions where multiple splits yield identical costs:
+
+Dimensions: $P = [10, 10, 10, 10]$ (3 matrices: $A_1, A_2, A_3$, all $10 \times 10$).
+
+* **Split at $k=1$:** $(A_1)(A_2 A_3) \implies 0 + 1000 + 10 \cdot 10 \cdot 10 = 2000$ operations.
+* **Split at $k=2$:** $(A_1 A_2)(A_3) \implies 1000 + 0 + 10 \cdot 10 \cdot 10 = 2000$ operations.
+
+Both splits result in a cost of **2000**. The rule explicitly dictates choosing the **smallest split index $k$**, which is $k=1$.
+
+If an implementation incorrectly uses `<=` instead of `<`, or handles indexing/string formatting inconsistently, it could select $k=2$ or output an improperly formatted string structure.
+
+---
+
+### Corrected Implementation
+
+Here is the robust, fully self-contained Python solution using interval dynamic programming. It guarantees that the strict inequality (`cost < min_cost`) retains the smallest split index $k$ during ascending traversal.
+
+```python
+def matrix_chain_order(p: list[int]) -> tuple[int, str]:
+    """
+    Computes the minimum scalar multiplication cost and optimal parenthesization
+    for a chain of matrices with dimensions p = [p0, p1, ..., pn].
+    
+    Tie-breaking rule: Strictly prefers the smallest split index k upon equal costs.
+    """
+    n = len(p) - 1
+    if n <= 0:
+        return 0, ""
+    if n == 1:
+        return 0, "A1"
+
+    # m[i][j]: minimum cost to multiply A_i...A_j (1-indexed)
+    # s[i][j]: optimal split index k for subchain A_i...A_j
+    m = [[0] * (n + 1) for _ in range(n + 1)]
+    s = [[0] * (n + 1) for _ in range(n + 1)]
+
+    # L is the chain length (from 2 up to n)
+    for L in range(2, n + 1):
+        for i in range(1, n - L + 2):
+            j = i + L - 1
+            m[i][j] = float('inf')
+            
+            # Iterate split index k in strictly ascending order: i <= k < j
+            for k in range(i, j):
+                cost = m[i][k] + m[k + 1][j] + p[i - 1] * p[k] * p[j]
+                
+                # Strict '<' guarantees that if cost == m[i][j], 
+                # the smaller index k already stored in s[i][j] is maintained.
+                if cost < m[i][j]:
+                    m[i][j] = cost
+                    s[i][j] = k
+
+    def build_expression(i: int, j: int) -> str:
+        if i == j:
+            return f"A{i}"
+        k = s[i][j]
+        left_expr = build_expression(i, k)
+        right_expr = build_expression(k + 1, j)
+        return f"({left_expr}{right_expr})"
+
+    min_cost = m[1][n]
+    optimal_parenthesization = build_expression(1, n)
+
+    return min_cost, optimal_parenthesization
+
+
+# Demonstration of deterministic tie-handling
+if __name__ == "__main__":
+    # 3 identical matrices (10x10): k=1 and k=2 both cost 2000.
+    dims = [10, 10, 10, 10]
+    cost, parenthesization = matrix_chain_order(dims)
+    
+    print(f"Dimensions: {dims}")
+    print(f"Minimum Scalar Multiplications: {cost}")
+    print(f"Optimal Parenthesization: {parenthesization}")
+    # Expected Output: (A1(A2A3)) due to choosing k=1 over k=2
+
+```

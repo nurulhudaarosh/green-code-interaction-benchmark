@@ -1,0 +1,90 @@
+```python
+import csv
+import io
+import sys
+
+# Severity hierarchy map for descending sort
+SEVERITY_ORDER = {
+    "CRITICAL": 6,
+    "FATAL": 6,
+    "ERROR": 5,
+    "WARN": 4,
+    "WARNING": 4,
+    "INFO": 3,
+    "DEBUG": 2,
+    "TRACE": 1,
+}
+
+
+def sort_csv_logs(
+    input_source,
+    output_destination,
+    timestamp_col="timestamp",
+    severity_col="severity",
+):
+    """Sorts CSV logs, retains the 0-based sequence number in the output CSV,
+
+    and uses sequence numbers to deterministically break ties.
+
+    Sort order:
+      1. Timestamp (Ascending)
+      2. Severity (Descending)
+      3. Original zero-based sequence number (Ascending)
+    """
+    reader = csv.DictReader(input_source, dialect="excel")
+    fieldnames = reader.fieldnames if reader.fieldnames else []
+
+    # Ensure zero-based sequence column is explicit in fieldnames
+    output_fieldnames = list(fieldnames)
+    if "sequence" not in output_fieldnames:
+        output_fieldnames.append("sequence")
+
+    indexed_rows = []
+    for seq_num, row in enumerate(reader):
+        row["sequence"] = seq_num
+
+        sev_name = str(row.get(severity_col, "")).strip().upper()
+        sev_priority = SEVERITY_ORDER.get(sev_name, 0)
+
+        # Full key tie-breaker using original 0-based sequence number
+        sort_key = (
+            str(row.get(timestamp_col, "")),
+            -sev_priority,
+            seq_num,
+        )
+
+        indexed_rows.append((sort_key, row))
+
+    # Sort using complete tuple key (timestamp, -severity, sequence)
+    indexed_rows.sort(key=lambda x: x[0])
+
+    writer = csv.DictWriter(
+        output_destination,
+        fieldnames=output_fieldnames,
+        dialect="excel",
+        lineterminator="\n",
+        quoting=csv.QUOTE_MINIMAL,
+    )
+
+    writer.writeheader()
+    for _, row in indexed_rows:
+        writer.writerow(row)
+
+
+if __name__ == "__main__":
+    # Test dataset demonstrating sequence inclusion and exact duplicate key handling
+    sample_data = (
+        'timestamp,severity,message\n'
+        '2026-09-12T10:00:00,INFO,"First message, row 0"\n'
+        '2026-09-12T10:00:00,ERROR,"Error message A, row 1"\n'
+        '2026-09-12T10:00:00,ERROR,"Identical tie (timestamp/severity), row 2"\n'
+        '2026-09-12T08:00:00,WARNING,"Early log, contains commas, quotes ""test"", row 3"\n'
+    )
+
+    input_buf = io.StringIO(sample_data)
+    output_buf = io.StringIO()
+
+    sort_csv_logs(input_buf, output_buf)
+    print(output_buf.getvalue())
+
+```

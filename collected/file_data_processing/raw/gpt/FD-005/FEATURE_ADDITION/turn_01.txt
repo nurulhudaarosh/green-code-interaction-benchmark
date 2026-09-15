@@ -1,0 +1,80 @@
+```python
+import csv
+import sys
+from datetime import datetime
+
+
+def parse_timestamp(value):
+    try:
+        return datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return value.strip()
+
+
+def severity_rank(value):
+    ranks = {
+        "CRITICAL": 4,
+        "ERROR": 3,
+        "WARNING": 2,
+        "WARN": 2,
+        "INFO": 1,
+        "DEBUG": 0
+    }
+    return ranks.get(value.strip().upper(), -1)
+
+
+def main():
+    if len(sys.argv) != 3:
+        print("Usage: python log_sorter.py input.csv output.csv")
+        return
+
+    input_file = sys.argv[1]
+    output_file = sys.argv[2]
+
+    rows = []
+
+    with open(input_file, "r", newline="", encoding="utf-8") as file:
+        reader = csv.DictReader(file)
+
+        if not reader.fieldnames:
+            return
+
+        for sequence, row in enumerate(reader):
+            row["_sequence"] = sequence
+            rows.append(row)
+
+    if not rows:
+        with open(output_file, "w", newline="", encoding="utf-8") as file:
+            writer = csv.DictWriter(file, fieldnames=reader.fieldnames)
+            writer.writeheader()
+        return
+
+    timestamp_field = "timestamp"
+    severity_field = "severity"
+
+    rows.sort(
+        key=lambda row: (
+            parse_timestamp(row.get(timestamp_field, "")),
+            -severity_rank(row.get(severity_field, "")),
+            row["_sequence"]
+        )
+    )
+
+    fieldnames = reader.fieldnames
+
+    with open(output_file, "w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(
+            file,
+            fieldnames=fieldnames,
+            quoting=csv.QUOTE_MINIMAL,
+            lineterminator="\n"
+        )
+        writer.writeheader()
+
+        for row in rows:
+            writer.writerow({field: row.get(field, "") for field in fieldnames})
+
+
+if __name__ == "__main__":
+    main()
+```

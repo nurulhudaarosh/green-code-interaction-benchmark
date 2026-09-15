@@ -1,0 +1,95 @@
+### Problem Identification & Analysis
+
+Given two strings $S_1$ and $S_2$, we need to find:
+
+1. The length of their Longest Common Subsequence (LCS).
+2. A single reconstructed LCS string generated using a deterministic tie-breaking rule when DP scores are equal. Specifically, when $S_1[i-1] \neq S_2[j-1]$ and $DP[i-1][j] == DP[i][j-1]$, the reconstruction preference is to advance in $S_1$ (which corresponds to moving up in the DP grid to state $(i-1, j)$).
+
+### Key Constraints & Requirements
+
+* **Time Complexity:** $\mathcal{O}(\vert{}S_1\vert{} \cdot \vert{}S_2\vert{})$ time using quadratic dynamic programming.
+* **Space Complexity:** $\mathcal{O}(\vert{}S_1\vert{} \cdot \vert{}S_2\vert{})$ space to store the full DP table for path reconstruction.
+* **Tie-Breaking Rule:**
+* If $S_1[i-1] == S_2[j-1]$, match the character and move to $(i-1, j-1)$.
+* If $S_1[i-1] \neq S_2[j-1]$:
+* If $DP[i-1][j] > DP[i][j-1]$, move to $(i-1, j)$.
+* If $DP[i][j-1] > DP[i-1][j]$, move to $(i, j-1)$.
+* If $DP[i-1][j] == DP[i][j-1]$, **prefer advancing in $S_1$**, moving to $(i-1, j)$.
+
+
+
+
+* **Output:** A tuple `(lcs_length, lcs_string)`.
+
+---
+
+### Algorithm Description
+
+1. **DP Table Construction:**
+Define $DP[i][j]$ as the length of the LCS of prefixes $S_1[0 \dots i-1]$ and $S_2[0 \dots j-1]$.
+* If $S_1[i-1] == S_2[j-1]$: $DP[i][j] = 1 + DP[i-1][j-1]$
+* Else: $DP[i][j] = \max(DP[i-1][j], DP[i][j-1])$
+
+
+2. **Predecessor Reconstruction:**
+Start at $(i, j) = (\vert{}S_1\vert{}, \vert{}S_2\vert{})$ and backtrack:
+* If $S_1[i-1] == S_2[j-1]$, append $S_1[i-1]$ to our result sequence and move to $(i-1, j-1)$.
+* Else if $DP[i-1][j] \ge DP[i][j-1]$, move to $(i-1, j)$ (enforcing the preference to advance in $S_1$ on ties).
+* Else, move to $(i, j-1)$.
+* Reverse the collected characters at the end.
+
+
+
+---
+
+### Python Implementation
+
+```python
+def lcs_with_reconstruction(s1: str, s2: str) -> tuple[int, str]:
+    """
+    Computes the LCS length and reconstructs the LCS string deterministically.
+    Prefers advancing in s1 when DP scores are equal.
+    """
+    m, n = len(s1), len(s2)
+    
+    # Build DP table
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if s1[i - 1] == s2[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+                
+    lcs_length = dp[m][n]
+    
+    # Backtrack to reconstruct the sequence
+    i, j = m, n
+    lcs_chars = []
+    
+    while i > 0 and j > 0:
+        if s1[i - 1] == s2[j - 1]:
+            lcs_chars.append(s1[i - 1])
+            i -= 1
+            j -= 1
+        # Deterministic tie-breaking: prefer moving up (advancing in s1) when dp values are equal
+        elif dp[i - 1][j] >= dp[i][j - 1]:
+            i -= 1
+        else:
+            j -= 1
+            
+    lcs_string = "".join(reversed(lcs_chars))
+    return lcs_length, lcs_string
+
+
+# Example usage
+if __name__ == "__main__":
+    s1 = "ABCBDAB"
+    s2 = "BDCABA"
+    length, lcs = lcs_with_reconstruction(s1, s2)
+    print(f"S1: {s1}")
+    print(f"S2: {s2}")
+    print(f"LCS Length: {length}")
+    print(f"Reconstructed LCS: '{lcs}'")
+
+```

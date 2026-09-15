@@ -1,0 +1,129 @@
+```python
+#!/usr/bin/env python3
+"""
+Offline NDJSON analyzer.
+
+Expected (nested) line shape:
+{
+  "user":    {"id": "u123", "name": "..."},
+  "request": {"endpoint": "/api/foo", "status": 200, "latency_ms": 123.4}
+}
+
+- Malformed JSON lines are skipped but counted.
+- Lines missing required fields (user.id, request.endpoint, request.status,
+  request.latency_ms) are treated as malformed too.
+- "error" = request.status >= 400.
+- Most-requested endpoint: highest count; ties broken lexically (smallest string wins).
+- Output is deterministic JSON, sorted by user ID (via sort_keys=True).
+
+Usage:
+    python analyzer.py input.ndjson [-o output.json]
+    cat input.ndjson | python analyzer.py
+"""
+
+import argparse
+import json
+import sys
+from collections import defaultdict
+
+
+def analyze(lines):
+    malformed = 0
+    total_requests = 0
+    endpoint_counts = defaultdict(int)
+    user_stats = defaultdict(lambda: {"request_count": 0, "error_count": 0, "_latency_sum": 0.0})
+
+    for raw in lines:
+        raw = raw.strip()
+        if not raw:
+            continue
+
+        try:
+            record = json.loads(raw)
+
+            user = record["user"]
+            request = record["request"]
+
+            user_id = user["id"]
+            endpoint = request["endpoint"]
+            status = request["status"]
+            latency = request["latency_ms"]
+
+            if not isinstance(user_id, str) or not isinstance(endpoint, str):
+                raise ValueError("bad field type")
+            if not isinstance(status, (int, float)) or not isinstance(latency, (int, float)):
+                raise ValueError("bad field type")
+
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            malformed += 1
+            continue
+
+        total_requests += 1
+        endpoint_counts[endpoint] += 1
+
+        stats = user_stats[user_id]
+        stats["request_count"] += 1
+        stats["_latency_sum"] += latency
+        if status >= 400:
+            stats["error_count"] += 1
+
+    # Finalize per-user averages
+    users_out = {}
+    for user_id, stats in user_stats.items():
+        count = stats["request_count"]
+        avg_latency = round(stats["_latency_sum"] / count, 2) if count else 0.0
+        users_out[user_id] = {
+            "request_count": count,
+            "error_count": stats["error_count"],
+            "avg_latency_ms": avg_latency,
+        }
+
+    # Most-requested endpoint: max count, lexical tie-break (smallest string)
+    most_requested_endpoint = None
+    if endpoint_counts:
+        most_requested_endpoint = min(
+            endpoint_counts.items(),
+            key=lambda kv: (-kv[1], kv[0])
+        )[0]
+
+    result = {
+        "total_requests": total_requests,
+        "malformed_lines": malformed,
+        "most_requested_endpoint": most_requested_endpoint,
+        "users": users_out,
+    }
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Offline NDJSON analyzer")
+    parser.add_argument("input", nargs="?", help="Path to NDJSON file (default: stdin)")
+    parser.add_argument("-o", "--output", help="Path to write JSON output (default: stdout)")
+    args = parser.parse_args()
+
+    if args.input:
+        with open(args.input, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    else:
+        lines = sys.stdin.readlines()
+
+    result = analyze(lines)
+    output_str = json.dumps(result, indent=2, sort_keys=True)
+
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as f:
+            f.write(output_str + "\n")
+    else:
+        print(output_str)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+**Notes / assumptions** (adjust to your real schema if different):
+- A line is "malformed" if it fails JSON parsing *or* is missing `user.id`, `request.endpoint`, `request.status`, or `request.latency_ms`, or those fields have the wrong type.
+- "Error" = `status >= 400`.
+- `avg_latency_ms` is rounded to 2 decimals for deterministic output.
+- Ties for most-requested endpoint go to the alphabetically first endpoint string.
+- `sort_keys=True` guarantees the `users` object (and everything else) serializes in sorted-key order, satisfying "sorted by user ID" deterministically.

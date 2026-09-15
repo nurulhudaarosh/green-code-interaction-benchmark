@@ -1,0 +1,208 @@
+from collections import deque
+from typing import List, Tuple, Optional
+
+class Edge:
+    """Represents an edge in the flow network"""
+    def __init__(self, to: int, cap: int, rev: int, original_id: int = -1):
+        self.to = to
+        self.cap = cap
+        self.rev = rev  # index of reverse edge in graph[to]
+        self.original_id = original_id  # ID for original edges, -1 for reverse
+    
+    def __repr__(self):
+        return f"Edge(to={self.to}, cap={self.cap}, rev={self.rev}, orig_id={self.original_id})"
+
+
+class DinicMaxFlow:
+    def __init__(self, n: int):
+        self.n = n
+        self.graph: List[List[Edge]] = [[] for _ in range(n)]
+        self.original_edges: List[Tuple[int, int, int, int]] = []  # (u, v, cap, orig_id)
+        self.edge_count = 0
+    
+    def add_edge(self, u: int, v: int, cap: int) -> int:
+        """Add directed edge u->v with capacity cap. Returns original edge ID."""
+        orig_id = self.edge_count
+        self.edge_count += 1
+        
+        # Forward edge
+        fwd = Edge(v, cap, len(self.graph[v]), orig_id)
+        # Reverse edge (capacity 0)
+        rev = Edge(u, 0, len(self.graph[u]), -1)
+        
+        self.graph[u].append(fwd)
+        self.graph[v].append(rev)
+        
+        self.original_edges.append((u, v, cap, orig_id))
+        return orig_id
+    
+    def bfs_level_graph(self, s: int, t: int) -> bool:
+        """Build level graph using BFS. Returns True if t is reachable."""
+        self.level = [-1] * self.n
+        self.level[s] = 0
+        q = deque([s])
+        
+        while q:
+            u = q.popleft()
+            for e in self.graph[u]:
+                if e.cap > 0 and self.level[e.to] < 0:
+                    self.level[e.to] = self.level[u] + 1
+                    q.append(e.to)
+        
+        return self.level[t] >= 0
+    
+    def dfs_blocking_flow(self, u: int, t: int, f: int) -> int:
+        """Find blocking flow using DFS with current-arc optimization."""
+        if u == t:
+            return f
+        
+        while self.it[u] < len(self.graph[u]):
+            e = self.graph[u][self.it[u]]
+            
+            if e.cap > 0 and self.level[u] + 1 == self.level[e.to]:
+                ret = self.dfs_blocking_flow(e.to, t, min(f, e.cap))
+                if ret > 0:
+                    e.cap -= ret
+                    self.graph[e.to][e.rev].cap += ret
+                    return ret
+            
+            self.it[u] += 1
+        
+        return 0
+    
+    def max_flow(self, s: int, t: int) -> int:
+        """Compute maximum flow from s to t."""
+        flow = 0
+        
+        while self.bfs_level_graph(s, t):
+            self.it = [0] * self.n
+            
+            while True:
+                pushed = self.dfs_blocking_flow(s, t, float('inf'))
+                if pushed == 0:
+                    break
+                flow += pushed
+        
+        return flow
+    
+    def get_original_edge_flows(self) -> List[Tuple[int, int, int, int]]:
+        """
+        Extract flow on original edges in original order.
+        Returns list of (from, to, capacity, flow).
+        """
+        # Create mapping from original_id to flow
+        flow_map = {}
+        
+        for u in range(self.n):
+            for e in self.graph[u]:
+                if e.original_id >= 0:  # Original edge
+                    # Flow = original capacity - remaining capacity
+                    orig_u, orig_v, orig_cap, _ = self.original_edges[e.original_id]
+                    flow = orig_cap - e.cap
+                    flow_map[e.original_id] = flow
+        
+        # Return in original order
+        result = []
+        for u, v, cap, orig_id in self.original_edges:
+            result.append((u, v, cap, flow_map[orig_id]))
+        
+        return result
+
+
+def solve_max_flow(n: int, edges: List[Tuple[int, int, int]], s: int, t: int):
+    """
+    Solve max flow problem.
+    
+    Args:
+        n: number of nodes (0-indexed)
+        edges: list of (u, v, capacity) tuples
+        s: source node
+        t: sink node
+    
+    Returns:
+        (max_flow_value, edge_flows)
+        where edge_flows is list of (u, v, capacity, flow) in original order
+    """
+    dinic = DinicMaxFlow(n)
+    
+    for u, v, cap in edges:
+        dinic.add_edge(u, v, cap)
+    
+    max_flow_value = dinic.max_flow(s, t)
+    edge_flows = dinic.get_original_edge_flows()
+    
+    return max_flow_value, edge_flows
+
+
+# Example usage and testing
+if __name__ == "__main__":
+    # Example 1: Simple network
+    n1 = 4
+    edges1 = [
+        (0, 1, 3),
+        (0, 2, 2),
+        (1, 2, 1),
+        (1, 3, 2),
+        (2, 3, 4),
+    ]
+    s1, t1 = 0, 3
+    
+    flow1, edge_flows1 = solve_max_flow(n1, edges1, s1, t1)
+    print(f"Example 1 - Max flow: {flow1}")
+    print("Edge flows (u, v, cap, flow):")
+    for u, v, cap, f in edge_flows1:
+        print(f"  {u}->{v}: capacity={cap}, flow={f}")
+    print()
+    
+    # Example 2: Classic CLRS example
+    n2 = 6
+    edges2 = [
+        (0, 1, 16),
+        (0, 2, 13),
+        (1, 2, 10),
+        (2, 1, 4),
+        (1, 3, 12),
+        (3, 2, 9),
+        (2, 4, 14),
+        (4, 3, 7),
+        (3, 5, 20),
+        (4, 5, 4),
+    ]
+    s2, t2 = 0, 5
+    
+    flow2, edge_flows2 = solve_max_flow(n2, edges2, s2, t2)
+    print(f"Example 2 - Max flow: {flow2} (expected: 23)")
+    print("Edge flows (u, v, cap, flow):")
+    for u, v, cap, f in edge_flows2:
+        print(f"  {u}->{v}: capacity={cap}, flow={f}")
+    print()
+    
+    # Example 3: Verify flow conservation
+    def verify_flow(n, edges, s, t, edge_flows):
+        """Verify flow conservation and capacity constraints."""
+        # Build flow dict
+        flow_on_edge = {}
+        for u, v, cap, f in edge_flows:
+            flow_on_edge[(u, v)] = flow_on_edge.get((u, v), 0) + f
+        
+        # Check capacity
+        for (u, v), f in flow_on_edge.items():
+            assert 0 <= f, f"Negative flow on {u}->{v}"
+        
+        # Check conservation
+        for node in range(n):
+            if node == s or node == t:
+                continue
+            inflow = sum(f for (u, v), f in flow_on_edge.items() if v == node)
+            outflow = sum(f for (u, v), f in flow_on_edge.items() if u == node)
+            assert inflow == outflow, f"Conservation violated at node {node}: in={inflow}, out={outflow}"
+        
+        # Check value
+        source_out = sum(f for (u, v), f in flow_on_edge.items() if u == s)
+        sink_in = sum(f for (u, v), f in flow_on_edge.items() if v == t)
+        assert source_out == sink_in, f"Flow value mismatch: source_out={source_out}, sink_in={sink_in}"
+        
+        return source_out
+    
+    val = verify_flow(n2, edges2, s2, t2, edge_flows2)
+    print(f"Flow conservation verified. Flow value: {val}")

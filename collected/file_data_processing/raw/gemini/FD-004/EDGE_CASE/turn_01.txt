@@ -1,0 +1,102 @@
+Here is a clean, deterministic Python script that uses standard libraries (`csv`, `collections`) to reconcile your inventory snapshots.
+
+```python
+import csv
+from collections import defaultdict
+from typing import Dict, List, Tuple
+
+
+def read_and_aggregate(filepath: str) -> Dict[Tuple[str, str], int]:
+    """Reads a CSV file and aggregates quantity by (Warehouse, SKU).
+
+    Assumes CSV has columns: 'Warehouse', 'SKU', 'Quantity'
+    """
+    inventory = defaultdict(int)
+    with open(filepath, mode="r", encoding="utf-8") as file:
+        reader = csv.DictReader(file)
+        for row in reader:
+            key = (row["Warehouse"].strip(), row["SKU"].strip())
+            qty = int(row["Quantity"].strip())
+            inventory[key] += qty
+    return dict(inventory)
+
+
+def reconcile_inventories(
+    old_file: str, new_file: str, output_file: str
+) -> None:
+    """Reconciles old vs new inventory snapshots and outputs a sorted report.
+
+    Status classifications:
+    - ADDED: Key only exists in the new snapshot.
+    - REMOVED: Key only exists in the old snapshot.
+    - CHANGED: Key exists in both, but quantities differ.
+    - UNCHANGED: Key exists in both with matching quantities.
+    """
+    old_inv = read_and_aggregate(old_file)
+    new_inv = read_and_aggregate(new_file)
+
+    # Get all unique keys across both snapshots
+    all_keys = set(old_inv.keys()).union(set(new_inv.keys()))
+
+    reconciled_rows = []
+
+    for key in all_keys:
+        wh, sku = key
+        old_qty = old_inv.get(key, 0)
+        new_qty = new_inv.get(key, 0)
+        diff_qty = new_qty - old_qty
+
+        # Classify status
+        if key not in old_inv:
+            status = "ADDED"
+        elif key not in new_inv:
+            status = "REMOVED"
+        elif diff_qty != 0:
+            status = "CHANGED"
+        else:
+            status = "UNCHANGED"
+
+        reconciled_rows.append(
+            {
+                "Warehouse": wh,
+                "SKU": sku,
+                "Status": status,
+                "Old_Qty": old_qty,
+                "New_Qty": new_qty,
+                "Diff_Qty": diff_qty,
+            }
+        )
+
+    # Deterministic sort: Primary by Warehouse, Secondary by SKU
+    reconciled_rows.sort(key=lambda x: (x["Warehouse"], x["SKU"]))
+
+    # Write reconciliation results to CSV
+    fieldnames = [
+        "Warehouse",
+        "SKU",
+        "Status",
+        "Old_Qty",
+        "New_Qty",
+        "Diff_Qty",
+    ]
+    with open(output_file, mode="w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(reconciled_rows)
+
+
+if __name__ == "__main__":
+    # Example usage:
+    reconcile_inventories(
+        old_file="old_snapshot.csv",
+        new_file="new_snapshot.csv",
+        output_file="reconciliation_report.csv",
+    )
+
+```
+
+**Key Features:**
+
+* **Duplicates Handling:** Sums up quantities for repeating `(Warehouse, SKU)` keys within the same file using `collections.defaultdict`.
+* **Classification Logic:** Correctly labels keys as `ADDED`, `REMOVED`, `CHANGED`, or `UNCHANGED`.
+* **Deterministic Sorting:** Orders output lexicographically by `Warehouse` then `SKU` to ensure exact reproduceability on every run.

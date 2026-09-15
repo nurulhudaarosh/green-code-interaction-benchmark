@@ -42,6 +42,21 @@ def emit(obj, code):
     sys.exit(code)
 
 
+def _ran_ok(out):
+    """The program produced a real result (no exception, no error dict,
+    not None). Correctness is judged separately."""
+    if out is None:
+        return False
+    if isinstance(out, dict):
+        vals = list(out.values())
+        if not vals:
+            return False
+        v = vals[0]
+        if v is None or (isinstance(v, dict) and "__error__" in v):
+            return False
+    return True
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--code", required=True)
@@ -104,13 +119,22 @@ def main():
             out_r = tester.safe_call(lambda: harness.run(ref_ns, inp), (), {}, errors)
             ref_ms += (time.perf_counter() - t0) * 1000
 
+            ran_c = _ran_ok(out_c)
+            ran_r = _ran_ok(out_r)
             if out_c is None:
                 peak_pass = False
-                results[scale] = {"correct": False, "error": errors[-1] if errors else "returned None"}
+                results[scale] = {"correct": False, "ran": False,
+                                  "error": errors[-1] if errors else "returned None"}
+            elif not ran_c:
+                # entry resolved but the program itself errored/returned None
+                peak_pass = False
+                results[scale] = {"correct": False, "ran": False,
+                                  "error": "program returned None/error"}
             else:
                 ok = tester.compare(out_c, out_r)
                 peak_pass = peak_pass and ok
-                results[scale] = {"correct": ok}
+                results[scale] = {"correct": ok, "ran": True,
+                                  "reference_ran": ran_r}
     finally:
         os.chdir(REPO)
         sys.stdin = sys.__stdin__
@@ -119,6 +143,8 @@ def main():
     emit({
         "status": "ok",
         "correct": peak_pass,
+        "ran": all(v.get("ran") for v in results.values()) and bool(results),
+        "reference_ran": all(v.get("reference_ran", True) for v in results.values()),
         "scales": results,
         "candidate_runtime_ms": round(cand_ms, 3),
         "reference_runtime_ms": round(ref_ms, 3),

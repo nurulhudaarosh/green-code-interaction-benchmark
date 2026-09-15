@@ -1,0 +1,64 @@
+```python
+import csv
+import re
+import sys
+
+
+def normalize_email(email):
+    return email.strip().lower()
+
+
+def normalize_phone(phone):
+    return re.sub(r"\D", "", phone)
+
+
+def completeness(record):
+    return sum(1 for value in record.values() if value.strip() != "")
+
+
+def normalize_customers(input_file, output_file):
+    groups = {}
+
+    with open(input_file, "r", newline="", encoding="utf-8") as file:
+        reader = csv.DictReader(file)
+
+        for sequence, row in enumerate(reader):
+            email = normalize_email(row.get("email", ""))
+            phone = normalize_phone(row.get("phone", ""))
+
+            row["email"] = email
+            row["phone"] = phone
+
+            record = {
+                "row": row,
+                "sequence": sequence,
+                "complete": completeness(row)
+            }
+
+            groups.setdefault(email, []).append(record)
+
+    selected = []
+
+    for email, records in groups.items():
+        best = max(
+            records,
+            key=lambda record: (record["complete"], -record["sequence"])
+        )
+        selected.append(best["row"])
+
+    selected.sort(key=lambda row: normalize_email(row.get("email", "")))
+
+    fieldnames = list(selected[0].keys()) if selected else []
+
+    with open(output_file, "w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(selected)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        sys.exit(1)
+
+    normalize_customers(sys.argv[1], sys.argv[2])
+```

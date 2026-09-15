@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""Login/Logout Session Analyzer"""
+
+import sys
+import csv
+from datetime import datetime
+from collections import defaultdict
+
+TIMESTAMP_FMT = "%Y-%m-%d %H:%M:%S"
+
+
+def parse_timestamp(ts):
+    if isinstance(ts, datetime):
+        return ts
+    return datetime.strptime(ts.strip(), TIMESTAMP_FMT)
+
+
+def load_events_from_csv(path):
+    events = []
+    with open(path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            events.append({
+                "user": row["user"].strip(),
+                "timestamp": parse_timestamp(row["timestamp"]),
+                "event": row["event"].strip().lower(),
+            })
+    return events
+
+
+def group_and_sort_by_user(events):
+    by_user = defaultdict(list)
+    for e in events:
+        by_user[e["user"]].append(e)
+    for user in by_user:
+        by_user[user].sort(key=lambda e: e["timestamp"])
+    return by_user
+
+
+def pair_login_logout(sorted_events):
+    """
+    Pair each login with the next valid logout.
+    - Duplicate login while a session is open -> ignored.
+    - Logout with no open session -> ignored.
+    - Dangling login with no logout -> dropped.
+    """
+    sessions = []
+    open_login = None
+
+    for e in sorted_events:
+        if e["event"] == "login":
+            if open_login is None:
+                open_login = e["timestamp"]
+        elif e["event"] == "logout":
+            if open_login is not None:
+                sessions.append((open_login, e["timestamp"]))
+                open_login = None
+
+    return sessions
+
+
+def merge_sessions(sessions):
+    """Merge sessions that overlap or touch (start <= previous end)."""
+    if not sessions:
+        return []
+
+    sorted_sessions = sorted(sessions, key=lambda s: s[0])
+    merged = [sorted_sessions[0]]
+
+    for start, end in sorted_sessions[1:]:
+        last_start, last_end = merged[-1]
+        if start <= last_end:
+            merged[-1] = (last_start, max(last_end, end))
+        else:
+            merged.append((start, end))
+
+    return merged
+
+
+def calculate_active_seconds(merged_sessions):
+    return sum((end - start).total_seconds() for start, end in merged_sessions)
+
+
+def analyze_events(events):
+    by_user = group_and_sort_by_user(events)
+    summary = {}
+
+    for user, user_events in by_user.items():
+        raw_sessions = pair_login_logout(user_events)
+        merged = merge_sessions(raw_sessions)
+        active_seconds = calculate_active_seconds(merged)
+
+        summary[user] = {
+            "sessions": merged,
+            "session_count": len(merged),
+            "total_active_seconds": active_seconds,
+        }
+
+    return summary
+
+
+def write_summary_csv(summary, path):
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["user", "session_count", "total_active_seconds", "sessions"])
+
+        for user in sorted(summary.keys()):
+            data = summary[user]
+            sessions_str = "; ".join(
+                f"{s.strftime(TIMESTAMP_FMT)} -> {e.strftime(TIMESTAMP_FMT)}"
+                for s, e in data["sessions"]
+            )
+            writer.writerow([
+                user,
+                data["session_count"],
+                f"{data['total_active_seconds']:.0f}",
+                sessions_str,
+            ])
+
+
+def print_summary(summary):
+    for user in sorted(summary.keys()):
+        data = summary[user]
+        print(f"\nUser: {user}")
+        print(f"  Sessions merged: {data['session_count']}")
+        print(f"  Total active seconds: {data['total_active_seconds']:.0f}")
+        for s, e in data["sessions"]:
+            print(f"    {s.strftime(TIMESTAMP_FMT)} -> {e.strftime(TIMESTAMP_FMT)}")
+
+
+def main():
+    if len(sys.argv) >= 3:
+        input_path, output_path = sys.argv[1], sys.argv[2]
+        events = load_events_from_csv(input_path)
+        summary = analyze_events(events)
+        write_summary_csv(summary, output_path)
+        print(f"Wrote summary for {len(summary)} users to {output_path}")
+    else:
+        print("Usage: python session_analyzer.py input_events.csv output_summary.csv")
+
+
+if __name__ == "__main__":
+    main()

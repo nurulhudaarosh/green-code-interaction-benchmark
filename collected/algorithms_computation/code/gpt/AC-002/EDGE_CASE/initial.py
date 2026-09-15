@@ -1,0 +1,122 @@
+# Dependency Build Planner
+# Deterministic build order using Kahn's topological sorting
+# with a min-heap and longest prerequisite depth tracking.
+
+import heapq
+
+
+def dependency_build_planner(packages, dependencies):
+    """
+    Given packages and prerequisite dependencies, return:
+        (build_order, dependency_levels)
+
+    packages:
+        Iterable of package names.
+
+    dependencies:
+        Iterable of (package, prerequisite) pairs.
+        This means 'prerequisite' must be built before 'package'.
+
+    Returns:
+        - build_order: deterministic valid build order
+        - dependency_levels: number of dependency levels
+        - If a cycle exists: ([], -1)
+    """
+
+    # Create a deterministic set of all packages.
+    package_set = set(packages)
+
+    # Include packages mentioned in dependencies.
+    for package, prerequisite in dependencies:
+        package_set.add(package)
+        package_set.add(prerequisite)
+
+    # Initialize graph and indegree.
+    graph = {package: [] for package in package_set}
+    indegree = {package: 0 for package in package_set}
+
+    # Build the dependency graph.
+    for package, prerequisite in dependencies:
+        graph[prerequisite].append(package)
+        indegree[package] += 1
+
+    # Sort adjacency lists so processing is deterministic.
+    for package in graph:
+        graph[package].sort()
+
+    # depth[p] = longest prerequisite depth ending at p.
+    # A package with no prerequisite has depth 1.
+    depth = {package: 1 for package in package_set}
+
+    # Min-heap ensures deterministic lexicographically smallest choice.
+    heap = []
+
+    for package in package_set:
+        if indegree[package] == 0:
+            heapq.heappush(heap, package)
+
+    build_order = []
+
+    # Kahn's topological sorting.
+    while heap:
+        current = heapq.heappop(heap)
+        build_order.append(current)
+
+        for dependent in graph[current]:
+            # Track the longest prerequisite depth.
+            depth[dependent] = max(
+                depth[dependent],
+                depth[current] + 1
+            )
+
+            indegree[dependent] -= 1
+
+            if indegree[dependent] == 0:
+                heapq.heappush(heap, dependent)
+
+    # If not all packages were processed, a cycle exists.
+    if len(build_order) != len(package_set):
+        return [], -1
+
+    # The maximum depth is the number of dependency levels.
+    dependency_levels = max(depth.values(), default=0)
+
+    return build_order, dependency_levels
+
+
+if __name__ == "__main__":
+    # Example
+    packages = ["A", "B", "C", "D", "E"]
+
+    # (package, prerequisite)
+    dependencies = [
+        ("B", "A"),
+        ("C", "A"),
+        ("D", "B"),
+        ("D", "C"),
+        ("E", "D"),
+    ]
+
+    order, levels = dependency_build_planner(
+        packages,
+        dependencies
+    )
+
+    print("Build order:", order)
+    print("Dependency levels:", levels)
+
+    # Example with a cycle
+    cyclic_packages = ["A", "B", "C"]
+    cyclic_dependencies = [
+        ("B", "A"),
+        ("C", "B"),
+        ("A", "C"),
+    ]
+
+    order, levels = dependency_build_planner(
+        cyclic_packages,
+        cyclic_dependencies
+    )
+
+    print("Cyclic build order:", order)
+    print("Cyclic dependency levels:", levels)

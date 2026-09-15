@@ -1,0 +1,42 @@
+```python
+import csv
+import sys
+
+
+def sort_csv(input_file, output_file):
+    rows = []
+
+    with open(input_file, "r", newline="", encoding="utf-8") as infile:
+        reader = csv.reader(infile)
+        header = next(reader)
+
+        for sequence, row in enumerate(reader):
+            rows.append((sequence, row))
+
+    timestamp_index = header.index("timestamp")
+    severity_index = header.index("severity")
+
+    rows.sort(
+        key=lambda item: (
+            item[1][timestamp_index],
+            -int(item[1][severity_index]),
+            item[0]
+        )
+    )
+
+    output_header = header + ["sequence"]
+
+    with open(output_file, "w", newline="", encoding="utf-8") as outfile:
+        writer = csv.writer(outfile)
+        writer.writerow(output_header)
+
+        for sequence, row in rows:
+            writer.writerow(row + [sequence])
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        sys.exit(1)
+
+    sort_csv(sys.argv[1], sys.argv[2])
+```

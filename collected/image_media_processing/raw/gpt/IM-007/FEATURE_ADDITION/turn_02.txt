@@ -1,0 +1,80 @@
+Add `find_similar_pairs` to the existing implementation. It computes each image's aHash once, then checks every unique pair and returns those within the given Hamming-distance threshold.
+
+```python id="74261"
+from PIL import Image
+
+
+def compute_ahash(image_path, hash_size=8):
+    """
+    Compute the classic average hash (aHash) of an image.
+    """
+    if not isinstance(hash_size, int) or hash_size <= 0:
+        raise ValueError("hash_size must be a positive integer")
+
+    with Image.open(image_path) as img:
+        gray = img.convert("L").resize((hash_size, hash_size))
+        pixels = list(gray.getdata())
+        average = sum(pixels) / len(pixels)
+
+        return "".join(
+            "1" if pixel >= average else "0"
+            for pixel in pixels
+        )
+
+
+def hamming_distance(hash_a, hash_b):
+    """
+    Calculate the Hamming distance between two binary hashes.
+    """
+    if len(hash_a) != len(hash_b):
+        raise ValueError("Hashes must have the same length")
+
+    if any(bit not in "01" for bit in hash_a + hash_b):
+        raise ValueError("Hashes must contain only '0' and '1'")
+
+    return sum(a != b for a, b in zip(hash_a, hash_b))
+
+
+def find_similar_pairs(image_paths, threshold):
+    """
+    Return all pairs of images whose aHash Hamming distance
+    is less than or equal to threshold.
+
+    Parameters:
+        image_paths (list): List of image file paths.
+        threshold (int): Maximum allowed Hamming distance.
+
+    Returns:
+        list: List of tuples (image_path_a, image_path_b).
+    """
+    if not isinstance(threshold, int) or threshold < 0:
+        raise ValueError("threshold must be a non-negative integer")
+
+    # Compute each hash only once.
+    hashes = {
+        path: compute_ahash(path)
+        for path in image_paths
+    }
+
+    similar_pairs = []
+
+    # Compare every unique pair.
+    paths = list(image_paths)
+    for i in range(len(paths)):
+        for j in range(i + 1, len(paths)):
+            path_a = paths[i]
+            path_b = paths[j]
+
+            distance = hamming_distance(
+                hashes[path_a],
+                hashes[path_b]
+            )
+
+            if distance <= threshold:
+                similar_pairs.append((path_a, path_b))
+
+    return similar_pairs
+```
+
+
+This returns each unique pair only once, so `(image1, image2)` and `(image2, image1)` won't both appear.

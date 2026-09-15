@@ -1,0 +1,109 @@
+```python
+"""
+Problem
+-------
+Given two strings A and B, compute the length of their Longest Common
+Subsequence (LCS) and reconstruct one concrete LCS string.
+
+Key constraints
+----------------
+- Inputs are two finite strings (str) A and B; either may be empty.
+- The algorithm must be deterministic: whenever multiple LCS choices are
+  possible during reconstruction (i.e. dp[i-1][j] == dp[i][j-1] on a
+  non-match cell), the tie-break rule is to prefer advancing in the FIRST
+  string (A) — i.e. move as if deleting a character from A first.
+- No randomness, no network/API calls, no external services, no human
+  interaction. Only the Python standard library may be used.
+- Output required: (lcs_length: int, lcs_string: str).
+
+Algorithm
+---------
+Classic quadratic-time / quadratic-space dynamic programming:
+
+1. Build a table dp[i][j] = length of the LCS of A[0:i] and B[0:j],
+   for i in [0..len(A)], j in [0..len(B)].
+   - dp[0][j] = dp[i][0] = 0 (empty prefix has no common subsequence)
+   - If A[i-1] == B[j-1]: dp[i][j] = dp[i-1][j-1] + 1
+   - Else: dp[i][j] = max(dp[i-1][j], dp[i][j-1])
+
+2. dp[len(A)][len(B)] is the LCS length.
+
+3. Reconstruct one LCS by walking backwards from (len(A), len(B)):
+   - If A[i-1] == B[j-1]: this character is part of the LCS; prepend it,
+     move to (i-1, j-1).
+   - Else if dp[i-1][j] >= dp[i][j-1]: move to (i-1, j)  <-- tie-break:
+     prefer "advancing in A" (consuming a character of A) when the two
+     neighboring scores are equal.
+   - Else: move to (i, j-1).
+
+   This is O(len(A) * len(B)) time and space, and always yields the same
+   LCS for the same inputs.
+"""
+
+from typing import Tuple
+
+
+def lcs(a: str, b: str) -> Tuple[int, str]:
+    """Compute the LCS length and one deterministic LCS string for a, b.
+
+    Tie-break rule during reconstruction: on equal DP scores, prefer
+    advancing in the first string `a`.
+
+    Returns:
+        (length, lcs_string)
+    """
+    n, m = len(a), len(b)
+
+    # dp[i][j] = LCS length of a[:i] and b[:j]
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+
+    for i in range(1, n + 1):
+        ai = a[i - 1]
+        dp_i = dp[i]
+        dp_im1 = dp[i - 1]
+        for j in range(1, m + 1):
+            if ai == b[j - 1]:
+                dp_i[j] = dp_im1[j - 1] + 1
+            else:
+                up = dp_im1[j]      # dp[i-1][j]
+                left = dp_i[j - 1]  # dp[i][j-1]
+                dp_i[j] = up if up >= left else left
+
+    length = dp[n][m]
+
+    # Reconstruction (deterministic)
+    chars = []
+    i, j = n, m
+    while i > 0 and j > 0:
+        if a[i - 1] == b[j - 1]:
+            chars.append(a[i - 1])
+            i -= 1
+            j -= 1
+        elif dp[i - 1][j] >= dp[i][j - 1]:
+            # Tie or "up" is better: prefer advancing in A (consume a[i-1])
+            i -= 1
+        else:
+            j -= 1
+
+    chars.reverse()
+    result = "".join(chars)
+    assert len(result) == length  # sanity check
+    return length, result
+
+
+if __name__ == "__main__":
+    test_cases = [
+        ("ABCBDAB", "BDCABA"),
+        ("", ""),
+        ("abc", ""),
+        ("", "xyz"),
+        ("AGGTAB", "GXTXAYB"),
+        ("aaaa", "aa"),
+        ("abcdef", "abcdef"),
+        ("abc", "def"),
+    ]
+
+    for x, y in test_cases:
+        length, subseq = lcs(x, y)
+        print(f"A={x!r:20} B={y!r:20} -> length={length}, lcs={subseq!r}")
+```

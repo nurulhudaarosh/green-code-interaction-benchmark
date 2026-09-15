@@ -1,0 +1,124 @@
+## Problem, restated
+
+**Input:** a 2‑D numeric grid `grid` (list of lists, all rows the same length) and a threshold `T`.
+
+**Definitions**
+- A cell `(r, c)` **qualifies** if `grid[r][c] >= T`.
+- Two qualifying cells are in the same **region** if connected via a chain of horizontally/vertically adjacent qualifying cells (4‑connectivity — no diagonals).
+- The **perimeter** of a region is the number of unit edges of its cells that are *exposed* — i.e. an edge is counted if the neighbor on that side is off the grid, or is on the grid but doesn't qualify.
+- The **smallest coordinate** of a region is the lexicographically smallest `(row, col)` pair among its member cells (row first, then column).
+
+**Task:** find the region with the largest size (cell count).
+
+**Tie-breaking, in order:**
+1. Largest size wins.
+2. If tied, largest perimeter wins.
+3. If still tied, smallest `(row, col)` coordinate wins.
+
+**Output:** `(size, perimeter, (row, col))` for the winning region, or a sentinel (`(0, 0, None)`) if no cell qualifies.
+
+## Key constraints
+- Grid must be rectangular; empty grid is a valid (trivial) input.
+- Only 4-connectivity counts — diagonal neighbors never merge regions.
+- Must be **deterministic**: same input → same output, every run. This rules out set/dict iteration order dependence for tie-breaking and rules out any randomness.
+- Must use **iterative** flood fill (explicit stack/queue), not recursion — avoids Python recursion-limit failures on large grids.
+- Standard library only, no I/O/network/human interaction.
+
+## Algorithm
+1. Scan the grid in row-major order (`r` ascending, then `c` ascending).
+2. On the first unvisited qualifying cell found, it is automatically the region's smallest coordinate (everything scanned earlier is either already visited or non-qualifying).
+3. Flood-fill that whole region iteratively with a stack: push the seed, pop a cell, mark visited, increment size, then for each of its 4 neighbors:
+   - if neighbor is off-grid or non-qualifying → perimeter += 1 (exposed edge)
+   - else if neighbor qualifies and is unvisited → push it, mark visited immediately (to avoid double-pushing)
+4. Track the best region seen so far using the key `(-size, -perimeter, (row, col))`, picking the minimum such key (since we want max size, then max perimeter, then min coordinate).
+5. After scanning the whole grid, return the best region found.
+
+Let me implement and test this.Implemented, tested, and verified below.
+
+## Output format
+`RegionResult(size: int, perimeter: int, top_left: Optional[Tuple[int,int]])`
+`top_left` is the smallest `(row, col)` in the winning region, or `None` if no cell has `value >= T`.
+
+## Solution
+
+```python
+from typing import List, Optional, Tuple, NamedTuple
+
+
+class RegionResult(NamedTuple):
+    size: int
+    perimeter: int
+    top_left: Optional[Tuple[int, int]]  # smallest (row, col) in the region; None if no region
+
+
+def largest_region(grid: List[List[float]], T: float) -> RegionResult:
+    """
+    Find the largest 4-connected region of cells with value >= T.
+
+    Tie-breaking order among candidate regions:
+        1. larger size wins
+        2. then larger perimeter wins
+        3. then smaller (row, col) coordinate wins
+
+    Returns RegionResult(size, perimeter, top_left).
+    If no cell qualifies, returns RegionResult(0, 0, None).
+    """
+    if not grid or not grid[0]:
+        return RegionResult(0, 0, None)
+
+    n_rows = len(grid)
+    n_cols = len(grid[0])
+    for row in grid:
+        if len(row) != n_cols:
+            raise ValueError("grid must be rectangular (all rows same length)")
+
+    def qualifies(r: int, c: int) -> bool:
+        return grid[r][c] >= T
+
+    visited = [[False] * n_cols for _ in range(n_rows)]
+    best_key = None
+    best_result = RegionResult(0, 0, None)
+    DIRS = ((-1, 0), (1, 0), (0, -1), (0, 1))
+
+    for r0 in range(n_rows):
+        for c0 in range(n_cols):
+            if visited[r0][c0] or not qualifies(r0, c0):
+                continue
+
+            top_left = (r0, c0)          # smallest coord of this region, guaranteed by scan order
+            visited[r0][c0] = True
+            stack = [(r0, c0)]
+            size = 0
+            perimeter = 0
+
+            while stack:
+                r, c = stack.pop()
+                size += 1
+                for dr, dc in DIRS:
+                    nr, nc = r + dr, c + dc
+                    if nr < 0 or nr >= n_rows or nc < 0 or nc >= n_cols:
+                        perimeter += 1
+                        continue
+                    if not qualifies(nr, nc):
+                        perimeter += 1
+                        continue
+                    if not visited[nr][nc]:
+                        visited[nr][nc] = True
+                        stack.append((nr, nc))
+
+            key = (-size, -perimeter, top_left)
+            if best_key is None or key < best_key:
+                best_key = key
+                best_result = RegionResult(size, perimeter, top_left)
+
+    return best_result
+```
+
+## Verified behavior
+- **Merged L-shaped region test** (`grid1`, `T=3`): the right column of 3's connects to the bottom row of 4's through their shared corner cell, forming one region of `size=7, perimeter=16, top_left=(0,3)` — correctly found even though the merge isn't visually obvious.
+- **No qualifying cells** (`grid2`, `T=5`): returns `(0, 0, None)`.
+- **Four isolated single-cell regions, all same size & perimeter** (`grid3`): tie-break by smallest coordinate → `(0,0)`.
+- **Single-cell grid**: `size=1, perimeter=4, top_left=(0,0)`.
+- **Ring around a hole** (`grid5`): `size=8, perimeter=16` — correctly counts both the outer boundary and the inner hole's edges as exposed.
+
+Determinism comes from: fixed row-major scan order, a fixed neighbor-check order, and a total-order tie-break key — no sets/dicts, no randomness, no reliance on hashing.

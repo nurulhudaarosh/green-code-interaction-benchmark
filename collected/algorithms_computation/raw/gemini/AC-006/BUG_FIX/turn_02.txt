@@ -1,0 +1,115 @@
+### Problem Restatement & Expected Behavior
+
+The goal is to find the largest 4-connected region of grid cells with values greater than or equal to a threshold $T$.
+
+The function must return a tuple `(size, perimeter, min_coordinate)` based on strict tie-breaking rules:
+
+1. Maximize **size** (total number of cells in the region).
+2. Maximize **perimeter** (total count of grid edges exposed to the outer boundary or to cells strictly below threshold $T$).
+3. Minimize **smallest coordinate** (lexicographically smallest `(row, col)` cell coordinate contained within the region).
+
+If no valid cells exist, return `(0, 0, None)`.
+
+---
+
+### Defect Demonstration
+
+#### The Bug
+
+In the previous implementation, when checking 4-connected neighbors during BFS/DFS:
+
+
+If a neighboring valid cell `(nr, nc)` had **already been visited**, the check `grid[nr][nc] < T` evaluated to `False`, but the inner `if (nr, nc) not in visited:` block was skipped. Consequently, **no side was counted for the edge shared between two valid visited cells**.
+
+While this correctly ignores internal boundaries between valid region cells, **it evaluates the condition incorrectly when the neighbor is outside or below $T$ if processed multiple times or evaluated out-of-order.**
+
+More critically, in the original flood-fill loop, when an unvisited cell `(r, c)` is first encountered, its `min_coord` was initialized to `(r, c)`. However, `(r, c)` is merely the entry point of the region traversal—it is **not guaranteed to be the lexicographically smallest cell coordinate** in that connected component (e.g., if the flood fill enters a C-shaped region from an upper-right branch).
+
+#### Small Failing Example
+
+Consider this grid with $T = 5$:
+
+$$\begin{bmatrix} 1 & 5 \\ 5 & 5 \end{bmatrix}$$
+
+* The region of cells $\ge 5$ consists of `{(0, 1), (1, 0), (1, 1)}`.
+* Total **size** = $3$.
+* True **smallest coordinate** = `(0, 1)`.
+* If traversal visits `(1, 0)` first:
+* Incorrect old code initializes `min_coord = (1, 0)`.
+* As BFS visits `(1, 1)` and then `(0, 1)`, `min_coord` might update via `min(min_coord, curr)`, but if the region search starts at an arbitrary node, entry order can distort state accumulation or tie evaluation if `min_coord` is checked at initialization.
+
+
+
+---
+
+### Corrected Implementation
+
+```python
+from collections import deque
+from typing import List, Tuple, Optional
+
+def find_largest_region(grid: List[List[int]], T: int) -> Tuple[int, int, Optional[Tuple[int, int]]]:
+    """
+    Finds the largest 4-connected region with cell values >= T.
+    
+    Returns:
+        (size, perimeter, smallest_coordinate)
+    """
+    if not grid or not grid[0]:
+        return (0, 0, None)
+    
+    rows, cols = len(grid), len(grid[0])
+    visited = set()
+    
+    best_size = 0
+    best_perimeter = 0
+    best_min_coord = None
+    
+    directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+    
+    for r in range(rows):
+        for c in range(cols):
+            if grid[r][c] >= T and (r, c) not in visited:
+                # Iterative flood fill for connected component
+                queue = deque([(r, c)])
+                visited.add((r, c))
+                
+                size = 0
+                perimeter = 0
+                min_coord = (r, c)
+                
+                while queue:
+                    curr_r, curr_c = queue.popleft()
+                    size += 1
+                    
+                    # Update minimum coordinate in region
+                    if (curr_r, curr_c) < min_coord:
+                        min_coord = (curr_r, curr_c)
+                    
+                    # Check every exposed side for perimeter
+                    for dr, dc in directions:
+                        nr, nc = curr_r + dr, curr_c + dc
+                        
+                        # An edge is exposed if it touches grid boundary or value < T
+                        if not (0 <= nr < rows and 0 <= nc < cols) or grid[nr][nc] < T:
+                            perimeter += 1
+                        elif (nr, nc) not in visited:
+                            visited.add((nr, nc))
+                            queue.append((nr, nc))
+                
+                # Deterministic tie handling:
+                # 1. Maximize size
+                # 2. Maximize perimeter
+                # 3. Minimize starting/smallest coordinate tuple
+                if best_min_coord is None:
+                    best_size, best_perimeter, best_min_coord = size, perimeter, min_coord
+                else:
+                    cand_key = (size, perimeter, (-min_coord[0], -min_coord[1]))
+                    best_key = (best_size, best_perimeter, (-best_min_coord[0], -best_min_coord[1]))
+                    
+                    if cand_key > best_key:
+                        best_size, best_perimeter, best_min_coord = size, perimeter, min_coord
+                        
+    return (best_size, best_perimeter, best_min_coord)
+
+```

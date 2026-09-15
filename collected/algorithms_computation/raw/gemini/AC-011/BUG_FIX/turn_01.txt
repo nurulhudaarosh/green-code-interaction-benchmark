@@ -1,0 +1,94 @@
+### Problem Identification & Analysis
+
+The problem is the **0/1 Knapsack Problem**, a classic combinatorial optimization problem. We are given $N$ indivisible items, where each item $i$ has a weight $w_i \ge 0$ and a value $v_i \ge 0$, along with a maximum knapsack weight capacity $W$. The objective is to select a subset of items such that the total weight does not exceed $W$ and the total value is maximized.
+
+#### Constraints & Requirements
+
+* **Item Selection:** Each item can either be taken ($1$) or left ($0$).
+* **Capacity Limit:** Total weight of selected items $\le W$.
+* **Tie-Breaking Rule:** If multiple subsets yield the same maximum value, return the index set that is **lexicographically smallest** (e.g., index list `[0, 3]` is smaller than `[1, 2]`).
+* **Required Output:** A sorted list containing the **0-based original indices** of the selected items.
+
+---
+
+### Algorithm Overview
+
+We use **Dynamic Programming (DP)** with an array of size $W + 1$.
+
+1. **State Definition:** Let `dp[cap]` represent the maximum value achievable with a knapsack capacity `cap`. To satisfy the tie-breaking rule, we also maintain `items_chosen[cap]`, which stores the sorted list of item indices that achieve `dp[cap]`.
+2. **Descending Updates:** Iterate through each item $i$ (from $0$ to $N-1$). For each item, iterate capacity `cap` backwards from $W$ down to $w_i$.
+3. **State Transition:** For a given capacity `cap`:
+* Compare the current solution `dp[cap]` against the new candidate solution `dp[cap - w_i] + v_i` with chosen items `items_chosen[cap - w_i] + [i]`.
+* Update `dp[cap]` if the new value is **strictly greater**, or if the values are **equal** and the new index set is **lexicographically smaller** than the existing index set.
+
+
+
+---
+
+### Deterministic Python Implementation
+
+```python
+def knapsack_01(weights: list[int], values: list[int], capacity: int) -> list[int]:
+    """
+    Solves the 0/1 Knapsack problem and returns the lexicographically smallest
+    list of original 0-based indices that achieve the maximum total value.
+
+    :param weights: List of item weights (non-negative integers).
+    :param values: List of item values (non-negative integers).
+    :param capacity: Maximum total weight capacity of the knapsack.
+    :return: Sorted list of chosen 0-based item indices.
+    """
+    n = len(weights)
+    
+    # dp[c] stores the maximum value achievable for capacity c
+    dp = [0] * (capacity + 1)
+    
+    # chosen[c] stores the list of item indices achieving dp[c]
+    chosen = [[] for _ in range(capacity + 1)]
+
+    for i in range(n):
+        w = weights[i]
+        v = values[i]
+        
+        if w > capacity:
+            continue
+            
+        # Iterate descending to avoid using the same item multiple times
+        for c in range(capacity, w - 1, -1):
+            new_val = dp[c - w] + v
+            candidate_indices = chosen[c - w] + [i]
+            
+            # Check if this choice yields a strictly higher value, or a tie
+            # with a lexicographically smaller list of indices.
+            if new_val > dp[c]:
+                dp[c] = new_val
+                chosen[c] = candidate_indices
+            elif new_val == dp[c] and new_val > 0:
+                if candidate_indices < chosen[c]:
+                    chosen[c] = candidate_indices
+
+    # Find the capacity yielding the absolute maximum value
+    max_val = max(dp)
+    
+    # Among all capacities reaching max_val, select the lexicographically smallest index list
+    best_indices = None
+    for c in range(capacity + 1):
+        if dp[c] == max_val:
+            if best_indices is None or chosen[c] < best_indices:
+                best_indices = chosen[c]
+
+    return best_indices if best_indices is not None else []
+
+
+# --- Example Usage ---
+if __name__ == "__main__":
+    weights = [2, 3, 4, 5]
+    values = [3, 4, 5, 6]
+    capacity = 5
+
+    selected_indices = knapsack_01(weights, values, capacity)
+    print(f"Selected item indices: {selected_indices}")
+    print(f"Total value: {sum(values[i] for i in selected_indices)}")
+    print(f"Total weight: {sum(weights[i] for i in selected_indices)}")
+
+```

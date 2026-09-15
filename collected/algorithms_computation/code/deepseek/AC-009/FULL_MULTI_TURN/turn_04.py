@@ -1,0 +1,233 @@
+def min_coin_combination(coins, target):
+    """
+    Returns (min_coins, combination) where:
+    - min_coins: minimum number of coins needed to make target, or -1 if impossible
+    - combination: list of coin values achieving that minimum, or [] if impossible
+    
+    Coins may be reused unlimited times.
+    Deterministic tie-breaking: prefers coins appearing earlier in the input list.
+    Uses 1D unbounded coin-change DP with deterministic reconstruction.
+    Handles all edge cases including empty coin lists and target=0.
+    """
+    # Case 1: Negative target (invalid input, treat as impossible)
+    if target < 0:
+        return -1, []
+    
+    # Case 2: Target is 0 (including when coins list is empty)
+    if target == 0:
+        return 0, []
+    
+    # Case 3: Empty coins list
+    if not coins:
+        return -1, []
+    
+    # Case 4: Filter coins that could potentially be used (<= target)
+    useful_coins = [c for c in coins if c <= target]
+    if not useful_coins:
+        return -1, []
+    
+    INF = float('inf')
+    dp = [INF] * (target + 1)
+    dp[0] = 0
+    
+    # 1D unbounded coin-change DP with deterministic tie-breaking
+    # Using <= ensures first coin in list wins when multiple coins give same min
+    for coin in useful_coins:
+        for amt in range(coin, target + 1):
+            if dp[amt - coin] + 1 <= dp[amt]:
+                dp[amt] = dp[amt - coin] + 1
+    
+    # Case 5: Target is unreachable
+    if dp[target] == INF:
+        return -1, []
+    
+    # Deterministic reconstruction
+    combination = []
+    remaining = target
+    while remaining > 0:
+        for coin in useful_coins:
+            if remaining >= coin and dp[remaining] == dp[remaining - coin] + 1:
+                combination.append(coin)
+                remaining -= coin
+                break
+        else:
+            # Safety guard - should never happen with correct DP
+            raise RuntimeError("Reconstruction failed: inconsistent DP state")
+    
+    return dp[target], combination
+
+
+# Comprehensive test suite
+if __name__ == "__main__":
+    print("=" * 70)
+    print("MINIMUM COIN CONSTRUCTION - COMPREHENSIVE TESTS")
+    print("=" * 70)
+    
+    # Test 1: Smallest permitted input (target=0, empty coins)
+    print("\nTest 1: Smallest permitted input")
+    print(f"  coins=[], target=0")
+    result = min_coin_combination([], 0)
+    print(f"  Expected: (0, [])")
+    print(f"  Got: {result}")
+    assert result == (0, []), "Test 1 failed"
+    print("  ✓ PASSED")
+    
+    # Test 2: Empty coins list with positive target
+    print("\nTest 2: Empty coins list")
+    print(f"  coins=[], target=5")
+    result = min_coin_combination([], 5)
+    print(f"  Expected: (-1, [])")
+    print(f"  Got: {result}")
+    assert result == (-1, []), "Test 2 failed"
+    print("  ✓ PASSED")
+    
+    # Test 3: All coins larger than target
+    print("\nTest 3: All coins > target")
+    print(f"  coins=[10, 20, 30], target=5")
+    result = min_coin_combination([10, 20, 30], 5)
+    print(f"  Expected: (-1, [])")
+    print(f"  Got: {result}")
+    assert result == (-1, []), "Test 3 failed"
+    print("  ✓ PASSED")
+    
+    # Test 4: Single coin - possible
+    print("\nTest 4: Single coin - possible")
+    print(f"  coins=[3], target=9")
+    result = min_coin_combination([3], 9)
+    print(f"  Expected: (3, [3, 3, 3])")
+    print(f"  Got: {result}")
+    assert result == (3, [3, 3, 3]), "Test 4 failed"
+    print("  ✓ PASSED")
+    
+    # Test 5: Single coin - impossible
+    print("\nTest 5: Single coin - impossible")
+    print(f"  coins=[4], target=7")
+    result = min_coin_combination([4], 7)
+    print(f"  Expected: (-1, [])")
+    print(f"  Got: {result}")
+    assert result == (-1, []), "Test 5 failed"
+    print("  ✓ PASSED")
+    
+    # Test 6: Standard case with multiple solutions (tie-breaking)
+    print("\nTest 6: Multiple optimal solutions (tie-breaking)")
+    print(f"  coins=[2, 3, 4], target=6")
+    result = min_coin_combination([2, 3, 4], 6)
+    print(f"  Expected: (2, [2, 4])  # Prefers 2 (earlier in list) over 3")
+    print(f"  Got: {result}")
+    # Both [2,4] and [3,3] are optimal, but we prefer [2,4] because 2 appears earlier
+    assert result == (2, [2, 4]), "Test 6 failed"
+    print("  ✓ PASSED")
+    
+    # Test 7: Another tie-breaking case
+    print("\nTest 7: Tie-breaking with [3,5,4], target=7")
+    print(f"  coins=[3, 5, 4], target=7")
+    result = min_coin_combination([3, 5, 4], 7)
+    print(f"  Expected: (2, [3, 4])  # Prefers 3 over 4? Actually both [3,4] and [4,3] work")
+    print(f"  Got: {result}")
+    assert result == (2, [3, 4]), "Test 7 failed"
+    print("  ✓ PASSED")
+    
+    # Test 8: All coins are 1 (minimum denomination)
+    print("\nTest 8: All coins are 1")
+    print(f"  coins=[1, 1, 1], target=5")
+    result = min_coin_combination([1, 1, 1], 5)
+    print(f"  Expected: (5, [1, 1, 1, 1, 1])")
+    print(f"  Got: {result}")
+    assert result == (5, [1, 1, 1, 1, 1]), "Test 8 failed"
+    print("  ✓ PASSED")
+    
+    # Test 9: Target exactly matches a coin
+    print("\nTest 9: Target equals a coin")
+    print(f"  coins=[5, 10, 25], target=10")
+    result = min_coin_combination([5, 10, 25], 10)
+    print(f"  Expected: (1, [10])  # One coin of 10")
+    print(f"  Got: {result}")
+    assert result == (1, [10]), "Test 9 failed"
+    print("  ✓ PASSED")
+    
+    # Test 10: Large target with small coins
+    print("\nTest 10: Large target with small coins")
+    print(f"  coins=[2, 3], target=100")
+    result = min_coin_combination([2, 3], 100)
+    # 100 = 50*2 (50 coins) or 33*3 + 1*? 100 mod 3 = 1, so need 2+? 
+    # Actually 100 = 32*3 + 2*2 = 34 coins, so min is 50 coins of 2
+    print(f"  Expected: (50, [2]*50)")
+    print(f"  Got: {result}")
+    expected = (50, [2] * 50)
+    assert result == expected, "Test 10 failed"
+    print("  ✓ PASSED")
+    
+    # Test 11: Impossible due to GCD > 1
+    print("\nTest 11: Impossible due to GCD > 1")
+    print(f"  coins=[4, 6], target=9")
+    result = min_coin_combination([4, 6], 9)
+    print(f"  Expected: (-1, [])")
+    print(f"  Got: {result}")
+    assert result == (-1, []), "Test 11 failed"
+    print("  ✓ PASSED")
+    
+    # Test 12: Negative target (invalid, but we handle gracefully)
+    print("\nTest 12: Negative target")
+    print(f"  coins=[1, 2, 5], target=-5")
+    result = min_coin_combination([1, 2, 5], -5)
+    print(f"  Expected: (-1, [])")
+    print(f"  Got: {result}")
+    assert result == (-1, []), "Test 12 failed"
+    print("  ✓ PASSED")
+    
+    # Test 13: Duplicate coins in input
+    print("\nTest 13: Duplicate coins in input")
+    print(f"  coins=[2, 3, 3, 5], target=8")
+    result = min_coin_combination([2, 3, 3, 5], 8)
+    print(f"  Expected: (2, [3, 5])  # First 3 (index 1) is used")
+    print(f"  Got: {result}")
+    assert result == (2, [3, 5]), "Test 13 failed"
+    print("  ✓ PASSED")
+    
+    # Test 14: Single coin value 1
+    print("\nTest 14: Single coin [1]")
+    print(f"  coins=[1], target=7")
+    result = min_coin_combination([1], 7)
+    print(f"  Expected: (7, [1, 1, 1, 1, 1, 1, 1])")
+    print(f"  Got: {result}")
+    assert result == (7, [1, 1, 1, 1, 1, 1, 1]), "Test 14 failed"
+    print("  ✓ PASSED")
+    
+    # Test 15: Mixed coins, target small
+    print("\nTest 15: Mixed coins, small target")
+    print(f"  coins=[4, 6, 9], target=8")
+    result = min_coin_combination([4, 6, 9], 8)
+    print(f"  Expected: (2, [4, 4])")
+    print(f"  Got: {result}")
+    assert result == (2, [4, 4]), "Test 15 failed"
+    print("  ✓ PASSED")
+    
+    print("\n" + "=" * 70)
+    print("ALL TESTS PASSED! ✓")
+    print("=" * 70)
+    
+    # Additional demonstration of deterministic behavior
+    print("\n" + "=" * 70)
+    print("DETERMINISM DEMONSTRATION")
+    print("=" * 70)
+    
+    test_cases = [
+        ([2, 3, 4], 6),
+        ([3, 4, 5], 8),
+        ([2, 5, 3], 8),
+        ([1, 3, 4], 6),
+        ([4, 6, 9], 20),
+    ]
+    
+    for coins, target in test_cases:
+        result1 = min_coin_combination(coins, target)
+        result2 = min_coin_combination(coins, target)
+        print(f"\ncoins={coins}, target={target}")
+        print(f"  Run 1: {result1}")
+        print(f"  Run 2: {result2}")
+        assert result1 == result2, "Non-deterministic behavior detected!"
+        print("  ✓ Deterministic")
+    
+    print("\n" + "=" * 70)
+    print("ALL DETERMINISM TESTS PASSED! ✓")
+    print("=" * 70)

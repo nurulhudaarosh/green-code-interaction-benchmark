@@ -1,0 +1,55 @@
+from pathlib import Path
+from PIL import Image
+
+def convert_format(input_dir: str | Path, output_dir: str | Path, target_format: str, bg_color: tuple = (255, 255, 255)) -> None:
+    """
+    Converts all images in input_dir to target_format ('PNG' or 'JPEG'/'JPG').
+    Processes and re-encodes all files even if already in target_format.
+    Safely handles transparent images when saving to JPEG.
+    
+    :param input_dir: Path to directory containing source images.
+    :param output_dir: Path to save converted images.
+    :param target_format: Target format string ('PNG', 'JPEG', 'JPG').
+    :param bg_color: RGB tuple to use for filling transparency when converting to JPEG.
+    """
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+    
+    # Normalize target format
+    fmt = target_format.upper()
+    if fmt == 'JPG':
+        fmt = 'JPEG'
+        
+    if fmt not in {'PNG', 'JPEG'}:
+        raise ValueError("target_format must be 'PNG' or 'JPEG' (or 'JPG').")
+        
+    ext = '.jpg' if fmt == 'JPEG' else '.png'
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    valid_exts = {'.png', '.jpg', '.jpeg', '.bmp', '.webp', '.tiff', '.tif'}
+
+    for file in input_path.iterdir():
+        if file.is_file() and file.suffix.lower() in valid_exts:
+            try:
+                with Image.open(file) as img:
+                    # Apply color mode pipeline to all files based on destination format
+                    if fmt == 'JPEG':
+                        # Flatten transparency even if input was already a JPEG-suffixed file containing alpha data (e.g., mislabeled)
+                        if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+                            rgba_img = img.convert('RGBA')
+                            background = Image.new('RGB', rgba_img.size, bg_color)
+                            background.paste(rgba_img, mask=rgba_img.split()[3])
+                            converted_img = background
+                        else:
+                            converted_img = img.convert('RGB')
+                    else:
+                        # For PNG target, retain image mode or load image data fully for re-encoding
+                        converted_img = img
+
+                    out_file = output_path / f"{file.stem}{ext}"
+                    # Save re-encodes and writes the target file regardless of original format
+                    converted_img.save(out_file, format=fmt)
+                    print(f"Converted: {file.name} -> {out_file.name}")
+                    
+            except Exception as e:
+                print(f"Failed to convert {file.name}: {e}")

@@ -1,0 +1,113 @@
+import json
+from collections import defaultdict
+from typing import Any, Dict
+
+
+def analyze_ndjson(input_path: str, output_path: str) -> Dict[str, Any]:
+    """Analyzes an NDJSON log file and writes aggregated user metrics to a JSON file.
+
+    Includes the most-requested endpoint per user (with lexical tie-breaking).
+
+    Args:
+        input_path: Path to the input NDJSON file.
+        output_path: Path where the output JSON file will be saved.
+
+    Returns:
+        Dict containing malformed_line_count and aggregated per-user statistics.
+    """
+    malformed_line_count = 0
+
+    # Intermediate storage: user_id -> metrics tracker
+    user_data = defaultdict(
+        lambda: {
+            "request_count": 0,
+            "error_count": 0,
+            "total_latency": 0.0,
+            "endpoints": defaultdict(int),
+        }
+    )
+
+    with open(input_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+
+            try:
+                record = json.loads(line)
+                if not isinstance(record, dict):
+                    malformed_line_count += 1
+                    continue
+
+                user_info = record.get("user")
+                request_info = record.get("request")
+
+                if not isinstance(user_info, dict) or not isinstance(
+                    request_info, dict
+                ):
+                    malformed_line_count += 1
+                    continue
+
+                user_id = user_info.get("id")
+                endpoint = request_info.get("endpoint")
+                status_code = request_info.get("status_code")
+                latency = request_info.get("latency")
+
+                if (
+                    user_id is None
+                    or endpoint is None
+                    or status_code is None
+                    or latency is None
+                    or not isinstance(latency, (int, float))
+                    or not isinstance(status_code, int)
+                ):
+                    malformed_line_count += 1
+                    continue
+
+                user_id_str = str(user_id)
+                stats = user_data[user_id_str]
+
+                stats["request_count"] += 1
+                stats["total_latency"] += latency
+
+                if status_code >= 400:
+                    stats["error_count"] += 1
+
+                stats["endpoints"][str(endpoint)] += 1
+
+            except (json.JSONDecodeError, Exception):
+                malformed_line_count += 1
+
+    users_output = {}
+
+    # Deterministic output processing
+    for user_id in sorted(user_data.keys()):
+        stats = user_data[user_id]
+        req_count = stats["request_count"]
+        avg_latency = stats["total_latency"] / req_count if req_count > 0 else 0.0
+
+        # Lexical tie-breaking: prioritize higher count (-count), then lexically smaller name (+endpoint)
+        most_requested = min(
+            stats["endpoints"].items(), key=lambda item: (-item[1], item[0])
+        )[0]
+
+        users_output[user_id] = {
+            "request_count": req_count,
+            "error_count": stats["error_count"],
+            "average_latency": round(avg_latency, 4),
+            "most_requested_endpoint": most_requested,
+        }
+
+    final_result = {
+        "malformed_line_count": malformed_line_count,
+        "users": users_output,
+    }
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(final_result, f, indent=2, sort_keys=True)
+
+    return final_result
+
+
+if __name__ == "__main__":
+    analyze_ndjson("logs.ndjson", "analysis_report.json")

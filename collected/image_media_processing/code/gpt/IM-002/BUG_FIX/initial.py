@@ -1,0 +1,55 @@
+from pathlib import Path
+from PIL import Image
+
+
+def generate_thumbnails(input_dir, cache_dir, max_dim=128):
+    """
+    Recursively create aspect-ratio-preserving thumbnails for PNG/JPEG images.
+
+    The output directory mirrors the input directory tree.
+
+    Returns:
+        dict: {
+            'processed_count': int,
+            'skipped': list[str]
+        }
+    """
+    input_dir = Path(input_dir)
+    cache_dir = Path(cache_dir)
+
+    valid_extensions = {".png", ".jpg", ".jpeg"}
+    processed_count = 0
+    skipped = []
+
+    if not input_dir.exists():
+        return {"processed_count": 0, "skipped": []}
+
+    for src_path in input_dir.rglob("*"):
+        if not src_path.is_file() or src_path.suffix.lower() not in valid_extensions:
+            continue
+
+        # Mirror the input directory structure in cache_dir.
+        relative_path = src_path.relative_to(input_dir)
+        dst_path = cache_dir / relative_path
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            with Image.open(src_path) as img:
+                # Convert to RGB/RGBA when needed for safe saving.
+                if img.mode not in ("RGB", "RGBA"):
+                    img = img.convert("RGBA" if "A" in img.getbands() else "RGB")
+
+                # thumbnail() preserves aspect ratio and ensures that
+                # neither dimension exceeds max_dim.
+                img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+
+                img.save(dst_path)
+                processed_count += 1
+
+        except (OSError, ValueError):
+            skipped.append(str(src_path))
+
+    return {
+        "processed_count": processed_count,
+        "skipped": skipped
+    }

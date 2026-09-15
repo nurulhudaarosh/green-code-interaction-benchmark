@@ -1,0 +1,228 @@
+def coin_change(coins, target, include_summary=False):
+    """
+    Find minimum number of coins to make target amount using given denominations.
+    Coins can be reused. Returns (min_count, coin_combination).
+    If impossible: returns (-1, [])
+    
+    OPTIONAL FEATURE: If include_summary=True, returns (min_count, coin_combination, operation_summary)
+    where operation_summary is a dict containing deterministic computation metrics.
+    
+    Args:
+        coins: List of positive integers representing coin denominations
+        target: Non-negative integer target amount
+        include_summary: Boolean flag to include operation summary (default: False)
+    
+    Returns:
+        If include_summary=False: tuple (minimum_number_of_coins, coin_list)
+        If include_summary=True: tuple (minimum_number_of_coins, coin_list, operation_summary)
+        operation_summary is a dict with:
+            - 'dp_iterations': Number of DP state computations performed
+            - 'coin_considerations': Total number of (amount, coin) pairs evaluated
+            - 'improvements_found': Number of times a better solution was found
+            - 'reconstruction_steps': Number of coins in the final combination
+    """
+    # Edge cases
+    if target == 0:
+        if include_summary:
+            return (0, [], {'dp_iterations': 0, 'coin_considerations': 0, 
+                           'improvements_found': 0, 'reconstruction_steps': 0})
+        return (0, [])
+    
+    if not coins:
+        if include_summary:
+            return (-1, [], {'dp_iterations': 0, 'coin_considerations': 0,
+                           'improvements_found': 0, 'reconstruction_steps': 0})
+        return (-1, [])
+    
+    # Filter out coins larger than target and sort for deterministic behavior
+    valid_coins = sorted([c for c in coins if c > 0 and c <= target])
+    if not valid_coins:
+        if include_summary:
+            return (-1, [], {'dp_iterations': 0, 'coin_considerations': 0,
+                           'improvements_found': 0, 'reconstruction_steps': 0})
+        return (-1, [])
+    
+    # DP array: min coins to make each amount
+    INF = float('inf')
+    dp = [INF] * (target + 1)
+    dp[0] = 0
+    
+    # Reconstruction array: last coin used to make each amount
+    # -1 means no coin used yet
+    last_coin = [-1] * (target + 1)
+    
+    # Operation counters
+    dp_iterations = 0
+    coin_considerations = 0
+    improvements_found = 0
+    
+    # Unbounded DP (complete knapsack style)
+    for amount in range(1, target + 1):
+        dp_iterations += 1  # One DP state per amount
+        for coin in valid_coins:
+            coin_considerations += 1  # Each (amount, coin) pair considered
+            if coin <= amount and dp[amount - coin] + 1 < dp[amount]:
+                dp[amount] = dp[amount - coin] + 1
+                last_coin[amount] = coin
+                improvements_found += 1
+    
+    # Check if target is reachable
+    if dp[target] == INF:
+        if include_summary:
+            return (-1, [], {
+                'dp_iterations': dp_iterations,
+                'coin_considerations': coin_considerations,
+                'improvements_found': improvements_found,
+                'reconstruction_steps': 0
+            })
+        return (-1, [])
+    
+    # Reconstruct the combination deterministically
+    combination = []
+    remaining = target
+    reconstruction_steps = 0
+    while remaining > 0:
+        coin = last_coin[remaining]
+        if coin == -1:
+            # Should not happen if dp[target] is finite
+            if include_summary:
+                return (-1, [], {
+                    'dp_iterations': dp_iterations,
+                    'coin_considerations': coin_considerations,
+                    'improvements_found': improvements_found,
+                    'reconstruction_steps': reconstruction_steps
+                })
+            return (-1, [])
+        combination.append(coin)
+        remaining -= coin
+        reconstruction_steps += 1
+    
+    # Sort for deterministic output (ascending order)
+    combination.sort()
+    
+    if include_summary:
+        return (dp[target], combination, {
+            'dp_iterations': dp_iterations,
+            'coin_considerations': coin_considerations,
+            'improvements_found': improvements_found,
+            'reconstruction_steps': reconstruction_steps
+        })
+    
+    return (dp[target], combination)
+
+
+# Example usage and test cases
+if __name__ == "__main__":
+    print("=" * 60)
+    print("ORIGINAL BEHAVIOR (without summary)")
+    print("=" * 60)
+    
+    # Test case 1: Standard example
+    coins1 = [1, 2, 5]
+    target1 = 11
+    count1, combo1 = coin_change(coins1, target1)
+    print(f"Coins: {coins1}, Target: {target1}")
+    print(f"Minimum coins: {count1}, Combination: {combo1}")  # Should be 3, [5, 5, 1]
+    print()
+    
+    # Test case 2: Impossible
+    coins2 = [2]
+    target2 = 3
+    count2, combo2 = coin_change(coins2, target2)
+    print(f"Coins: {coins2}, Target: {target2}")
+    print(f"Minimum coins: {count2}, Combination: {combo2}")  # Should be -1, []
+    print()
+    
+    # Test case 3: Target 0
+    coins3 = [1, 2, 5]
+    target3 = 0
+    count3, combo3 = coin_change(coins3, target3)
+    print(f"Coins: {coins3}, Target: {target3}")
+    print(f"Minimum coins: {count3}, Combination: {combo3}")  # Should be 0, []
+    print()
+    
+    # Test case 4: Empty coins
+    coins4 = []
+    target4 = 10
+    count4, combo4 = coin_change(coins4, target4)
+    print(f"Coins: {coins4}, Target: {target4}")
+    print(f"Minimum coins: {count4}, Combination: {combo4}")  # Should be -1, []
+    print()
+    
+    # Test case 5: Coins larger than target
+    coins5 = [10, 20, 30]
+    target5 = 15
+    count5, combo5 = coin_change(coins5, target5)
+    print(f"Coins: {coins5}, Target: {target5}")
+    print(f"Minimum coins: {count5}, Combination: {combo5}")  # Should be -1, []
+    print()
+    
+    print("=" * 60)
+    print("ENHANCED BEHAVIOR (with operation summary)")
+    print("=" * 60)
+    
+    # Test with summary enabled
+    coins6 = [1, 2, 5]
+    target6 = 11
+    count6, combo6, summary6 = coin_change(coins6, target6, include_summary=True)
+    print(f"Coins: {coins6}, Target: {target6}")
+    print(f"Minimum coins: {count6}, Combination: {combo6}")
+    print(f"Operation Summary: {summary6}")
+    print()
+    
+    # Test impossible with summary
+    coins7 = [2]
+    target7 = 3
+    count7, combo7, summary7 = coin_change(coins7, target7, include_summary=True)
+    print(f"Coins: {coins7}, Target: {target7}")
+    print(f"Minimum coins: {count7}, Combination: {combo7}")
+    print(f"Operation Summary: {summary7}")
+    print()
+    
+    # Test target 0 with summary
+    coins8 = [1, 2, 5]
+    target8 = 0
+    count8, combo8, summary8 = coin_change(coins8, target8, include_summary=True)
+    print(f"Coins: {coins8}, Target: {target8}")
+    print(f"Minimum coins: {count8}, Combination: {combo8}")
+    print(f"Operation Summary: {summary8}")
+    print()
+    
+    # Test larger example
+    coins9 = [3, 7, 11]
+    target9 = 50
+    count9, combo9, summary9 = coin_change(coins9, target9, include_summary=True)
+    print(f"Coins: {coins9}, Target: {target9}")
+    print(f"Minimum coins: {count9}, Combination: {combo9}")
+    print(f"Operation Summary: {summary9}")
+    print()
+    
+    # Test multiple optimal solutions - deterministic behavior
+    coins10 = [1, 3, 4]
+    target10 = 6
+    count10, combo10, summary10 = coin_change(coins10, target10, include_summary=True)
+    print(f"Coins: {coins10}, Target: {target10}")
+    print(f"Minimum coins: {count10}, Combination: {combo10}")  # Should be 2, [3, 3]
+    print(f"Operation Summary: {summary10}")
+    print()
+    
+    # Verify original interface still works
+    print("=" * 60)
+    print("VERIFYING ORIGINAL INTERFACE PRESERVED")
+    print("=" * 60)
+    test_coins = [1, 2, 5]
+    test_target = 11
+    
+    # Original call without summary - still returns 2-tuple
+    result_original = coin_change(test_coins, test_target)
+    print(f"Original result type: {type(result_original)}")
+    print(f"Original result: {result_original}")
+    print(f"Original - count: {result_original[0]}, combo: {result_original[1]}")
+    print()
+    
+    # Enhanced call with summary - returns 3-tuple
+    result_enhanced = coin_change(test_coins, test_target, include_summary=True)
+    print(f"Enhanced result type: {type(result_enhanced)}")
+    print(f"Enhanced result length: {len(result_enhanced)}")
+    print(f"Enhanced - count: {result_enhanced[0]}, combo: {result_enhanced[1]}")
+    print(f"Enhanced - summary: {result_enhanced[2]}")

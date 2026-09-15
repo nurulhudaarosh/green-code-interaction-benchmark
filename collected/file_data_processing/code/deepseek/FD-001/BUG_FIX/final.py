@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""
+Customer Event CSV Processor
+
+Removes duplicates, keeps latest records, calculates statistics, outputs sorted results.
+Usage: python processor.py input.csv output.csv
+"""
+
+import csv
+import sys
+from datetime import datetime
+from collections import defaultdict
+
+
+class CustomerEventProcessor:
+    def __init__(self):
+        self.records = {}
+        self.stats = defaultdict(lambda: {'count': 0, 'amount': 0.0})
+        self.duplicates = 0
+        self.processed = 0
+    
+    def parse_timestamp(self, ts):
+        formats = [
+            '%Y-%m-%d %H:%M:%S',
+            '%Y-%m-%d %H:%M:%S.%f',
+            '%Y/%m/%d %H:%M:%S',
+            '%Y-%m-%dT%H:%M:%S',
+            '%m/%d/%Y %H:%M:%S',
+            '%d/%m/%Y %H:%M:%S',
+        ]
+        ts = ts.strip()
+        for fmt in formats:
+            try:
+                return datetime.strptime(ts, fmt)
+            except ValueError:
+                continue
+        try:
+            return datetime.fromisoformat(ts.replace('Z', '+00:00'))
+        except:
+            return None
+    
+    def process_file(self, input_file):
+        try:
+            rows_by_key = {}
+            
+            with open(input_file, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                required = ['customer_id', 'timestamp', 'status', 'amount']
+                if not all(col in reader.fieldnames for col in required):
+                    return False, f"Missing required columns: {required}"
+                
+                for row in reader:
+                    self.processed += 1
+                    if not all(row.get(col, '').strip() for col in required):
+                        continue
+                    try:
+                        float(row['amount'].strip())
+                    except:
+                        continue
+                    ts = self.parse_timestamp(row['timestamp'])
+                    if not ts:
+                        continue
+                    
+                    cid = row['customer_id'].strip()
+                    key = (cid, ts)
+                    rows_by_key[key] = row
+            
+            customer_latest = {}
+            
+            for (cid, ts), row in rows_by_key.items():
+                if cid not in customer_latest:
+                    customer_latest[cid] = (ts, row)
+                else:
+                    existing_ts, existing_row = customer_latest[cid]
+                    if ts > existing_ts:
+                        customer_latest[cid] = (ts, row)
+                    elif ts == existing_ts:
+                        customer_latest[cid] = (ts, row)
+            
+            self.records = {}
+            self.stats = defaultdict(lambda: {'count': 0, 'amount': 0.0})
+            
+            for cid, (ts, row) in customer_latest.items():
+                self.records[cid] = row
+                status = row['status'].strip()
+                amount = float(row['amount'].strip())
+                self.stats[status]['count'] += 1
+                self.stats[status]['amount'] += amount
+            
+            self.duplicates = self.processed - len(self.records)
+            
+            return True, ""
+            
+        except FileNotFoundError:
+            return False, f"File not found: {input_file}"
+        except Exception as e:
+            return False, f"Error: {str(e)}"
+    
+    def write_output(self, output_file):
+        try:
+            with open(output_file, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=['customer_id', 'timestamp', 'status', 'amount'])
+                writer.writeheader()
+                for cid in sorted(self.records.keys()):
+                    writer.writerow(self.records[cid])
+                
+                if self.stats:
+                    f.write('\n# Statistics\n')
+                    f.write('# Status,Count,Total_Amount\n')
+                    for status in sorted(self.stats.keys()):
+                        stats = self.stats[status]
+                        f.write(f'{status},{stats["count"]},{stats["amount"]:.2f}\n')
+            return True, ""
+        except Exception as e:
+            return False, f"Error writing output: {str(e)}"
+
+
+def main():
+    if len(sys.argv) < 3:
+        print("Usage: python processor.py input.csv output.csv")
+        sys.exit(1)
+    
+    input_file = sys.argv[1]
+    output_file = sys.argv[2]
+    
+    processor = CustomerEventProcessor()
+    success, error = processor.process_file(input_file)
+    if not success:
+        print(f"Error: {error}")
+        sys.exit(1)
+    
+    success, error = processor.write_output(output_file)
+    if not success:
+        print(f"Error: {error}")
+        sys.exit(1)
+    
+    print(f"Processed: {processor.processed} records")
+    print(f"Duplicates removed: {processor.duplicates}")
+    print(f"Unique customers: {len(processor.records)}")
+    print(f"Output written: {output_file}")
+
+
+if __name__ == "__main__":
+    main()

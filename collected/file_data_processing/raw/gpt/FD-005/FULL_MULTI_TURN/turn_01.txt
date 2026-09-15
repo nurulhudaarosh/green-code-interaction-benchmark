@@ -1,0 +1,37 @@
+```python
+import csv
+import sys
+
+
+def sort_csv(input_file, output_file):
+    rows = []
+
+    with open(input_file, "r", newline="", encoding="utf-8") as infile:
+        reader = csv.DictReader(infile)
+
+        for sequence, row in enumerate(reader):
+            row["sequence"] = sequence
+            rows.append(row)
+
+    rows.sort(
+        key=lambda row: (
+            row["timestamp"],
+            -int(row["severity"]),
+            row["sequence"]
+        )
+    )
+
+    fieldnames = list(rows[0].keys()) if rows else []
+
+    with open(output_file, "w", newline="", encoding="utf-8") as outfile:
+        writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        sys.exit(1)
+
+    sort_csv(sys.argv[1], sys.argv[2])
+```

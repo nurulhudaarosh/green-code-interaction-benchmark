@@ -1,0 +1,84 @@
+# test_preprocess_images.py
+```python
+import numpy as np
+import pytest
+from PIL import Image
+from pathlib import Path
+
+from preprocess_images import preprocess_images
+
+
+def _write_gray_png(path, arr):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(arr.astype(np.uint8), mode='L').save(path, format='PNG')
+
+
+@pytest.mark.parametrize("fill", [0, 255])
+@pytest.mark.parametrize("clip", [None, 1, (1, 99), (0, 100)])
+def test_fully_uniform_images_are_flat(tmp_path, fill, clip):
+    """All-black (0) and all-white (255) images must not raise and must be
+    marked flat in the stats."""
+    in_dir = tmp_path / "in"
+    out_dir = tmp_path / "out"
+    _write_gray_png(in_dir / "flat.png", np.full((16, 16), fill))
+
+    stats, summary = preprocess_images(
+        in_dir, out_dir, clip_percentile=clip, save_stats=False
+    )
+
+    key = "flat.png"
+    assert key in stats
+    assert stats[key]["flat"] is True
+    assert stats[key]["original_min"] == fill
+    assert stats[key]["original_max"] == fill
+    assert summary["flat"] == 1
+    assert summary["processed"] == 1
+
+    # Output must exist and be constant at flat_value (default 0)
+    out = np.asarray(Image.open(out_dir / key))
+    assert np.all(out == 0)
+
+
+@pytest.mark.parametrize("fill", [0, 255])
+def test_flat_image_custom_flat_value(tmp_path, fill):
+    in_dir = tmp_path / "in"
+    out_dir = tmp_path / "out"
+    _write_gray_png(in_dir / "flat.png", np.full((8, 8), fill))
+
+    preprocess_images(
+        in_dir, out_dir, flat_value=127, save_stats=False
+    )
+
+    out = np.asarray(Image.open(out_dir / "flat.png"))
+    assert np.all(out == 127)
+
+
+def test_mixed_flat_and_nonflat(tmp_path):
+    """A black image, a white image, and a gradient in the same batch."""
+    in_dir = tmp_path / "in"
+    out_dir = tmp_path / "out"
+    _write_gray_png(in_dir / "black.png", np.zeros((8, 8)))
+    _write_gray_png(in_dir / "white.png", np.full((8, 8), 255))
+    gradient = np.tile(np.arange(8, dtype=np.uint8), (8, 1)) * 36
+    _write_gray_png(in_dir / "grad.png", gradient)
+
+    stats, summary = preprocess_images(
+        in_dir, out_dir, clip_percentile=(1, 99), save_stats=False
+    )
+
+    assert stats["black.png"]["flat"] is True
+    assert stats["white.png"]["flat"] is True
+    assert stats["grad.png"]["flat"] is False
+    assert summary == {
+        "processed": 3,
+        "flat": 2,
+        "clipped": 0,   # gradient's percentile bounds match its extrema here
+        "clip_percentile": [1.0, 99.0],
+        "flat_value": 0,
+    }
+
+    # Grad image should span the full 0-255 range after normalization
+    grad_out = np.asarray(Image.open(out_dir / "grad.png"))
+    assert grad_out.min() == 0
+    assert grad_out.max() == 255
+```

@@ -1,0 +1,387 @@
+```python
+# Problem Restatement
+# Given a directed graph with non-negative capacities, a source s, and a sink t,
+# compute:
+#   1. The maximum possible flow from s to t.
+#   2. The flow sent through every original edge, in the SAME order as the
+#      input edges.
+#
+# Key Constraints / Requirements
+# - Directed capacitated network.
+# - Capacities are non-negative integers.
+# - Use Dinic's blocking-flow algorithm.
+# - Preserve original edge order in the returned flow list.
+# - Multiple parallel edges are allowed.
+# - The solution must be deterministic.
+# - Use only Python's standard library.
+# - No network, APIs, external services, randomness, or human interaction.
+#
+# Required Output
+# Return a dictionary:
+# {
+#     "max_flow": maximum s-t flow,
+#     "edge_flows": [flow_on_edge_0, flow_on_edge_1, ...]
+# }
+#
+# For each original edge (u, v, capacity), edge_flows[i] is the amount of
+# flow sent through that exact original edge.
+
+from collections import deque
+from typing import List, Tuple, Dict, Any
+
+
+def maximum_flow(
+    n: int,
+    edges: List[Tuple[int, int, int]],
+    s: int,
+    t: int
+) -> Dict[str, Any]:
+    """
+    Compute maximum s-t flow using Dinic's blocking-flow algorithm.
+
+    Parameters
+    ----------
+    n:
+        Number of vertices, numbered 0 .. n-1.
+    edges:
+        Original directed edges as (u, v, capacity).
+    s:
+        Source vertex.
+    t:
+        Sink vertex.
+
+    Returns
+    -------
+    dict
+        {
+            "max_flow": int,
+            "edge_flows": List[int]
+        }
+
+    Raises
+    ------
+    ValueError
+        If the graph/source/sink/edge data is invalid.
+    """
+
+    # -------------------------
+    # Validate input
+    # -------------------------
+    if not isinstance(n, int) or n < 0:
+        raise ValueError("n must be a non-negative integer")
+
+    if not (0 <= s < n) or not (0 <= t < n):
+        raise ValueError("source and sink must be valid vertex indices")
+
+    if s == t:
+        raise ValueError("source and sink must be different")
+
+    for edge in edges:
+        if len(edge) != 3:
+            raise ValueError("each edge must be (u, v, capacity)")
+
+        u, v, capacity = edge
+
+        if not (0 <= u < n and 0 <= v < n):
+            raise ValueError("edge endpoint is outside the graph")
+
+        if not isinstance(capacity, int) or capacity < 0:
+            raise ValueError("capacity must be a non-negative integer")
+
+    # -------------------------
+    # Residual edge structure
+    # -------------------------
+    class ResidualEdge:
+        __slots__ = ("to", "rev", "capacity", "original_index", "original_capacity")
+
+        def __init__(
+            self,
+            to: int,
+            rev: int,
+            capacity: int,
+            original_index: int = -1,
+            original_capacity: int = 0
+        ):
+            self.to = to
+            self.rev = rev
+            self.capacity = capacity
+
+            # Only forward/original edges receive an original index.
+            self.original_index = original_index
+            self.original_capacity = original_capacity
+
+    graph: List[List[ResidualEdge]] = [[] for _ in range(n)]
+
+    # Keep direct references to the forward residual edges corresponding
+    # to the original input edges. This is what guarantees original order
+    # in the final output.
+    original_edges: List[ResidualEdge] = []
+
+    def add_edge(
+        u: int,
+        v: int,
+        capacity: int,
+        original_index: int
+    ) -> None:
+        forward = ResidualEdge(
+            to=v,
+            rev=len(graph[v]),
+            capacity=capacity,
+            original_index=original_index,
+            original_capacity=capacity
+        )
+
+        reverse = ResidualEdge(
+            to=u,
+            rev=len(graph[u]),
+            capacity=0
+        )
+
+        graph[u].append(forward)
+        graph[v].append(reverse)
+
+        original_edges.append(forward)
+
+    for index, (u, v, capacity) in enumerate(edges):
+        add_edge(u, v, capacity, index)
+
+    # -------------------------
+    # Dinic: BFS level graph
+    # -------------------------
+    def build_level_graph() -> List[int]:
+        level = [-1] * n
+        level[s] = 0
+
+        queue = deque([s])
+
+        while queue:
+            u = queue.popleft()
+
+            for edge in graph[u]:
+                if edge.capacity > 0 and level[edge.to] == -1:
+                    level[edge.to] = level[u] + 1
+                    queue.append(edge.to)
+
+        return level
+
+    # -------------------------
+    # Dinic: DFS blocking flow
+    # -------------------------
+    def send_flow(
+        u: int,
+        pushed: int,
+        level: List[int],
+        next_edge: List[int]
+    ) -> int:
+        if u == t:
+            return pushed
+
+        while next_edge[u] < len(graph[u]):
+            edge = graph[u][next_edge[u]]
+
+            # Only follow edges that belong to the current level graph.
+            if edge.capacity > 0 and level[edge.to] == level[u] + 1:
+                flow = send_flow(
+                    edge.to,
+                    min(pushed, edge.capacity),
+                    level,
+                    next_edge
+                )
+
+                if flow > 0:
+                    edge.capacity -= flow
+                    reverse = graph[edge.to][edge.rev]
+                    reverse.capacity += flow
+                    return flow
+
+            next_edge[u] += 1
+
+        return 0
+
+    # -------------------------
+    # Dinic main algorithm
+    # -------------------------
+    max_flow = 0
+
+    while True:
+        level = build_level_graph()
+
+        if level[t] == -1:
+            break
+
+        # Current-arc optimization:
+        # next_edge[u] tells us which outgoing residual edge should be
+        # considered next for vertex u.
+        next_edge = [0] * n
+
+        while True:
+            pushed = send_flow(
+                s,
+                float("inf"),
+                level,
+                next_edge
+            )
+
+            if pushed == 0:
+                break
+
+            max_flow += pushed
+
+    # -------------------------
+    # Recover flow on originals
+    # -------------------------
+    #
+    # For an original forward edge:
+    #
+    #     remaining_capacity = original_capacity - flow
+    #
+    # Therefore:
+    #
+    #     flow = original_capacity - remaining_capacity
+    #
+    # Because original_edges was populated in input order, the resulting
+    # list is also in exactly the original input order.
+    edge_flows = [
+        edge.original_capacity - edge.capacity
+        for edge in original_edges
+    ]
+
+    return {
+        "max_flow": max_flow,
+        "edge_flows": edge_flows
+    }
+
+
+# ------------------------------------------------------------
+# Tests
+# ------------------------------------------------------------
+
+if __name__ == "__main__":
+    # Example 1:
+    #
+    #       3
+    #     /   \
+    #   3       2
+    #  /         \
+    # s           t
+    #  \         /
+    #   2       3
+    #     \   /
+    #       2
+    #
+    # The maximum flow is 5.
+    edges1 = [
+        (0, 1, 3),
+        (0, 2, 2),
+        (1, 3, 3),
+        (2, 3, 2),
+    ]
+
+    result1 = maximum_flow(
+        n=4,
+        edges=edges1,
+        s=0,
+        t=3
+    )
+
+    assert result1 == {
+        "max_flow": 5,
+        "edge_flows": [3, 2, 3, 2]
+    }
+
+    # Example 2:
+    # Parallel edges must remain separate and preserve input order.
+    edges2 = [
+        (0, 1, 5),
+        (0, 1, 3),
+        (1, 2, 10),
+    ]
+
+    result2 = maximum_flow(
+        n=3,
+        edges=edges2,
+        s=0,
+        t=2
+    )
+
+    assert result2 == {
+        "max_flow": 8,
+        "edge_flows": [5, 3, 8]
+    }
+
+    # Example 3:
+    # Zero-capacity edge.
+    edges3 = [
+        (0, 1, 0),
+        (0, 2, 4),
+        (2, 1, 4),
+        (1, 3, 4),
+    ]
+
+    result3 = maximum_flow(
+        n=4,
+        edges=edges3,
+        s=0,
+        t=3
+    )
+
+    assert result3 == {
+        "max_flow": 4,
+        "edge_flows": [0, 4, 4, 4]
+    }
+
+    # Example 4:
+    # No path from source to sink.
+    edges4 = [
+        (0, 1, 7),
+        (2, 3, 9),
+    ]
+
+    result4 = maximum_flow(
+        n=4,
+        edges=edges4,
+        s=0,
+        t=3
+    )
+
+    assert result4 == {
+        "max_flow": 0,
+        "edge_flows": [0, 0]
+    }
+
+    # Example 5:
+    # A graph where flow must be rerouted through residual edges.
+    edges5 = [
+        (0, 1, 10),
+        (0, 2, 10),
+        (1, 2, 2),
+        (1, 3, 4),
+        (1, 4, 8),
+        (2, 4, 9),
+        (4, 3, 10),
+    ]
+
+    result5 = maximum_flow(
+        n=5,
+        edges=edges5,
+        s=0,
+        t=3
+    )
+
+    assert result5["max_flow"] == 14
+    assert len(result5["edge_flows"]) == len(edges5)
+
+    # Every returned flow must respect its original capacity.
+    for flow, (_, _, capacity) in zip(result5["edge_flows"], edges5):
+        assert 0 <= flow <= capacity
+
+    # Determinism check.
+    assert maximum_flow(5, edges5, 0, 3) == result5
+
+    print("All tests passed.")
+    print(result1)
+    print(result2)
+    print(result3)
+    print(result4)
+    print(result5)
+```

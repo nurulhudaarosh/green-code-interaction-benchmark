@@ -1,0 +1,81 @@
+import sys
+
+class FenwickTree:
+    def __init__(self, n):
+        self.n = n
+        self.bit = [0] * (n + 1)
+
+    def build(self, arr):
+        # O(n) build from array (1-indexed internally)
+        for i, val in enumerate(arr, start=1):
+            self.bit[i] += val
+            j = i + (i & -i)
+            if j <= self.n:
+                self.bit[j] += self.bit[i]
+
+    def update(self, idx, delta):
+        # point update: add delta at position idx (1-indexed)
+        while idx <= self.n:
+            self.bit[idx] += delta
+            idx += idx & -idx
+
+    def prefix_sum(self, idx):
+        # sum of [1..idx] inclusive
+        s = 0
+        while idx > 0:
+            s += self.bit[idx]
+            idx -= idx & -idx
+        return s
+
+    def range_sum(self, l, r):
+        # inclusive range sum [l..r]
+        if l > r:
+            return 0  # deterministic handling for invalid input
+        return self.prefix_sum(r) - self.prefix_sum(l - 1)
+
+def main():
+    data = sys.stdin.buffer.read().split()
+    if not data:
+        return
+    
+    it = iter(data)
+    n = int(next(it))
+    arr = [int(next(it)) for _ in range(n)]
+    
+    ft = FenwickTree(n)
+    ft.build(arr)
+    
+    q = int(next(it))
+    out_lines = []
+    
+    for _ in range(q):
+        op = next(it).decode().lower()  # case-insensitive, deterministic
+        
+        if op == 'update':
+            idx = int(next(it))
+            new_val = int(next(it))
+            # Validate index
+            if 1 <= idx <= n:
+                old_val = arr[idx - 1]
+                delta = new_val - old_val
+                arr[idx - 1] = new_val
+                ft.update(idx, delta)
+            # else: silently ignore for deterministic behavior
+        elif op == 'query':
+            l = int(next(it))
+            r = int(next(it))
+            # Validate and clamp to valid range for deterministic behavior
+            if l < 1: l = 1
+            if r > n: r = n
+            if l <= r:
+                out_lines.append(str(ft.range_sum(l, r)))
+            else:
+                out_lines.append("0")  # deterministic handling
+        else:
+            # Unknown operation: deterministic skip (no-op)
+            pass
+    
+    sys.stdout.write("\n".join(out_lines))
+
+if __name__ == "__main__":
+    main()

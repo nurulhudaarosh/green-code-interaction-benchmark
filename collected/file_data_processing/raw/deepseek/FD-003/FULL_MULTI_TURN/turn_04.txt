@@ -1,0 +1,90 @@
+```python
+import csv
+import sys
+from collections import defaultdict
+
+def parse_float(value):
+    if value is None:
+        return None
+    try:
+        result = float(str(value).strip())
+    except (ValueError, TypeError):
+        return None
+    if result != result:  # NaN check
+        return None
+    if result in (float("inf"), float("-inf")):
+        return None
+    return result
+
+def parse_int(value):
+    if value is None:
+        return None
+    try:
+        result = int(str(value).strip())
+    except (ValueError, TypeError):
+        return None
+    return result
+
+def aggregate_sales(input_path, output_path):
+    aggregates = defaultdict(lambda: {"total_units": 0, "total_revenue": 0.0, "weighted_price_sum": 0.0})
+
+    with open(input_path, "r", newline="", encoding="utf-8") as infile:
+        reader = csv.DictReader(infile)
+        required_fields = {"region", "category", "units", "unit_price"}
+        if not required_fields.issubset(set(reader.fieldnames or [])):
+            raise ValueError(f"Input CSV must contain columns: {required_fields}")
+
+        for row in reader:
+            try:
+                region = (row.get("region") or "").strip()
+                category = (row.get("category") or "").strip()
+                units_raw = row.get("units")
+                price_raw = row.get("unit_price")
+
+                if not region or not category:
+                    continue
+
+                units = parse_int(units_raw)
+                price = parse_float(price_raw)
+
+                if units is None or price is None:
+                    continue
+                if units <= 0 or price < 0:
+                    continue
+
+                key = (region, category)
+                revenue = units * price
+
+                aggregates[key]["total_units"] += units
+                aggregates[key]["total_revenue"] += revenue
+                aggregates[key]["weighted_price_sum"] += price * units
+            except (ValueError, TypeError, AttributeError):
+                continue
+
+    results = []
+    for (region, category), data in sorted(aggregates.items()):
+        total_units = data["total_units"]
+        weighted_avg = data["weighted_price_sum"] / total_units if total_units > 0 else 0.0
+        results.append({
+            "region": region,
+            "category": category,
+            "total_units": total_units,
+            "total_revenue": round(data["total_revenue"], 2),
+            "weighted_avg_unit_price": round(weighted_avg, 2),
+        })
+
+    with open(output_path, "w", newline="", encoding="utf-8") as outfile:
+        fieldnames = ["region", "category", "total_units", "total_revenue", "weighted_avg_unit_price"]
+        writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in results:
+            writer.writerow(row)
+
+    return results
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: python aggregator.py <input.csv> <output.csv>")
+        sys.exit(1)
+    aggregate_sales(sys.argv[1], sys.argv[2])
+```

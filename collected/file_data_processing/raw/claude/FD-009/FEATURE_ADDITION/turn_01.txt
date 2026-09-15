@@ -1,0 +1,161 @@
+```python
+import csv
+import statistics
+from collections import defaultdict
+from dataclasses import dataclass, field
+from typing import List, Dict
+
+
+@dataclass
+class Transaction:
+    account_id: str
+    transaction_id: str
+    timestamp: str
+    amount: float
+    is_flagged: bool = False
+    baseline_mean: float = field(default=None)
+    baseline_stdev: float = field(default=None)
+    window_size: int = field(default=0)
+
+
+def load_transactions(filepath: str) -> List[Transaction]:
+    """Load transactions from a CSV file with columns:
+    account_id, transaction_id, timestamp, amount
+    """
+    transactions = []
+    with open(filepath, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            transactions.append(
+                Transaction(
+                    account_id=row["account_id"],
+                    transaction_id=row["transaction_id"],
+                    timestamp=row["timestamp"],
+                    amount=float(row["amount"]),
+                )
+            )
+    return transactions
+
+
+def group_and_order_by_account(
+    transactions: List[Transaction],
+) -> Dict[str, List[Transaction]]:
+    """Group transactions by account, then order each group deterministically
+    by timestamp, with transaction_id as a tiebreaker.
+    """
+    grouped = defaultdict(list)
+    for txn in transactions:
+        grouped[txn.account_id].append(txn)
+
+    for account_id in grouped:
+        grouped[account_id].sort(key=lambda t: (t.timestamp, t.transaction_id))
+
+    return grouped
+
+
+def analyze_account(transactions: List[Transaction], window: int = 5) -> None:
+    """For each transaction (after the first `window` in the account's
+    ordered history), compute mean and population standard deviation of the
+    `window` immediately preceding transactions, then flag the current
+    transaction if it is unusually high.
+
+    Flagging rule:
+        threshold = mean + 3 * population_stdev
+        flagged if amount > threshold
+
+    Zero-deviation rule:
+        If the preceding window has zero standard deviation (i.e. all
+        preceding amounts are identical), then any amount that differs
+        from that constant value is flagged, regardless of magnitude.
+        If the amount equals the constant value, it is not flagged.
+    """
+    for i, txn in enumerate(transactions):
+        if i < window:
+            # Not enough preceding history to establish a baseline.
+            txn.window_size = i
+            continue
+
+        preceding = [t.amount for t in transactions[i - window:i]]
+        mean = statistics.mean(preceding)
+        stdev = statistics.pstdev(preceding)  # population standard deviation
+
+        txn.baseline_mean = mean
+        txn.baseline_stdev = stdev
+        txn.window_size = window
+
+        if stdev == 0:
+            # Zero-deviation rule: any deviation from the constant baseline
+            # is considered unusual.
+            txn.is_flagged = txn.amount != mean
+        else:
+            threshold = mean + 3 * stdev
+            txn.is_flagged = txn.amount > threshold
+
+
+def analyze_all_accounts(
+    grouped: Dict[str, List[Transaction]], window: int = 5
+) -> None:
+    for account_id in grouped:
+        analyze_account(grouped[account_id], window=window)
+
+
+def write_output(grouped: Dict[str, List[Transaction]], filepath: str) -> None:
+    """Write deterministic output: accounts sorted alphabetically, and within
+    each account, transactions in the same chronological order used for
+    analysis.
+    """
+    fieldnames = [
+        "account_id",
+        "transaction_id",
+        "timestamp",
+        "amount",
+        "baseline_mean",
+        "baseline_stdev",
+        "window_size",
+        "is_flagged",
+    ]
+
+    with open(filepath, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for account_id in sorted(grouped.keys()):
+            for txn in grouped[account_id]:
+                writer.writerow(
+                    {
+                        "account_id": txn.account_id,
+                        "transaction_id": txn.transaction_id,
+                        "timestamp": txn.timestamp,
+                        "amount": f"{txn.amount:.2f}",
+                        "baseline_mean": (
+                            f"{txn.baseline_mean:.6f}"
+                            if txn.baseline_mean is not None
+                            else ""
+                        ),
+                        "baseline_stdev": (
+                            f"{txn.baseline_stdev:.6f}"
+                            if txn.baseline_stdev is not None
+                            else ""
+                        ),
+                        "window_size": txn.window_size,
+                        "is_flagged": txn.is_flagged,
+                    }
+                )
+
+
+def run_analysis(input_path: str, output_path: str, window: int = 5) -> None:
+    transactions = load_transactions(input_path)
+    grouped = group_and_order_by_account(transactions)
+    analyze_all_accounts(grouped, window=window)
+    write_output(grouped, output_path)
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) != 3:
+        print("Usage: python transaction_analyzer.py <input.csv> <output.csv>")
+        sys.exit(1)
+
+    run_analysis(sys.argv[1], sys.argv[2])
+```

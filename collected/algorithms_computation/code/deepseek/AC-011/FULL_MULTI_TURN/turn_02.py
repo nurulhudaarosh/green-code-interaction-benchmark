@@ -1,0 +1,114 @@
+def knapsack_selected_indices(weights, values, capacity):
+    """
+    Solve 0/1 knapsack and return lexicographically smallest list of selected indices.
+    
+    Args:
+        weights: List of item weights
+        values:  List of item values
+        capacity: Knapsack capacity
+    
+    Returns:
+        List of original indices (0-based) in ascending order
+    """
+    n = len(weights)
+    
+    # DP table: dp[i][c] = max value using items from i to n-1 with capacity c
+    dp = [[0] * (capacity + 1) for _ in range(n + 1)]
+    
+    # Fill DP table from bottom to top (reverse order for proper reconstruction)
+    for i in range(n - 1, -1, -1):
+        w = weights[i]
+        v = values[i]
+        for c in range(capacity + 1):
+            if c >= w:
+                dp[i][c] = max(dp[i + 1][c], dp[i + 1][c - w] + v)
+            else:
+                dp[i][c] = dp[i + 1][c]
+    
+    # Reconstruct lexicographically smallest index list
+    selected = []
+    remaining_capacity = capacity
+    
+    for i in range(n):
+        w = weights[i]
+        v = values[i]
+        
+        # Check if we can include item i
+        if remaining_capacity >= w:
+            # Value if we include item i
+            include_value = dp[i + 1][remaining_capacity - w] + v
+            # Value if we skip item i
+            skip_value = dp[i + 1][remaining_capacity]
+            
+            # Include item i if it gives better value
+            # OR if it gives equal value (tie-breaking: include for lexicographically smaller list)
+            if include_value > skip_value:
+                selected.append(i)
+                remaining_capacity -= w
+            elif include_value == skip_value:
+                # Tie: include current item to get lexicographically smaller list
+                selected.append(i)
+                remaining_capacity -= w
+            # else: skip (include_value < skip_value)
+        # else: cannot include, skip
+    
+    return selected
+
+
+# Example usage and testing
+if __name__ == "__main__":
+    print("Test 1 - Tie case (should be [0, 1]):")
+    weights = [1, 1, 2]
+    values = [2, 2, 4]
+    capacity = 2
+    result = knapsack_selected_indices(weights, values, capacity)
+    print(f"Selected indices: {result}")
+    print(f"Total value: {sum(values[i] for i in result)}")
+    print(f"Total weight: {sum(weights[i] for i in result)}")
+    print(f"Expected: [0, 1] -> {'✓' if result == [0, 1] else '✗'}")
+    
+    print("\nTest 2 - Another tie case (should be [0, 2]):")
+    weights2 = [2, 3, 2, 3]
+    values2 = [5, 6, 5, 6]
+    capacity2 = 5
+    result2 = knapsack_selected_indices(weights2, values2, capacity2)
+    print(f"Selected indices: {result2}")
+    print(f"Total value: {sum(values2[i] for i in result2)}")
+    print(f"Total weight: {sum(weights2[i] for i in result2)}")
+    print(f"Expected: [0, 2] -> {'✓' if result2 == [0, 2] else '✗'}")
+    
+    print("\nTest 3 - No tie (should be [0, 1]):")
+    weights3 = [2, 3, 4, 5]
+    values3 = [3, 4, 5, 6]
+    capacity3 = 5
+    result3 = knapsack_selected_indices(weights3, values3, capacity3)
+    print(f"Selected indices: {result3}")
+    print(f"Total value: {sum(values3[i] for i in result3)}")
+    print(f"Total weight: {sum(weights3[i] for i in result3)}")
+    print(f"Expected: [0, 1] -> {'✓' if result3 == [0, 1] else '✗'}")
+    
+    print("\nTest 4 - Multiple ties (should be [0, 1, 2]):")
+    weights4 = [1, 1, 1, 3]
+    values4 = [1, 1, 1, 3]
+    capacity4 = 3
+    result4 = knapsack_selected_indices(weights4, values4, capacity4)
+    print(f"Selected indices: {result4}")
+    print(f"Total value: {sum(values4[i] for i in result4)}")
+    print(f"Total weight: {sum(weights4[i] for i in result4)}")
+    print(f"Expected: [0, 1, 2] -> {'✓' if result4 == [0, 1, 2] else '✗'}")
+    
+    print("\nTest 5 - Edge case: empty capacity (should be []):")
+    weights5 = [1, 2, 3]
+    values5 = [5, 10, 15]
+    capacity5 = 0
+    result5 = knapsack_selected_indices(weights5, values5, capacity5)
+    print(f"Selected indices: {result5}")
+    print(f"Expected: [] -> {'✓' if result5 == [] else '✗'}")
+    
+    print("\nTest 6 - Edge case: no items (should be []):")
+    weights6 = []
+    values6 = []
+    capacity6 = 10
+    result6 = knapsack_selected_indices(weights6, values6, capacity6)
+    print(f"Selected indices: {result6}")
+    print(f"Expected: [] -> {'✓' if result6 == [] else '✗'}")

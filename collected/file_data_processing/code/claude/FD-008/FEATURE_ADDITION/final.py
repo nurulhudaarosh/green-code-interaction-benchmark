@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Offline duplicate .txt file finder.
+
+Recursively scans a directory for regular .txt files (symlinks and other
+extensions are ignored), normalizes content (case-fold + whitespace
+normalize), hashes with SHA-256, and reports deterministic duplicate groups
+(only groups with 2+ files; paths and groups are sorted deterministically).
+"""
+
+import argparse
+import hashlib
+import re
+import sys
+from pathlib import Path
+from collections import defaultdict
+
+WHITESPACE_RE = re.compile(r"\s+")
+
+
+def normalize(text: str) -> str:
+    """Case-fold and collapse/trim whitespace for stable comparison."""
+    text = text.casefold()
+    text = WHITESPACE_RE.sub(" ", text)
+    return text.strip()
+
+
+def hash_content(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def iter_txt_files(root: Path):
+    """Yield regular (non-symlink) .txt files under root, recursively."""
+    for path in root.rglob("*.txt"):
+        if path.is_symlink():
+            continue
+        if not path.is_file():
+            continue
+        yield path
+
+
+def read_text(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8", errors="strict")
+    except (UnicodeDecodeError, OSError) as e:
+        print(f"Warning: could not read {path}: {e}", file=sys.stderr)
+        return None
+
+
+def find_duplicates(root: Path):
+    """Return dict: hash -> sorted list of absolute path strings.
+
+    Only hashes with 2+ files are included (actual duplicate groups).
+    """
+    groups = defaultdict(list)
+
+    for path in iter_txt_files(root):
+        content = read_text(path)
+        if content is None:
+            continue
+        normalized = normalize(content)
+        digest = hash_content(normalized)
+        groups[digest].append(str(path.resolve()))
+
+    duplicates = {
+        digest: sorted(paths)          # deterministic path order within group
+        for digest, paths in groups.items()
+        if len(paths) > 1              # only real duplicate groups
+    }
+    return duplicates
+
+
+def report(duplicates: dict):
+    if not duplicates:
+        print("No duplicate .txt files found.")
+        return
+
+    # Deterministic group order: sort by (first path in group, hash)
+    ordered_hashes = sorted(
+        duplicates.keys(),
+        key=lambda h: (duplicates[h][0], h)
+    )
+
+    for i, digest in enumerate(ordered_hashes, start=1):
+        paths = duplicates[digest]
+        print(f"Group {i} (sha256={digest}):")
+        for p in paths:
+            print(f"  {p}")
+        print()
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Find duplicate .txt files by normalized content hash."
+    )
+    parser.add_argument(
+        "directory",
+        nargs="?",
+        default=".",
+        help="Root directory to scan recursively (default: current directory)",
+    )
+    args = parser.parse_args()
+
+    root = Path(args.directory)
+    if not root.is_dir():
+        print(f"Error: {root} is not a directory", file=sys.stderr)
+        sys.exit(1)
+
+    duplicates = find_duplicates(root)
+    report(duplicates)
+
+
+if __name__ == "__main__":
+    main()

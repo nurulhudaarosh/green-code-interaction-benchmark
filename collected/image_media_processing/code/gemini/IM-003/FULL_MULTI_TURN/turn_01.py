@@ -1,0 +1,62 @@
+from pathlib import Path
+from PIL import Image
+
+def convert_format(input_dir: str | Path, output_dir: str | Path, target_format: str) -> None:
+    """
+    Recursively converts image files from input_dir to the specified target_format.
+    
+    :param input_dir: Path to the directory containing input images.
+    :param output_dir: Path to the directory where converted images will be saved.
+    :param target_format: Desired output format, either 'JPEG' (or 'JPG') or 'PNG'.
+    """
+    in_path = Path(input_dir)
+    out_path = Path(output_dir)
+    
+    # Normalize target format syntax
+    fmt = target_format.upper().strip()
+    if fmt == "JPG":
+        fmt = "JPEG"
+    if fmt not in ("JPEG", "PNG"):
+        raise ValueError(f"Unsupported target format: {target_format}. Choose 'JPEG' or 'PNG'.")
+
+    # Target extension
+    ext = ".jpg" if fmt == "JPEG" else ".png"
+
+    # Supported image extensions to look for
+    valid_extensions = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif", ".gif"}
+
+    for file_path in in_path.rglob("*"):
+        if file_path.is_file() and file_path.suffix.lower() in valid_extensions:
+            # Preserve subfolder hierarchy in output directory
+            relative_path = file_path.relative_to(in_path)
+            destination = out_path / relative_path.with_suffix(ext)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+
+            try:
+                with Image.open(file_path) as img:
+                    # Target-specific format handling
+                    if fmt == "JPEG":
+                        # Handle transparency/alpha channel by flattening over a white background
+                        if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+                            # Convert palette images with transparency to RGBA first
+                            img = img.convert("RGBA")
+                            background = Image.new("RGB", img.size, (255, 255, 255))
+                            # Paste using the image's alpha channel as mask
+                            background.paste(img, mask=img.split()[3])
+                            final_img = background
+                        else:
+                            final_img = img.convert("RGB")
+                    
+                    elif fmt == "PNG":
+                        # Retain existing RGBA/RGB/L modes, convert CMYK or palette modes
+                        if img.mode in ("CMYK", "P"):
+                            final_img = img.convert("RGBA" if "transparency" in img.info else "RGB")
+                        else:
+                            final_img = img
+
+                    # Save converted image
+                    final_img.save(destination, format=fmt, quality=95 if fmt == "JPEG" else None)
+                    print(f"Converted: {file_path.name} -> {destination}")
+
+            except Exception as e:
+                print(f"Error processing {file_path}: {e}")

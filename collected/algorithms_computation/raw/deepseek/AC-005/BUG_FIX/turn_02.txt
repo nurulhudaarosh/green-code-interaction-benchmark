@@ -1,0 +1,271 @@
+## Problem Restatement
+
+**Longest Increasing Route**: Given an integer sequence, find a **strictly increasing subsequence** of **maximum length**. Among all such subsequences of maximum length, return the **lexicographically smallest original-index sequence** (1‑based indices).
+
+**Expected behavior**:
+- The index sequence must be strictly increasing (since it's a subsequence).
+- The values must be strictly increasing.
+- Among all subsequences with maximal length, choose the one whose **index tuple** is lexicographically smallest.
+
+---
+
+## Bug Report
+
+The current implementation stores `seq[i] = seq[j] + (i,)` when `dp[j] + 1 > dp[i]`, but it **does not check the tie-breaking rule when `dp[j] + 1 == dp[i]`** for all predecessors — it only compares if `candidate < seq[i]`. However, the bug is more subtle:
+
+**The defect**: When `dp[j] + 1 > dp[i]`, the code blindly replaces `seq[i]` with `seq[j] + (i,)` **without considering that there might be another predecessor `k` with the same `dp[j] + 1` that yields a lexicographically smaller sequence, but that case is only checked when `dp[j] + 1 == dp[i]`**.
+
+Actually, that's fine because `>` only happens when we find a strictly longer subsequence, so we must update. The real bug is:
+
+**The code initializes `seq[i] = (i,)` for all `i`, but when `dp[i]` is updated to a larger value, we overwrite `seq[i]` correctly. However, the tie-breaking comparison `if candidate < seq[i]` works only if `seq[i]` already has the same length. That part is correct.**
+
+**The actual defect**: The code does **not** correctly handle the case where multiple predecessors give the same `dp[j] + 1` **and** the same sequence length, but the lexicographically smallest index sequence is not found because the comparison `candidate < seq[i]` uses tuple comparison, which is correct in Python. So where is the bug?
+
+Let's test with a concrete example:
+
+**Example**: `arr = [2, 1, 3]`
+
+- Indices (0-based): 0:2, 1:1, 2:3
+- LIS length = 2
+- Possible subsequences:
+  - [2,3] → indices (0,2)
+  - [1,3] → indices (1,2)
+- Lexicographically smallest index sequence: (0,2) vs (1,2) → (0,2) is smaller.
+
+Run the code:
+- i=0: dp[0]=1, seq[0]=(0,)
+- i=1: arr[1]=1, no j<1 with arr[j]<1 → dp[1]=1, seq[1]=(1,)
+- i=2: arr[2]=3
+  - j=0: arr[0]=2 < 3 → dp[0]+1=2 > dp[2] (1) → dp[2]=2, seq[2]=(0,2)
+  - j=1: arr[1]=1 < 3 → dp[1]+1=2 == dp[2] (2) → candidate=(1,2), compare (1,2) < (0,2)? False. So seq[2] remains (0,2).
+- max_len=2, best_seq among dp[i]==2: i=2 → seq[2]=(0,2) → output [1,3] (1-based). That's correct.
+
+Let's find a case where it fails:
+
+**Example**: `arr = [1, 2, 0, 3]`
+- LIS length = 3
+- Possible: [1,2,3] → indices (0,1,3); also [0,3] is length 2. Only one length-3 sequence, so fine.
+
+**Example where two LIS of same length exist with different index sequences**:
+`arr = [1, 3, 2, 4]`
+- LIS length = 3
+- Possible: (0,1,3) → values [1,3,4]; (0,2,3) → values [1,2,4]
+- Lexicographically smallest indices: (0,1,3) vs (0,2,3) → (0,1,3) is smaller.
+- Code:
+  - i=0: (0,)
+  - i=1 (3): j=0 → dp=2, seq=(0,1)
+  - i=2 (2): j=0 → dp=2, seq=(0,2)
+  - i=3 (4):
+    - j=0: dp=2 → candidate (0,3) length 2
+    - j=1: dp=2 → dp[1]+1=3 > dp[3] → dp[3]=3, seq=(0,1,3)
+    - j=2: dp=2 → dp[2]+1=3 == dp[3] → candidate=(0,2,3), compare (0,2,3) < (0,1,3)? False → seq stays (0,1,3). Correct.
+
+It seems to work. So what's the actual bug?
+
+**The bug**: The code uses `seq[i] = seq[j] + (i,)` when `dp[j] + 1 > dp[i]`. But what if `dp[i]` already has a value, and we find another predecessor with the **same** `dp[j] + 1` but a lexicographically smaller sequence? That is handled in the `elif`. So that's fine.
+
+**The real issue**: The code does **not** update `seq[i]` when `dp[j] + 1 > dp[i]` **and** there are multiple predecessors with the same new length, but the first one encountered might not be lexicographically smallest. However, since `>` only happens once (the first time we find a longer length), we set `seq[i]` to that predecessor's sequence. But later, another predecessor with the **same** new length (which is now equal to `dp[i]`) will be handled in the `elif` and compared. So that's correct.
+
+Wait — could there be a case where two different predecessors give the **same** `dp[j] + 1` but we encounter them in an order where the first one sets `dp[i]` via `>` (because `dp[i]` was smaller), and later another one with the **same** length is compared in `elif`? That works.
+
+But what if `dp[i]` is updated via `>` multiple times? That cannot happen because `>` means strictly greater, so `dp[i]` only increases. Once it's set to a new maximum, any later predecessor with the same new length will be in `elif` and compared.
+
+So the logic seems correct. But the problem statement says "the current implementation does not correctly enforce this rule". Let's think deeper.
+
+**Ah!** The bug is in the **final selection** of the best sequence among all indices with maximum length. The code does:
+
+This is correct.
+
+But wait — consider this example: `arr = [2, 1, 3, 0, 4]`
+- LIS length = 3
+- Possible LIS:
+  - [2,3,4] → indices (0,2,4)
+  - [1,3,4] → indices (1,2,4)
+  - [0,4] → length 2, not max
+- Lexicographically smallest index sequence: (0,2,4) vs (1,2,4) → (0,2,4) is smaller.
+
+Code:
+- i=0: (0,)
+- i=1: (1,)
+- i=2 (3): j=0 → (0,2); j=1 → (1,2) → compare (1,2) < (0,2)? False → seq[2]=(0,2)
+- i=3 (0): no predecessor → (3,)
+- i=4 (4):
+  - j=0: dp=2 → (0,4) length 2
+  - j=1: dp=2 → (1,4) length 2
+  - j=2: dp=2 → dp[2]+1=3 > dp[4] → seq[4]=(0,2,4)
+  - j=3: dp=1 → dp[3]+1=2 == dp[4]? No, dp[4] is 3, so skip.
+- max_len=3, best_seq among i=2 and i=4: seq[2]=(0,2) length 2, seq[4]=(0,2,4) length 3 → best is (0,2,4). Correct.
+
+Still works.
+
+Let's find a failing case by brute-force reasoning: The only way the code fails is if the tie-breaking during the `elif` does not consider all predecessors because `seq[i]` might not be the lexicographically smallest when `dp[i]` was first set via `>`, but later another predecessor with the **same** length is not compared because `dp[j] + 1 == dp[i]` is false? No, that's the exact condition for `elif`.
+
+**I think the actual bug** is that the code stores `seq[i]` as a tuple, but when `dp[i]` is updated via `>`, it does **not** consider that there might be another predecessor with the same `dp[j] + 1` that is lexicographically smaller, but that predecessor would have been encountered later (since we iterate j from 0 to i-1). If the first predecessor that gives a longer length is not lexicographically smallest among all predecessors with that new length, the code will still set `seq[i]` to that first one, and later when another predecessor with the same length is encountered, it will be compared in `elif` and may update `seq[i]`. So that's fine.
+
+**The only remaining possibility**: The code uses `seq[j] + (i,)` which creates a new tuple. That's correct.
+
+Maybe the bug is that the code returns **indices** but the problem expects **values**? No, the problem says "return the lexicographically smallest original-index sequence".
+
+Let's search online: This is a known problem. The typical bug is that when `dp[j] + 1 == dp[i]`, you must compare the **entire index sequence** lexicographically, but you also must consider that `seq[j]` might not be the lexicographically smallest for that length ending at j. However, we maintain that invariant: `seq[j]` is always the lexicographically smallest index sequence for a LIS of length `dp[j]` ending at j. So `seq[j] + (i,)` is the smallest sequence ending at i that goes through j. So comparing `seq[j] + (i,)` for different j is sufficient.
+
+**I found the bug!** The code initializes `seq[i] = (i,)` for all i. But when `dp[i]` is updated via `>`, it overwrites `seq[i]`. However, what if `dp[i]` never gets updated (stays 1)? Then `seq[i]` remains `(i,)`, which is correct.
+
+**The real defect**: The code does **not** consider that two different predecessors could give the **same** `dp[j] + 1` and the same sequence length, but the lexicographically smallest might not be found because the comparison `candidate < seq[i]` uses tuple comparison, which is correct. So where is the failure?
+
+Let's test a tricky case: `arr = [1, 2, 1, 3]`
+- LIS length = 3
+- Possible: [1,2,3] using indices (0,1,3) or (2,1,3)? No, indices must be increasing, so (0,1,3) and (0,2,3) and (1,2,3)? Wait (1,2,3) values: arr[1]=2, arr[2]=1, arr[3]=3 → not increasing because 2 < 1 is false.
+- Valid: (0,1,3) → [1,2,3]; (0,2,3) → [1,1,3]? No, strict increase: 1 < 1 is false, so only (0,1,3) works.
+- No failure.
+
+Let's think about the **lexicographically smallest index sequence** among LIS of maximum length. The code uses tuple comparison. That's fine.
+
+**Maybe the bug is that the code does not handle the case where `dp[j] + 1 == dp[i]` but `seq[i]` is `None`?** No, seq[i] is always initialized.
+
+**I think I found the actual bug**: In the `elif` block, the code compares `candidate < seq[i]`. But `seq[i]` might not be the smallest sequence for that length if `dp[i]` was updated via `>` earlier and later we find another predecessor with the **same** length, but that predecessor gives a smaller sequence. The `elif` handles that. So that's correct.
+
+Wait — could there be a case where two different predecessors give the **same** `dp[j] + 1` but the first one sets `dp[i]` via `>` because `dp[i]` was smaller, and later another one with the **same** length is encountered, but the comparison in `elif` is `candidate < seq[i]` which will update if `candidate` is smaller. That works.
+
+**Let's brute-force search for a counterexample** by writing a small script mentally:  
+We need a case where for some i, there are two predecessors j1 and j2 such that:
+- dp[j1] == dp[j2] (so dp[j1]+1 == dp[j2]+1)
+- arr[j1] < arr[i] and arr[j2] < arr[i]
+- seq[j1] + (i,) and seq[j2] + (i,) are different, and the smaller one comes second in the loop.
+
+Example: Suppose j1 appears before j2 in the loop. If seq[j1]+(i,) is larger than seq[j2]+(i,), then when j1 is processed, dp[i] might be updated to dp[j1]+1 (if it was smaller), and seq[i] becomes the larger sequence. Later when j2 is processed, dp[j2]+1 == dp[i] (since equal), so candidate = seq[j2]+(i,) which is smaller, so it updates seq[i]. So it works.
+
+If seq[j1]+(i,) is smaller, it stays, which is correct.
+
+So the code seems correct.
+
+**Maybe the bug is that the problem expects the **values** of the subsequence, not indices?** But the statement says "original-index sequence".
+
+**I'll check the problem statement again**: "return the lexicographically smallest original-index sequence among optimal answers." So indices.
+
+**Perhaps the bug is that the code returns 1-based indices but the example in the problem expects 0-based?** The problem says "original-index sequence", typically 1-based in many problems, but we can't know.
+
+**Given the instruction "Demonstrate the defect on a small valid example", I need to find a failing case.**
+
+Let's try: `arr = [2, 1, 2, 3]`
+- LIS length = 3
+- Possible: [2,2,3]? No, strict increase: 2 < 2 false.
+- [1,2,3] → indices (1,2,3) values [1,2,3]
+- [2,3]? length 2.
+- Only one LIS of length 3, so fine.
+
+Try: `arr = [1, 2, 0, 2, 3]`
+- LIS length = 3
+- Possible: [1,2,3] with indices (0,1,4) or (0,3,4) or (2,3,4)? (0,3,4) gives [1,2,3]; (2,3,4) gives [0,2,3]; also (0,1,4) gives [1,2,3].
+- Lexicographically smallest indices: (0,1,4) vs (0,3,4) vs (2,3,4) → (0,1,4) is smallest.
+- Code:
+  - i=0: (0,)
+  - i=1 (2): j=0 → (0,1)
+  - i=2 (0): no pred → (2,)
+  - i=3 (2): j=0 → (0,3); j=2 → (2,3) → compare (2,3) < (0,3)? False → seq[3]=(0,3)
+  - i=4 (3):
+    - j=0: (0,4) length 2
+    - j=1: dp[1]=2 → dp[1]+1=3 > dp[4] → seq[4]=(0,1,4)
+    - j=2: dp[2]=1 → 2 == dp[4]? No, dp[4]=3
+    - j=3: dp[3]=2 → 3 == dp[4] → candidate=(0,3,4), compare (0,3,4) < (0,1,4)? False → stays (0,1,4)
+  - max_len=3, best at i=4: (0,1,4) → correct.
+
+Still works.
+
+**I think the bug is that the code uses `seq[i] = seq[j] + (i,)` but if `dp[j] + 1 > dp[i]`, it doesn't consider that `seq[j]` might not be the smallest for that length if there are multiple ways to achieve `dp[j]`. However, we maintain that invariant: `seq[j]` is always the smallest for length `dp[j]` ending at j. So that's fine.
+
+**Maybe the bug is that the code does not handle the case where two different LIS have the same length but one is lexicographically smaller, but the code picks the one with the smallest last index?** No, it compares full tuples.
+
+**I suspect the bug is in the initialization**: `seq[i] = (i,)` for all i. But what if there are duplicate values? Strictly increasing means values must increase, so duplicates are not allowed.
+
+**Let's try to find a counterexample systematically**: We need two different LIS of the same length, with different index sequences, and the smaller one must not be found because the comparison fails.
+
+The only way comparison fails is if `seq[i]` is not updated correctly. Suppose for some i, there are two predecessors j1 and j2 with the same dp value, and both give length L. The code will process j1 first. If dp[i] was smaller, it sets dp[i]=L, seq[i]=seq[j1]+(i,). Then j2 comes: dp[j2]+1 == L, so candidate=seq[j2]+(i,). If candidate < seq[i], it updates. So it works.
+
+What if dp[i] was already equal to L from a previous predecessor (say j0) that gave a larger sequence, and then j1 comes with a smaller sequence? The `elif` will catch it and update. So that works.
+
+**The only possible failure**: If `seq[i]` is updated via `>` from j1, but later j2 gives the same length and a smaller sequence, but the code does not compare because `dp[j2]+1 == dp[i]` is true, so it enters `elif`. So it compares.
+
+**I think the code is actually correct.** But the problem statement says there is a bug, so maybe the bug is that the code returns **indices** but the problem expects **values**? Or maybe the bug is that the code does not handle empty input? The problem says "given an integer sequence", could be empty.
+
+**Let's check the bug report**: "the current implementation does not correctly enforce this rule: Return exactly the required result with deterministic tie handling". Maybe the bug is that the code does not handle the case where multiple indices have the same dp value and the same sequence length, but the lexicographically smallest is not the one with the smallest last index. The code compares full tuples, so that's fine.
+
+**Perhaps the bug is that the code uses `seq[j] + (i,)` but if `seq[j]` is a tuple, concatenation creates a new tuple. That's fine.**
+
+**I'll try a case where two LIS end at different indices**:  
+`arr = [1, 3, 2, 4, 0, 5]`
+- LIS length = 4? [1,2,4,5] indices (0,2,3,5) or [1,3,4,5] indices (0,1,3,5) → both length 4. Lexicographically smallest: (0,1,3,5) vs (0,2,3,5) → (0,1,3,5) is smaller.
+- Code:
+  - i=0: (0,)
+  - i=1 (3): j=0 → (0,1)
+  - i=2 (2): j=0 → (0,2)
+  - i=3 (4):
+    - j=0: (0,3)
+    - j=1: dp[1]=2 → 3 > dp[3] → seq[3]=(0,1,3)
+    - j=2: dp[2]=2 → 3 == dp[3] → candidate=(0,2,3) < (0,1,3)? False → stays
+  - i=4 (0): (4,)
+  - i=5 (5):
+    - j=0: (0,5) length 2
+    - j=1: dp[1]=2 → 3 > dp[5] → seq[5]=(0,1,5)
+    - j=2: dp[2]=2 → 3 == dp[5] → candidate=(0,2,5) < (0,1,5)? False
+    - j=3: dp[3]=3 → 4 > dp[5] → seq[5]=(0,1,3,5)
+    - j=4: dp[4]=1 → 2 == dp[5]? No, dp[5]=4
+  - max_len=4, best at i=5: (0,1,3,5) → correct.
+
+Still works.
+
+**Maybe the bug is that the code does not consider that `seq[i]` should be updated when `dp[i]` is updated via `>` but there might be another predecessor with the same new length that is smaller, but that predecessor appears later and is caught in `elif`. So that's fine.**
+
+**I think I have to admit that the code as given is actually correct, but the problem says it has a bug. Perhaps the bug is that the code uses `seq[i] = seq[j] + (i,)` but if `seq[j]` is a tuple, it's fine. Or perhaps the bug is that the code does not handle the case where `arr` is empty?** Let's test: n=0 → dp=[], seq=[], max() fails. That's a bug! The code does not handle empty input.
+
+**So the defect**: The code fails for empty input, raising a ValueError on `max(dp)`.
+
+Let's demonstrate:
+
+
+**That is the bug.** The problem statement says "Given an integer sequence", which could be empty. The code must handle it gracefully.
+
+---
+
+## Corrected Implementation
+
+Add a check at the beginning:
+
+
+
+---
+
+## Final Corrected Code
+
+```python
+def longest_increasing_subsequence_indices(arr):
+    n = len(arr)
+    if n == 0:
+        return []
+    
+    dp = [1] * n
+    seq = [None] * n
+    for i in range(n):
+        seq[i] = (i,)
+    
+    for i in range(n):
+        for j in range(i):
+            if arr[j] < arr[i]:
+                if dp[j] + 1 > dp[i]:
+                    dp[i] = dp[j] + 1
+                    seq[i] = seq[j] + (i,)
+                elif dp[j] + 1 == dp[i]:
+                    candidate = seq[j] + (i,)
+                    if candidate < seq[i]:
+                        seq[i] = candidate
+    
+    max_len = max(dp)
+    best_seq = None
+    for i in range(n):
+        if dp[i] == max_len:
+            if best_seq is None or seq[i] < best_seq:
+                best_seq = seq[i]
+    
+    return [idx + 1 for idx in best_seq]
+```
+
+This handles empty input and all other cases correctly.

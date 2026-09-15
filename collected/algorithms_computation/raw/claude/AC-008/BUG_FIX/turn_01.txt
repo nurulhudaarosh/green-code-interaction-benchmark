@@ -1,0 +1,165 @@
+**Problem:** maintain an integer array under point-replacement updates and inclusive range-sum queries, returning each query's result in order.
+
+**Key constraints:** 0-based indices with `0 <= i, l, r < n` and `l <= r`; values can be negative; updates *replace* (not add to) an element; both operations should run faster than O(n) each (O(log n)); solution must be deterministic — stdlib only, no randomness/network/I/O.
+
+**Required output:** a list of ints, one per query, in input order.
+
+**Algorithm:** a Fenwick tree (BIT) stores partial sums so prefix sums and point updates are O(log n). Since updates are replacements, keep a shadow array; on update compute `delta = new_val - old_val` and apply that delta to the BIT. `range_sum(l, r) = prefix(r) - prefix(l-1)`.
+
+```python
+"""
+Point-update / range-sum-query maintenance using a Fenwick tree (BIT).
+
+Supported operations (0-based indices):
+    ("update", i, val)  -> replace arr[i] with val
+    ("query",  l, r)    -> report sum(arr[l..r]) inclusive
+
+Deterministic, standard-library only: no randomness, no I/O, no network.
+"""
+
+from typing import List, Tuple, Union
+
+
+class FenwickTree:
+    """1-indexed internal Fenwick tree over a 0-indexed logical array."""
+
+    def __init__(self, n: int) -> None:
+        self.n = n
+        self.tree = [0] * (n + 1)  # tree[1..n]
+
+    def _add(self, i: int, delta: int) -> None:
+        i += 1  # move to 1-based BIT index
+        while i <= self.n:
+            self.tree[i] += delta
+            i += i & (-i)
+
+    def _prefix_sum(self, i: int) -> int:
+        if i < 0:
+            return 0
+        i += 1  # move to 1-based BIT index
+        s = 0
+        while i > 0:
+            s += self.tree[i]
+            i -= i & (-i)
+        return s
+
+    def range_sum(self, l: int, r: int) -> int:
+        return self._prefix_sum(r) - self._prefix_sum(l - 1)
+
+    def point_update(self, i: int, delta: int) -> None:
+        self._add(i, delta)
+
+
+class NumArray:
+    """Wraps a Fenwick tree to support point replacement + range sum."""
+
+    def __init__(self, nums: List[int]) -> None:
+        self.n = len(nums)
+        self.arr = list(nums)
+        self.bit = FenwickTree(self.n)
+        for idx, v in enumerate(self.arr):
+            if v != 0:
+                self.bit.point_update(idx, v)
+
+    def update(self, index: int, val: int) -> None:
+        if not (0 <= index < self.n):
+            raise IndexError(f"update index {index} out of range [0, {self.n})")
+        delta = val - self.arr[index]
+        if delta != 0:
+            self.bit.point_update(index, delta)
+        self.arr[index] = val
+
+    def sum_range(self, left: int, right: int) -> int:
+        if not (0 <= left <= right < self.n):
+            raise IndexError(f"query range [{left}, {right}] invalid for size {self.n}")
+        return self.bit.range_sum(left, right)
+
+
+Operation = Union[Tuple[str, int, int]]  # ("update", i, val) or ("query", l, r)
+
+
+def process_operations(nums: List[int], operations: List[Operation]) -> List[int]:
+    """
+    Run a sequence of update/query operations against the initial array `nums`.
+    Returns a list of results for every "query" operation, in order.
+    """
+    num_array = NumArray(nums)
+    results: List[int] = []
+
+    for op in operations:
+        kind = op[0]
+        if kind == "update":
+            _, index, val = op
+            num_array.update(index, val)
+        elif kind == "query":
+            _, left, right = op
+            results.append(num_array.sum_range(left, right))
+        else:
+            raise ValueError(f"Unknown operation type: {kind!r}")
+
+    return results
+
+
+def _self_test() -> None:
+    """Deterministic checks against a naive O(n)-per-op reference implementation."""
+
+    def naive(nums: List[int], operations: List[Operation]) -> List[int]:
+        arr = list(nums)
+        out = []
+        for op in operations:
+            kind = op[0]
+            if kind == "update":
+                _, i, v = op
+                arr[i] = v
+            else:
+                _, l, r = op
+                out.append(sum(arr[l:r + 1]))
+        return out
+
+    test_cases = [
+        (
+            [1, 3, 5],
+            [("query", 0, 2), ("update", 1, 2), ("query", 0, 2)],
+        ),
+        (
+            [-1, 4, -2, 7, 0, 9, -5, 2],
+            [
+                ("query", 0, 7),
+                ("update", 3, -100),
+                ("query", 2, 5),
+                ("update", 0, 0),
+                ("query", 0, 0),
+                ("query", 4, 7),
+            ],
+        ),
+        (
+            [0] * 10,
+            [("update", i, i * i) for i in range(10)]
+            + [("query", 0, 9), ("query", 3, 6)],
+        ),
+    ]
+
+    for nums, ops in test_cases:
+        expected = naive(nums, ops)
+        actual = process_operations(nums, ops)
+        assert actual == expected, f"Mismatch: expected {expected}, got {actual}"
+
+    print("All self-tests passed.")
+
+
+if __name__ == "__main__":
+    _self_test()
+
+    # Example usage
+    nums = [1, 3, 5, 7, 9, 11]
+    operations: List[Operation] = [
+        ("query", 0, 5),
+        ("update", 2, 100),
+        ("query", 1, 3),
+        ("update", 5, -1),
+        ("query", 0, 5),
+    ]
+    print(process_operations(nums, operations))
+```
+
+Running it prints `All self-tests passed.` and `[36, 110, 119]` for the example.

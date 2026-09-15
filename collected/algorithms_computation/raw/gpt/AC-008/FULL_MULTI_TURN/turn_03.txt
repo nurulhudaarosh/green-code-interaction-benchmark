@@ -1,0 +1,331 @@
+Below is the updated version. The original behavior is preserved by default: `mutable_range_sum_engine(array, operations)` still returns only the query-result list. When `include_summary=True`, it returns an additional `operation_summary` field.
+
+For the summary, **major computational operations** are counted deterministically as:
+
+* 1 per `update` operation processed.
+* 1 per `query` operation processed.
+* The Fenwick-tree internal steps are not counted individually, because their number depends on the tree structure rather than representing separate high-level decisions.
+
+```python
+"""
+Mutable Range Sum Engine
+
+Original problem:
+Maintain an integer array under two types of operations:
+
+1. Point replacement:
+       ("update", index, new_value)
+
+   Replace array[index] with new_value.
+
+2. Inclusive range-sum query:
+       ("query", left, right)
+
+   Return the sum of array[left:right + 1].
+
+Original required output:
+- Return one integer for every query.
+- Query results must appear in exactly the same order as the
+  corresponding query operations.
+- The result must be deterministic.
+- With the original/default interface, return ONLY the list of
+  query results.
+
+Algorithm:
+- Use a Fenwick tree (Binary Indexed Tree).
+- Point replacement is handled using:
+      delta = new_value - old_value
+- Fenwick update: O(log n)
+- Fenwick prefix sum: O(log n)
+- Inclusive range sum:
+      prefix_sum(right) - prefix_sum(left - 1)
+- Initial construction: O(n)
+
+New optional feature:
+- If include_summary=True, return an additional
+  "operation_summary" field.
+- operation_summary reports the number of major computational
+  operations/decisions made by the algorithm.
+- For this task, each processed update or query counts as one
+  major operation.
+- Therefore:
+      operation_summary = number of update operations
+                        + number of query operations
+                        = len(operations)
+
+Backward compatibility:
+- If include_summary is False (default), the function returns the
+  original list of query results.
+- If include_summary is True, the function returns:
+      {
+          "results": [...],
+          "operation_summary": <integer>
+      }
+"""
+
+
+class FenwickTree:
+    """Fenwick Tree supporting point additions and prefix sums."""
+
+    def __init__(self, values):
+        self.n = len(values)
+        self.tree = [0] * (self.n + 1)
+
+        # O(n) construction.
+        for i, value in enumerate(values, start=1):
+            self.tree[i] += value
+
+            parent = i + (i & -i)
+            if parent <= self.n:
+                self.tree[parent] += self.tree[i]
+
+    def update(self, index, delta):
+        """Add delta to the value at a 0-based index."""
+        i = index + 1
+
+        while i <= self.n:
+            self.tree[i] += delta
+            i += i & -i
+
+    def prefix_sum(self, index):
+        """Return sum of values from index 0 through index."""
+        if index < 0:
+            return 0
+
+        total = 0
+        i = index + 1
+
+        while i > 0:
+            total += self.tree[i]
+            i -= i & -i
+
+        return total
+
+    def range_sum(self, left, right):
+        """Return inclusive sum from left through right."""
+        return (
+            self.prefix_sum(right)
+            - self.prefix_sum(left - 1)
+        )
+
+
+def mutable_range_sum_engine(
+    array,
+    operations,
+    include_summary=False
+):
+    """
+    Process point replacements and inclusive range-sum queries.
+
+    Parameters:
+        array:
+            Initial list of integers.
+
+        operations:
+            List containing:
+                ("update", index, new_value)
+                ("query", left, right)
+
+        include_summary:
+            False by default, preserving the original output.
+            If True, return a dictionary containing both results
+            and operation_summary.
+
+    Returns:
+        When include_summary=False:
+            List[int]
+
+        When include_summary=True:
+            {
+                "results": List[int],
+                "operation_summary": int
+            }
+    """
+
+    values = list(array)
+    fenwick = FenwickTree(values)
+
+    results = []
+
+    # Number of high-level operations processed.
+    operation_count = 0
+
+    # Process operations strictly in input order.
+    for operation in operations:
+        operation_type = operation[0]
+
+        if operation_type == "update":
+            _, index, new_value = operation
+
+            old_value = values[index]
+            delta = new_value - old_value
+
+            values[index] = new_value
+            fenwick.update(index, delta)
+
+            operation_count += 1
+
+        elif operation_type == "query":
+            _, left, right = operation
+
+            results.append(
+                fenwick.range_sum(left, right)
+            )
+
+            operation_count += 1
+
+        else:
+            raise ValueError(
+                f"Unknown operation type: {operation_type}"
+            )
+
+    # Preserve the original output when the feature is disabled.
+    if not include_summary:
+        return results
+
+    # New optional output.
+    return {
+        "results": results,
+        "operation_summary": operation_count
+    }
+
+
+# ---------------------------------------------------------
+# Tests
+# ---------------------------------------------------------
+
+def run_tests():
+    # -----------------------------------------------------
+    # Original behavior must remain unchanged.
+    # -----------------------------------------------------
+
+    array = [1, 2, 3]
+    operations = [
+        ("query", 0, 2),       # 6
+        ("update", 1, 5),
+        ("query", 0, 2),       # 9
+    ]
+
+    assert mutable_range_sum_engine(
+        array,
+        operations
+    ) == [6, 9]
+
+    # -----------------------------------------------------
+    # New optional summary.
+    # -----------------------------------------------------
+
+    assert mutable_range_sum_engine(
+        array,
+        operations,
+        include_summary=True
+    ) == {
+        "results": [6, 9],
+        "operation_summary": 3
+    }
+
+    # -----------------------------------------------------
+    # Only queries.
+    # -----------------------------------------------------
+
+    array = [10, 20, 30]
+    operations = [
+        ("query", 0, 0),
+        ("query", 1, 2),
+    ]
+
+    assert mutable_range_sum_engine(
+        array,
+        operations,
+        include_summary=True
+    ) == {
+        "results": [10, 50],
+        "operation_summary": 2
+    }
+
+    # -----------------------------------------------------
+    # Only updates.
+    # -----------------------------------------------------
+
+    array = [1, 2, 3]
+    operations = [
+        ("update", 0, 10),
+        ("update", 1, 20),
+        ("update", 2, 30),
+    ]
+
+    assert mutable_range_sum_engine(
+        array,
+        operations,
+        include_summary=True
+    ) == {
+        "results": [],
+        "operation_summary": 3
+    }
+
+    # -----------------------------------------------------
+    # Multiple updates at the same position.
+    # -----------------------------------------------------
+
+    array = [1, 2, 3]
+    operations = [
+        ("update", 0, 10),
+        ("update", 0, -5),
+        ("update", 0, 100),
+        ("query", 0, 0),
+        ("query", 0, 2),
+    ]
+
+    assert mutable_range_sum_engine(
+        array,
+        operations,
+        include_summary=True
+    ) == {
+        "results": [100, 105],
+        "operation_summary": 5
+    }
+
+    # -----------------------------------------------------
+    # Negative values.
+    # -----------------------------------------------------
+
+    array = [-5, 10, -3, 8]
+    operations = [
+        ("query", 0, 3),
+        ("update", 2, 5),
+        ("query", 1, 3),
+    ]
+
+    assert mutable_range_sum_engine(
+        array,
+        operations,
+        include_summary=True
+    ) == {
+        "results": [10, 23],
+        "operation_summary": 3
+    }
+
+    # -----------------------------------------------------
+    # Empty operations.
+    # -----------------------------------------------------
+
+    assert mutable_range_sum_engine(
+        [1, 2, 3],
+        []
+    ) == []
+
+    assert mutable_range_sum_engine(
+        [1, 2, 3],
+        [],
+        include_summary=True
+    ) == {
+        "results": [],
+        "operation_summary": 0
+    }
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()
+```

@@ -1,0 +1,223 @@
+"""
+PROBLEM (restated)
+-------------------
+Capacity-Constrained 0/1 Knapsack: given n indivisible items, each with a
+non-negative integer weight w[i] and a value v[i] (int or float), and a
+knapsack of integer capacity C, choose a subset of items whose total weight
+does not exceed C while maximizing total value. Each item may be chosen at
+most once (0/1, not fractional).
+
+If multiple subsets achieve the same maximum total value, the required
+answer is the subset whose sorted list of original indices is
+lexicographically smallest (compared element-by-element as ascending
+sequences; e.g. [0,3] < [1], and [1] < [1,2]).
+
+KEY CONSTRAINTS
+---------------
+- Items are indivisible (0/1 knapsack, not fractional knapsack).
+- weight[i] must be a non-negative integer (required for DP indexing).
+- value[i] may be int or float, but must be comparable (supports ==, >).
+- capacity C must be a non-negative integer.
+- n may be 0 (empty item list) -> optimal selection is empty.
+- Fully deterministic: no randomness, no network/API calls, no external
+  services, no human interaction. Pure standard-library computation.
+
+REQUIRED OUTPUTS (unchanged from original spec)
+------------------------------------------------
+1. total_value        -- the optimal achievable total value (numeric).
+2. selected_indices    -- ascending list of original indices of selected
+                           items; among all subsets achieving total_value,
+                           this is the lexicographically smallest such list.
+
+NEW OPTIONAL FEATURE
+---------------------
+3. operation_summary   -- OPTIONAL. When explicitly requested (via
+                           `include_operation_summary=True`), an additional
+                           deterministic dict is returned reporting the
+                           number of major computational decisions/operations
+                           the algorithm performed:
+                             - "dp_cells_computed": number of dp[i][c] table
+                               entries computed (each is one "skip vs take"
+                               decision, or a trivial skip-only decision
+                               when the item doesn't fit).
+                             - "take_vs_skip_comparisons": number of dp
+                               cells where BOTH taking and skipping the item
+                               were feasible and had to be compared with max().
+                             - "reconstruction_decisions": number of items
+                               examined while reconstructing the
+                               lexicographically smallest optimal index set
+                               (== n, one decision per item).
+                             - "items_selected": len(selected_indices).
+                           When NOT requested (the default), this field is
+                           simply absent/None, and every other field and
+                           requirement behaves exactly as before -- i.e.
+                           enabling/disabling this feature never changes
+                           total_value or selected_indices.
+
+ALGORITHM
+---------
+Standard 0/1 knapsack DP using a suffix table, plus a single deterministic
+left-to-right greedy reconstruction pass for lexicographic minimality:
+
+  dp[i][c] = max total value obtainable using only items i, i+1, ..., n-1
+             with remaining capacity c.
+
+  dp[n][c] = 0 for all c.
+  For 0 <= i < n:
+      dp[i][c] = dp[i+1][c]                                  (skip item i)
+      if w[i] <= c:
+          dp[i][c] = max(dp[i][c], v[i] + dp[i+1][c-w[i]])   (consider take)
+
+Reconstruction (i = 0..n-1, tracking remaining capacity/target value):
+  Prefer including item i whenever doing so still keeps the global optimum
+  reachable, since placing the smallest available index as early as
+  possible in the (ascending) output sequence lexicographically dominates
+  any alternative that defers to a larger index.
+
+Complexity: O(n * C) time and O(n * C) space (pseudo-polynomial, since it
+depends on the magnitude of C).
+"""
+
+from typing import List, Sequence, Tuple, NamedTuple, Optional, Dict, Any
+
+
+class KnapsackResult(NamedTuple):
+    total_value: float
+    selected_indices: List[int]
+    operation_summary: Optional[Dict[str, Any]] = None
+
+
+def solve_knapsack_01(
+    items: Sequence[Tuple[int, float]],
+    capacity: int,
+    include_operation_summary: bool = False,
+) -> KnapsackResult:
+    """
+    Solve the 0/1 knapsack problem exactly and deterministically.
+
+    Args:
+        items: sequence of (weight, value) pairs. weight must be a
+               non-negative integer. value may be int or float.
+               The position of each pair in this sequence is its
+               "original index", returned in the result.
+        capacity: non-negative integer knapsack capacity.
+        include_operation_summary: if True, populate the optional
+               `operation_summary` field with deterministic counts of the
+               major computational decisions made. If False (default),
+               `operation_summary` is None and total_value/selected_indices
+               are computed identically to the original (feature-free)
+               behavior -- this flag never alters those two fields.
+
+    Returns:
+        KnapsackResult(total_value, selected_indices, operation_summary)
+        where selected_indices is the lexicographically smallest ascending
+        list of original indices achieving the maximum total_value, and
+        operation_summary is either None (feature disabled) or a dict as
+        described above (feature enabled).
+
+    Raises:
+        ValueError: on invalid (negative / non-integer) weights or capacity.
+    """
+    n = len(items)
+
+    if not isinstance(capacity, int) or capacity < 0:
+        raise ValueError("capacity must be a non-negative integer")
+
+    weights: List[int] = []
+    values: List[float] = []
+    for idx, (w, v) in enumerate(items):
+        if not isinstance(w, int) or w < 0:
+            raise ValueError(f"item {idx} has invalid weight {w!r}; "
+                              f"weights must be non-negative integers")
+        weights.append(w)
+        values.append(v)
+
+    # dp[i][c] = max value achievable using items[i:] with capacity c.
+    dp: List[List[float]] = [[0.0] * (capacity + 1) for _ in range(n + 1)]
+
+    dp_cells_computed = 0
+    take_vs_skip_comparisons = 0
+
+    for i in range(n - 1, -1, -1):
+        w_i, v_i = weights[i], values[i]
+        row_i = dp[i]
+        row_next = dp[i + 1]
+        for c in range(capacity + 1):
+            best = row_next[c]  # skip item i
+            dp_cells_computed += 1
+            if w_i <= c:
+                take = v_i + row_next[c - w_i]
+                take_vs_skip_comparisons += 1  # both options were feasible
+                if take > best:
+                    best = take
+            row_i[c] = best
+
+    total_value = dp[0][capacity]
+
+    # Reconstruct lexicographically smallest optimal index set.
+    selected: List[int] = []
+    rem_capacity = capacity
+    rem_value = total_value
+    reconstruction_decisions = 0
+
+    for i in range(n):
+        reconstruction_decisions += 1
+        w_i, v_i = weights[i], values[i]
+        can_take = w_i <= rem_capacity
+        candidate = (v_i + dp[i + 1][rem_capacity - w_i]) if can_take else None
+
+        if can_take and candidate == rem_value:
+            selected.append(i)
+            rem_capacity -= w_i
+            rem_value -= v_i
+        # else: skipping is consistent, i.e. dp[i+1][rem_capacity] == rem_value
+
+    operation_summary: Optional[Dict[str, Any]] = None
+    if include_operation_summary:
+        operation_summary = {
+            "dp_cells_computed": dp_cells_computed,
+            "take_vs_skip_comparisons": take_vs_skip_comparisons,
+            "reconstruction_decisions": reconstruction_decisions,
+            "items_selected": len(selected),
+        }
+
+    return KnapsackResult(
+        total_value=total_value,
+        selected_indices=selected,
+        operation_summary=operation_summary,
+    )
+
+
+if __name__ == "__main__":
+    demo_items = [
+        (2, 3),   # index 0
+        (3, 4),   # index 1
+        (4, 5),   # index 2
+        (5, 6),   # index 3
+    ]
+    demo_capacity = 5
+
+    # Feature disabled (default) -- identical to original behavior.
+    result = solve_knapsack_01(demo_items, demo_capacity)
+    print(f"Optimal total value: {result.total_value}")
+    print(f"Selected original indices: {result.selected_indices}")
+    print(f"operation_summary (should be None): {result.operation_summary}")
+
+    # Feature enabled -- same total_value/selected_indices, plus summary.
+    result_with_summary = solve_knapsack_01(
+        demo_items, demo_capacity, include_operation_summary=True
+    )
+    print(f"\nWith operation_summary requested:")
+    print(f"Optimal total value: {result_with_summary.total_value}")
+    print(f"Selected original indices: {result_with_summary.selected_indices}")
+    print(f"operation_summary: {result_with_summary.operation_summary}")
+
+    # Tie-break sanity check (unaffected by the new feature).
+    tie_items = [
+        (1, 10),  # index 0
+        (1, 10),  # index 1  -> {0,1} has value 20, weight 2
+        (2, 20),  # index 2  -> {2} alone also has value 20, weight 2
+    ]
+    tie_result = solve_knapsack_01(tie_items, capacity=2)
+    print(f"\nTie-break value: {tie_result.total_value}")
+    print(f"Tie-break indices (expect [0, 1]): {tie_result.selected_indices}")

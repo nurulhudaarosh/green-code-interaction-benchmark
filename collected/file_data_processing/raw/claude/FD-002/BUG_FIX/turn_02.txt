@@ -1,0 +1,56 @@
+The script already does exactly this — here's a quick walkthrough of where, so you can verify it:
+
+**Where malformed lines are handled:**
+
+```python
+for raw in lines:
+    raw = raw.strip()
+    if not raw:
+        continue
+
+    try:
+        record = json.loads(raw)
+        user = record["user"]
+        request = record["request"]
+        user_id = user["id"]
+        endpoint = request["endpoint"]
+        status = request["status"]
+        latency = request["latency_ms"]
+
+        if not isinstance(user_id, str) or not isinstance(endpoint, str):
+            raise ValueError("bad field type")
+        if not isinstance(status, (int, float)) or not isinstance(latency, (int, float)):
+            raise ValueError("bad field type")
+
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        malformed += 1
+        continue   # <-- skips this line, run keeps going
+
+    # only reached for valid records — stats update here
+    total_requests += 1
+    ...
+```
+
+**What this guarantees:**
+
+1. **`json.JSONDecodeError`** — catches lines that aren't valid JSON at all (truncated, corrupted, empty braces, etc.).
+2. **`KeyError`** — catches valid JSON that's missing `user`, `user.id`, `request`, `request.endpoint`, `request.status`, or `request.latency_ms`.
+3. **`TypeError`** — catches cases like `user` or `request` being a string/number/`null` instead of a dict (so `user["id"]` would blow up).
+4. **`ValueError`** (raised manually) — catches cases where fields exist but have the wrong type (e.g. `status` is a string like `"200"` instead of a number).
+5. In every one of those cases, `malformed += 1` runs, then `continue` moves to the next line — **the script never stops or raises**, it just skips and keeps counting.
+6. Only lines that pass all checks reach the `total_requests += 1` block and update `user_stats` / `endpoint_counts`, so bad lines never pollute the per-user or per-endpoint statistics.
+
+**If you want to double check it yourself**, here's a tiny test file that mixes good and broken lines:
+
+```
+{"user": {"id": "u1"}, "request": {"endpoint": "/a", "status": 200, "latency_ms": 100}}
+not even json
+{"user": {"id": "u1"}, "request": {"endpoint": "/a", "status": 500, "latency_ms": 300}}
+{"user": {"id": "u2"}}
+{"user": {"id": "u2"}, "request": {"endpoint": "/b", "status": "oops", "latency_ms": 50}}
+{"user": {"id": "u2"}, "request": {"endpoint": "/b", "status": 200, "latency_ms": 200}}
+```
+
+Running `python analyzer.py test.ndjson` on that should give you `malformed_lines: 3` (lines 2, 4, 5) and correct stats for `u1` (2 requests, 1 error) and `u2` (1 request, 0 errors) — with the bad lines contributing nothing.
+
+If you're seeing different behavior (a crash, or bad lines leaking into the stats), paste the exact line that's causing trouble and I'll fix the parsing logic for that case.

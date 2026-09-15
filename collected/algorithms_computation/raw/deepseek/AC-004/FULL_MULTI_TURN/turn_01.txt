@@ -1,0 +1,89 @@
+I understand the problem: we are given a list of jobs, each with a start time, finish time, and profit. We must select a subset of non‑overlapping jobs (jobs that touch at endpoints are considered compatible) that gives the maximum total profit. In case of ties (same max profit), we must choose the subset with the lexicographically smallest sequence of original indices (i.e., the smallest indices in the original order).
+
+**Key constraints (implied)**:
+- The input can be any valid list of jobs.
+- Number of jobs can be up to, say, 10^5 (so O(n log n) algorithm is expected).
+- Output should be the maximum profit and the selected jobs' original indices (0‑based), in increasing order.
+
+**Required output**: maximum profit and the list of indices of the chosen jobs.
+
+**Algorithm**:
+1. Sort jobs by finish time, and also keep track of original index.
+2. For each job in sorted order, find the latest compatible predecessor using binary search (on finish times) to get the previous job that ends before or at this job's start.
+3. DP: 
+   - `dp[i]` = best profit considering first i jobs (in sorted order).
+   - `choice[i]` = list of indices (original) for best solution up to i.
+   - For each job i, either skip it (`dp[i-1]`) or take it: profit = job.profit + dp[prev_index], and combine choices.
+   - Tie‑break: choose the option with lexicographically smaller list of original indices (since all choices are lists sorted in increasing order, we can compare them directly).
+4. The answer is `dp[n]` and `choice[n]`.
+
+**Deterministic Python implementation**:
+
+```python
+import bisect
+
+def job_scheduling(jobs):
+    """
+    jobs: list of tuples (start, finish, profit)
+    Returns: (max_profit, list_of_indices_in_original_order)
+    """
+    # add original index to each job
+    indexed_jobs = [(start, finish, profit, idx) for idx, (start, finish, profit) in enumerate(jobs)]
+    # sort by finish time
+    indexed_jobs.sort(key=lambda x: x[1])
+    
+    n = len(indexed_jobs)
+    finish_times = [job[1] for job in indexed_jobs]
+    
+    # dp_profit[i] = max profit using first i jobs (i from 0 to n)
+    dp_profit = [0] * (n + 1)
+    # dp_indices[i] = list of original indices for that max profit
+    dp_indices = [[] for _ in range(n + 1)]
+    
+    for i in range(1, n + 1):
+        start, finish, profit, orig_idx = indexed_jobs[i-1]
+        
+        # find the latest job with finish <= start
+        j = bisect.bisect_right(finish_times, start, 0, i-1)  # among first i-1 jobs (0-indexed)
+        # j is the count of jobs with finish <= start, so predecessor index = j (since dp uses 1-indexed)
+        
+        # option: take this job
+        take_profit = profit + dp_profit[j]
+        take_indices = dp_indices[j] + [orig_idx]
+        
+        # option: skip this job
+        skip_profit = dp_profit[i-1]
+        skip_indices = dp_indices[i-1]
+        
+        # choose better: higher profit; if tie, lexicographically smaller indices
+        if take_profit > skip_profit:
+            dp_profit[i] = take_profit
+            dp_indices[i] = take_indices
+        elif skip_profit > take_profit:
+            dp_profit[i] = skip_profit
+            dp_indices[i] = skip_indices
+        else:
+            # tie: choose lexicographically smaller list
+            if take_indices < skip_indices:
+                dp_profit[i] = take_profit
+                dp_indices[i] = take_indices
+            else:
+                dp_profit[i] = skip_profit
+                dp_indices[i] = skip_indices
+    
+    return dp_profit[n], dp_indices[n]
+
+# Example usage (only for self-test, not required for final output)
+if __name__ == "__main__":
+    # Example: jobs = [(1,3,5), (2,5,6), (4,6,5), (6,7,4)]
+    # The optimal is job 0 + job 2 + job 3 (indices 0,2,3) profit 14, or job 1+job3 profit 10, etc.
+    jobs = [(1,3,5), (2,5,6), (4,6,5), (6,7,4)]
+    profit, indices = job_scheduling(jobs)
+    print("Max profit:", profit)
+    print("Indices:", indices)
+```
+
+**Explanation of determinism**:
+- The sorting is stable, and we always compare lists lexicographically in case of ties.
+- No randomness, no external input, no network calls.
+- All operations are deterministic and use only the standard library.

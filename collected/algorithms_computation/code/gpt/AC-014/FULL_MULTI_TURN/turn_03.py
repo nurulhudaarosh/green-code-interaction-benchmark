@@ -1,0 +1,489 @@
+"""
+One-Dimensional K-Cluster Partition
+===================================
+
+Original Problem
+----------------
+Given one-dimensional numeric points:
+
+1. Sort the points in nondecreasing order.
+2. Partition the sorted points into exactly k non-empty contiguous clusters.
+3. The cost of each cluster is the sum of squared deviations of its points
+   from that cluster's mean.
+4. Minimize the total cost across all k clusters.
+5. Return the minimum cost and the final cluster boundary indices.
+
+Original required output:
+    {
+        "cost": minimum total clustering cost,
+        "boundaries": final boundary indices
+    }
+
+Boundary convention:
+    boundaries contains the zero-based inclusive ending index of each
+    cluster in the sorted points.
+
+Existing deterministic tie-breaking requirement:
+    If two DP transitions have equal cost, choose the smaller split index.
+
+Algorithm requirement:
+    - Sort the points.
+    - Build prefix sums and prefix sums of squares.
+    - Compute every interval cost in O(1).
+    - Use interval-cost dynamic programming.
+    - Reconstruct the final boundaries using parent/split information.
+
+New Feature
+-----------
+The result now also contains:
+
+    "operation_summary": {
+        "dp_transitions": <number>
+    }
+
+`dp_transitions` is the deterministic number of major DP computational
+decisions made by the algorithm.
+
+A transition is counted every time the algorithm evaluates a valid
+candidate split in the interval-cost DP.
+
+The count does NOT depend on which split wins a tie, so the summary is
+deterministic for the same input and k.
+
+All original fields and requirements remain unchanged.
+
+
+Compatibility / Disabled Feature
+--------------------------------
+The function accepts an optional `include_operation_summary` argument.
+
+Default:
+    include_operation_summary=False
+
+When the feature is disabled, the original output is preserved exactly:
+
+    {
+        "cost": ...,
+        "boundaries": ...
+    }
+
+When enabled:
+
+    include_operation_summary=True
+
+the additional `operation_summary` field is returned.
+
+
+Complexity
+----------
+Sorting:
+    O(n log n)
+
+Prefix sums:
+    O(n)
+
+Dynamic programming:
+    O(k * n^2)
+
+Memory:
+    O(k * n)
+
+Interval cost:
+    O(1)
+"""
+
+from math import isclose
+
+
+def one_dimensional_k_cluster(
+    points,
+    k,
+    include_operation_summary=False
+):
+    """
+    Partition one-dimensional points into exactly k non-empty contiguous
+    clusters after sorting.
+
+    Parameters
+    ----------
+    points : iterable of numeric values
+        One-dimensional input points.
+
+    k : int
+        Exact number of non-empty clusters.
+
+    include_operation_summary : bool, optional
+        If True, include the additional deterministic operation_summary
+        field in the returned dictionary.
+
+    Returns
+    -------
+    dict
+        Always contains:
+            "cost"
+            "boundaries"
+
+        If include_operation_summary=True, also contains:
+            "operation_summary": {
+                "dp_transitions": int
+            }
+
+    Boundary indices are zero-based inclusive ending indices in the
+    sorted points.
+    """
+
+    n = len(points)
+
+    if n == 0:
+        raise ValueError("points must not be empty")
+
+    if not 1 <= k <= n:
+        raise ValueError("k must satisfy 1 <= k <= len(points)")
+
+    # --------------------------------------------------------
+    # Sort the points.
+    # --------------------------------------------------------
+    values = sorted(points)
+
+    # --------------------------------------------------------
+    # Prefix sums and prefix sums of squares.
+    # --------------------------------------------------------
+    prefix_sum = [0.0] * (n + 1)
+    prefix_sq = [0.0] * (n + 1)
+
+    for i, value in enumerate(values, start=1):
+        x = float(value)
+
+        prefix_sum[i] = prefix_sum[i - 1] + x
+        prefix_sq[i] = prefix_sq[i - 1] + x * x
+
+    # --------------------------------------------------------
+    # O(1) interval cost.
+    #
+    # Interval is [left, right).
+    #
+    # SSE = sum(x^2) - sum(x)^2 / count
+    # --------------------------------------------------------
+    def interval_cost(left, right):
+        count = right - left
+
+        if count <= 0:
+            return 0.0
+
+        total = prefix_sum[right] - prefix_sum[left]
+        total_sq = prefix_sq[right] - prefix_sq[left]
+
+        cost = total_sq - (total * total) / count
+
+        # Remove tiny negative floating-point errors.
+        if cost < 0.0 and abs(cost) < 1e-12:
+            cost = 0.0
+
+        return cost
+
+    INF = float("inf")
+
+    # dp[c][i] =
+    # minimum cost for the first i sorted points using exactly c clusters.
+    dp = [[INF] * (n + 1) for _ in range(k + 1)]
+
+    # parent[c][i] =
+    # split position selected for the optimal transition.
+    parent = [[-1] * (n + 1) for _ in range(k + 1)]
+
+    dp[0][0] = 0.0
+
+    # --------------------------------------------------------
+    # New deterministic operation counter.
+    #
+    # One operation is counted for every valid DP transition
+    # whose candidate cost is evaluated.
+    # --------------------------------------------------------
+    dp_transitions = 0
+
+    # --------------------------------------------------------
+    # Interval-cost dynamic programming.
+    # --------------------------------------------------------
+    for clusters in range(1, k + 1):
+        for i in range(clusters, n + 1):
+
+            best_cost = INF
+            best_split = -1
+
+            # Previous clusters: [0, split)
+            # Current cluster:   [split, i)
+            for split in range(clusters - 1, i):
+
+                previous_cost = dp[clusters - 1][split]
+
+                if previous_cost == INF:
+                    continue
+
+                # This is a major computational decision:
+                # evaluate one valid DP transition.
+                dp_transitions += 1
+
+                candidate = (
+                    previous_cost
+                    + interval_cost(split, i)
+                )
+
+                # Primary optimization criterion:
+                # minimum total cost.
+                if candidate < best_cost:
+                    best_cost = candidate
+                    best_split = split
+
+                # Deterministic tie-breaking:
+                # equal cost -> smaller split index.
+                elif candidate == best_cost:
+                    if best_split == -1 or split < best_split:
+                        best_split = split
+
+            dp[clusters][i] = best_cost
+            parent[clusters][i] = best_split
+
+    # --------------------------------------------------------
+    # Reconstruct the final boundaries.
+    # --------------------------------------------------------
+    boundaries = []
+    current_i = n
+
+    for clusters in range(k, 0, -1):
+        split = parent[clusters][current_i]
+
+        if split == -1:
+            raise RuntimeError("Failed to reconstruct clustering")
+
+        # Current cluster is [split, current_i).
+        # Therefore its inclusive ending index is current_i - 1.
+        boundaries.append(current_i - 1)
+
+        current_i = split
+
+    boundaries.reverse()
+
+    # --------------------------------------------------------
+    # Preserve the original result when the new feature is
+    # disabled.
+    # --------------------------------------------------------
+    result = {
+        "cost": dp[k][n],
+        "boundaries": boundaries,
+    }
+
+    # Add the new field only when explicitly requested.
+    if include_operation_summary:
+        result["operation_summary"] = {
+            "dp_transitions": dp_transitions
+        }
+
+    return result
+
+
+# ============================================================
+# Tests
+# ============================================================
+
+def run_tests():
+
+    # --------------------------------------------------------
+    # Test 1: Original output remains unchanged when the
+    # operation-summary feature is disabled.
+    # --------------------------------------------------------
+    result = one_dimensional_k_cluster(
+        [1, 2, 10, 11],
+        2
+    )
+
+    assert set(result.keys()) == {"cost", "boundaries"}
+    assert isclose(result["cost"], 1.0)
+    assert result["boundaries"] == [1, 3]
+
+
+    # --------------------------------------------------------
+    # Test 2: New operation_summary field when enabled.
+    # --------------------------------------------------------
+    result = one_dimensional_k_cluster(
+        [1, 2, 10, 11],
+        2,
+        include_operation_summary=True
+    )
+
+    assert set(result.keys()) == {
+        "cost",
+        "boundaries",
+        "operation_summary",
+    }
+
+    assert isclose(result["cost"], 1.0)
+    assert result["boundaries"] == [1, 3]
+
+    assert result["operation_summary"] == {
+        "dp_transitions": 9
+    }
+
+
+    # --------------------------------------------------------
+    # Test 3: Deterministic tie case.
+    #
+    # [0, 2, 4], k=2:
+    #
+    # split=1 -> [0] | [2,4] -> cost 2
+    # split=2 -> [0,2] | [4] -> cost 2
+    #
+    # Smaller split wins.
+    # --------------------------------------------------------
+    result = one_dimensional_k_cluster(
+        [0, 2, 4],
+        2,
+        include_operation_summary=True
+    )
+
+    assert isclose(result["cost"], 2.0)
+    assert result["boundaries"] == [0, 2]
+
+    # DP transitions:
+    # c=1:
+    #   i=1 -> 1 transition
+    #   i=2 -> 2 transitions
+    #   i=3 -> 3 transitions
+    #
+    # c=2:
+    #   i=2 -> 1 transition
+    #   i=3 -> 2 transitions
+    #
+    # total = 9
+    assert result["operation_summary"] == {
+        "dp_transitions": 9
+    }
+
+
+    # --------------------------------------------------------
+    # Test 4: Repeated values.
+    # --------------------------------------------------------
+    result = one_dimensional_k_cluster(
+        [1, 1, 1, 10, 10, 10],
+        2,
+        include_operation_summary=True
+    )
+
+    assert isclose(result["cost"], 0.0)
+    assert result["boundaries"] == [2, 5]
+    assert result["operation_summary"]["dp_transitions"] > 0
+
+
+    # --------------------------------------------------------
+    # Test 5: Unsorted input is sorted before clustering.
+    # --------------------------------------------------------
+    result = one_dimensional_k_cluster(
+        [11, 1, 10, 2],
+        2,
+        include_operation_summary=True
+    )
+
+    assert isclose(result["cost"], 1.0)
+    assert result["boundaries"] == [1, 3]
+
+
+    # --------------------------------------------------------
+    # Test 6: One cluster.
+    # --------------------------------------------------------
+    result = one_dimensional_k_cluster(
+        [1, 2, 3],
+        1,
+        include_operation_summary=True
+    )
+
+    assert isclose(result["cost"], 2.0)
+    assert result["boundaries"] == [2]
+    assert result["operation_summary"]["dp_transitions"] == 6
+
+
+    # --------------------------------------------------------
+    # Test 7: k == n.
+    # --------------------------------------------------------
+    result = one_dimensional_k_cluster(
+        [5, 1, 3],
+        3,
+        include_operation_summary=True
+    )
+
+    assert isclose(result["cost"], 0.0)
+    assert result["boundaries"] == [0, 1, 2]
+    assert result["operation_summary"]["dp_transitions"] == 7
+
+
+    # --------------------------------------------------------
+    # Test 8: Negative values.
+    # --------------------------------------------------------
+    result = one_dimensional_k_cluster(
+        [-5, -4, 10, 11],
+        2,
+        include_operation_summary=True
+    )
+
+    assert isclose(result["cost"], 1.0)
+    assert result["boundaries"] == [1, 3]
+
+
+    # --------------------------------------------------------
+    # Test 9: All values identical.
+    # --------------------------------------------------------
+    result = one_dimensional_k_cluster(
+        [7, 7, 7, 7],
+        2,
+        include_operation_summary=True
+    )
+
+    assert isclose(result["cost"], 0.0)
+    assert len(result["boundaries"]) == 2
+    assert result["operation_summary"]["dp_transitions"] > 0
+
+
+    # --------------------------------------------------------
+    # Test 10: Invalid k.
+    # --------------------------------------------------------
+    try:
+        one_dimensional_k_cluster([1, 2, 3], 0)
+        assert False, "Expected ValueError"
+    except ValueError:
+        pass
+
+
+    # --------------------------------------------------------
+    # Test 11: Empty input.
+    # --------------------------------------------------------
+    try:
+        one_dimensional_k_cluster([], 1)
+        assert False, "Expected ValueError"
+    except ValueError:
+        pass
+
+
+    # --------------------------------------------------------
+    # Test 12: Determinism.
+    #
+    # Running the same input twice must produce exactly the same
+    # result, including operation_summary.
+    # --------------------------------------------------------
+    result1 = one_dimensional_k_cluster(
+        [4, 1, 4, 2, 8, 8],
+        3,
+        include_operation_summary=True
+    )
+
+    result2 = one_dimensional_k_cluster(
+        [4, 1, 4, 2, 8, 8],
+        3,
+        include_operation_summary=True
+    )
+
+    assert result1 == result2
+
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()

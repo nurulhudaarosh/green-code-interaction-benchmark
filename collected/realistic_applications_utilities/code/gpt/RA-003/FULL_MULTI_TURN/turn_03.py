@@ -1,0 +1,14 @@
+# Turn 3: Add deterministic ranking
+
+def add_ranking(results):
+    """Sort students by score and assign deterministic ranks."""
+    if not results:
+        return []
+
+    # Higher score ranks first; name breaks ties deterministically.
+    results.sort(key=lambda x: (-x["score"], str(x["name"]).lower()))
+
+    for rank, student in enumerate(results, start=1):
+        student["rank"] = rank
+
+    return results

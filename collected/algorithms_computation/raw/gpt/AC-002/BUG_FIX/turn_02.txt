@@ -1,0 +1,208 @@
+## Problem
+
+The **Dependency Build Planner** receives:
+
+* A set of packages.
+* Prerequisite dependencies, where `(A, B)` means **B must be built before A**.
+
+It must return:
+
+1. A **valid deterministic build order**.
+2. The **number of dependency levels**, based on the longest prerequisite chain.
+
+If the dependencies contain a **cycle**, it must return:
+
+```text
+([], -1)
+```
+
+### Expected behavior
+
+When multiple packages are ready at the same time, the planner must always choose the **lexicographically smallest package name** first. This gives deterministic tie handling.
+
+The required algorithm is:
+
+* **Kahn's topological sorting**
+* Use a **min-heap** for deterministic selection among available packages.
+* Track the **longest prerequisite depth** for each package.
+* Detect a cycle when not all packages can be processed.
+
+---
+
+## Defect demonstration
+
+Consider:
+
+```text
+Packages:
+A, B, C, D
+
+Dependencies:
+C depends on A
+C depends on B
+D depends on A
+```
+
+Initially, `A` and `B` have no prerequisites.
+
+Therefore, the deterministic rule requires:
+
+```text
+A
+B
+C
+D
+```
+
+However, an implementation that uses a normal queue or processes dependencies in input order can produce:
+
+```text
+B
+A
+C
+D
+```
+
+That order is technically a valid topological order, but it **violates the required deterministic tie rule** because `A < B` and both were available at the same time.
+
+The correct result is:
+
+```text
+Build Order: ['A', 'B', 'C', 'D']
+Dependency Levels: 2
+```
+
+The levels are:
+
+```text
+Level 1: A, B
+Level 2: C, D
+```
+
+---
+
+## Corrected implementation
+
+The important fix is to put every currently available package into a **min-heap** and always use `heapq.heappop()` to select the smallest one.
+
+```python
+# Dependency Build Planner
+# Deterministic Kahn Topological Sort
+# Standard library only
+
+import heapq
+
+
+def dependency_build_planner(packages, dependencies):
+    """
+    Given packages and prerequisite dependencies, return:
+
+        (build_order, levels)
+
+    where:
+        - build_order is a deterministic valid topological order.
+        - levels is the longest prerequisite depth.
+
+    A dependency (package, prerequisite) means:
+        prerequisite must be built before package.
+
+    If a cycle exists:
+        return ([], -1)
+    """
+
+    # Initialize graph and indegree
+    graph = {package: [] for package in packages}
+    indegree = {package: 0 for package in packages}
+
+    # Build the dependency graph
+    for package, prerequisite in dependencies:
+
+        # Support packages appearing only in dependencies
+        if package not in graph:
+            graph[package] = []
+            indegree[package] = 0
+
+        if prerequisite not in graph:
+            graph[prerequisite] = []
+            indegree[prerequisite] = 0
+
+        graph[prerequisite].append(package)
+        indegree[package] += 1
+
+    # Sort adjacency lists so processing is deterministic
+    for package in graph:
+        graph[package].sort()
+
+    # depth[p] = longest prerequisite chain ending at p
+    depth = {package: 1 for package in graph}
+
+    # Min-heap of currently available packages
+    heap = []
+
+    for package in graph:
+        if indegree[package] == 0:
+            heapq.heappush(heap, package)
+
+    build_order = []
+
+    # Kahn's algorithm
+    while heap:
+        # Always choose lexicographically smallest available package
+        current = heapq.heappop(heap)
+        build_order.append(current)
+
+        for dependent in graph[current]:
+            # Longest prerequisite depth
+            depth[dependent] = max(
+                depth[dependent],
+                depth[current] + 1
+            )
+
+            indegree[dependent] -= 1
+
+            # All prerequisites are now satisfied
+            if indegree[dependent] == 0:
+                heapq.heappush(heap, dependent)
+
+    # If some packages were not processed, a cycle exists
+    if len(build_order) != len(graph):
+        return [], -1
+
+    # Number of dependency levels
+    levels = max(depth.values(), default=0)
+
+    return build_order, levels
+
+
+def main():
+    # Small valid example demonstrating deterministic tie handling
+    packages = ["A", "B", "C", "D"]
+
+    # (package, prerequisite)
+    dependencies = [
+        ("C", "A"),
+        ("C", "B"),
+        ("D", "A")
+    ]
+
+    order, levels = dependency_build_planner(
+        packages,
+        dependencies
+    )
+
+    print("Build Order:", order)
+    print("Dependency Levels:", levels)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+For the example, this prints:
+
+```text
+Build Order: ['A', 'B', 'C', 'D']
+Dependency Levels: 2
+```
+
+**What was changed:** only the ordering behavior was corrected by using a **min-heap for every set of simultaneously available packages**. The cycle handling, longest-depth calculation, standard-library-only requirement, and overall Kahn algorithm remain unchanged.

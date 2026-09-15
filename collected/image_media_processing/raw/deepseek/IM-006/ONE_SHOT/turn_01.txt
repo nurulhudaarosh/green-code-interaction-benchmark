@@ -1,0 +1,48 @@
+Here's a Python implementation using PIL/Pillow to extract metadata from images:
+
+```python
+import os
+from PIL import Image
+
+def extract_metadata(input_dir):
+    """
+    Extract metadata from all images in input_dir.
+    
+    Returns a sorted list of dicts with keys:
+        filename, format, mode, width, height, file_size_bytes
+    """
+    results = []
+    
+    for filename in os.listdir(input_dir):
+        filepath = os.path.join(input_dir, filename)
+        
+        if not os.path.isfile(filepath):
+            continue
+        
+        try:
+            with Image.open(filepath) as img:
+                results.append({
+                    "filename": filename,
+                    "format": img.format,
+                    "mode": img.mode,
+                    "width": img.width,
+                    "height": img.height,
+                    "file_size_bytes": os.path.getsize(filepath),
+                })
+        except (IOError, OSError):
+            # Skip files that aren't valid images
+            continue
+    
+    results.sort(key=lambda d: d["filename"])
+    return results
+```
+
+Key points:
+
+- **`Image.open` is lazy** — it reads only the header until you access pixel data, so this is fast even for many/large files. Calling `img.width`/`img.height`/`img.format`/`img.mode` inside the `with` block keeps the file handle valid.
+- **`format`** comes from PIL (e.g. `"JPEG"`, `"PNG"`), not the file extension — more reliable.
+- **`mode`** is the pixel mode (e.g. `"RGB"`, `"RGBA"`, `"L"`, `"P"`).
+- **Non-image files** raise `UnidentifiedImageError` (a subclass of `OSError` in modern Pillow) and are skipped.
+- **Sorting** by filename gives a deterministic order; change the key (e.g. `lambda d: (d["format"], d["filename"])`) if you want a different ordering.
+
+If you'd rather not depend on Pillow, you could parse headers manually (e.g. via the `imghdr` module or raw struct parsing), but PIL handles far more formats and edge cases.

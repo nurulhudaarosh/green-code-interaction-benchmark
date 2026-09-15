@@ -1,0 +1,118 @@
+from typing import List, Tuple, Dict, Any
+
+
+def rectangle_statistics(
+    matrix: List[List[int]],
+    queries: List[Tuple[int, int, int, int]]
+) -> List[Dict[str, int]]:
+    """
+    Answer inclusive rectangle queries for sum, minimum, and maximum.
+
+    Each query is:
+        (r1, c1, r2, c2)
+
+    where (r1, c1) is the top-left corner and
+    (r2, c2) is the bottom-right corner.
+
+    Returns one dictionary per query:
+        {
+            "sum": ...,
+            "min": ...,
+            "max": ...
+        }
+    """
+
+    if not matrix or not matrix[0]:
+        if queries:
+            raise ValueError("Matrix must not be empty.")
+        return []
+
+    rows = len(matrix)
+    cols = len(matrix[0])
+
+    # Validate that the matrix is rectangular.
+    for row in matrix:
+        if len(row) != cols:
+            raise ValueError("Matrix must be rectangular.")
+
+    # ---------------------------------------------------------
+    # 1. Build a 2D prefix-sum table.
+    #
+    # prefix[i][j] stores the sum of matrix[0:i][0:j],
+    # using 1-based prefix indices.
+    # ---------------------------------------------------------
+    prefix = [[0] * (cols + 1) for _ in range(rows + 1)]
+
+    for r in range(1, rows + 1):
+        row_sum = 0
+        for c in range(1, cols + 1):
+            row_sum += matrix[r - 1][c - 1]
+            prefix[r][c] = (
+                prefix[r - 1][c] + row_sum
+            )
+
+    results = []
+
+    # ---------------------------------------------------------
+    # 2. Process each query.
+    # ---------------------------------------------------------
+    for r1, c1, r2, c2 in queries:
+        if not (0 <= r1 <= r2 < rows and 0 <= c1 <= c2 < cols):
+            raise ValueError(
+                f"Invalid rectangle query: {(r1, c1, r2, c2)}"
+            )
+
+        # Convert the inclusive zero-based rectangle to
+        # prefix-table boundaries.
+        a = r1
+        b = c1
+        c = r2 + 1
+        d = c2 + 1
+
+        # O(1) rectangle sum using inclusion-exclusion.
+        rectangle_sum = (
+            prefix[c][d]
+            - prefix[a][d]
+            - prefix[c][b]
+            + prefix[a][b]
+        )
+
+        # Direct scan for minimum and maximum.
+        minimum = matrix[r1][c1]
+        maximum = matrix[r1][c1]
+
+        for r in range(r1, r2 + 1):
+            for col in range(c1, c2 + 1):
+                value = matrix[r][col]
+
+                if value < minimum:
+                    minimum = value
+
+                if value > maximum:
+                    maximum = value
+
+        results.append({
+            "sum": rectangle_sum,
+            "min": minimum,
+            "max": maximum
+        })
+
+    return results
+
+
+# Example
+if __name__ == "__main__":
+    matrix = [
+        [1, 2, 3, 4],
+        [5, 6, 7, 8],
+        [9, 10, 11, 12]
+    ]
+
+    queries = [
+        (0, 0, 1, 1),
+        (1, 1, 2, 3),
+        (0, 0, 2, 3),
+        (2, 2, 2, 2)
+    ]
+
+    print(rectangle_statistics(matrix, queries))

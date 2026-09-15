@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""
+Shortest Path from Source to All Vertices using Dijkstra's Algorithm
+
+Problem:
+- Given a directed graph with non-negative edge weights and a source vertex
+- Compute the shortest distance from the source to every vertex
+- Use -1 for unreachable vertices
+
+Input Format:
+- First line: N M S (number of vertices, number of edges, source vertex)
+- Next M lines: u v w (directed edge from u to v with weight w)
+- Vertices are 0-indexed
+
+Output Format:
+- Single line: N space-separated integers representing shortest distances
+- Use -1 for unreachable vertices
+
+Constraints:
+- 1 ≤ N ≤ 10^5
+- 0 ≤ M ≤ 10^5
+- 0 ≤ u, v < N
+- 0 ≤ w ≤ 10^9
+- Source vertex S is 0-indexed
+
+Algorithm: Dijkstra's Algorithm with Binary Heap (Priority Queue)
+- Time Complexity: O((N + M) log N)
+- Space Complexity: O(N + M)
+"""
+
+import sys
+import heapq
+from typing import List, Tuple, Optional
+
+
+def dijkstra(
+    n: int,
+    adj: List[List[Tuple[int, int]]],
+    source: int
+) -> List[int]:
+    """
+    Compute shortest distances from source to all vertices using Dijkstra's algorithm.
+
+    Args:
+        n: Number of vertices
+        adj: Adjacency list where adj[u] = [(v, weight), ...]
+        source: Source vertex (0-indexed)
+
+    Returns:
+        List of shortest distances from source to each vertex
+        -1 for unreachable vertices
+    """
+    # Initialize distances with infinity
+    INF = float('inf')
+    dist = [INF] * n
+    dist[source] = 0
+
+    # Priority queue: (distance, vertex)
+    pq = [(0, source)]
+
+    while pq:
+        d, u = heapq.heappop(pq)
+
+        # Skip if we've already found a better path
+        if d != dist[u]:
+            continue
+
+        # Relax all outgoing edges
+        for v, weight in adj[u]:
+            new_dist = d + weight
+            if new_dist < dist[v]:
+                dist[v] = new_dist
+                heapq.heappush(pq, (new_dist, v))
+
+    # Convert INF to -1 for unreachable vertices
+    return [-1 if d == INF else d for d in dist]
+
+
+def solve() -> None:
+    """
+    Read input, run Dijkstra's algorithm, and print results.
+    """
+    # Read all input at once for efficiency
+    data = sys.stdin.buffer.read().split()
+    if not data:
+        return
+
+    # Parse first line: N, M, S
+    idx = 0
+    n = int(data[idx])
+    idx += 1
+    m = int(data[idx])
+    idx += 1
+    s = int(data[idx])
+    idx += 1
+
+    # Build adjacency list
+    adj: List[List[Tuple[int, int]]] = [[] for _ in range(n)]
+
+    for _ in range(m):
+        u = int(data[idx])
+        idx += 1
+        v = int(data[idx])
+        idx += 1
+        w = int(data[idx])
+        idx += 1
+
+        # Validate input constraints
+        if 0 <= u < n and 0 <= v < n and w >= 0:
+            adj[u].append((v, w))
+
+    # Run Dijkstra's algorithm
+    distances = dijkstra(n, adj, s)
+
+    # Print results
+    print(' '.join(str(d) for d in distances))
+
+
+if __name__ == "__main__":
+    solve()

@@ -1,0 +1,59 @@
+```python
+def check_inventory_status(inventory: dict, sku: str, reorder_level: int = 10) -> str:
+    """
+    Determine stock status for a SKU, handling edge cases:
+    - empty/missing inventory data
+    - unknown SKU
+    - zero stock
+    - boundary reorder levels (stock exactly at reorder_level)
+    """
+    # 1. Empty or missing data
+    if not inventory:
+        return "ERROR: No inventory data available."
+
+    # 2. Unknown SKU
+    if sku not in inventory:
+        return f"ERROR: SKU '{sku}' not found in inventory."
+
+    stock = inventory[sku]
+
+    # Defensive check for bad values (e.g., None, negative stock)
+    if stock is None or not isinstance(stock, (int, float)):
+        return f"ERROR: Invalid stock value for SKU '{sku}'."
+    if stock < 0:
+        return f"ERROR: Negative stock ({stock}) for SKU '{sku}' — data issue."
+
+    # 3. Zero stock
+    if stock == 0:
+        return f"OUT_OF_STOCK: SKU '{sku}' has 0 units."
+
+    # 4. Boundary reorder level (stock exactly equals reorder_level)
+    if stock == reorder_level:
+        return f"REORDER_NOW: SKU '{sku}' at boundary ({stock} == reorder level {reorder_level})."
+
+    # Below reorder level
+    if stock < reorder_level:
+        return f"LOW_STOCK: SKU '{sku}' has {stock} units (below reorder level {reorder_level})."
+
+    # Healthy stock
+    return f"OK: SKU '{sku}' has {stock} units (above reorder level {reorder_level})."
+
+
+# --- Example test cases ---
+if __name__ == "__main__":
+    inventory_data = {"SKU100": 0, "SKU200": 10, "SKU300": 5, "SKU400": 25}
+
+    tests = [
+        ({}, "SKU100"),                # empty data
+        (inventory_data, "SKU999"),    # unknown SKU
+        (inventory_data, "SKU100"),    # zero stock
+        (inventory_data, "SKU200"),    # boundary (== reorder level 10)
+        (inventory_data, "SKU300"),    # below reorder level
+        (inventory_data, "SKU400"),    # healthy stock
+    ]
+
+    for data, sku in tests:
+        print(check_inventory_status(data, sku))
+```
+
+This covers the four cases you listed plus a couple of extra guards (invalid/negative values) since bad data often shows up alongside empty datasets in practice. Let me know if you want this adapted to raise exceptions instead of returning status strings, or wired into a specific framework (Flask, pandas, etc.).

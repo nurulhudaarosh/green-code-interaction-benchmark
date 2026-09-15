@@ -1,0 +1,11 @@
+{
+  "task_id": "AC-008",
+  "model": "gpt",
+  "interaction": "EDGE_CASE",
+  "turn": 1,
+  "saved_at": "2026-09-06T05:12:37.099107+00:00",
+  "response_sha256": "080b91c2b2596241dfae043ca5ee3db3b48daa2feb84ad4cfa3289f9b368ed06",
+  "code_sha256": "7536b4cf5c99b15cc6cb9ac94099ca293e136863bbe1efc72497b4aed0e73d1c",
+  "raw_file": ".collection/raw/gpt/AC-008/EDGE_CASE/turn_01.txt",
+  "code_file": ".collection/code/gpt/AC-008/EDGE_CASE/initial.py"
+}

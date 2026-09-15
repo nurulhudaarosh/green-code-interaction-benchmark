@@ -1,0 +1,64 @@
+```python
+from collections import defaultdict
+import math
+
+
+def analyze_transactions(transactions):
+    """Analyzes transactions per account, ordered chronologically.
+
+    Sorts all transactions chronologically by `timestamp` and processes them in
+    order per `account_id`. Calculates statistics (mean and population standard
+    deviation) from up to 5 immediately preceding amounts.
+
+    Flagging rules:
+    - Standard: amount > mean + (3 * pop_std)
+    - Zero-Deviation Rule (pop_std == 0): amount > mean
+    """
+    # Sort deterministically by timestamp first (using account_id as tie-breaker)
+    sorted_txs = sorted(
+        transactions, key=lambda x: (x["timestamp"], x["account_id"])
+    )
+
+    # Track rolling window of up to 5 preceding amounts per account
+    account_windows = defaultdict(list)
+    analyzed_transactions = []
+
+    for tx in sorted_txs:
+        acc_id = tx["account_id"]
+        amount = float(tx["amount"])
+        window = account_windows[acc_id]
+
+        if not window:
+            mean = 0.0
+            pop_std = 0.0
+            is_anomaly = False
+        else:
+            n = len(window)
+            mean = sum(window) / n
+            variance = sum((x - mean) ** 2 for x in window) / n
+            pop_std = math.sqrt(variance)
+
+            # Apply anomaly logic including zero-deviation rule
+            if pop_std == 0.0:
+                is_anomaly = amount > mean
+            else:
+                is_anomaly = amount > (mean + (3.0 * pop_std))
+
+        analyzed_tx = dict(tx)
+        analyzed_tx.update(
+            {
+                "rolling_mean": round(mean, 4),
+                "rolling_pop_std": round(pop_std, 4),
+                "is_anomaly": is_anomaly,
+            }
+        )
+        analyzed_transactions.append(analyzed_tx)
+
+        # Update rolling window (max 5 preceding transactions)
+        window.append(amount)
+        if len(window) > 5:
+            window.pop(0)
+
+    return analyzed_transactions
+
+```

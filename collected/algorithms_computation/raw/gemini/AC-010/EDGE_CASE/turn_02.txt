@@ -1,0 +1,142 @@
+### Restatement of the Problem
+
+The **Matrix Chain Planner** problem takes an array of dimensions $P = [p_0, p_1, \dots, p_n]$ representing $n$ matrices $A_1, A_2, \dots, A_n$, where matrix $A_i$ has shape $p_{i-1} \times p_i$. The objective is to determine:
+
+1. The **minimum total scalar multiplication cost** required to multiply all $n$ matrices.
+2. The **optimal parenthesization** string representing the multiplication hierarchy.
+
+**Tie-Breaking Rule:** Whenever multiple split points $k \in [i, j-1]$ result in the *exact same minimum cost*, the planner **must select the smallest split index $k$**.
+
+---
+
+### Handling Difficult & Edge Cases
+
+1. **Repeated Values (Uniform Dimensions):**
+When adjacent matrices share identical dimensions (e.g., $P = [10, 10, 10, 10, 10]$), many distinct parenthesized groupings produce identical scalar costs. The algorithm must remain stable and adhere to the strict smallest-index $k$ rule without infinite recursion or non-deterministic behavior.
+2. **Deterministic Ties:**
+Symmetric matrix chains (e.g., $P = [10, 20, 10, 20, 10]$) produce equal-cost split points across symmetric branches. By initializing candidate costs and using a strictly less comparison (`cost < min_cost`), we guarantee that candidate $k = i$ wins over candidate $k = i + 1, \dots, j - 1$ whenever their calculated costs are identical.
+3. **Small Inputs ($n = 0, 1$):**
+* $n = 0$: $P = []$ or $[p_0]$, 0 matrices $\rightarrow$ cost = 0, structure = `""`.
+* $n = 1$: $P = [p_0, p_1]$, 1 matrix $\rightarrow$ cost = 0, structure = `"A1"`.
+
+
+
+---
+
+### Python Implementation & Comprehensive Test Suite
+
+```python
+def matrix_chain_order(p: list[int]) -> tuple[int, str]:
+    """
+    Computes minimum scalar multiplication cost and parenthesization for a matrix chain.
+    Strictly prefers the smallest split index k during deterministic cost ties.
+    """
+    if not p or len(p) <= 1:
+        return 0, ""
+    
+    n = len(p) - 1
+    if n == 1:
+        return 0, "A1"
+
+    # DP tables: m[i][j] stores min cost, s[i][j] stores optimal split k
+    m = [[0] * (n + 1) for _ in range(n + 1)]
+    s = [[0] * (n + 1) for _ in range(n + 1)]
+
+    # L is the sub-chain length
+    for L in range(2, n + 1):
+        for i in range(1, n - L + 2):
+            j = i + L - 1
+            m[i][j] = float('inf')
+            
+            for k in range(i, j):
+                cost = m[i][k] + m[k + 1][j] + p[i - 1] * p[k] * p[j]
+                
+                # Strict inequality ensures smallest k is preserved on ties
+                if cost < m[i][j]:
+                    m[i][j] = cost
+                    s[i][j] = k
+
+    def build_parenthesis(i: int, j: int) -> str:
+        if i == j:
+            return f"A{i}"
+        k = s[i][j]
+        left = build_parenthesis(i, k)
+        right = build_parenthesis(k + 1, j)
+        return f"({left}{right})"
+
+    return m[1][n], build_parenthesis(1, n)
+
+
+# =====================================================================
+# Unit Tests
+# =====================================================================
+
+def run_tests():
+    test_cases = [
+        # Standard Case
+        {
+            "name": "Standard Textbook Example",
+            "p": [40, 20, 30, 10, 30],
+            "expected_cost": 26000,
+            "expected_str": "((A1(A2A3))A4)"
+        },
+        # Repeated Values (Uniform Dimensions)
+        {
+            "name": "Repeated Values (Square Matrices 10x10)",
+            "p": [10, 10, 10, 10, 10],
+            "expected_cost": 3000,
+            # For 4 identical matrices, split k=1 gives cost 1000 + 0 + 1000 = 2000...
+            # Left-associative ((A1A2)A3)A4 due to tie-breaking rule at each step
+            "expected_str": "(((A1A2)A3)A4)"
+        },
+        # Deterministic Ties with Equal Symmetries
+        {
+            "name": "Deterministic Tie Symmetries",
+            "p": [10, 20, 10, 20],
+            "expected_cost": 4000,
+            # (A1 A2) A3 cost: 10*20*10 + 10*10*20 = 2000 + 2000 = 4000
+            # A1 (A2 A3) cost: 20*10*20 + 10*20*20 = 4000 + 4000 = 8000
+            # Preferred k=1 yields ((A1A2)A3)
+            "expected_str": "((A1A2)A3)"
+        },
+        {
+            "name": "Symmetric Cost Tie-Breaking",
+            "p": [20, 20, 20, 20],
+            "expected_cost": 16000,
+            "expected_str": "(((A1A2)A3)A4)"
+        },
+        # Edge Cases
+        {
+            "name": "Single Matrix (n = 1)",
+            "p": [10, 20],
+            "expected_cost": 0,
+            "expected_str": "A1"
+        },
+        {
+            "name": "Empty Dimension Array (n = 0)",
+            "p": [],
+            "expected_cost": 0,
+            "expected_str": ""
+        }
+    ]
+
+    print("Running Matrix Chain Planner Test Suite:\n" + "=" * 50)
+    all_passed = True
+    for tc in test_cases:
+        cost, structure = matrix_chain_order(tc["p"])
+        passed = (cost == tc["expected_cost"]) and (structure == tc["expected_str"])
+        if not passed:
+            all_passed = False
+            print(f"FAILED: {tc['name']}")
+            print(f"  Got:      Cost={cost}, Str={structure}")
+            print(f"  Expected: Cost={tc['expected_cost']}, Str={tc['expected_str']}")
+        else:
+            print(f"PASSED: {tc['name']} -> Cost: {cost}, Format: {structure}")
+
+    if all_passed:
+        print("=" * 50 + "\nAll tests passed successfully!")
+
+if __name__ == "__main__":
+    run_tests()
+
+```

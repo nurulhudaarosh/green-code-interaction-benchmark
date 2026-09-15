@@ -1,0 +1,92 @@
+from datetime import datetime
+from collections import defaultdict
+
+def analyze(events):
+    """
+    events: list of dicts {"user": str, "action": "login"/"logout", "timestamp": str/datetime}
+    Returns dict: user -> {"sessions": [...], "active_seconds": float, "session_count": int}
+    """
+    by_user = defaultdict(list)
+    for e in events:
+        ts = e["timestamp"]
+        if isinstance(ts, str):
+            ts = datetime.fromisoformat(ts)
+        by_user[e["user"]].append((ts, e["action"].lower()))
+
+    summary = {}
+
+    for user, evts in by_user.items():
+        # Sort chronologically per user (handles out-of-order input)
+        evts.sort(key=lambda x: x[0])
+
+        # Pair each login with next valid logout; ignore unmatched events
+        sessions = []
+        open_login = None
+        for ts, action in evts:
+            if action == "login":
+                if open_login is None:
+                    open_login = ts
+                # duplicate/nested login while one is open: ignore, keep first
+            elif action == "logout":
+                if open_login is not None and ts > open_login:
+                    sessions.append((open_login, ts))
+                    open_login = None
+                # stray logout (no open login) or logout <= login: ignore
+            # unrecognized actions are ignored
+        # trailing open login with no logout: ignore (unmatched)
+
+        # Merge overlapping or touching sessions
+        sessions.sort(key=lambda x: x[0])
+        merged = []
+        for start, end in sessions:
+            if merged and start <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+            else:
+                merged.append((start, end))
+
+        active_seconds = sum((e - s).total_seconds() for s, e in merged)
+
+        summary[user] = {
+            "sessions": merged,
+            "active_seconds": active_seconds,
+            "session_count": len(merged),
+        }
+
+    return summary
+
+
+def format_summary(summary):
+    lines = []
+    for user in sorted(summary.keys()):
+        data = summary[user]
+        lines.append(f"User: {user}")
+        lines.append(f"  Sessions: {data['session_count']}")
+        lines.append(f"  Active time: {data['active_seconds']:.0f} seconds")
+        for start, end in data["sessions"]:
+            lines.append(f"    {start.isoformat()} -> {end.isoformat()}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def write_summary(summary, filepath="session_summary.txt"):
+    with open(filepath, "w") as f:
+        f.write(format_summary(summary))
+
+
+if __name__ == "__main__":
+    # Deliberately out-of-order, with unmatched/stray events
+    sample_events = [
+        {"user": "alice", "action": "logout", "timestamp": "2024-01-01T09:30:00"},
+        {"user": "alice", "action": "login", "timestamp": "2024-01-01T09:00:00"},
+        {"user": "alice", "action": "login", "timestamp": "2024-01-01T09:30:00"},  # touching
+        {"user": "alice", "action": "logout", "timestamp": "2024-01-01T10:15:00"},
+        {"user": "alice", "action": "login", "timestamp": "2024-01-01T11:30:00"},  # unmatched (no logout)
+        {"user": "bob", "action": "logout", "timestamp": "2024-01-01T08:00:00"},  # stray, no login
+        {"user": "bob", "action": "login", "timestamp": "2024-01-01T08:10:00"},
+        {"user": "bob", "action": "login", "timestamp": "2024-01-01T08:05:00"},  # out of order, dup
+        {"user": "bob", "action": "logout", "timestamp": "2024-01-01T08:45:00"},
+    ]
+
+    result = analyze(sample_events)
+    print(format_summary(result))
+    write_summary(result)

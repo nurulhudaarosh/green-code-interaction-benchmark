@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""Offline duplicate .txt file finder.
+
+Recursively scans a directory for regular .txt files (symlinks and other
+extensions are ignored), normalizes their content (casefold + whitespace
+normalization), hashes the normalized content with SHA-256, and reports
+deterministic duplicate groups.
+"""
+
+import argparse
+import hashlib
+import re
+from pathlib import Path
+from typing import Dict, List
+
+
+def normalize_content(text: str) -> str:
+    """Casefold and normalize whitespace in text content."""
+    text = text.casefold()
+    # Collapse all whitespace runs (spaces, tabs, newlines, etc.) into a
+    # single space, and strip leading/trailing whitespace.
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def hash_content(text: str) -> str:
+    """Return the SHA-256 hex digest of normalized text content."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def iter_txt_files(root: Path):
+    """Yield regular .txt files under root, skipping symlinks."""
+    for path in root.rglob("*.txt"):
+        if path.is_symlink():
+            continue
+        if not path.is_file():
+            continue
+        yield path
+
+
+def find_duplicates(root: Path) -> Dict[str, List[Path]]:
+    """Group .txt files under root by normalized-content SHA-256 hash."""
+    groups: Dict[str, List[Path]] = {}
+
+    for path in iter_txt_files(root):
+        try:
+            raw = path.read_text(encoding="utf-8", errors="strict")
+        except (UnicodeDecodeError, OSError) as exc:
+            print(f"Skipping {path}: {exc}")
+            continue
+
+        digest = hash_content(normalize_content(raw))
+        groups.setdefault(digest, []).append(path)
+
+    # Keep only groups with more than one file (actual duplicates).
+    duplicates = {h: sorted(paths) for h, paths in groups.items() if len(paths) > 1}
+    return duplicates
+
+
+def report_duplicates(duplicates: Dict[str, List[Path]]) -> None:
+    """Print duplicate groups deterministically (sorted by hash)."""
+    if not duplicates:
+        print("No duplicate .txt files found.")
+        return
+
+    print(f"Found {len(duplicates)} duplicate group(s):\n")
+    for digest in sorted(duplicates.keys()):
+        paths = duplicates[digest]
+        print(f"Hash: {digest}")
+        for p in paths:
+            print(f"  - {p}")
+        print()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Find duplicate .txt files by normalized content hash."
+    )
+    parser.add_argument(
+        "directory",
+        type=Path,
+        nargs="?",
+        default=Path("."),
+        help="Root directory to scan recursively (default: current directory).",
+    )
+    args = parser.parse_args()
+
+    root = args.directory.resolve()
+    if not root.is_dir():
+        parser.error(f"{root} is not a directory")
+
+    duplicates = find_duplicates(root)
+    report_duplicates(duplicates)
+
+
+if __name__ == "__main__":
+    main()

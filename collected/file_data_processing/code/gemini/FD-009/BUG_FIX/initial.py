@@ -1,0 +1,79 @@
+import pandas as pd
+import numpy as np
+
+def analyze_transactions(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Analyzes transaction data to flag unusually high values based on a 5-period 
+    rolling population standard deviation.
+    
+    Expected Columns in Input DataFrame:
+        - account_id: Unique identifier for the account
+        - timestamp: Date/Time of the transaction
+        - amount: Transaction amount
+    """
+    # 1. Ensure deterministic ordering per account
+    # Sorting by account_id and timestamp guarantees sequential accuracy.
+    df_sorted = df.sort_values(by=['account_id', 'timestamp']).reset_index(drop=True)
+    
+    def process_account(group: pd.DataFrame) -> pd.DataFrame:
+        amounts = group['amount'].to_numpy()
+        n = len(amounts)
+        
+        rolling_mean = np.full(n, np.nan)
+        rolling_std = np.full(n, np.nan)
+        is_unusual = np.zeros(n, dtype=bool)
+        
+        # 2. Iterate through transactions to calculate stats from the 5 immediately preceding amounts
+        for i in range(n):
+            if i >= 5:
+                # Select window of the 5 immediately preceding amounts
+                window = amounts[i-5:i]
+                
+                m = np.mean(window)
+                # ddof=0 calculates the population standard deviation
+                s = np.std(window, ddof=0)
+                
+                rolling_mean[i] = m
+                rolling_std[i] = s
+                
+                # 3. Apply Zero-Deviation Rule & Flagging Logic
+                # If population standard deviation is 0, any amount strictly greater than the mean is flagged.
+                if s == 0:
+                    if amounts[i] > m:
+                        is_unusual[i] = True
+                else:
+                    # Flag if amount > mean + 3 * population_std
+                    if amounts[i] > (m + 3 * s):
+                        is_unusual[i] = True
+
+        group['rolling_mean_5'] = rolling_mean
+        group['rolling_std_5'] = rolling_std
+        group['is_unusual'] = is_unusual
+        
+        return group
+
+    # Apply the rolling analysis per account group
+    result_df = df_sorted.groupby('account_id', group_keys=False).apply(process_account)
+    
+    # Ensure final output is deterministically ordered by account_id and timestamp
+    result_df = result_df.sort_values(by=['account_id', 'timestamp']).reset_index(drop=True)
+    
+    return result_df
+
+
+# Example usage:
+if __name__ == "__main__":
+    sample_data = pd.DataFrame({
+        'account_id': [101, 101, 101, 101, 101, 101, 101, 102, 102, 102, 102, 102, 102],
+        'timestamp': [
+            '2026-01-01', '2026-01-02', '2026-01-03', '2026-01-04', '2026-01-05', '2026-01-06', '2026-01-07',
+            '2026-01-01', '2026-01-02', '2026-01-03', '2026-01-04', '2026-01-05', '2026-01-06'
+        ],
+        'amount': [
+            100.0, 102.0, 98.0, 101.0, 99.0, 500.0, 100.0,  # Account 101: 6th txn is high spike
+            50.0, 50.0, 50.0, 50.0, 50.0, 51.0               # Account 102: Zero-deviation trigger on 6th txn
+        ]
+    })
+
+    analyzed_df = analyze_transactions(sample_data)
+    print(analyzed_df.to_string())

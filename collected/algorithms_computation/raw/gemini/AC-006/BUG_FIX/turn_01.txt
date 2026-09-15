@@ -1,0 +1,119 @@
+### Problem Analysis & Strategy
+
+The problem asks us to analyze a 2D matrix of numbers and locate a continuous group of 4-connected cells (moving up, down, left, right) where each cell's value is greater than or equal to a threshold $T$.
+
+#### Key Constraints & Tie-Breaking Rules
+
+1. **Selection Criteria**: Find the valid 4-connected component that maximizes **size** (number of cells).
+2. **Tie-Breaking Order**:
+* First priority: Larger **size**.
+* Second priority: Larger **perimeter**.
+* Third priority: Smaller **minimum coordinate** (lexicographically smallest `(row, col)` pair among all cells in the region).
+
+
+3. **Connectivity**: 4-directional (adjacent cells share a top, bottom, left, or right edge).
+4. **Perimeter Definition**: Total number of exposed grid edges. An edge of a cell in the region contributes to the perimeter if it touches the boundary of the grid or an adjacent cell outside the region.
+
+#### Required Output
+
+Return a tuple containing: `(largest_size, perimeter, min_coordinate)`. If no valid cells meet threshold $T$, return `(0, 0, None)`.
+
+---
+
+### Algorithm Description
+
+1. Iterate through all cells in the grid to find unvisited cells with `value >= T`.
+2. For each unvisited valid cell, perform an **iterative Flood Fill** (using a stack or queue) to explore the entire 4-connected component:
+* Track the total cell count (**size**).
+* Track the lexicographically minimum `(row, col)` pair (**smallest coordinate**).
+* Calculate the **perimeter**: For every cell in the region, check all 4 neighbors. Increment perimeter count by 1 for each neighbor that is outside grid bounds or has a value strictly less than $T$.
+
+
+3. Track and update the overall best region found across the grid based on the specified tie-breaking hierarchy.
+
+---
+
+### Python Solution
+
+```python
+from collections import deque
+from typing import List, Tuple, Optional
+
+def find_largest_region(grid: List[List[int]], T: int) -> Tuple[int, int, Optional[Tuple[int, int]]]:
+    """
+    Finds the largest 4-connected region with values >= T.
+    
+    Returns:
+        (size, perimeter, smallest_coordinate)
+    """
+    if not grid or not grid[0]:
+        return (0, 0, None)
+    
+    rows, cols = len(grid), len(grid[0])
+    visited = set()
+    
+    best_size = 0
+    best_perimeter = 0
+    best_min_coord = None
+    
+    directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+    
+    for r in range(rows):
+        for c in range(cols):
+            if grid[r][c] >= T and (r, c) not in visited:
+                # Start Flood Fill / BFS
+                region_cells = []
+                queue = deque([(r, c)])
+                visited.add((r, c))
+                
+                min_coord = (r, c)
+                perimeter = 0
+                size = 0
+                
+                while queue:
+                    curr_r, curr_c = queue.popleft()
+                    size += 1
+                    min_coord = min(min_coord, (curr_r, curr_c))
+                    
+                    # Check 4 directions for perimeter and component traversal
+                    for dr, dc in directions:
+                        nr, nc = curr_r + dr, curr_c + dc
+                        
+                        # Boundary or less than threshold contributes to perimeter
+                        if not (0 <= nr < rows and 0 <= nc < cols) or grid[nr][nc] < T:
+                            perimeter += 1
+                        else:
+                            if (nr, nc) not in visited:
+                                visited.add((nr, nc))
+                                queue.append((nr, nc))
+                
+                # Compare current region against the best region found so far
+                current_candidate = (size, perimeter, min_coord)
+                if best_min_coord is None:
+                    best_size, best_perimeter, best_min_coord = current_candidate
+                else:
+                    # Compare: Larger size -> Larger perimeter -> Smaller coordinate
+                    if (size > best_size) or \
+                       (size == best_size and perimeter > best_perimeter) or \
+                       (size == best_size and perimeter == best_perimeter and min_coord < best_min_coord):
+                        best_size = size
+                        best_perimeter = perimeter
+                        best_min_coord = min_coord
+                        
+    return (best_size, best_perimeter, best_min_coord)
+
+
+# Example Usage & Test Case
+if __name__ == "__main__":
+    grid_example = [
+        [5, 5, 2, 1],
+        [5, 1, 5, 5],
+        [1, 1, 5, 5]
+    ]
+    threshold = 5
+    
+    result = find_largest_region(grid_example, threshold)
+    print("Largest Region Result:", result)
+    # Expected Output: (4, 8, (1, 2))
+
+```

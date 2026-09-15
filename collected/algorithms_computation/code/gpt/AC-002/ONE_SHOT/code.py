@@ -1,0 +1,172 @@
+# Package Build Order
+# -------------------
+# Given packages and prerequisite dependencies, produce:
+#   1. A deterministic valid build order.
+#   2. The number of dependency levels.
+#
+# If a cycle exists:
+#   return ([], -1)
+#
+# Algorithm:
+#   - Use Kahn's Topological Sorting algorithm.
+#   - Use a min-heap so that the smallest package is always selected first.
+#   - Track the longest prerequisite depth for every package.
+#   - A package with no prerequisites has depth 1.
+#   - If a package depends on another package, its depth is:
+#         max(depth of prerequisites) + 1
+#
+# Time Complexity: O((V + E) log V)
+# Space Complexity: O(V + E)
+#
+# Standard library only.
+
+
+import heapq
+
+
+def find_build_order(packages, dependencies):
+    """
+    Find a deterministic valid build order and dependency levels.
+
+    Parameters:
+        packages:
+            Iterable of package names.
+
+        dependencies:
+            Iterable of (prerequisite, package) pairs.
+            For example:
+                ("A", "B")
+            means A must be built before B.
+
+    Returns:
+        (build_order, levels)
+
+        build_order:
+            List containing a valid deterministic build order.
+
+        levels:
+            Number of dependency levels.
+
+        If a cycle exists:
+            ([], -1)
+    """
+
+    # Convert packages to a set to remove duplicates.
+    package_set = set(packages)
+
+    # Add packages appearing in dependencies as well.
+    # This makes the function robust even if they were not
+    # explicitly included in the package list.
+    for prerequisite, package in dependencies:
+        package_set.add(prerequisite)
+        package_set.add(package)
+
+    # Create adjacency list and indegree table.
+    graph = {package: [] for package in package_set}
+    indegree = {package: 0 for package in package_set}
+
+    # Track the longest prerequisite depth.
+    # A package with no prerequisites starts at level 1.
+    depth = {package: 1 for package in package_set}
+
+    # Build graph.
+    #
+    # prerequisite -> package
+    #
+    # Example:
+    # A -> B
+    # means B cannot be built until A is built.
+    for prerequisite, package in dependencies:
+        graph[prerequisite].append(package)
+        indegree[package] += 1
+
+    # Sort adjacency lists to make processing deterministic.
+    for package in graph:
+        graph[package].sort()
+
+    # Min-heap containing all packages with no prerequisites.
+    heap = []
+
+    for package in package_set:
+        if indegree[package] == 0:
+            heapq.heappush(heap, package)
+
+    build_order = []
+
+    while heap:
+        # Always select the lexicographically smallest available package.
+        current = heapq.heappop(heap)
+        build_order.append(current)
+
+        # Process all packages that depend on current.
+        for dependent in graph[current]:
+            # Update the longest prerequisite depth.
+            depth[dependent] = max(
+                depth[dependent],
+                depth[current] + 1
+            )
+
+            # Remove the dependency.
+            indegree[dependent] -= 1
+
+            # If all prerequisites are completed,
+            # the package becomes available.
+            if indegree[dependent] == 0:
+                heapq.heappush(heap, dependent)
+
+    # If not all packages were processed, a cycle exists.
+    if len(build_order) != len(package_set):
+        return [], -1
+
+    # The number of dependency levels is the longest prerequisite depth.
+    levels = max(depth.values(), default=0)
+
+    return build_order, levels
+
+
+def main():
+    # Example input.
+    packages = [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F"
+    ]
+
+    # (prerequisite, package)
+    dependencies = [
+        ("A", "C"),
+        ("B", "C"),
+        ("C", "D"),
+        ("C", "E"),
+        ("D", "F"),
+        ("E", "F")
+    ]
+
+    order, levels = find_build_order(packages, dependencies)
+
+    print("Build Order:", order)
+    print("Dependency Levels:", levels)
+
+    # Example with a cycle.
+    cyclic_packages = ["A", "B", "C"]
+    cyclic_dependencies = [
+        ("A", "B"),
+        ("B", "C"),
+        ("C", "A")
+    ]
+
+    order, levels = find_build_order(
+        cyclic_packages,
+        cyclic_dependencies
+    )
+
+    print("\nCycle Example:")
+    print("Build Order:", order)
+    print("Dependency Levels:", levels)
+
+
+if __name__ == "__main__":
+    main()

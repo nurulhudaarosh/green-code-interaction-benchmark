@@ -1,0 +1,50 @@
+```python
+import os
+from PIL import Image
+
+def extract_metadata(input_dir):
+    """
+    Extract metadata for every image file in input_dir.
+
+    Returns a list of dicts, sorted by filename, each containing:
+        - filename
+        - format
+        - mode
+        - width
+        - height
+        - file_size_bytes
+    """
+    results = []
+
+    for entry in os.listdir(input_dir):
+        full_path = os.path.join(input_dir, entry)
+
+        if not os.path.isfile(full_path):
+            continue
+
+        try:
+            with Image.open(full_path) as img:
+                width, height = img.size
+                results.append({
+                    "filename": entry,
+                    "format": img.format,
+                    "mode": img.mode,
+                    "width": width,
+                    "height": height,
+                    "file_size_bytes": os.path.getsize(full_path),
+                })
+        except (IOError, OSError):
+            # Not a valid/openable image file — skip it
+            continue
+
+    results.sort(key=lambda d: d["filename"])
+    return results
+```
+
+**Notes:**
+- Uses Pillow's `Image.open` to detect format/mode/dimensions; non-image files (or corrupt images) are silently skipped via the `try/except`.
+- `os.path.getsize` gives the file size in bytes directly from the filesystem, so it works regardless of image format.
+- Sorting is done by `filename` (string sort). If you want case-insensitive or natural-number sorting (e.g., `img2` before `img10`), let me know and I can adjust the `key`.
+- Only top-level files in `input_dir` are scanned; if you need recursive traversal into subdirectories, I can swap `os.listdir` for `os.walk`.
+
+If you don't already have Pillow installed: `pip install Pillow`.

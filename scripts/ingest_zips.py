@@ -62,12 +62,16 @@ def load_tasks(dataset):
 
 def interactions_of(task):
     ia = task.get("interactions") or task.get("interaction_design") or {}
-    return list(ia.keys())
+    # datasets mix cases ("BUG_FIX" vs "bug_fix"); the on-disk layout is
+    # always UPPERCASE, so normalize here
+    return [str(k).upper() for k in ia.keys()]
 
 
 def turns_for(task, interaction):
     ia = (task.get("interactions") or task.get("interaction_design") or {})
     spec = ia.get(interaction)
+    if spec is None and interaction:
+        spec = ia.get(interaction.lower()) or ia.get(interaction.upper())
     if isinstance(spec, dict) and isinstance(spec.get("turns"), list):
         return len(spec["turns"])
     return {"ONE_SHOT": 1}.get(interaction, 2 if interaction != "FULL_MULTI_TURN" else 4)
@@ -116,6 +120,31 @@ def syntax_ok(path: Path):
         return False
 
 
+def copy_code_preserving_local(src: Path, dest: Path) -> list:
+    """Copy the code/ tree src -> dest, but NEVER overwrite a collected file
+    that the user has locally edited (content differs from the inbox copy).
+    Workflow: a member's code fails -> edit collected/.../final.py by hand ->
+    re-run pipeline -> your fix is kept, gets re-measured (sha changed), and
+    later ingests/syncs will not overwrite it. To go back to the member's
+    version: delete your collected file (or edit inbox instead).
+    Returns list of protected (kept) relative paths.
+    """
+    kept = []
+    dest.mkdir(parents=True, exist_ok=True)
+    for p in sorted(src.rglob("*")):
+        rel = p.relative_to(src)
+        d = dest / rel
+        if p.is_dir():
+            d.mkdir(parents=True, exist_ok=True)
+            continue
+        if d.is_file() and d.read_bytes() != p.read_bytes():
+            kept.append(str(rel))
+            continue
+        d.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(p, d)
+    return kept
+
+
 def process_source(src: Path, dry_run: bool):
     report = {
         "source_zip": src.name,
@@ -131,6 +160,7 @@ def process_source(src: Path, dry_run: bool):
         "syntax_errors": [],
         "manifest_mismatches": [],
         "extra_files": [],
+        "local_modifications": [],
         "units_done": 0,
         "units_total": 0,
     }
@@ -145,29 +175,77 @@ def process_source(src: Path, dry_run: bool):
 
         roots = find_roots(tmp)
         if not roots:
+            # A category folder with no uploads yet is NOT an error — the
+            # member simply has not started. Wait for files to appear.
+            if src.is_dir() and not any(tmp.rglob("*.py")):
+                report["note"] = "not started yet (nothing uploaded)"
+                report["category"] = src.name
+                return report
             report["error"] = "no .collection/ or dataset/dataset.json found in zip"
             return report
         root = roots[0]
 
+        # ---- category + dataset resolution --------------------------------
+        # The LOCAL dataset/<category>/dataset.json is the frozen source of
+        # truth: once valid it is never replaced by an incoming copy.
+        # Order: inbox folder name > task-id prefixes in the code tree >
+        # dataset metadata (source or local).
+        category = src.name if src.is_dir() and src.name in CATEGORY_BY_CODE.values() else None
+
+        dataset = tasks = meta = None
         ds_file = root / "dataset" / "dataset.json"
-        if not ds_file.is_file():
-            report["error"] = "dataset/dataset.json missing from zip"
-            return report
-        dataset = json.loads(ds_file.read_text(encoding="utf-8"))
-        tasks = load_tasks(dataset)
-        meta = dataset.get("dataset_metadata", {}) if isinstance(dataset, dict) else {}
-        code_dir_name = meta.get("category")
-        category = code_dir_name if code_dir_name in CATEGORY_BY_CODE.values() \
-            else CATEGORY_BY_CODE.get(meta.get("category_code", ""))
-        if category is None and tasks:
-            prefix = str(tasks[0].get("task_id", "")).split("-")[0].upper()
-            category = CATEGORY_BY_CODE.get(prefix)
+
+        def read_local_dataset(cat):
+            p = REPO / "dataset" / cat / "dataset.json"
+            try:
+                d = json.loads(p.read_text(encoding="utf-8"))
+                t = load_tasks(d)
+                if t:
+                    return d, t
+            except (json.JSONDecodeError, ValueError, OSError):
+                pass
+            return None, None
+
+        if category is not None:
+            dataset, tasks = read_local_dataset(category)
+            meta = dataset.get("dataset_metadata", {}) if isinstance(dataset, dict) else {}
+        if not tasks and ds_file.is_file():
+            try:
+                dataset = json.loads(ds_file.read_text(encoding="utf-8"))
+                tasks = load_tasks(dataset)
+                meta = dataset.get("dataset_metadata", {}) if isinstance(dataset, dict) else {}
+            except (json.JSONDecodeError, ValueError, OSError) as e:
+                print(f"  WARNING: source dataset.json unreadable ({e})")
+                dataset = tasks = None
+        if category is None and dataset is not None:
+            code_dir_name = meta.get("category")
+            category = code_dir_name if code_dir_name in CATEGORY_BY_CODE.values() \
+                else CATEGORY_BY_CODE.get(meta.get("category_code", ""))
+            if category is None and tasks:
+                prefix = str(tasks[0].get("task_id", "")).split("-")[0].upper()
+                category = CATEGORY_BY_CODE.get(prefix)
+        if category is None:
+            # last resort: task-id prefixes found in the code tree
+            code_root = root / ".collection" / "code"
+            if code_root.is_dir():
+                for p in code_root.glob("*/*/*/*.py"):
+                    prefix = p.parts[-3].split("-")[0].upper()
+                    category = CATEGORY_BY_CODE.get(prefix)
+                    if category:
+                        break
         if category is None:
             report["error"] = "cannot determine category from dataset"
             return report
+        if not tasks:
+            dataset, tasks = read_local_dataset(category)
+            meta = dataset.get("dataset_metadata", {}) if isinstance(dataset, dict) else {}
+        if not tasks:
+            report["error"] = ("no usable dataset: source has none and local "
+                               f"dataset/{category}/dataset.json is missing/empty")
+            return report
 
         report["category"] = category
-        report["dataset_version"] = meta.get("dataset_version")
+        report["dataset_version"] = (meta or {}).get("dataset_version")
         report["task_count"] = len(tasks)
 
         coll = root / ".collection"
@@ -228,7 +306,18 @@ def process_source(src: Path, dry_run: bool):
             for sub in ("code", "raw"):
                 src = coll / sub
                 if src.is_dir():
-                    shutil.copytree(src, dest / sub, dirs_exist_ok=True)
+                    if sub == "code":
+                        kept = copy_code_preserving_local(src, dest / sub)
+                        report["local_modifications"] = kept
+                        if kept:
+                            print(f"  KEPT {len(kept)} local modification(s) "
+                                  "in collected/ (your fixes survive):")
+                            for rel in kept[:10]:
+                                print(f"    - {rel}")
+                            if len(kept) > 10:
+                                print(f"    ... +{len(kept) - 10} more")
+                    else:
+                        shutil.copytree(src, dest / sub, dirs_exist_ok=True)
             for extra in ("logs", "state.json"):
                 src = coll / extra
                 if src.is_dir():
@@ -245,13 +334,30 @@ def process_source(src: Path, dry_run: bool):
 
             ds_dest = REPO / "dataset" / category / "dataset.json"
             ds_dest.parent.mkdir(parents=True, exist_ok=True)
-            if ds_dest.is_file() and ds_dest.read_bytes() != ds_file.read_bytes():
-                shutil.copy2(ds_dest, ds_dest.parent / "dataset.prev.json")
-            if ds_dest.is_file() and ds_dest.read_bytes() == ds_file.read_bytes():
+            local_valid = False
+            if ds_dest.is_file():
+                try:
+                    local_valid = bool(load_tasks(
+                        json.loads(ds_dest.read_text(encoding="utf-8"))))
+                except (json.JSONDecodeError, ValueError, OSError):
+                    local_valid = False
+            if local_valid:
+                # FROZEN: the local dataset is the source of truth and is
+                # never replaced once valid. Keep the incoming copy for
+                # reference only.
                 report["dataset_updated"] = False
-            else:
+                if (ds_file.is_file()
+                        and ds_dest.read_bytes() != ds_file.read_bytes()):
+                    shutil.copy2(ds_file, ds_dest.parent / "dataset.incoming.json")
+                    report["dataset_note"] = ("local dataset frozen; incoming "
+                                              "copy saved as dataset.incoming.json")
+            elif ds_file.is_file():
+                if ds_dest.is_file():
+                    shutil.copy2(ds_dest, ds_dest.parent / "dataset.prev.json")
                 ds_dest.write_bytes(ds_file.read_bytes())
                 report["dataset_updated"] = True
+            else:
+                report["dataset_updated"] = False
 
             (dest / "ingest_report.json").write_text(
                 json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -273,6 +379,9 @@ def write_status(reports):
         cat = r.get("category") or r["source_zip"]
         if r.get("error"):
             lines.append(f"| {cat} | ERROR: {r['error']} | | | | | |")
+            continue
+        if r.get("note"):
+            lines.append(f"| {cat} | WAITING: {r['note']} | | | | | |")
             continue
         lines.append(
             f"| {cat} | {r['units_done']}/{r['units_total']} | {r['expected_files']} "
@@ -316,6 +425,9 @@ def main():
         reports.append(r)
         if r.get("error"):
             print(f"  ERROR: {r['error']}")
+            continue
+        if r.get("note"):
+            print(f"  {r['note']}")
             continue
         ok = not (r["missing"] or r["empty"] or r["syntax_errors"] or r["manifest_mismatches"])
         print(f"  category        : {r['category']} (dataset {r['dataset_version']}, {r['task_count']} tasks)")

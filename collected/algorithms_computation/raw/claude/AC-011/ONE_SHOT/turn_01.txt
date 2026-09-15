@@ -1,0 +1,120 @@
+## Problem
+
+Given `n` indivisible items, each with a non‑negative integer `weight` and `value`, and a knapsack of integer `capacity`, choose a subset of items whose total weight ≤ capacity that maximizes total value (the classic 0/1 knapsack — each item used at most once).
+
+**Constraints**
+- Weights, values, capacity are non‑negative integers.
+- Each item may be selected 0 or 1 times.
+- If multiple subsets achieve the same maximum value, return the **lexicographically smallest list of original indices** (compare index sequences element‑by‑element; a proper prefix is smaller than a longer sequence).
+
+**Required output**
+- The maximum achievable value.
+- The list of original indices (ascending order) of the chosen items, deterministically resolving ties as above.
+
+**Algorithm**
+1. Build a DP table `dp[i][c]` = best value obtainable using items `i..n-1` with capacity `c`, filled backward (`i = n-1 downto 0`) — this is the "descending" direction of the classic 0/1 DP recurrence (`dp[i][c] = max(dp[i+1][c], value[i] + dp[i+1][c-weight[i]])`), which prevents an item from being reused.
+2. Reconstruct the answer scanning items **forward** (`i = 0..n-1`): include item `i` whenever doing so is still consistent with the optimum (`value[i] + dp[i+1][c-weight[i]] == dp[i][c]`). Preferring inclusion whenever possible guarantees the lexicographically smallest index list, since an index list starting with a smaller index is always lexicographically smaller.
+
+```python
+"""
+Deterministic 0/1 Knapsack solver.
+
+- Standard library only, no randomness, no I/O beyond function calls.
+- Returns (max_value, selected_indices) where selected_indices is the
+  lexicographically smallest list of original indices achieving max_value.
+"""
+
+from typing import List, Sequence, Tuple
+
+
+def knapsack_01(
+    weights: Sequence[int],
+    values: Sequence[int],
+    capacity: int,
+) -> Tuple[int, List[int]]:
+    """
+    Solve the 0/1 knapsack problem.
+
+    Args:
+        weights: non-negative integer weights, one per item.
+        values: non-negative integer values, one per item (same length as weights).
+        capacity: non-negative integer knapsack capacity.
+
+    Returns:
+        (max_value, selected_indices):
+            max_value: the maximum total value achievable.
+            selected_indices: ascending list of original indices of chosen
+                items; among all index-subsets achieving max_value, this is
+                the lexicographically smallest one.
+
+    Raises:
+        ValueError: on malformed or invalid input.
+    """
+    n = len(weights)
+    if len(values) != n:
+        raise ValueError("weights and values must have the same length")
+    if capacity < 0:
+        raise ValueError("capacity must be non-negative")
+    for w in weights:
+        if w < 0:
+            raise ValueError("weights must be non-negative")
+    for v in values:
+        if v < 0:
+            raise ValueError("values must be non-negative")
+
+    W = capacity
+
+    # dp[i][c] = best value obtainable using items i..n-1 with capacity c.
+    # Filled with i descending (n-1 -> 0), which is the "descending" DP
+    # direction that ensures each item is considered exactly once per layer.
+    dp = [[0] * (W + 1) for _ in range(n + 1)]
+    for i in range(n - 1, -1, -1):
+        wi, vi = weights[i], values[i]
+        row_next = dp[i + 1]
+        row_cur = dp[i]
+        for c in range(W + 1):
+            best = row_next[c]
+            if wi <= c:
+                cand = vi + row_next[c - wi]
+                if cand > best:
+                    best = cand
+            row_cur[c] = best
+
+    max_value = dp[0][W]
+
+    # Reconstruct: scan items forward, greedily include an item whenever
+    # doing so remains consistent with the optimal value from this point
+    # onward. This produces the lexicographically smallest index list.
+    selected: List[int] = []
+    c = W
+    for i in range(n):
+        wi, vi = weights[i], values[i]
+        if wi <= c and vi + dp[i + 1][c - wi] == dp[i][c]:
+            selected.append(i)
+            c -= wi
+        # else: item i is not part of the (lexicographically smallest)
+        # optimal solution given previous choices; skip it.
+
+    return max_value, selected
+
+
+if __name__ == "__main__":
+    # Simple deterministic self-check / example usage.
+    weights = [2, 3, 4, 5]
+    values = [3, 4, 5, 6]
+    capacity = 5
+
+    value, indices = knapsack_01(weights, values, capacity)
+    print(f"Max value: {value}")
+    print(f"Selected indices: {indices}")
+    print(f"Selected weights: {[weights[i] for i in indices]}")
+    print(f"Selected values: {[values[i] for i in indices]}")
+
+    # Tie-breaking example: two items with equal weight/value, item 0 should
+    # be preferred over item 1 to yield the lexicographically smallest list.
+    weights2 = [1, 1]
+    values2 = [10, 10]
+    capacity2 = 1
+    value2, indices2 = knapsack_01(weights2, values2, capacity2)
+    print(f"Tie-break check -> value: {value2}, indices: {indices2}")  # expect [0]
+```

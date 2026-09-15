@@ -26,10 +26,23 @@ results/raw/*
 results/processed/*
 results/final/*
 results/measurement_queue.jsonl
+results/file_ledger.jsonl
+results/zip_ledger.jsonl
+results/drive_listings.json
+results/pipeline_state.json
+results/.file_ledger.lock
 
 !results/raw/.gitkeep
 !results/processed/.gitkeep
 !results/final/.gitkeep
+
+# Keep the presentation report, tables and plots in the repo
+!results/final/presentation.md
+!results/final/energy_report.csv
+!results/final/energy_report.json
+!results/final/energy_failures.csv
+!results/final/plots/
+!results/final/plots/**
 
 # Logs
 *.log
@@ -41,3 +54,4 @@ results/measurement_queue.jsonl
 # OS
 .DS_Store
 Thumbs.db
+cookies.txt

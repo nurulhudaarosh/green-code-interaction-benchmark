@@ -1,0 +1,139 @@
+import os
+import sys
+from pathlib import Path
+from PIL import Image
+
+# Supported input extensions (Pillow can read these)
+INPUT_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp", ".ico"}
+
+# Map target format to (PIL format name, output extension)
+TARGET_FORMATS = {
+    "PNG":  ("PNG",  ".png"),
+    "JPEG": ("JPEG", ".jpg"),
+}
+
+
+def convert_format(input_dir, output_dir, target_format):
+    """
+    Convert all images in input_dir to the target format and save in output_dir.
+
+    Parameters
+    ----------
+    input_dir : str | Path
+        Directory containing source images.
+    output_dir : str | Path
+        Directory where converted images will be written. Created if missing.
+    target_format : str
+        Either "PNG" or "JPEG" (case-insensitive).
+
+    Returns
+    -------
+    dict with keys:
+        'converted' : list of (src_path, dst_path) tuples
+        'skipped'   : list of (src_path, reason) tuples
+        'failed'    : list of (src_path, reason) tuples
+    """
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+
+    if not input_dir.is_dir():
+        raise NotADirectoryError(f"input_dir is not a directory: {input_dir}")
+
+    fmt_key = target_format.upper()
+    if fmt_key not in TARGET_FORMATS:
+        raise ValueError(
+            f"Unsupported target_format {target_format!r}. "
+            f"Choose one of: {', '.join(TARGET_FORMATS)}"
+        )
+
+    pil_format, out_ext = TARGET_FORMATS[fmt_key]
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    result = {"converted": [], "skipped": [], "failed": []}
+
+    for src in sorted(input_dir.iterdir()):
+        if not src.is_file():
+            continue
+
+        ext = src.suffix.lower()
+        if ext not in INPUT_EXTENSIONS:
+            result["skipped"].append((src, f"unsupported extension {ext!r}"))
+            continue
+
+        # Skip files already in the target format
+        if ext == out_ext or (fmt_key == "JPEG" and ext in {".jpg", ".jpeg"}):
+            result["skipped"].append((src, "already in target format"))
+            continue
+
+        dst = output_dir / (src.stem + out_ext)
+
+        try:
+            _convert_one(src, dst, pil_format)
+            result["converted"].append((src, dst))
+        except Exception as e:
+            result["failed"].append((src, f"{type(e).__name__}: {e}"))
+
+    return result
+
+
+def _convert_one(src, dst, pil_format):
+    """Convert a single image, flattening transparency when writing JPEG."""
+    with Image.open(src) as img:
+        img.load()  # force decoding inside the context manager
+
+        if pil_format == "JPEG":
+            # Flatten any transparency onto a white background.
+            if _has_alpha(img):
+                img = _flatten_on_white(img)
+            # JPEG doesn't support palette mode or some odd modes.
+            if img.mode not in ("RGB", "L", "CMYK"):
+                img = img.convert("RGB")
+
+            img.save(dst, format="JPEG", quality=95, optimize=True)
+
+        elif pil_format == "PNG":
+            # PNG supports transparency; just save it as-is.
+            img.save(dst, format="PNG", optimize=True)
+        else:
+            # Generic fallback (shouldn't be reached with current map).
+            img.save(dst, format=pil_format)
+
+
+def _has_alpha(img):
+    """Return True if the image has an alpha channel or transparency info."""
+    if img.mode in ("RGBA", "LA"):
+        return True
+    if img.mode == "P" and "transparency" in img.info:
+        return True
+    return False
+
+
+def _flatten_on_white(img):
+    """Composite an image with transparency onto a white RGB background."""
+    # Convert palette images with transparency to RGBA first.
+    if img.mode == "P":
+        img = img.convert("RGBA")
+    elif img.mode == "LA":
+        img = img.convert("RGBA")
+
+    if img.mode == "RGBA":
+        background = Image.new("RGB", img.size, (255, 255, 255))
+        # Use the alpha channel as the mask for compositing.
+        background.paste(img, mask=img.split()[-1])
+        return background
+
+    # Fallback for unexpected modes
+    return img.convert("RGB")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 4:
+        print("Usage: python convert_format.py <input_dir> <output_dir> <PNG|JPEG>")
+        sys.exit(1)
+
+    report = convert_format(sys.argv[1], sys.argv[2], sys.argv[3])
+    print(f"Converted: {len(report['converted'])}")
+    print(f"Skipped:   {len(report['skipped'])}")
+    print(f"Failed:    {len(report['failed'])}")
+    for src, err in report["failed"]:
+        print(f"  FAILED {src}: {err}")

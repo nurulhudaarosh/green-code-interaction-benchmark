@@ -1,0 +1,151 @@
+## Problem understanding
+
+Given an integer sequence `a`, find a **strictly increasing subsequence** having the **maximum possible length**.
+
+If multiple subsequences have that maximum length, choose the one whose sequence of **original indices** is lexicographically smallest.
+
+For example:
+
+```text
+a = [3, 1, 2, 4]
+```
+
+The longest increasing subsequence is `[1, 2, 4]`, using original indices `[1, 2, 3]`.
+
+### Key constraints / requirements
+
+* Input is a sequence of integers.
+* A subsequence preserves the original order; elements do not need to be contiguous.
+* It must be **strictly** increasing:
+  `a[i] < a[j]` for consecutive selected indices `i < j`.
+* Maximize the number of selected elements.
+* Among all maximum-length answers, return the **lexicographically smallest original-index sequence**.
+* Indexing is **0-based**.
+* Deterministic behavior is required.
+* Use **quadratic dynamic programming**, `O(n²)` time.
+* Use explicit **predecessor/index-sequence tie breaking**.
+* Standard library only; no network, APIs, randomness, or human interaction.
+
+### Required output
+
+Return the selected original indices as a list of integers.
+
+For an empty input sequence, return `[]`.
+
+## Algorithm
+
+For every position `i`, maintain:
+
+* `length[i]`: length of the best increasing subsequence ending at `i`.
+* `sequence[i]`: the lexicographically smallest original-index sequence among subsequences of that length ending at `i`.
+* `predecessor[i]`: the predecessor index used to construct that sequence.
+
+For every pair `j < i`, if `a[j] < a[i]`, then `j` can precede `i`.
+
+We compare candidates using:
+
+1. Larger subsequence length is better.
+2. If lengths are equal, lexicographically smaller index sequence is better.
+
+Finally, compare all `sequence[i]` values having the global maximum length and return the lexicographically smallest one.
+
+This is `O(n²)` time and `O(n²)` worst-case space because explicit index sequences are retained for deterministic tie breaking.
+
+```python
+from typing import List
+
+
+def longest_increasing_subsequence_indices(a: List[int]) -> List[int]:
+    """
+    Return the lexicographically smallest original-index sequence among
+    all maximum-length strictly increasing subsequences.
+
+    Indices are 0-based.
+
+    Time:  O(n^2)
+    Space: O(n^2) in the worst case due to explicit index sequences.
+    """
+    n = len(a)
+
+    if n == 0:
+        return []
+
+    # length[i] = best LIS length ending at i.
+    length = [1] * n
+
+    # predecessor[i] = predecessor index chosen for i.
+    predecessor = [None] * n
+
+    # sequence[i] = lexicographically smallest index sequence for
+    # a best increasing subsequence ending at i.
+    sequence = [[i] for i in range(n)]
+
+    for i in range(n):
+        for j in range(i):
+            # Strictly increasing requirement.
+            if a[j] >= a[i]:
+                continue
+
+            candidate_length = length[j] + 1
+            candidate_sequence = sequence[j] + [i]
+
+            if candidate_length > length[i]:
+                length[i] = candidate_length
+                predecessor[i] = j
+                sequence[i] = candidate_sequence
+
+            elif candidate_length == length[i]:
+                # Explicit lexicographic tie breaking.
+                if candidate_sequence < sequence[i]:
+                    predecessor[i] = j
+                    sequence[i] = candidate_sequence
+
+    # Find the globally optimal length.
+    best_length = max(length)
+
+    # Among all globally optimal subsequences, choose the
+    # lexicographically smallest original-index sequence.
+    best_sequence = None
+
+    for i in range(n):
+        if length[i] == best_length:
+            if best_sequence is None or sequence[i] < best_sequence:
+                best_sequence = sequence[i]
+
+    # best_sequence cannot be None because n > 0.
+    return best_sequence
+```
+
+### Example
+
+
+Output:
+
+```text
+[1, 2, 3]
+```
+
+These indices correspond to:
+
+```text
+a[1], a[2], a[3] = 1, 2, 4
+```
+
+For a tie:
+
+
+
+There are two optimal index sequences:
+
+```text
+[0, 1]
+[2, 3]
+```
+
+Both have length `2`, but `[0, 1]` is lexicographically smaller, so:
+
+
+Refine the LIS solution
+
+* Add test cases
+* Add a correctness proof

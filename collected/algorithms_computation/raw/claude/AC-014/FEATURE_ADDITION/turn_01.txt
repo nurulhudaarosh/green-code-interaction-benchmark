@@ -1,0 +1,176 @@
+```python
+"""
+1D Optimal Clustering (k-contiguous-cluster partitioning)
+============================================================
+
+Problem
+-------
+Given a list of one-dimensional points, sort them and partition the sorted
+sequence into k contiguous clusters (segments) so as to minimize the total
+within-cluster sum of squared deviations from each cluster's own mean:
+
+    cost = sum over clusters c of  sum_{x in c} (x - mean(c))^2
+
+Because points are 1D, the optimal k-way partition (for minimizing SSE) is
+always achieved by contiguous segments of the *sorted* array -- so we sort
+first, then choose k-1 cut points among sorted values.
+
+Key constraints
+---------------
+- n = number of points, k = number of desired clusters, with 1 <= k <= n.
+- Clusters must be contiguous ranges of the sorted points (no cluster may
+  "skip over" a point that belongs to a neighboring cluster).
+- Every point must belong to exactly one cluster; clusters may not be empty
+  (each of the k clusters gets at least one point).
+- The algorithm must be deterministic: same input -> same output, every run.
+  No randomness, no network/API calls, no external libraries.
+
+Required output
+----------------
+- The minimal total sum-of-squared-deviations cost (a float).
+- The final boundary indices: a list of k+1 indices [0, b1, b2, ..., n]
+  into the *sorted* array such that cluster i consists of
+  sorted_points[boundaries[i] : boundaries[i+1]].
+
+Algorithm
+---------
+1. Sort the points.
+2. Build prefix sums S[i] = sum of first i sorted points, and prefix sums
+   of squares Q[i] = sum of squares of first i sorted points. This lets us
+   compute the SSE cost(i, j) of any contiguous segment sorted_points[i:j]
+   in O(1) time:
+       n_seg   = j - i
+       sum_seg = S[j] - S[i]
+       sq_seg  = Q[j] - Q[i]
+       cost(i, j) = sq_seg - (sum_seg^2) / n_seg      (0 if n_seg == 0)
+   (this is the standard identity: sum (x-mean)^2 = sum x^2 - (sum x)^2/n)
+3. Dynamic programming over "clusters used" and "prefix length covered":
+       dp[m][j] = minimum cost of partitioning the first j sorted points
+                  into m contiguous, non-empty clusters
+       dp[0][0] = 0 ;  dp[0][j>0] = infinity
+       dp[m][j] = min over i < j of ( dp[m-1][i] + cost(i, j) )
+   We also store the optimal split point `choice[m][j] = argmin i` to
+   reconstruct the boundaries afterward.
+4. The answer is dp[k][n]; boundaries are reconstructed by walking
+   `choice` backward from (k, n) to (0, 0).
+
+Complexity: O(k * n^2) time, O(k * n) space -- fine for modest n.
+Deterministic: ties in the argmin are broken by always keeping the first
+(smallest index) minimizer found, so results are reproducible.
+"""
+
+from typing import List, Tuple
+import math
+
+
+def _prefix_sums(sorted_points: List[float]) -> Tuple[List[float], List[float]]:
+    n = len(sorted_points)
+    S = [0.0] * (n + 1)
+    Q = [0.0] * (n + 1)
+    for idx, x in enumerate(sorted_points, start=1):
+        S[idx] = S[idx - 1] + x
+        Q[idx] = Q[idx - 1] + x * x
+    return S, Q
+
+
+def _segment_cost(S: List[float], Q: List[float], i: int, j: int) -> float:
+    """SSE cost of sorted_points[i:j] using prefix sums S, Q."""
+    n_seg = j - i
+    if n_seg <= 0:
+        return 0.0
+    sum_seg = S[j] - S[i]
+    sq_seg = Q[j] - Q[i]
+    return sq_seg - (sum_seg * sum_seg) / n_seg
+
+
+def optimal_1d_clustering(points: List[float], k: int) -> dict:
+    """
+    Partition `points` into k contiguous clusters (after sorting) minimizing
+    total sum-of-squared-deviations from each cluster's mean.
+
+    Returns a dict with:
+        "sorted_points": the sorted input points
+        "cost": minimal total SSE (float)
+        "boundaries": list of k+1 indices into sorted_points, defining
+                      cluster i as sorted_points[boundaries[i]:boundaries[i+1]]
+        "clusters": the actual list-of-lists of points per cluster
+    """
+    if not isinstance(k, int) or k < 1:
+        raise ValueError("k must be a positive integer")
+    n = len(points)
+    if n == 0:
+        raise ValueError("points must be non-empty")
+    if k > n:
+        raise ValueError("k cannot exceed the number of points")
+
+    sorted_points = sorted(points)
+    S, Q = _prefix_sums(sorted_points)
+
+    INF = math.inf
+
+    # dp[m][j] = min cost partitioning first j points into m clusters
+    dp = [[INF] * (n + 1) for _ in range(k + 1)]
+    choice = [[-1] * (n + 1) for _ in range(k + 1)]
+    dp[0][0] = 0.0
+
+    for m in range(1, k + 1):
+        # j must be >= m (need at least 1 point per cluster)
+        for j in range(m, n + 1):
+            best_cost = INF
+            best_i = -1
+            # i ranges over previous cut point: need i >= m-1 (m-1 clusters
+            # need at least m-1 points) and i < j (current cluster non-empty)
+            for i in range(m - 1, j):
+                prev = dp[m - 1][i]
+                if prev == INF:
+                    continue
+                total = prev + _segment_cost(S, Q, i, j)
+                if total < best_cost:  # strict '<' => deterministic first-min tie-break
+                    best_cost = total
+                    best_i = i
+            dp[m][j] = best_cost
+            choice[m][j] = best_i
+
+    total_cost = dp[k][n]
+    if total_cost == INF:
+        raise RuntimeError("No valid partition found (unexpected).")
+
+    # Reconstruct boundaries by walking `choice` backward from (k, n)
+    boundaries = [0] * (k + 1)
+    boundaries[k] = n
+    m, j = k, n
+    while m > 0:
+        i = choice[m][j]
+        boundaries[m - 1] = i
+        j = i
+        m -= 1
+    # boundaries[0] should be 0
+    boundaries[0] = 0
+
+    clusters = [
+        sorted_points[boundaries[c]:boundaries[c + 1]] for c in range(k)
+    ]
+
+    return {
+        "sorted_points": sorted_points,
+        "cost": total_cost,
+        "boundaries": boundaries,
+        "clusters": clusters,
+    }
+
+
+if __name__ == "__main__":
+    # Deterministic demo / self-test (no randomness, no I/O beyond stdout).
+    sample_points = [4, 4.2, 4.1, 100, 101, 102, 50, 51, 200]
+    k_clusters = 4
+
+    result = optimal_1d_clustering(sample_points, k_clusters)
+
+    print("Sorted points :", result["sorted_points"])
+    print("k             :", k_clusters)
+    print("Min SSE cost  : {:.6f}".format(result["cost"]))
+    print("Boundaries    :", result["boundaries"])
+    print("Clusters      :")
+    for idx, c in enumerate(result["clusters"]):
+        print(f"  Cluster {idx}: {c}")
+```

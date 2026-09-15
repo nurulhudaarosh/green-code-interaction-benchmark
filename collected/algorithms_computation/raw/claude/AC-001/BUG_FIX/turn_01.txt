@@ -1,0 +1,129 @@
+```python
+Problem
+-------
+Given half-open meeting intervals [start, end), find:
+  1. max_count  - the maximum number of meetings simultaneously active
+                  at any instant.
+  2. begin_times - the sorted, deduplicated list of times at which the
+                  active-meeting count rises to reach that max_count.
+
+Because intervals are half-open, a meeting ending at time t is no longer
+counted as active at t, so it does not overlap with a meeting starting
+at t.
+
+Key constraints
+----------------
+- Each interval must satisfy start < end (half-open, non-empty).
+- At a tied timestamp, end events are processed before start events,
+  since a meeting freeing its slot at t must be resolved before a new
+  meeting starting at t claims a slot.
+- Output must be deterministic: same input -> same output every run
+  (no dependence on set/dict iteration order, no randomness).
+- begin_times records only *rises into* the max level, not every
+  timestamp at which the max is merely sustained.
+
+Required output
+----------------
+A tuple (max_count, begin_times) where begin_times is sorted ascending
+with no duplicates.
+
+Algorithm (sweep line)
+-----------------------
+1. Convert each interval (s, e) into two events: (s, +1) and (e, -1).
+2. Sort events by (time, delta). Since -1 < +1, end events at a given
+   timestamp naturally sort before start events at that same timestamp.
+3. Sweep through events, grouping all events at an identical timestamp
+   so they are applied atomically as one net change to the running count.
+4. Whenever a timestamp's net effect increases the count:
+     - if the new count exceeds the max seen so far, start a new
+       begin_times list with this timestamp.
+     - if the new count equals the current max, append this timestamp.
+5. Non-increasing timestamps do not affect begin_times.
+
+Complexity: O(n log n) for sorting, O(n) for the sweep.
+Uses only the Python standard library; no network, APIs, randomness,
+or human interaction.
+```
+
+from typing import List, Tuple
+
+
+def max_concurrent_meetings(
+    intervals: List[Tuple[float, float]]
+) -> Tuple[int, List[float]]:
+    """
+    Given half-open meeting intervals [start, end), compute:
+      - the maximum number of simultaneously active meetings, and
+      - the sorted, deduplicated list of times at which that maximum
+        is newly reached (a "rise" into the max level).
+
+    Rules:
+      - Intervals are half-open: a meeting ending at t does not overlap
+        one starting at t.
+      - At equal timestamps, end events are applied before start events.
+
+    Raises:
+      ValueError: if any interval has start >= end.
+    """
+    events: List[Tuple[float, int]] = []
+    for s, e in intervals:
+        if s >= e:
+            raise ValueError(f"Invalid interval (start >= end): ({s}, {e})")
+        events.append((s, 1))   # start event
+        events.append((e, -1))  # end event
+
+    # -1 sorts before +1 at equal timestamps -> ends processed before starts.
+    events.sort(key=lambda ev: (ev[0], ev[1]))
+
+    count = 0
+    max_count = 0
+    begin_times: List[float] = []
+
+    i, n = 0, len(events)
+    while i < n:
+        t = events[i][0]
+        j = i
+        net_delta = 0
+        while j < n and events[j][0] == t:
+            net_delta += events[j][1]
+            j += 1
+
+        prev_count = count
+        count += net_delta
+
+        if count > prev_count:  # this timestamp was a net rise
+            if count > max_count:
+                max_count = count
+                begin_times = [t]
+            elif count == max_count:
+                begin_times.append(t)
+
+        i = j
+
+    return max_count, begin_times
+
+
+if __name__ == "__main__":
+    # Deterministic self-checks (no randomness, no I/O).
+    assert max_concurrent_meetings([]) == (0, [])
+
+    assert max_concurrent_meetings([(0, 30), (5, 10), (15, 20)]) == (2, [5, 15])
+
+    # Half-open semantics: [0,5) and [5,10) do NOT overlap.
+    assert max_concurrent_meetings([(0, 5), (5, 10)]) == (1, [0, 5])
+
+    # Three-way overlap.
+    assert max_concurrent_meetings([(1, 4), (2, 5), (3, 6)]) == (3, [3])
+
+    # Two separate peaks of the same max size.
+    assert max_concurrent_meetings(
+        [(0, 2), (0, 2), (5, 7), (5, 7)]
+    ) == (2, [0, 5])
+
+    try:
+        max_concurrent_meetings([(5, 5)])
+        raise AssertionError("expected ValueError for zero-length interval")
+    except ValueError:
+        pass
+
+    print("All checks passed.")

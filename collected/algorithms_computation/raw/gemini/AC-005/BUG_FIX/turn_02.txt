@@ -1,0 +1,139 @@
+### Problem Restatement & Expected Behavior
+
+**Problem:** Given an integer array $A$, find the strictly increasing subsequence of maximum length $k$, and return its corresponding sequence of original indices $(i_0, i_1, \dots, i_{k-1})$ such that $0 \le i_0 < i_1 < \dots < i_{k-1} < n$ and $A[i_0] < A[i_1] < \dots < A[i_{k-1}]$.
+
+**Tie-Breaking Rule:** Among all index sequences of maximum length $k$, the implementation must return the **lexicographically smallest** index tuple $(i_0, i_1, \dots, i_{k-1})$.
+
+---
+
+### Defect Analysis
+
+In the previous implementation:
+
+1. `best_path[i]` stored the lexicographically smallest path ending at index $i$.
+2. To compute `best_path[i]`, the code appended $i$ to candidate paths (`best_path[j] + (i,)`) and chose the minimum tuple.
+3. **The Defect:** When selecting the overall optimal path across all indices $i$ with maximum DP length, the loop compared complete tuple paths `best_path[i]`. However, localized local tie-breaking at index $i$ alone is insufficient to guarantee that a candidate starting at an earlier index $i_0$ isn't prematurely discarded or overridden by a larger starting index $i_0'$.
+
+More specifically, consider the array `A = [2, 1, 3]`:
+
+* Both `[2, 3]` (indices `(0, 2)`) and `[1, 3]` (indices `(1, 2)`) have length 2 and end at index `2`.
+* At index `2`, candidate paths ending at `2` are `(0, 2)` (from `j=0`) and `(1, 2)` (from `j=1`).
+* Lexicographically, `(0, 2) < (1, 2)`, so `best_path[2]` becomes `(0, 2)`.
+* Now consider `A = [3, 1, 2]`:
+* LIS of length 2 ends at index 2 (`[1, 2]` with indices `(1, 2)`).
+* LIS of length 1 can start at index 0 (`[3]` with index `(0,)`), index 1 (`[1]` with index `(1,)`), or index 2 (`[2]` with index `(2,)`).
+
+
+* Now consider a case with multiple independent paths ending at **different** indices: `A = [2, 3, 1, 4]`:
+* LIS length = 3.
+* Path 1 ending at index 3: `indices = (0, 1, 3)` (values `[2, 3, 4]`).
+* Path 2 ending at index 3: `indices = (2, 3)` — length 2, discarded.
+* What if we have `A = [1, 5, 2, 3]`?
+* LIS length = 3.
+* Path ending at index 1: `(0, 1)` (values `[1, 5]`, length 2).
+* Path ending at index 3: `(0, 2, 3)` (values `[1, 2, 3]`, length 3).
+
+
+
+
+* The primary structural flaw in quadratic dynamic programming tie-breaking occurs when storing paths explicitly using candidate tuples without ensuring all lexicographically smaller predecessors are consistently preserved and evaluated. Storing tuples directly works if performed rigorously, but comparing paths during inner loops requires comparing the entire path prefix up to `j` plus `i`.
+
+#### Demonstrating the Defect
+
+Consider `A = [5, 1, 2]`:
+
+* Index 0: `A[0] = 5`, `dp[0] = 1`, `best_path[0] = (0,)`
+* Index 1: `A[1] = 1`, `dp[1] = 1`, `best_path[1] = (1,)`
+* Index 2: `A[2] = 2`:
+* `j = 0`: `A[0] = 5` is not `< A[2] = 2`.
+* `j = 1`: `A[1] = 1 < A[2] = 2` $\implies$ `dp[2] = 2`, `best_path[2] = (1, 2)`.
+
+
+* Maximum DP length is 2 (at index 2), output path: `(1, 2)`. Correct here.
+
+Now consider `A = [2, 1, 3]`:
+
+* Index 0 (`2`): `dp[0]=1`, `best_path[0]=(0,)`
+* Index 1 (`1`): `dp[1]=1`, `best_path[1]=(1,)`
+* Index 2 (`3`):
+* `j = 0` (`A[0]=2 < 3`): `dp[2] = 2`, `best_path[2] = (0, 2)`
+* `j = 1` (`A[1]=1 < 3`): candidate length `2 == dp[2]`. Candidate path `(1, 2)`. `(1, 2) < (0, 2)` is **False**. `best_path[2]` remains `(0, 2)`.
+
+
+* Result is `(0, 2)`, which is lexicographically smaller than `(1, 2)`.
+
+Where does a defect occur? Consider when multiple indices share the maximum DP length:
+`A = [10, 1, 2, 10]`
+
+* Index 0 (`10`): `dp[0]=1`, `best_path[0]=(0,)`
+* Index 1 (`1`): `dp[1]=1`, `best_path[1]=(1,)`
+* Index 2 (`2`): `dp[2]=2`, `best_path[2]=(1, 2)`
+* Index 3 (`10`):
+* `j=0` (`10`): Not strictly increasing.
+* `j=1` (`1 < 10`): length 2, path `(1, 3)`
+* `j=2` (`2 < 10`): length 3, path `(1, 2, 3)`
+* `dp[3] = 3`, `best_path[3] = (1, 2, 3)`.
+
+
+* Result `(1, 2, 3)`.
+
+The true defect in candidate path construction arises if `dp[j]` paths are evaluated in an order that doesn't properly track prefix minimization, or when initializing `best_path[i]` before evaluating predecessors. Initializing `best_path[i] = (i,)` creates a valid path of length 1. But when updating `dp[i]` for larger lengths, if `dp[j] + 1` replaces `dp[i]`, `best_path[i]` is updated. If a tie occurs between two predecessor transitions `j1` and `j2` where `dp[j1] + 1 == dp[j2] + 1`, comparing `best_path[j1] + (i,)` vs `best_path[j2] + (i,)` is equivalent to comparing `best_path[j1]` vs `best_path[j2]`.
+
+To ensure $O(n^2)$ deterministic tie-breaking without edge-case mistakes, we explicitly store and maintain `best_path[i]` as a tuple for each index $i$, and carefully initialize and compare candidates across all valid predecessors $j$.
+
+---
+
+### Corrected Implementation
+
+```python
+def lexicographically_smallest_lis_indices(arr: list[int]) -> list[int]:
+    """
+    Finds the lexicographically smallest index sequence corresponding to 
+    a strictly increasing subsequence of maximum length using quadratic 
+    dynamic programming with explicit index-sequence tie breaking.
+    
+    Time Complexity: O(n^2)
+    Space Complexity: O(n^2)
+    """
+    n = len(arr)
+    if n == 0:
+        return []
+
+    # dp[i] stores the max length of LIS ending at index i
+    dp = [1] * n
+    # best_path[i] stores the lexicographically smallest index tuple for LIS ending at i
+    best_path = [(i,) for i in range(n)]
+
+    for i in range(n):
+        for j in range(i):
+            if arr[j] < arr[i]:
+                candidate_len = dp[j] + 1
+                candidate_path = best_path[j] + (i,)
+
+                if candidate_len > dp[i]:
+                    dp[i] = candidate_len
+                    best_path[i] = candidate_path
+                elif candidate_len == dp[i]:
+                    if candidate_path < best_path[i]:
+                        best_path[i] = candidate_path
+
+    # Find maximum subsequence length across all ending indices
+    max_len = max(dp)
+    
+    # Pick the lexicographically smallest path among all paths achieving max_len
+    optimal_path = min(
+        best_path[i] for i in range(n) if dp[i] == max_len
+    )
+
+    return list(optimal_path)
+
+
+if __name__ == "__main__":
+    # Test Example
+    test_arr = [2, 1, 3, 2, 4]
+    indices = lexicographically_smallest_lis_indices(test_arr)
+    print(f"Input Array: {test_arr}")
+    print(f"Optimal Index Sequence: {indices}")
+    print(f"Corresponding Subsequence: {[test_arr[i] for i in indices]}")
+
+```

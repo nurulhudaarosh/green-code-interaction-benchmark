@@ -1,0 +1,122 @@
+I’ll break this down and implement a deterministic 0/1 knapsack solver with tie-breaking.
+
+---
+
+## Problem Restatement
+- We have `n` indivisible items, each with a **weight** and **value**.
+- We have a knapsack **capacity**.
+- We want to select a subset of items to **maximize total value** without exceeding capacity.
+- **Tie-breaking**: If multiple subsets give the same maximum value, we choose the one with the **lexicographically smallest list of original indices** (0‑based or 1‑based? I'll assume 0‑based as typical in programming, but we can adapt; the problem says "original indices" – I'll use 0‑based and note it).
+
+---
+
+## Key Constraints (typical)
+- `n` can be up to ~2000 (if weights/values are smallish) or up to ~100 with larger weights.
+- Capacity up to ~10^5 or more.
+- Weights, values are positive integers.
+
+---
+
+## Algorithm
+1. **DP array**: `dp[w]` = maximum value achievable with exact capacity `w`. We use `-inf` for unreachable, `dp[0] = 0`.
+2. We iterate items one by one, updating `dp` from high capacity down to `weight` (to avoid reusing same item).
+3. **Tie-breaking for lexicographically smallest index list**:
+   - Standard DP only stores max value, not the chosen indices.
+   - We can store the chosen indices set as a tuple or frozenset for each capacity, but that would be O(n * capacity * n) too heavy.
+   - Better: Use DP that stores **the set of indices** as a bitset (Python int) – each bit represents an item index.
+   - For tie-breaking: when two ways yield the same value, we compare the bitsets lexicographically (smallest index first). Since we process items in increasing index order, and we want the lexicographically smallest list of indices, we can:
+     - When updating `dp[w]` from `dp[w - weight] + value`, if the new value is greater, replace.
+     - If equal, compare the new bitset (with current item added) against the old bitset: we want the one that is lexicographically smaller as a sorted list of indices.
+   - To compare bitsets lexicographically: we can find the lowest index where they differ; the one with 0 at that position and 1 in the other? Actually we want the list that is smaller when sorted ascending.
+     - E.g., [0, 2] vs [1] → [0,2] is lexicographically smaller because at position 0, 0 < 1.
+     - So we want the bitset that has the smaller element at the first differing position.
+   - Since we process items in increasing index order, when we add item `i`, its bit is set. If two ways have same value, we compare the two bitsets.
+   - We can compare by: `(bitset1 ^ bitset2)` gives differing bits, find the least significant set bit (lowest index). The one that has 0 at that bit is lexicographically smaller? Actually if we have bitset A and B, let `diff = A ^ B`, `low = diff & -diff` (lowest set bit). If `A & low` is 0 and `B & low` is 1, then A has 0 at that position, B has 1, so A's list at that position has no index, B has index = log2(low). Since we compare sorted lists, the first differing element: if one list has no element at that position? Actually both lists have the same length? No, lengths may differ. But lexicographic definition: compare element by element; if one is a prefix of the other, the shorter is smaller. But here we have sets of indices, we sort them. So if A has {0,2} and B has {0,1,2}, then A vs B: first element 0 equal, second: 2 vs 1 → 1 is smaller, so B is smaller. So we want the one with the smaller element at the first differing position. That means: the bitset that has a 0 at the lowest differing bit is actually the one with the larger index at that position? Wait careful:
+       - Let diff bit = k.  
+       - If A has 0 at k, B has 1 at k → A's sorted list does NOT contain k, B does.  
+       - The first differing position in the sorted lists will be at the point where A has some larger index > k (or ends), and B has k. Since k is the smallest differing index, for all indices < k, A and B are identical. So at index k, B has k, A has something > k (or nothing). Since k < that something, B is lexicographically smaller.  
+       - Therefore, the bitset that has **1** at the lowest differing bit is lexicographically smaller.
+   - So when values equal, we keep the bitset that has the lowest differing bit set to 1 (i.e., the one with the smaller next element).
+
+4. After processing all items, find `best_w` = capacity with max `dp[best_w]` value (consider all weights ≤ capacity). Since we want max value, we can scan `w` from 0..capacity and pick max value; if tie, pick lexicographically smallest index list among those with max value. To do that, we can also compare bitsets.
+
+5. Extract selected indices from the bitset.
+
+---
+
+## Implementation
+
+```python
+def knapsack_selected_indices(weights, values, capacity):
+    n = len(weights)
+    # dp_val[w] = max value, dp_mask[w] = bitset of chosen indices
+    NEG = -10**18
+    dp_val = [NEG] * (capacity + 1)
+    dp_mask = [0] * (capacity + 1)
+    dp_val[0] = 0
+    dp_mask[0] = 0
+
+    for i in range(n):
+        w = weights[i]
+        v = values[i]
+        # descending capacity
+        for cap in range(capacity, w - 1, -1):
+            if dp_val[cap - w] == NEG:
+                continue
+            new_val = dp_val[cap - w] + v
+            new_mask = dp_mask[cap - w] | (1 << i)
+            if new_val > dp_val[cap]:
+                dp_val[cap] = new_val
+                dp_mask[cap] = new_mask
+            elif new_val == dp_val[cap]:
+                # tie-break: choose lexicographically smaller index list
+                # compare new_mask and dp_mask[cap]
+                diff = new_mask ^ dp_mask[cap]
+                if diff:
+                    # lowest differing bit
+                    low = diff & -diff
+                    # if new_mask has 1 at low, it's lexicographically smaller
+                    if new_mask & low:
+                        dp_mask[cap] = new_mask
+                    # else keep old
+                # if diff==0, same mask, no change
+
+    # find best (max value, then lexicographically smallest indices)
+    best_val = NEG
+    best_mask = 0
+    for cap in range(capacity + 1):
+        if dp_val[cap] > best_val:
+            best_val = dp_val[cap]
+            best_mask = dp_mask[cap]
+        elif dp_val[cap] == best_val and dp_val[cap] != NEG:
+            # tie-break between masks
+            diff = dp_mask[cap] ^ best_mask
+            if diff:
+                low = diff & -diff
+                # keep the one with 1 at lowest differing bit
+                if dp_mask[cap] & low:
+                    best_mask = dp_mask[cap]
+    # extract indices
+    indices = []
+    for i in range(n):
+        if best_mask & (1 << i):
+            indices.append(i)
+    return indices
+```
+
+---
+
+## Example Test
+
+
+
+---
+
+## Complexity
+- Time: O(n * capacity)
+- Space: O(capacity)
+
+---
+
+## Final Deterministic Solution
+The code above uses only standard library, no randomness, no external interaction. It is deterministic and handles ties correctly.

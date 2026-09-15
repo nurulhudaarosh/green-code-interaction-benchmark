@@ -1,0 +1,52 @@
+```python
+import csv
+import sys
+
+SEVERITY_ORDER = {
+    "CRITICAL": 5,
+    "ERROR": 4,
+    "WARNING": 3,
+    "INFO": 2,
+    "DEBUG": 1
+}
+
+def sort_csv_logs(input_file, output_file):
+    rows = []
+
+    with open(input_file, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+
+        for sequence, row in enumerate(reader):
+            row["_sequence"] = sequence
+            rows.append(row)
+
+    rows.sort(
+        key=lambda row: (
+            row["timestamp"],
+            -SEVERITY_ORDER.get(row["severity"].upper(), 0),
+            row["_sequence"]
+        )
+    )
+
+    if rows:
+        fieldnames = [field for field in rows[0] if field != "_sequence"]
+
+        with open(output_file, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=fieldnames,
+                quoting=csv.QUOTE_MINIMAL
+            )
+            writer.writeheader()
+
+            for row in rows:
+                row.pop("_sequence", None)
+                writer.writerow(row)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        sys.exit(1)
+
+    sort_csv_logs(sys.argv[1], sys.argv[2])
+```

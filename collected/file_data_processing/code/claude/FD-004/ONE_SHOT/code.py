@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+"""
+Inventory Reconciliation Utility
+---------------------------------
+Compares two CSV snapshots (old vs new) of warehouse/product inventory,
+sums duplicate (warehouse, product) records, classifies each key as
+added / removed / changed / unchanged, computes the quantity delta
+(new - old), and writes a deterministic, sorted CSV report.
+
+Expected input CSV columns (header required): warehouse,product,quantity
+
+Usage:
+    python reconcile_inventory.py old.csv new.csv -o report.csv
+"""
+
+import argparse
+import csv
+import sys
+from collections import defaultdict
+
+
+def load_snapshot(path):
+    """
+    Load a CSV file and sum quantities for duplicate (warehouse, product) keys.
+    Returns: dict[(warehouse, product)] -> total_quantity (float)
+    """
+    totals = defaultdict(float)
+    try:
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            required = {"warehouse", "product", "quantity"}
+            if reader.fieldnames is None or not required.issubset(
+                {c.strip().lower() for c in reader.fieldnames}
+            ):
+                raise ValueError(
+                    f"{path}: CSV must have columns: warehouse, product, quantity "
+                    f"(found: {reader.fieldnames})"
+                )
+
+            # Build a case-insensitive column lookup
+            col_map = {c.strip().lower(): c for c in reader.fieldnames}
+
+            for row_num, row in enumerate(reader, start=2):
+                warehouse = (row.get(col_map["warehouse"]) or "").strip()
+                product = (row.get(col_map["product"]) or "").strip()
+                qty_raw = (row.get(col_map["quantity"]) or "").strip()
+
+                if not warehouse or not product:
+                    print(
+                        f"Warning: {path} row {row_num}: missing warehouse/product, skipping",
+                        file=sys.stderr,
+                    )
+                    continue
+
+                try:
+                    qty = float(qty_raw) if qty_raw != "" else 0.0
+                except ValueError:
+                    print(
+                        f"Warning: {path} row {row_num}: invalid quantity '{qty_raw}', "
+                        f"treating as 0",
+                        file=sys.stderr,
+                    )
+                    qty = 0.0
+
+                totals[(warehouse, product)] += qty
+
+    except FileNotFoundError:
+        print(f"Error: file not found: {path}", file=sys.stderr)
+        sys.exit(1)
+
+    return totals
+
+
+def format_qty(q):
+    """Render quantities as ints when they have no fractional part, else floats."""
+    if float(q).is_integer():
+        return int(q)
+    return round(q, 6)
+
+
+def reconcile(old_totals, new_totals):
+    """
+    Classify every key present in either snapshot.
+    Returns a list of dict rows, unsorted.
+    """
+    all_keys = set(old_totals.keys()) | set(new_totals.keys())
+    rows = []
+
+    for key in all_keys:
+        warehouse, product = key
+        old_qty = old_totals.get(key)
+        new_qty = new_totals.get(key)
+
+        if old_qty is None and new_qty is not None:
+            status = "added"
+            old_val = 0.0
+        elif old_qty is not None and new_qty is None:
+            status = "removed"
+            new_qty = 0.0
+            old_val = old_qty
+        else:
+            old_val = old_qty
+            if old_qty == new_qty:
+                status = "unchanged"
+            else:
+                status = "changed"
+
+        delta = (new_qty if new_qty is not None else 0.0) - (
+            old_val if old_val is not None else 0.0
+        )
+
+        rows.append(
+            {
+                "warehouse": warehouse,
+                "product": product,
+                "old_quantity": format_qty(old_val if old_val is not None else 0.0),
+                "new_quantity": format_qty(new_qty if new_qty is not None else 0.0),
+                "delta": format_qty(delta),
+                "status": status,
+            }
+        )
+
+    return rows
+
+
+def write_report(rows, out_path):
+    """
+    Write rows to CSV, sorted deterministically by
+    (status, warehouse, product) for stable, repeatable output.
+    """
+    status_order = {"added": 0, "removed": 1, "changed": 2, "unchanged": 3}
+    rows_sorted = sorted(
+        rows,
+        key=lambda r: (
+            status_order.get(r["status"], 99),
+            r["warehouse"],
+            r["product"],
+        ),
+    )
+
+    fieldnames = [
+        "warehouse",
+        "product",
+        "old_quantity",
+        "new_quantity",
+        "delta",
+        "status",
+    ]
+
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows_sorted)
+
+    return rows_sorted
+
+
+def print_summary(rows):
+    counts = defaultdict(int)
+    for r in rows:
+        counts[r["status"]] += 1
+    print("Reconciliation summary:")
+    for status in ("added", "removed", "changed", "unchanged"):
+        print(f"  {status:9s}: {counts.get(status, 0)}")
+    print(f"  {'total':9s}: {len(rows)}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Reconcile two inventory CSV snapshots (old vs new)."
+    )
+    parser.add_argument("old_csv", help="Path to the old snapshot CSV")
+    parser.add_argument("new_csv", help="Path to the new snapshot CSV")
+    parser.add_argument(
+        "-o",
+        "--output",
+        default="reconciliation_report.csv",
+        help="Path to write the output report (default: reconciliation_report.csv)",
+    )
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Suppress the summary printed to stdout",
+    )
+    args = parser.parse_args()
+
+    old_totals = load_snapshot(args.old_csv)
+    new_totals = load_snapshot(args.new_csv)
+
+    rows = reconcile(old_totals, new_totals)
+    rows_sorted = write_report(rows, args.output)
+
+    if not args.quiet:
+        print_summary(rows_sorted)
+        print(f"\nReport written to: {args.output}")
+
+
+if __name__ == "__main__":
+    main()

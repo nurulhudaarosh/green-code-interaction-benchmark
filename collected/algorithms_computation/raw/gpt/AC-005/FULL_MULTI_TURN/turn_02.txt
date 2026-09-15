@@ -1,0 +1,201 @@
+### Restated problem
+
+**Longest Increasing Route** takes an integer sequence and must:
+
+1. Find a **strictly increasing subsequence**.
+2. Maximize its length.
+3. If multiple subsequences have the same maximum length, return the one whose **original 0-based index sequence is lexicographically smallest**.
+4. Produce the result deterministically.
+5. Use **quadratic dynamic programming (`O(n²)`) with explicit predecessor/index-sequence tie breaking**.
+6. Keep the existing output structure:
+
+   * `length`
+   * `indices`
+   * `values`
+7. Preserve the existing behavior for empty input and other valid inputs.
+
+### Bug analysis
+
+There is an important point: **the previously supplied implementation does not actually produce an incorrect answer for the stated tie-breaking rule**. It already compares complete index sequences:
+
+
+
+and then performs the same comparison globally.
+
+However, it does **not explicitly maintain a predecessor decision**, which is what the requirement specifically asks for. It stores complete tuples instead. That makes the implementation less faithful to the requested DP formulation and can also consume `O(n²)` memory.
+
+A small example illustrating why explicit tie handling matters is:
+
+```text
+sequence = [1, 3, 2, 4]
+```
+
+There are two optimal increasing subsequences:
+
+```text
+values:  [1, 3, 4]    indices: [0, 1, 3]
+values:  [1, 2, 4]    indices: [0, 2, 3]
+```
+
+Both have length `3`, so the required answer is:
+
+```text
+indices = [0, 1, 3]
+```
+
+because `[0, 1, 3] < [0, 2, 3]` lexicographically.
+
+The corrected implementation below makes that decision explicitly through `predecessor[i]` and uses index sequences only for deterministic tie comparison.
+
+### Corrected implementation
+
+```python
+from typing import Sequence
+
+
+def longest_increasing_route(sequence: Sequence[int]) -> dict:
+    """
+    Find a maximum-length strictly increasing subsequence.
+
+    Tie-breaking:
+        Among all maximum-length subsequences, return the one whose
+        original 0-based index sequence is lexicographically smallest.
+
+    Dynamic programming:
+        dp[i] = maximum length of a strictly increasing subsequence
+                ending at index i.
+
+        predecessor[i] = predecessor index chosen for the optimal
+                         subsequence ending at i.
+
+    Complexity:
+        Time:  O(n^2)
+        Space: O(n) for DP/predecessor arrays, plus temporary index
+                sequences used for deterministic tie comparison.
+    """
+    n = len(sequence)
+
+    if n == 0:
+        return {
+            "length": 0,
+            "indices": [],
+            "values": [],
+        }
+
+    dp = [1] * n
+    predecessor = [-1] * n
+
+    # Used only to make predecessor tie-breaking explicit and deterministic.
+    index_sequences = [(i,) for i in range(n)]
+
+    for i in range(n):
+        for j in range(i):
+            if sequence[j] >= sequence[i]:
+                continue
+
+            candidate_length = dp[j] + 1
+            candidate_indices = index_sequences[j] + (i,)
+
+            if candidate_length > dp[i]:
+                dp[i] = candidate_length
+                predecessor[i] = j
+                index_sequences[i] = candidate_indices
+
+            elif candidate_length == dp[i]:
+                current_indices = index_sequences[i]
+
+                if candidate_indices < current_indices:
+                    predecessor[i] = j
+                    index_sequences[i] = candidate_indices
+
+    # Find the globally optimal ending index.
+    best_end = 0
+
+    for i in range(1, n):
+        if dp[i] > dp[best_end]:
+            best_end = i
+        elif dp[i] == dp[best_end]:
+            if index_sequences[i] < index_sequences[best_end]:
+                best_end = i
+
+    # Reconstruct using the explicit predecessor chain.
+    indices = []
+    current = best_end
+
+    while current != -1:
+        indices.append(current)
+        current = predecessor[current]
+
+    indices.reverse()
+
+    return {
+        "length": len(indices),
+        "indices": indices,
+        "values": [sequence[i] for i in indices],
+    }
+
+
+def _run_tests() -> None:
+    # Basic increasing sequence.
+    assert longest_increasing_route([1, 2, 3, 4]) == {
+        "length": 4,
+        "indices": [0, 1, 2, 3],
+        "values": [1, 2, 3, 4],
+    }
+
+    # Decreasing sequence: every subsequence has length 1.
+    # The smallest original index must therefore be selected.
+    assert longest_increasing_route([5, 4, 3, 2, 1]) == {
+        "length": 1,
+        "indices": [0],
+        "values": [5],
+    }
+
+    # Strictly increasing means equal values cannot both be selected.
+    assert longest_increasing_route([2, 2, 2]) == {
+        "length": 1,
+        "indices": [0],
+        "values": [2],
+    }
+
+    # Explicit lexicographic tie-breaking.
+    #
+    # [0, 1, 3] -> [1, 3, 4]
+    # [0, 2, 3] -> [1, 2, 4]
+    #
+    # Both have length 3, but [0, 1, 3] is lexicographically smaller.
+    assert longest_increasing_route([1, 3, 2, 4]) == {
+        "length": 3,
+        "indices": [0, 1, 3],
+        "values": [1, 3, 4],
+    }
+
+    # Empty input.
+    assert longest_increasing_route([]) == {
+        "length": 0,
+        "indices": [],
+        "values": [],
+    }
+
+    # Single element.
+    assert longest_increasing_route([42]) == {
+        "length": 1,
+        "indices": [0],
+        "values": [42],
+    }
+
+    # Negative and mixed values.
+    assert longest_increasing_route([-3, -1, -2, 0]) == {
+        "length": 3,
+        "indices": [0, 1, 3],
+        "values": [-3, -1, 0],
+    }
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    _run_tests()
+```
+
+This correction keeps the **same required result and tie-breaking behavior**, while making the predecessor choice explicit and reconstructing the final answer from the predecessor chain.

@@ -1,0 +1,542 @@
+Below is the updated single-file implementation. The original `max_profit` and `selected_jobs` outputs are unchanged. The new `operation_summary` is deterministic and counts the major algorithmic operations: jobs processed for predecessor search, binary-search predecessor operations, DP decisions, and tie comparisons.
+
+```python
+"""
+Weighted Job Scheduler
+======================
+
+Original Problem
+----------------
+Given jobs with:
+    (start, finish, profit)
+
+select a non-overlapping subset of jobs with maximum total profit.
+
+Two jobs are compatible when the earlier job's finish time is less than
+or equal to the later job's start time. Thus, jobs touching at endpoints
+are compatible.
+
+If multiple schedules have the same maximum profit, choose the schedule
+whose sequence of original job indices is lexicographically smallest.
+
+Original Required Output
+------------------------
+By default, weighted_job_scheduler(jobs) returns exactly:
+
+    {
+        "max_profit": <maximum total profit>,
+        "selected_jobs": [<original job indices in scheduling order>]
+    }
+
+Concrete Feature
+----------------
+An optional `include_operation_summary` flag has been added.
+
+When enabled:
+
+    weighted_job_scheduler(jobs, include_operation_summary=True)
+
+returns:
+
+    {
+        "max_profit": ...,
+        "selected_jobs": ...,
+        "operation_summary": {
+            "jobs_processed": ...,
+            "predecessor_searches": ...,
+            "dp_decisions": ...,
+            "tie_comparisons": ...,
+            "total_major_operations": ...
+        }
+    }
+
+When the feature is disabled (the default), the original output is
+returned unchanged and contains only:
+    - max_profit
+    - selected_jobs
+
+Operation definitions
+---------------------
+The operation summary is deterministic.
+
+jobs_processed:
+    Number of jobs processed by the predecessor-search phase.
+
+predecessor_searches:
+    Number of binary-search predecessor calculations.
+
+dp_decisions:
+    Number of DP take-vs-skip decisions performed.
+
+tie_comparisons:
+    Number of lexicographic comparisons performed when take and skip
+    have equal profit.
+
+total_major_operations:
+    Sum of:
+        jobs_processed
+        + predecessor_searches
+        + dp_decisions
+        + tie_comparisons
+
+Algorithm
+---------
+1. Sort jobs by finish time.
+2. For each job, binary-search the latest compatible predecessor.
+3. Use dynamic programming to compare:
+       - skip the current job
+       - take the current job plus its best predecessor solution
+4. On equal profit, choose the lexicographically smaller sequence of
+   original job indices.
+5. Preserve the actual scheduling order of selected original indices.
+
+Complexity
+----------
+Sorting:
+    O(n log n)
+
+Predecessor searches:
+    O(n log n)
+
+Dynamic programming:
+    O(n) states, excluding the cost of lexicographic sequence comparison.
+
+Only the Python standard library is used.
+No network access, APIs, external services, or randomness.
+"""
+
+from bisect import bisect_right
+from typing import Dict, List, Sequence, Tuple
+
+
+Job = Tuple[int, int, int]
+
+
+def weighted_job_scheduler(
+    jobs: Sequence[Job],
+    include_operation_summary: bool = False,
+) -> Dict[str, object]:
+    """
+    Solve the weighted job scheduling problem.
+
+    Parameters
+    ----------
+    jobs:
+        Sequence of (start, finish, profit).
+
+    include_operation_summary:
+        If False, preserve the original output exactly.
+
+        If True, add an `operation_summary` dictionary describing the
+        deterministic number of major operations performed.
+
+    Returns
+    -------
+    dict
+        Default:
+            {
+                "max_profit": int,
+                "selected_jobs": List[int]
+            }
+
+        With operation summary:
+            {
+                "max_profit": int,
+                "selected_jobs": List[int],
+                "operation_summary": {
+                    ...
+                }
+            }
+    """
+
+    n = len(jobs)
+
+    # ---------------------------------------------------------------
+    # Operation counters.
+    # ---------------------------------------------------------------
+    jobs_processed = 0
+    predecessor_searches = 0
+    dp_decisions = 0
+    tie_comparisons = 0
+
+    # ---------------------------------------------------------------
+    # Empty input.
+    # ---------------------------------------------------------------
+    if n == 0:
+        result = {
+            "max_profit": 0,
+            "selected_jobs": [],
+        }
+
+        if include_operation_summary:
+            result["operation_summary"] = {
+                "jobs_processed": 0,
+                "predecessor_searches": 0,
+                "dp_decisions": 0,
+                "tie_comparisons": 0,
+                "total_major_operations": 0,
+            }
+
+        return result
+
+    # ---------------------------------------------------------------
+    # Validate input and attach original indices.
+    # ---------------------------------------------------------------
+    indexed_jobs = []
+
+    for original_index, job in enumerate(jobs):
+        if not isinstance(job, (tuple, list)) or len(job) != 3:
+            raise ValueError(
+                f"Job at index {original_index} must be "
+                f"(start, finish, profit)."
+            )
+
+        start, finish, profit = job
+
+        if not isinstance(start, int):
+            raise TypeError(
+                f"Start time of job {original_index} must be an integer."
+            )
+
+        if not isinstance(finish, int):
+            raise TypeError(
+                f"Finish time of job {original_index} must be an integer."
+            )
+
+        if not isinstance(profit, int):
+            raise TypeError(
+                f"Profit of job {original_index} must be an integer."
+            )
+
+        if start > finish:
+            raise ValueError(
+                f"Job at index {original_index} has start time greater "
+                f"than finish time."
+            )
+
+        indexed_jobs.append(
+            (start, finish, profit, original_index)
+        )
+
+    # ---------------------------------------------------------------
+    # Sort by finish time.
+    #
+    # Extra keys make equal-finish ordering deterministic.
+    # ---------------------------------------------------------------
+    indexed_jobs.sort(
+        key=lambda job: (job[1], job[0], job[2], job[3])
+    )
+
+    finish_times = [job[1] for job in indexed_jobs]
+
+    # ---------------------------------------------------------------
+    # Binary-search compatible predecessors.
+    #
+    # A predecessor is compatible when:
+    #
+    #     predecessor.finish <= current.start
+    #
+    # bisect_right is used so equality is allowed.
+    # ---------------------------------------------------------------
+    predecessor: List[int] = []
+
+    for i, (start, _, _, _) in enumerate(indexed_jobs):
+        jobs_processed += 1
+        predecessor_searches += 1
+
+        p = bisect_right(
+            finish_times,
+            start,
+            0,
+            i,
+        ) - 1
+
+        predecessor.append(p)
+
+    # ---------------------------------------------------------------
+    # Dynamic programming.
+    #
+    # dp_profit[i]:
+    #     best profit using the first i sorted jobs.
+    #
+    # dp_sequence[i]:
+    #     lexicographically smallest original-index sequence achieving
+    #     dp_profit[i].
+    #
+    # The sequence is kept in actual scheduling order.
+    # ---------------------------------------------------------------
+    dp_profit: List[int] = [0] * (n + 1)
+    dp_sequence: List[Tuple[int, ...]] = [()] * (n + 1)
+
+    for i in range(1, n + 1):
+        _, _, profit, original_index = indexed_jobs[i - 1]
+
+        dp_decisions += 1
+
+        # -----------------------------------------------------------
+        # Option 1: skip the current job.
+        # -----------------------------------------------------------
+        skip_profit = dp_profit[i - 1]
+        skip_sequence = dp_sequence[i - 1]
+
+        # -----------------------------------------------------------
+        # Option 2: take the current job.
+        # -----------------------------------------------------------
+        p = predecessor[i - 1]
+
+        take_profit = dp_profit[p + 1] + profit
+
+        # Preserve scheduling order.
+        take_sequence = dp_sequence[p + 1] + (original_index,)
+
+        # -----------------------------------------------------------
+        # Compare take and skip.
+        # -----------------------------------------------------------
+        if take_profit > skip_profit:
+            dp_profit[i] = take_profit
+            dp_sequence[i] = take_sequence
+
+        elif take_profit < skip_profit:
+            dp_profit[i] = skip_profit
+            dp_sequence[i] = skip_sequence
+
+        else:
+            # Equal profit: deterministic tie-breaking.
+            tie_comparisons += 1
+
+            if take_sequence < skip_sequence:
+                dp_profit[i] = take_profit
+                dp_sequence[i] = take_sequence
+            else:
+                dp_profit[i] = skip_profit
+                dp_sequence[i] = skip_sequence
+
+    # ---------------------------------------------------------------
+    # Preserve the original required fields.
+    # ---------------------------------------------------------------
+    result: Dict[str, object] = {
+        "max_profit": dp_profit[n],
+        "selected_jobs": list(dp_sequence[n]),
+    }
+
+    # ---------------------------------------------------------------
+    # Optional new field.
+    #
+    # It is completely absent when the feature is disabled, so the
+    # original API/output remains unchanged.
+    # ---------------------------------------------------------------
+    if include_operation_summary:
+        total_major_operations = (
+            jobs_processed
+            + predecessor_searches
+            + dp_decisions
+            + tie_comparisons
+        )
+
+        result["operation_summary"] = {
+            "jobs_processed": jobs_processed,
+            "predecessor_searches": predecessor_searches,
+            "dp_decisions": dp_decisions,
+            "tie_comparisons": tie_comparisons,
+            "total_major_operations": total_major_operations,
+        }
+
+    return result
+
+
+# =====================================================================
+# Tests
+# =====================================================================
+
+def _run_tests() -> None:
+    """Run deterministic correctness and feature tests."""
+
+    # ---------------------------------------------------------------
+    # 1. Original behavior: feature disabled.
+    #
+    # The result must contain exactly the original fields.
+    # ---------------------------------------------------------------
+    jobs = [
+        (1, 3, 50),
+        (2, 5, 20),
+        (3, 6, 70),
+        (6, 8, 60),
+        (5, 7, 30),
+    ]
+
+    result = weighted_job_scheduler(jobs)
+
+    assert result == {
+        "max_profit": 130,
+        "selected_jobs": [0, 2],
+    }
+
+    assert "operation_summary" not in result
+
+    # ---------------------------------------------------------------
+    # 2. Feature enabled.
+    # ---------------------------------------------------------------
+    result = weighted_job_scheduler(
+        jobs,
+        include_operation_summary=True,
+    )
+
+    assert result["max_profit"] == 130
+    assert result["selected_jobs"] == [0, 2]
+
+    summary = result["operation_summary"]
+
+    assert summary["jobs_processed"] == 5
+    assert summary["predecessor_searches"] == 5
+    assert summary["dp_decisions"] == 5
+    assert summary["tie_comparisons"] >= 0
+
+    assert summary["total_major_operations"] == (
+        summary["jobs_processed"]
+        + summary["predecessor_searches"]
+        + summary["dp_decisions"]
+        + summary["tie_comparisons"]
+    )
+
+    # ---------------------------------------------------------------
+    # 3. Empty input.
+    # ---------------------------------------------------------------
+    assert weighted_job_scheduler([]) == {
+        "max_profit": 0,
+        "selected_jobs": [],
+    }
+
+    assert weighted_job_scheduler(
+        [],
+        include_operation_summary=True,
+    ) == {
+        "max_profit": 0,
+        "selected_jobs": [],
+        "operation_summary": {
+            "jobs_processed": 0,
+            "predecessor_searches": 0,
+            "dp_decisions": 0,
+            "tie_comparisons": 0,
+            "total_major_operations": 0,
+        },
+    }
+
+    # ---------------------------------------------------------------
+    # 4. Endpoint compatibility.
+    # ---------------------------------------------------------------
+    assert weighted_job_scheduler([
+        (1, 3, 10),
+        (3, 5, 20),
+    ]) == {
+        "max_profit": 30,
+        "selected_jobs": [0, 1],
+    }
+
+    # ---------------------------------------------------------------
+    # 5. Deterministic tie-breaking.
+    # ---------------------------------------------------------------
+    assert weighted_job_scheduler([
+        (1, 3, 10),  # 0
+        (1, 3, 10),  # 1
+    ]) == {
+        "max_profit": 10,
+        "selected_jobs": [0],
+    }
+
+    # ---------------------------------------------------------------
+    # 6. Tie-breaking with jobs whose original indices are not in
+    # finish-time order.
+    # ---------------------------------------------------------------
+    assert weighted_job_scheduler([
+        (3, 4, 5),   # 0
+        (1, 2, 5),   # 1
+    ]) == {
+        "max_profit": 5,
+        "selected_jobs": [0],
+    }
+
+    # ---------------------------------------------------------------
+    # 7. Multi-job tie.
+    # ---------------------------------------------------------------
+    assert weighted_job_scheduler([
+        (1, 2, 5),   # 0
+        (2, 3, 5),   # 1
+        (1, 2, 5),   # 2
+        (2, 3, 5),   # 3
+    ]) == {
+        "max_profit": 10,
+        "selected_jobs": [0, 1],
+    }
+
+    # ---------------------------------------------------------------
+    # 8. Negative profits.
+    # ---------------------------------------------------------------
+    assert weighted_job_scheduler([
+        (1, 2, -10),
+        (2, 3, -20),
+    ]) == {
+        "max_profit": 0,
+        "selected_jobs": [],
+    }
+
+    # ---------------------------------------------------------------
+    # 9. Zero-profit jobs.
+    #
+    # Empty schedule has profit 0 and is lexicographically preferred.
+    # ---------------------------------------------------------------
+    assert weighted_job_scheduler([
+        (1, 2, 0),
+        (2, 3, 0),
+    ]) == {
+        "max_profit": 0,
+        "selected_jobs": [],
+    }
+
+    # ---------------------------------------------------------------
+    # 10. Operation summary is deterministic.
+    # ---------------------------------------------------------------
+    result_a = weighted_job_scheduler(
+        jobs,
+        include_operation_summary=True,
+    )
+
+    result_b = weighted_job_scheduler(
+        jobs,
+        include_operation_summary=True,
+    )
+
+    assert result_a == result_b
+
+    # ---------------------------------------------------------------
+    # 11. Invalid interval.
+    # ---------------------------------------------------------------
+    try:
+        weighted_job_scheduler([
+            (5, 2, 10),
+        ])
+        raise AssertionError("Expected ValueError.")
+    except ValueError:
+        pass
+
+    # ---------------------------------------------------------------
+    # 12. Invalid job shape.
+    # ---------------------------------------------------------------
+    try:
+        weighted_job_scheduler([
+            (1, 2),
+        ])
+        raise AssertionError("Expected ValueError.")
+    except ValueError:
+        pass
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    _run_tests()
+```
+
+Explore the scheduler details
+
+* Show a sample operation summary
+* Explain the operation counts

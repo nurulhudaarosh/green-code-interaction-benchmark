@@ -1,0 +1,117 @@
+import csv
+import sqlite3
+from dataclasses import dataclass
+from typing import List, Optional
+
+
+@dataclass
+class InventoryItem:
+    sku: str
+    name: str
+    quantity: int
+    reorder_threshold: int
+
+
+class InventoryManager:
+
+    def __init__(self, db_path: str = "inventory.db") -> None:
+        self.db_path = db_path
+        self._init_db()
+
+    def _get_connection(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_db(self) -> None:
+        with self._get_connection() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS inventory (
+                    sku TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    quantity INTEGER NOT NULL CHECK (quantity >= 0),
+                    reorder_threshold INTEGER NOT NULL CHECK (reorder_threshold >= 0)
+                )
+            """)
+
+    def add_or_update_item(self, sku: str, name: str, quantity: int,
+                           reorder_threshold: int) -> None:
+        """Utility method to add or overwrite an item in the SQLite database."""
+        if quantity < 0 or reorder_threshold < 0:
+            raise ValueError("Quantity and threshold must be non-negative.")
+
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO inventory (sku, name, quantity, reorder_threshold)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(sku) DO UPDATE SET
+                    name = excluded.name,
+                    quantity = excluded.quantity,
+                    reorder_threshold = excluded.reorder_threshold
+            """, (sku, name, quantity, reorder_threshold))
+
+    def update_stock(self, sku: str, amount_change: int) -> None:
+        """Utility method to adjust stock levels (positive for restocks, negative for sales)."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT quantity FROM inventory WHERE sku = ?",
+                (sku, )).fetchone()
+            if not row:
+                raise KeyError(f"SKU '{sku}' not found.")
+
+            new_quantity = row["quantity"] + amount_change
+            if new_quantity < 0:
+                raise ValueError(
+                    f"Insufficient stock for '{sku}'. Current: {row['quantity']}, Change: {amount_change}"
+                )
+
+            conn.execute(
+                "UPDATE inventory SET quantity = ? WHERE sku = ?",
+                (new_quantity, sku),
+            )
+
+    def get_low_stock_report(self) -> List[InventoryItem]:
+        """Low-stock reporting method. Returns items where quantity <= threshold."""
+        with self._get_connection() as conn:
+            rows = conn.execute("""
+                SELECT sku, name, quantity, reorder_threshold
+                FROM inventory
+                WHERE quantity <= reorder_threshold
+                ORDER BY quantity ASC
+            """).fetchall()
+
+            return [InventoryItem(**dict(row)) for row in rows]
+
+    def export_low_stock_csv(self, file_path: str = "low_stock_report.csv") -> None:
+        """Utility method to export the low-stock report directly to a CSV file."""
+        low_stock_items = self.get_low_stock_report()
+
+        with open(file_path, mode="w", newline="", encoding="utf-8") as file:
+            writer = csv.writer(file)
+            writer.writerow(["SKU", "Name", "Current Quantity", "Reorder Threshold"])
+            for item in low_stock_items:
+                writer.writerow([item.sku, item.name, item.quantity, item.reorder_threshold])
+
+
+# Example Usage:
+if __name__ == "__main__":
+    manager = InventoryManager(":memory:")  # Use in-memory SQLite DB for testing
+
+    # Add initial inventory
+    manager.add_or_update_item("SKU-001", "Wireless Mouse", quantity=15, reorder_threshold=5)
+    manager.add_or_update_item("SKU-002", "Mechanical Keyboard", quantity=3, reorder_threshold=4)
+    manager.add_or_update_item("SKU-003", "USB-C Cable", quantity=2, reorder_threshold=10)
+
+    # Process stock adjustment
+    manager.update_stock("SKU-001", -12)  # Drops stock to 3 (Triggers low-stock)
+
+    # Fetch and print low-stock report
+    report = manager.get_low_stock_report()
+    print(f"Low Stock Alert ({len(report)} items found):")
+    for item in report:
+        print(f" - [{item.sku}] {item.name}: {item.quantity} in stock (Threshold: {item.reorder_threshold})")
+
+    # Export report to CSV
+    manager.export_low_stock_csv("low_stock_report.csv")
+    print("\nLow stock report successfully exported to 'low_stock_report.csv'.")

@@ -1,0 +1,113 @@
+### Problem Definition
+
+Given a 1D sequence of points, we want to partition them into $k$ contiguous clusters such that the total sum of squared deviations from each cluster's mean is minimized.
+
+Mathematically, after sorting the array $X = [x_1, x_2, \dots, x_n]$, we find $k$ disjoint contiguous intervals $[i_j, i_{j+1} - 1]$ for $j = 1, \dots, k$ covering indices $0$ to $n-1$ that minimize:
+
+$$\sum_{j=1}^{k} \sum_{m=i_j}^{i_{j+1}-1} (x_m - \mu_j)^2 \quad \text{where } \mu_j = \frac{1}{i_{j+1} - i_j} \sum_{m=i_j}^{i_{j+1}-1} x_m$$
+
+---
+
+### Constraints & Output Format
+
+* **Constraints**: Input points must be sorted before clustering. The number of clusters $k$ satisfies $1 \le k \le n$. If $k \ge n$, every element is its own cluster with a total cost of $0.0$.
+* **Required Output**:
+1. **Cost**: The minimal sum of squared deviations across all clusters.
+2. **Boundary Indices**: The 0-based start indices of each cluster in the sorted array (e.g., `[0, i_2, i_3, ..., i_k]`).
+
+
+
+---
+
+### Algorithm Description
+
+1. **Sorting & Prefix Sums**: Sort $X$ in non-decreasing order. Compute prefix sums of $x_i$ and $x_i^2$ to evaluate the mean and sum of squared errors (SSE) of any subarray $X[i..j]$ in $O(1)$ time using the identity:
+
+$$\text{Cost}(i, j) = \sum_{m=i}^{j} x_m^2 - \frac{1}{j - i + 1}\left(\sum_{m=i}^{j} x_m\right)^2$$
+
+
+2. **Dynamic Programming**: Let $DP[c][j]$ be the minimum cost to partition the first $j$ elements into $c$ clusters. The recurrence relation is:
+
+$$DP[c][j] = \min_{c-1 \le m < j} \left( DP[c-1][m] + \text{Cost}(m, j-1) \right)$$
+
+
+3. **Backtracking**: Maintain a parent table `split[c][j]` storing the optimal split index $m$ to reconstruct the cluster boundary indices.
+
+---
+
+### Python 3 Implementation
+
+```python
+def optimal_1d_k_means(points: list[float], k: int) -> tuple[float, list[int]]:
+    """
+    Sorts 1D points and partitions them into k contiguous clusters minimizing sum of squared errors.
+    
+    Returns:
+        (min_cost, cluster_start_indices)
+    """
+    if not points or k <= 0:
+        return 0.0, []
+    
+    # 1. Sort points
+    sorted_pts = sorted(points)
+    n = len(sorted_pts)
+    
+    # Edge case: more or equal clusters than points
+    if k >= n:
+        return 0.0, list(range(n))
+    
+    # 2. Compute Prefix Sums (P1 for linear sum, P2 for squared sum)
+    P1 = [0.0] * (n + 1)
+    P2 = [0.0] * (n + 1)
+    for i in range(n):
+        P1[i + 1] = P1[i] + sorted_pts[i]
+        P2[i + 1] = P2[i] + sorted_pts[i] ** 2
+
+    def get_cost(i: int, j: int) -> float:
+        """Returns sum of squared deviations for sorted_pts[i:j+1]."""
+        count = j - i + 1
+        sum_x = P1[j + 1] - P1[i]
+        sum_x2 = P2[j + 1] - P2[i]
+        return max(0.0, sum_x2 - (sum_x * sum_x) / count)
+
+    # 3. Dynamic Programming Setup
+    # DP[c][j] = minimum cost using c clusters for the first j points
+    dp = [[float('inf')] * (n + 1) for _ in range(k + 1)]
+    split = [[0] * (n + 1) for _ in range(k + 1)]
+    
+    # Base Case: 1 cluster
+    for j in range(1, n + 1):
+        dp[1][j] = get_cost(0, j - 1)
+        split[1][j] = 0
+
+    # Fill DP for 2 to k clusters
+    for c in range(2, k + 1):
+        for j in range(c, n + 1):
+            for m in range(c - 1, j):
+                cost = dp[c - 1][m] + get_cost(m, j - 1)
+                if cost < dp[c][j]:
+                    dp[c][j] = cost
+                    split[c][j] = m
+
+    # 4. Backtrack boundary indices
+    boundaries = [0] * k
+    curr_j = n
+    for c in range(k, 0, -1):
+        boundaries[c - 1] = split[c][curr_j]
+        curr_j = split[c][curr_j]
+
+    return dp[k][n], boundaries
+
+
+# --- Example Usage ---
+if __name__ == "__main__":
+    raw_points = [10.0, 2.0, 1.0, 12.0, 3.0, 20.0, 22.0]
+    num_clusters = 3
+    
+    cost, boundary_indices = optimal_1d_k_means(raw_points, num_clusters)
+    
+    print(f"Sorted Points:     {sorted(raw_points)}")
+    print(f"Minimal Cost:      {cost:.4f}")
+    print(f"Boundary Indices:  {boundary_indices}")
+
+```

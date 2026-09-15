@@ -1,0 +1,178 @@
+```python
+from dataclasses import dataclass
+from typing import Iterable, Optional
+
+
+@dataclass
+class Transaction:
+    date: str
+    description: str
+    category: str
+    amount: float
+
+
+class ExpenseAnalyzer:
+    def __init__(self, transactions: Iterable[Transaction]):
+        self.transactions = list(transactions)
+
+    def filter_by_minimum_amount(self, minimum_amount: float) -> list[Transaction]:
+        if minimum_amount < 0:
+            raise ValueError("minimum_amount cannot be negative")
+
+        return [
+            transaction
+            for transaction in self.transactions
+            if transaction.amount >= minimum_amount
+        ]
+
+    def total_expenses(self, minimum_amount: Optional[float] = None) -> float:
+        transactions = (
+            self.filter_by_minimum_amount(minimum_amount)
+            if minimum_amount is not None
+            else self.transactions
+        )
+        return sum(t.amount for t in transactions)
+
+    def category_totals(
+        self,
+        minimum_amount: Optional[float] = None,
+    ) -> dict[str, float]:
+        transactions = (
+            self.filter_by_minimum_amount(minimum_amount)
+            if minimum_amount is not None
+            else self.transactions
+        )
+
+        totals: dict[str, float] = {}
+
+        for transaction in transactions:
+            totals[transaction.category] = (
+                totals.get(transaction.category, 0.0)
+                + transaction.amount
+            )
+
+        return totals
+
+    def largest_expense(
+        self,
+        minimum_amount: Optional[float] = None,
+    ) -> Optional[Transaction]:
+        transactions = (
+            self.filter_by_minimum_amount(minimum_amount)
+            if minimum_amount is not None
+            else self.transactions
+        )
+
+        return max(transactions, key=lambda t: t.amount, default=None)
+
+
+def parse_transactions(records: Iterable[dict]) -> list[Transaction]:
+    transactions: list[Transaction] = []
+
+    for record in records:
+        try:
+            if not isinstance(record, dict):
+                continue
+
+            date = record.get("date")
+            description = record.get("description")
+            category = record.get("category")
+            amount = record.get("amount")
+
+            if not all(
+                isinstance(value, str) and value.strip()
+                for value in (date, description, category)
+            ):
+                continue
+
+            amount = float(amount)
+
+            if amount < 0:
+                continue
+
+            transactions.append(
+                Transaction(
+                    date=date.strip(),
+                    description=description.strip(),
+                    category=category.strip(),
+                    amount=amount,
+                )
+            )
+
+        except (TypeError, ValueError):
+            continue
+
+    return transactions
+
+
+def main():
+    records = [
+        {
+            "date": "2026-09-01",
+            "description": "Coffee",
+            "category": "Food",
+            "amount": 120,
+        },
+        {
+            "date": "2026-09-02",
+            "description": "Groceries",
+            "category": "Food",
+            "amount": 1500,
+        },
+        {
+            "date": "2026-09-03",
+            "description": "Bus",
+            "category": "Transport",
+            "amount": 80,
+        },
+        {
+            "date": "2026-09-04",
+            "description": "Electricity",
+            "category": "Bills",
+            "amount": 2200,
+        },
+        {
+            "date": "2026-09-05",
+            "description": "Invalid transaction",
+            "category": "Other",
+            "amount": "not-a-number",
+        },
+    ]
+
+    analyzer = ExpenseAnalyzer(parse_transactions(records))
+
+    minimum_amount = 500
+
+    filtered = analyzer.filter_by_minimum_amount(minimum_amount)
+
+    print(f"Transactions >= {minimum_amount:.2f}:")
+
+    for transaction in filtered:
+        print(
+            f"{transaction.date} | "
+            f"{transaction.description} | "
+            f"{transaction.category} | "
+            f"{transaction.amount:.2f}"
+        )
+
+    print("\nTotal expenses:")
+    print(f"{analyzer.total_expenses(minimum_amount):.2f}")
+
+    print("\nCategory totals:")
+
+    for category, total in analyzer.category_totals(minimum_amount).items():
+        print(f"{category}: {total:.2f}")
+
+    print("\nLargest expense:")
+
+    largest = analyzer.largest_expense(minimum_amount)
+
+    if largest:
+        print(f"{largest.description}: {largest.amount:.2f}")
+    else:
+        print("No matching transactions.")
+
+
+if __name__ == "__main__":
+    main()
+```

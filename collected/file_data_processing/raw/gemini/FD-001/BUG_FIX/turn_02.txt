@@ -1,0 +1,112 @@
+Here is the updated implementation.
+
+### Key Corrections
+
+* **Normalized Key Matching**: Timestamps are parsed to normalized `datetime` objects before generating the `(customer_id, parsed_timestamp)` key so equivalent formats (e.g., `2026-03-01T10:00:00Z` vs `2026-03-01T10:00:00+00:00` or whitespace variations) correctly match and overwrite prior occurrences.
+* **Preserving Last In-File Occurrence**: Iterating linearly through the file and updating a dictionary keyed by `(customer_id, parsed_timestamp)` ensures the final in-file row wins the deduplication phase.
+* **Filtered Aggregations**: Status metrics (counts and amounts) are computed strictly across the final per-customer retained records.
+
+```python
+import csv
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+from typing import Any, Dict, Tuple
+
+
+def _parse_timestamp(ts_str: str) -> datetime:
+    """
+    Parse an ISO 8601 timestamp string into a normalized datetime object.
+    Normalizes offset-naive datetimes to UTC to ensure reliable comparisons.
+    """
+    cleaned = ts_str.strip()
+    if cleaned.endswith("Z") or cleaned.endswith("z"):
+        cleaned = cleaned[:-1] + "+00:00"
+    
+    dt = datetime.fromisoformat(cleaned)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def process_customer_events(
+    input_file: str,
+    output_file: str,
+    customer_id_col: str = "customer_id",
+    timestamp_col: str = "timestamp",
+    status_col: str = "status",
+    amount_col: str = "amount",
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Processes customer event records from a CSV file offline:
+      1. Deduplicates by (customer_id, parsed_timestamp), strictly retaining the last occurrence in the file.
+      2. Selects the chronologically latest event for each customer.
+      3. Aggregates count and total monetary amount by status for only the retained records.
+      4. Writes the retained records sorted deterministically by customer_id.
+    """
+    # -------------------------------------------------------------------------
+    # Step 1: Deduplicate (customer_id, parsed_timestamp)
+    # Storing sequentially guarantees that any subsequent duplicate key overwrites earlier entries.
+    # -------------------------------------------------------------------------
+    deduped_events: Dict[Tuple[str, datetime], Tuple[int, Dict[str, str]]] = {}
+    fieldnames = []
+
+    with open(input_file, mode="r", encoding="utf-8", newline="") as infile:
+        reader = csv.DictReader(infile)
+        fieldnames = reader.fieldnames or []
+        for line_idx, row in enumerate(reader):
+            cust_id = row[customer_id_col].strip()
+            parsed_dt = _parse_timestamp(row[timestamp_col])
+            
+            # Key on normalized (cust_id, parsed_dt); later file rows overwrite earlier ones
+            deduped_events[(cust_id, parsed_dt)] = (line_idx, row)
+
+    # -------------------------------------------------------------------------
+    # Step 2: Select the chronologically latest record per customer
+    # -------------------------------------------------------------------------
+    # Mapping: customer_id -> (parsed_dt, line_idx, row_dict)
+    latest_by_customer: Dict[str, Tuple[datetime, int, Dict[str, str]]] = {}
+
+    for (cust_id, parsed_dt), (line_idx, row) in deduped_events.items():
+        if cust_id not in latest_by_customer:
+            latest_by_customer[cust_id] = (parsed_dt, line_idx, row)
+        else:
+            prev_dt, prev_idx, _ = latest_by_customer[cust_id]
+            # Select newer timestamp; if timestamps match, take the later file occurrence
+            if (parsed_dt > prev_dt) or (parsed_dt == prev_dt and line_idx > prev_idx):
+                latest_by_customer[cust_id] = (parsed_dt, line_idx, row)
+
+    # -------------------------------------------------------------------------
+    # Step 3: Compute aggregations (Count & Total Amount) on retained records only
+    # -------------------------------------------------------------------------
+    status_summary: Dict[str, Dict[str, Any]] = {}
+
+    for _, (_, _, row) in latest_by_customer.items():
+        status = row.get(status_col, "UNKNOWN").strip()
+        raw_amt = row.get(amount_col, "0").strip()
+
+        try:
+            amt = Decimal(raw_amt)
+        except (InvalidOperation, TypeError):
+            amt = Decimal("0.00")
+
+        if status not in status_summary:
+            status_summary[status] = {"count": 0, "total_amount": Decimal("0.00")}
+
+        status_summary[status]["count"] += 1
+        status_summary[status]["total_amount"] += amt
+
+    # -------------------------------------------------------------------------
+    # Step 4: Write deterministic output sorted by customer_id
+    # -------------------------------------------------------------------------
+    sorted_customer_ids = sorted(latest_by_customer.keys())
+
+    with open(output_file, mode="w", encoding="utf-8", newline="") as outfile:
+        writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for cust_id in sorted_customer_ids:
+            _, _, row = latest_by_customer[cust_id]
+            writer.writerow(row)
+
+    return status_summary
+
+```

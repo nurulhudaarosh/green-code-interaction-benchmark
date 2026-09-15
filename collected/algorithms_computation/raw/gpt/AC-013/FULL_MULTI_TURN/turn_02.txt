@@ -1,0 +1,153 @@
+```python
+from typing import List, Tuple, Dict
+
+
+def rectangle_statistics(
+    matrix: List[List[int]],
+    queries: List[Tuple[int, int, int, int]]
+) -> List[Dict[str, int]]:
+    """
+    For each inclusive rectangle query (r1, c1, r2, c2), return:
+        {
+            "sum": rectangle sum,
+            "min": rectangle minimum,
+            "max": rectangle maximum
+        }
+
+    Algorithm:
+    - Build a 2D prefix-sum table for O(1) rectangle sums.
+    - Directly scan each queried rectangle for min/max.
+    """
+
+    # Handle empty matrix.
+    if not matrix:
+        if queries:
+            raise ValueError("Queries cannot be answered for an empty matrix.")
+        return []
+
+    rows = len(matrix)
+    cols = len(matrix[0])
+
+    if cols == 0:
+        if queries:
+            raise ValueError("Queries cannot be answered for an empty matrix.")
+        return []
+
+    # Ensure the matrix is rectangular.
+    if any(len(row) != cols for row in matrix):
+        raise ValueError("Matrix must be rectangular.")
+
+    # ---------------------------------------------------------
+    # Build 2D prefix-sum table.
+    # prefix[r + 1][c + 1] stores the sum of the area
+    # from (0, 0) through (r, c).
+    # ---------------------------------------------------------
+    prefix = [[0] * (cols + 1) for _ in range(rows + 1)]
+
+    for r in range(rows):
+        for c in range(cols):
+            prefix[r + 1][c + 1] = (
+                matrix[r][c]
+                + prefix[r][c + 1]
+                + prefix[r + 1][c]
+                - prefix[r][c]
+            )
+
+    results = []
+
+    # ---------------------------------------------------------
+    # Process every query.
+    # ---------------------------------------------------------
+    for query in queries:
+        if len(query) != 4:
+            raise ValueError("Each query must contain four coordinates.")
+
+        r1, c1, r2, c2 = query
+
+        if not (
+            0 <= r1 <= r2 < rows
+            and 0 <= c1 <= c2 < cols
+        ):
+            raise ValueError(f"Invalid rectangle query: {query}")
+
+        # Sum in O(1) using the prefix-sum table.
+        rectangle_sum = (
+            prefix[r2 + 1][c2 + 1]
+            - prefix[r1][c2 + 1]
+            - prefix[r2 + 1][c1]
+            + prefix[r1][c1]
+        )
+
+        # Direct scan for minimum and maximum.
+        minimum = matrix[r1][c1]
+        maximum = matrix[r1][c1]
+
+        for r in range(r1, r2 + 1):
+            for c in range(c1, c2 + 1):
+                value = matrix[r][c]
+
+                if value < minimum:
+                    minimum = value
+
+                if value > maximum:
+                    maximum = value
+
+        # Exactly the required output fields.
+        results.append({
+            "sum": rectangle_sum,
+            "min": minimum,
+            "max": maximum
+        })
+
+    return results
+
+
+# -------------------------------------------------------------
+# Tests
+# -------------------------------------------------------------
+if __name__ == "__main__":
+
+    # Tied minimum and maximum values.
+    matrix = [
+        [2, 1],
+        [1, 2]
+    ]
+
+    assert rectangle_statistics(
+        matrix,
+        [(0, 0, 1, 1)]
+    ) == [
+        {"sum": 6, "min": 1, "max": 2}
+    ]
+
+    # Smallest valid matrix.
+    matrix = [[7]]
+
+    assert rectangle_statistics(
+        matrix,
+        [(0, 0, 0, 0)]
+    ) == [
+        {"sum": 7, "min": 7, "max": 7}
+    ]
+
+    # Multiple rectangles.
+    matrix = [
+        [1, 2, 3],
+        [4, 5, 6],
+        [7, 8, 9]
+    ]
+
+    queries = [
+        (0, 0, 1, 1),
+        (1, 1, 2, 2),
+        (0, 0, 2, 2)
+    ]
+
+    assert rectangle_statistics(matrix, queries) == [
+        {"sum": 12, "min": 1, "max": 5},
+        {"sum": 28, "min": 5, "max": 9},
+        {"sum": 45, "min": 1, "max": 9}
+    ]
+
+    print("All tests passed.")
+```

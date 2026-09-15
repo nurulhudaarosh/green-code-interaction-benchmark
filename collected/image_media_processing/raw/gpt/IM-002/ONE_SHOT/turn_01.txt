@@ -1,0 +1,41 @@
+```python
+from pathlib import Path
+from PIL import Image
+
+
+def generate_thumbnails(input_dir, cache_dir, max_dim=128):
+    input_dir = Path(input_dir)
+    cache_dir = Path(cache_dir)
+
+    if max_dim <= 0:
+        raise ValueError("max_dim must be greater than 0")
+
+    valid_extensions = {".png", ".jpg", ".jpeg"}
+    processed_count = 0
+
+    for src_path in input_dir.rglob("*"):
+        if not src_path.is_file() or src_path.suffix.lower() not in valid_extensions:
+            continue
+
+        # Mirror the input directory tree in cache_dir
+        relative_path = src_path.relative_to(input_dir)
+        dst_path = cache_dir / relative_path
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            with Image.open(src_path) as img:
+                # Preserve aspect ratio; neither dimension exceeds max_dim.
+                thumbnail = img.copy()
+                thumbnail.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+
+                # Keep the same output format/extension.
+                thumbnail.save(dst_path)
+
+            processed_count += 1
+
+        except (OSError, ValueError):
+            # Skip files that are not valid/readable images.
+            continue
+
+    return processed_count
+```

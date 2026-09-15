@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""
+Longest Strictly Increasing Subsequence (LIS) with lexicographically
+smallest original-index sequence among all optimal-length answers.
+
+Deterministic, standard-library only, no randomness, no I/O side effects
+beyond stdin/stdout in main().
+"""
+
+from typing import List, Sequence, Tuple
+
+
+def lis_lex_smallest_indices(a: Sequence[int]) -> Tuple[int, List[int]]:
+    """
+    Returns (max_length, indices) where `indices` is the lexicographically
+    smallest list of original indices (strictly increasing indices,
+    strictly increasing values at those indices) achieving max_length.
+
+    Algorithm: O(n^2) DP.
+      dp_len[i]  = length of the best strictly increasing subsequence ending at i
+      dp_path[i] = the actual lexicographically smallest index-path ending at i
+                   among all paths of length dp_len[i]
+
+    For each i, we consider every j < i with a[j] < a[i]. Among candidates
+    that yield the maximum possible dp_len[i], we keep the one whose
+    dp_path[j] is lexicographically smallest (comparing the resulting
+    path dp_path[j] + [i]). Storing full paths (not just predecessor
+    pointers) guarantees correctness of lexicographic minimality, since
+    a predecessor-only backtrack can be ambiguous when several j's tie
+    on length but differ in their own optimal sub-path.
+    """
+    n = len(a)
+    if n == 0:
+        return 0, []
+
+    dp_len: List[int] = [1] * n
+    dp_path: List[List[int]] = [[i] for i in range(n)]
+
+    for i in range(n):
+        best_len = 1
+        best_path = [i]
+        for j in range(i):
+            if a[j] < a[i]:
+                candidate_len = dp_len[j] + 1
+                if candidate_len > best_len:
+                    best_len = candidate_len
+                    best_path = dp_path[j] + [i]
+                elif candidate_len == best_len:
+                    candidate_path = dp_path[j] + [i]
+                    if candidate_path < best_path:
+                        best_path = candidate_path
+        dp_len[i] = best_len
+        dp_path[i] = best_path
+
+    max_len = max(dp_len)
+    # Among all i achieving max_len, pick the lexicographically smallest path.
+    best_overall: List[int] = None
+    for i in range(n):
+        if dp_len[i] == max_len:
+            if best_overall is None or dp_path[i] < best_overall:
+                best_overall = dp_path[i]
+
+    return max_len, best_overall
+
+
+def main() -> None:
+    # Deterministic demonstration / self-test cases (no external input required).
+    test_cases: List[List[int]] = [
+        [],
+        [5],
+        [3, 3, 3, 3],
+        [10, 9, 2, 5, 3, 7, 101, 18],
+        [0, 1, 0, 3, 2, 3],
+        [7, 7, 7, 7, 7, 7, 7],
+        [1, 2, 3, 4, 5],
+        [5, 4, 3, 2, 1],
+        [2, 2, 2, 1, 3, 1, 3, 2, 4],
+    ]
+
+    for a in test_cases:
+        length, indices = lis_lex_smallest_indices(a)
+        values = [a[i] for i in indices]
+        print(f"a = {a}")
+        print(f"  max_length     = {length}")
+        print(f"  indices        = {indices}")
+        print(f"  values         = {values}")
+        print()
+
+
+if __name__ == "__main__":
+    main()

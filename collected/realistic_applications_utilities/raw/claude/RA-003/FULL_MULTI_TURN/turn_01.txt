@@ -1,0 +1,78 @@
+Here's a self-contained student analysis script — it takes a list of student records (name, scores per subject) and computes averages, letter grades, pass/fail status, and class-wide statistics. Swap in your own data or load from a CSV as needed.
+
+```python
+import statistics
+from dataclasses import dataclass, field
+
+@dataclass
+class Student:
+    name: str
+    scores: dict  # subject -> score (0-100)
+
+    @property
+    def average(self):
+        return round(statistics.mean(self.scores.values()), 2)
+
+    @property
+    def grade(self):
+        avg = self.average
+        if avg >= 90: return "A"
+        if avg >= 80: return "B"
+        if avg >= 70: return "C"
+        if avg >= 60: return "D"
+        return "F"
+
+    @property
+    def passed(self):
+        return self.average >= 60
+
+
+def analyze_students(students):
+    report = []
+    for s in students:
+        report.append({
+            "name": s.name,
+            "average": s.average,
+            "grade": s.grade,
+            "status": "Pass" if s.passed else "Fail",
+            "best_subject": max(s.scores, key=s.scores.get),
+            "worst_subject": min(s.scores, key=s.scores.get),
+        })
+    return report
+
+
+def class_summary(students):
+    all_avgs = [s.average for s in students]
+    pass_count = sum(1 for s in students if s.passed)
+    grade_counts = {}
+    for s in students:
+        grade_counts[s.grade] = grade_counts.get(s.grade, 0) + 1
+
+    return {
+        "class_average": round(statistics.mean(all_avgs), 2),
+        "median": round(statistics.median(all_avgs), 2),
+        "highest": max(all_avgs),
+        "lowest": min(all_avgs),
+        "pass_rate": f"{round(100 * pass_count / len(students), 1)}%",
+        "grade_distribution": grade_counts,
+    }
+
+
+if __name__ == "__main__":
+    students = [
+        Student("Ayesha", {"Math": 88, "Science": 92, "English": 79}),
+        Student("Rahim", {"Math": 55, "Science": 60, "English": 48}),
+        Student("Tanvir", {"Math": 95, "Science": 89, "English": 91}),
+        Student("Mim", {"Math": 70, "Science": 65, "English": 72}),
+    ]
+
+    print("Individual Report:")
+    for row in analyze_students(students):
+        print(row)
+
+    print("\nClass Summary:")
+    for k, v in class_summary(students).items():
+        print(f"{k}: {v}")
+```
+
+If you had specific data (a CSV, a particular set of subjects, or grading rules) in mind, let me know and I'll adapt it.

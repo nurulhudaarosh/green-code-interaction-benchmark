@@ -1,0 +1,124 @@
+### Problem Identification & Understanding
+
+The problem requires preprocessing an $R \times C$ integer matrix to efficiently answer multiple range queries on arbitrary subgrid regions. Each query provides four coordinates $(r_1, c_1, r_2, c_2)$ representing an inclusive rectangular bounding box spanning from row $r_1$ to $r_2$ and column $c_1$ to $c_2$. For each subgrid query, we must compute:
+
+1. **Sum**: The sum of all elements in the region.
+2. **Minimum**: The smallest value in the region.
+3. **Maximum**: The largest value in the region.
+
+---
+
+### Key Constraints & Required Output
+
+* **Input Grid**: An $R \times C$ matrix of integers.
+* **Query Coordinates**: $(r_1, c_1, r_2, c_2)$ where $0 \le r_1 \le r_2 < R$ and $0 \le c_1 \le c_2 < C$.
+* **Time Complexity Requirements**:
+* Sum queries should execute in $\mathcal{O}(1)$ time after preprocessing.
+* Minimum and Maximum queries use direct subgrid scanning in $\mathcal{O}((r_2 - r_1 + 1) \cdot (c_2 - c_1 + 1))$ time.
+
+
+* **Output**: For each query, a tuple or structure containing `(sum, minimum, maximum)`.
+
+---
+
+### Algorithm Description
+
+1. **Prefix-Sum Table Construction ($\mathcal{O}(R \cdot C)$ Preprocessing)**:
+We construct a 2D prefix sum array `P` of size $(R+1) \times (C+1)$ where `P[i][j]` represents the sum of the subgrid from `(0, 0)` up to `(i-1, j-1)`.
+
+$$\text{P}[i][j] = \text{grid}[i-1][j-1] + \text{P}[i-1][j] + \text{P}[i][j-1] - \text{P}[i-1][j-1]$$
+
+
+2. **Sum Query ($\mathcal{O}(1)$ time)**:
+For an inclusive rectangle $(r_1, c_1, r_2, c_2)$, the sum is extracted in constant time using inclusion-exclusion:
+
+$$\text{Sum} = \text{P}[r_2+1][c_2+1] - \text{P}[r_1][c_2+1] - \text{P}[r_2+1][c_1] + \text{P}[r_1][c_1]$$
+
+
+3. **Extrema Queries ($\mathcal{O}(\text{area})$ time)**:
+Minimum and maximum values are determined by scanning the subgrid elements directly from row $r_1$ to $r_2$ and column $c_1$ to $c_2$.
+
+---
+
+### Python Implementation
+
+```python
+class MatrixRangeQueryProcessor:
+    def __init__(self, grid: list[list[int]]):
+        """Preprocesses the input matrix for range queries."""
+        if not grid or not grid[0]:
+            raise ValueError("Grid must be a non-empty 2D list of integers.")
+            
+        self.grid = grid
+        self.rows = len(grid)
+        self.cols = len(grid[0])
+        
+        # Build 2D Prefix Sum Table with 1-based indexing
+        self.prefix_sum = [[0] * (self.cols + 1) for _ in range(self.rows + 1)]
+        
+        for r in range(self.rows):
+            for c in range(self.cols):
+                self.prefix_sum[r + 1][c + 1] = (
+                    grid[r][c]
+                    + self.prefix_sum[r][c + 1]
+                    + self.prefix_sum[r + 1][c]
+                    - self.prefix_sum[r][c]
+                )
+
+    def query(self, r1: int, c1: int, r2: int, c2: int) -> tuple[int, int, int]:
+        """
+        Answers inclusive rectangle queries for (Sum, Minimum, Maximum).
+        
+        Coordinates must satisfy: 0 <= r1 <= r2 < R and 0 <= c1 <= c2 < C
+        """
+        # Validate boundary inputs
+        if not (0 <= r1 <= r2 < self.rows and 0 <= c1 <= c2 < self.cols):
+            raise IndexError("Query coordinates are out of matrix bounds.")
+
+        # O(1) Range Sum calculation using 2D Prefix Sum
+        rect_sum = (
+            self.prefix_sum[r2 + 1][c2 + 1]
+            - self.prefix_sum[r1][c2 + 1]
+            - self.prefix_sum[r2 + 1][c1]
+            + self.prefix_sum[r1][c1]
+        )
+
+        # O(area) Direct scanning for Minimum and Maximum
+        rect_min = float('inf')
+        rect_max = float('-inf')
+
+        for r in range(r1, r2 + 1):
+            for c in range(c1, c2 + 1):
+                val = self.grid[r][c]
+                if val < rect_min:
+                    rect_min = val
+                if val > rect_max:
+                    rect_max = val
+
+        return rect_sum, rect_min, rect_max
+
+
+# --- Example Usage ---
+if __name__ == "__main__":
+    matrix = [
+        [3,  0,  1,  4,  2],
+        [5,  6,  3,  2,  1],
+        [1,  2,  0,  1,  5],
+        [4,  1,  0,  1,  7],
+        [1,  0,  3,  0,  5]
+    ]
+
+    processor = MatrixRangeQueryProcessor(matrix)
+    
+    # Query region: r1=2, c1=1 to r2=4, c2=3
+    # Elements:
+    # [2, 0, 1]
+    # [1, 0, 1]
+    # [0, 3, 0]
+    total_sum, min_val, max_val = processor.query(2, 1, 4, 3)
+    
+    print(f"Subgrid Sum: {total_sum}")  # Output: 8
+    print(f"Subgrid Min: {min_val}")    # Output: 0
+    print(f"Subgrid Max: {max_val}")    # Output: 3
+
+```

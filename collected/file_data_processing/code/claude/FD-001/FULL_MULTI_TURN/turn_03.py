@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""
+Customer Event CSV Utility (offline, stdlib-only)
+
+Pipeline:
+1. Read input CSV (expected columns: customer_id, timestamp, status, amount)
+2. Remove duplicate (customer_id, timestamp) records -> keep the LAST
+   occurrence found in the input file for each identical key.
+3. Compute count, total/average/min/max amount per status, using ONLY the
+   retained (deduped) records -- no further filtering or collapsing.
+4. Write two deterministic outputs:
+   - deduped_records.csv  (all retained records, sorted by customer_id then timestamp)
+   - status_summary.csv   (count + amount stats per status, sorted by status)
+   ...and print the same status summary as a formatted console table.
+
+Usage:
+    python customer_events.py input.csv --outdir ./output
+"""
+
+import csv
+import argparse
+from datetime import datetime
+from collections import defaultdict
+from decimal import Decimal, InvalidOperation
+
+
+REQUIRED_FIELDS = ["customer_id", "timestamp", "status", "amount"]
+
+TIMESTAMP_FORMATS = [
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%dT%H:%M:%S",
+    "%Y-%m-%d",
+]
+
+
+def parse_timestamp(value: str) -> datetime:
+    value = value.strip()
+    for fmt in TIMESTAMP_FORMATS:
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    raise ValueError(f"Unrecognized timestamp format: {value!r}")
+
+
+def parse_amount(value: str) -> Decimal:
+    try:
+        return Decimal(value.strip())
+    except (InvalidOperation, AttributeError):
+        raise ValueError(f"Invalid amount value: {value!r}")
+
+
+def load_rows(path: str):
+    with open(path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        missing = [c for c in REQUIRED_FIELDS if c not in (reader.fieldnames or [])]
+        if missing:
+            raise ValueError(f"Missing required columns: {missing}")
+
+        rows = []
+        for i, raw in enumerate(reader, start=2):  # line 1 = header
+            try:
+                row = {
+                    "customer_id": raw["customer_id"].strip(),
+                    "timestamp": raw["timestamp"].strip(),
+                    "status": raw["status"].strip(),
+                    "amount": raw["amount"].strip(),
+                    "_dt": parse_timestamp(raw["timestamp"]),
+                    "_amt": parse_amount(raw["amount"]),
+                    "_input_order": i,
+                }
+            except ValueError as e:
+                raise ValueError(f"Row {i}: {e}") from e
+            rows.append(row)
+        return rows
+
+
+def dedupe_by_customer_and_timestamp(rows):
+    """Keep the LAST occurrence for each (customer_id, timestamp) pair."""
+    dedup = {}
+    for row in rows:
+        key = (row["customer_id"], row["timestamp"])
+        dedup[key] = row  # later occurrence always overwrites earlier one
+    return list(dedup.values())
+
+
+def summarize_by_status(retained_rows):
+    """
+    Count, total/average/min/max amount per status, using only the
+    retained (deduped) records.
+    """
+    summary = defaultdict(lambda: {
+        "count": 0,
+        "total_amount": Decimal("0"),
+        "min_amount": None,
+        "max_amount": None,
+    })
+    for row in retained_rows:
+        s = summary[row["status"]]
+        amt = row["_amt"]
+        s["count"] += 1
+        s["total_amount"] += amt
+        s["min_amount"] = amt if s["min_amount"] is None else min(s["min_amount"], amt)
+        s["max_amount"] = amt if s["max_amount"] is None else max(s["max_amount"], amt)
+
+    for s in summary.values():
+        s["avg_amount"] = (s["total_amount"] / s["count"]) if s["count"] else Decimal("0")
+
+    return summary
+
+
+def write_deduped_records(retained_rows, out_path):
+    ordered = sorted(retained_rows, key=lambda r: (r["customer_id"], r["_dt"]))
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["customer_id", "timestamp", "status", "amount"])
+        for row in ordered:
+            writer.writerow([row["customer_id"], row["timestamp"], row["status"], row["amount"]])
+
+
+def write_status_summary(summary, out_path):
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["status", "count", "total_amount", "avg_amount", "min_amount", "max_amount"])
+        for status in sorted(summary.keys()):
+            s = summary[status]
+            writer.writerow([
+                status,
+                s["count"],
+                str(s["total_amount"]),
+                str(s["avg_amount"]),
+                str(s["min_amount"]),
+                str(s["max_amount"]),
+            ])
+
+
+def print_status_summary(summary):
+    """Pretty-print the per-status breakdown to the console."""
+    headers = ["status", "count", "total_amount", "avg_amount", "min_amount", "max_amount"]
+    rows = []
+    for status in sorted(summary.keys()):
+        s = summary[status]
+        rows.append([
+            status,
+            str(s["count"]),
+            str(s["total_amount"]),
+            str(s["avg_amount"]),
+            str(s["min_amount"]),
+            str(s["max_amount"]),
+        ])
+
+    widths = [max(len(h), *(len(r[i]) for r in rows)) if rows else len(h)
+              for i, h in enumerate(headers)]
+
+    def fmt_row(cells):
+        return "  ".join(cell.ljust(widths[i]) for i, cell in enumerate(cells))
+
+    print(fmt_row(headers))
+    print("  ".join("-" * w for w in widths))
+    for r in rows:
+        print(fmt_row(r))
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Process customer event CSV file (offline).")
+    parser.add_argument("input_csv", help="Path to input CSV file")
+    parser.add_argument("--outdir", default=".", help="Directory to write output files (default: current dir)")
+    args = parser.parse_args()
+
+    rows = load_rows(args.input_csv)
+    retained_rows = dedupe_by_customer_and_timestamp(rows)
+    summary = summarize_by_status(retained_rows)
+
+    deduped_out = f"{args.outdir.rstrip('/')}/deduped_records.csv"
+    summary_out = f"{args.outdir.rstrip('/')}/status_summary.csv"
+
+    write_deduped_records(retained_rows, deduped_out)
+    write_status_summary(summary, summary_out)
+
+    print(f"Input rows read:              {len(rows)}")
+    print(f"Retained after (customer,ts) dedup: {len(retained_rows)}")
+    print()
+    print("Status summary (from retained records only):")
+    print_status_summary(summary)
+    print()
+    print(f"Wrote: {deduped_out}")
+    print(f"Wrote: {summary_out}")
+
+
+if __name__ == "__main__":
+    main()

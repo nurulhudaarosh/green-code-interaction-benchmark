@@ -1,0 +1,51 @@
+The premise is incorrect: the provided code **already** checks `if radius > 0:` and skips `ImageFilter.GaussianBlur(radius)` entirely when `radius == 0`, taking the `else` branch instead.
+
+However, calling `img.save()` directly in Pillow can re-encode the image payload (e.g., lossy JPEG re-compression, metadata alterations, or standard file encoding adjustments), which means saving the Pillow image object still will not yield a byte-identical output file.
+
+To guarantee **byte-identical** output when `radius == 0`, perform a direct file copy using `shutil.copy2()`.
+
+Here is the updated function:
+
+```python
+import os
+import shutil
+from PIL import Image, ImageFilter
+
+def apply_blur(input_dir: str, output_dir: str, radius: float) -> None:
+    """
+    Applies a Gaussian blur of the given radius to every image in input_dir
+    and saves the results to output_dir.
+    
+    - Negative radius raises a ValueError.
+    - Radius of 0 performs a byte-identical file copy without processing.
+    """
+    if radius < 0:
+        raise ValueError(f"Radius must be non-negative, got {radius}")
+
+    os.makedirs(output_dir, exist_ok=True)
+    valid_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.webp')
+
+    for filename in os.listdir(input_dir):
+        if not filename.lower().endswith(valid_extensions):
+            continue
+
+        input_path = os.path.join(input_dir, filename)
+        output_path = os.path.join(output_dir, filename)
+
+        if radius == 0:
+            # Passthrough mode: direct file copy preserves exact byte identity
+            shutil.copy2(input_path, output_path)
+        else:
+            try:
+                with Image.open(input_path) as img:
+                    blurred_img = img.filter(ImageFilter.GaussianBlur(radius))
+                    blurred_img.save(output_path)
+            except (IOError, SyntaxError) as e:
+                print(f"Skipping non-image or unreadable file {filename}: {e}")
+
+```
+
+### Improvements Made
+
+* **Byte-Identical Passthrough:** Uses `shutil.copy2(input_path, output_path)` when `radius == 0`. This bypasses image decoding, pixel processing, and re-encoding entirely, preserving identical file bytes, color profiles, and metadata.
+* **Separation of Concerns:** Pillow image processing is only invoked when `radius > 0`.

@@ -1,0 +1,64 @@
+# Meeting Intervals - Maximum Simultaneously Active Meetings
+# Intervals are half-open: [start, end)
+
+def find_max_meetings(meetings):
+    events = []
+
+    for start, end in meetings:
+        # End event (-1) and start event (+1)
+        events.append((start, 1))
+        events.append((end, -1))
+
+    # Sort by time.
+    # For the same time, -1 (end) comes before +1 (start).
+    events.sort()
+
+    active = 0
+    maximum = 0
+    max_begin_times = []
+
+    i = 0
+
+    while i < len(events):
+        time = events[i][0]
+
+        # Process all events at the same timestamp.
+        # End events are processed before start events.
+        while i < len(events) and events[i][0] == time:
+            active += events[i][1]
+            i += 1
+
+        # Active meetings after all events at this timestamp
+        # are the meetings active from this time onward.
+        if active > maximum:
+            maximum = active
+            max_begin_times = [time]
+
+        elif active == maximum and maximum > 0:
+            if not max_begin_times or max_begin_times[-1] != time:
+                max_begin_times.append(time)
+
+    return maximum, max_begin_times
+
+
+def main():
+    # Input:
+    # First line: number of meetings
+    # Next n lines: start end
+
+    n = int(input())
+
+    meetings = []
+
+    for _ in range(n):
+        start, end = map(int, input().split())
+        meetings.append((start, end))
+
+    maximum, times = find_max_meetings(meetings)
+
+    print(maximum)
+    print(*times)
+
+
+if __name__ == "__main__":
+    main()

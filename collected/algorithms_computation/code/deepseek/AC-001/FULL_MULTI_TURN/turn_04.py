@@ -1,0 +1,320 @@
+"""
+Problem: Interval Conflict Analyzer
+
+Given half-open meeting intervals [start, end), find the maximum number of
+simultaneously active meetings and the sorted times at which that maximum begins.
+
+Original required outputs:
+- maximum_count: The maximum number of simultaneously active meetings (int)
+- start_times: Sorted list of times at which the maximum count begins (List[int])
+- For empty input: Return (0, [])
+
+Key rules:
+- Intervals are half-open: [start, end)
+- A meeting is active at time t if start <= t < end
+- At a given timestamp, END events occur BEFORE START events
+- Tie-breaking: All start times that achieve the maximum should be returned
+  in sorted order (deduplicated)
+- Deterministic behavior: Results are deterministic and reproducible
+
+Edge cases handled:
+1. Smallest permitted input (single interval)
+2. Empty input (no intervals)
+3. Disconnected structures (non-overlapping intervals)
+4. Touch at endpoints (half-open semantics)
+5. Multiple starts at same timestamp
+6. Maximum achieved at multiple different timestamps
+7. Intervals with zero duration [x, x) - should have no active time
+8. Very large gaps between intervals
+9. Intervals that are subsets of others
+10. Minimum and maximum integer boundaries
+
+Algorithm: Sweep-line over events
+1. Create events: (time, type) where type=0 for END, type=1 for START
+2. Sort by (time, type) so END (0) comes before START (1) at same timestamp
+3. Sweep through events, maintaining current active count
+4. Track maximum count and the start times when this maximum is first achieved
+5. For each START event, record the time if count after adding equals max_count
+
+Time complexity: O(n log n) due to sorting
+Space complexity: O(n)
+"""
+
+from typing import List, Tuple, Union, Optional
+
+
+def find_max_active_meetings(
+    intervals: List[Tuple[int, int]]
+) -> Tuple[int, List[int]]:
+    """
+    Find the maximum number of simultaneously active meetings and the sorted
+    times at which that maximum begins.
+
+    Args:
+        intervals: List of [start, end) meeting intervals
+
+    Returns:
+        (max_count, list_of_start_times)
+        Returns (0, []) for empty input
+
+    Examples:
+        >>> find_max_active_meetings([])
+        (0, [])
+        >>> find_max_active_meetings([(0, 1)])
+        (1, [0])
+        >>> find_max_active_meetings([(0, 3), (1, 4), (2, 5), (3, 6)])
+        (3, [2, 3])
+        >>> find_max_active_meetings([(0, 5), (5, 10), (10, 15)])
+        (1, [0, 5, 10])
+    """
+    # Edge case: Empty input
+    if not intervals:
+        return 0, []
+
+    # Create events: (time, type)
+    # type: 0 for END, 1 for START (END before START at same timestamp)
+    events = []
+    for start, end in intervals:
+        # Handle zero-duration intervals [x, x) - they should not create active meetings
+        if start == end:
+            continue
+        events.append((start, 1))  # START event
+        events.append((end, 0))    # END event
+
+    # If all intervals were zero-duration, treat as empty
+    if not events:
+        return 0, []
+
+    # Sort by time, then by type (END=0 comes before START=1)
+    events.sort(key=lambda x: (x[0], x[1]))
+
+    max_count = 0
+    current_count = 0
+    result_times = []
+
+    i = 0
+    while i < len(events):
+        time = events[i][0]
+        
+        # Process all END events at this timestamp first
+        while i < len(events) and events[i][0] == time and events[i][1] == 0:
+            current_count -= 1
+            i += 1
+        
+        # Count START events at this timestamp
+        start_count = 0
+        while i < len(events) and events[i][0] == time and events[i][1] == 1:
+            current_count += 1
+            start_count += 1
+            i += 1
+        
+        # After processing all events at this timestamp, update max and results
+        if start_count > 0:  # Only consider timestamps where meetings actually start
+            if current_count > max_count:
+                # New maximum reached
+                max_count = current_count
+                result_times = [time]
+            elif current_count == max_count:
+                # Same maximum reached at this start time
+                # Avoid duplicates: check if this time is already the last recorded
+                if not result_times or result_times[-1] != time:
+                    result_times.append(time)
+
+    return max_count, result_times
+
+
+def run_test(test_num: int, intervals: List[Tuple[int, int]], 
+             expected_count: int, expected_times: List[int], 
+             description: str) -> bool:
+    """Helper function to run a single test case."""
+    result_count, result_times = find_max_active_meetings(intervals)
+    passed = (result_count == expected_count and result_times == expected_times)
+    
+    print(f"\nTest {test_num}: {description}")
+    print(f"  Input: {intervals}")
+    print(f"  Expected: max={expected_count}, times={expected_times}")
+    print(f"  Got:      max={result_count}, times={result_times}")
+    print(f"  Status: {'✓ PASSED' if passed else '✗ FAILED'}")
+    
+    if not passed:
+        print(f"  DEBUG: Current implementation: max={result_count}, times={result_times}")
+    
+    return passed
+
+
+def main():
+    """Test the function with comprehensive test cases including edge cases."""
+    
+    print("=" * 80)
+    print("INTERVAL CONFLICT ANALYZER - COMPREHENSIVE TEST SUITE")
+    print("=" * 80)
+    print("\nTesting edge cases: empty input, single intervals, disconnected structures, etc.")
+    
+    tests_passed = 0
+    total_tests = 0
+    
+    # Test 1: Empty input (smallest permitted input)
+    total_tests += 1
+    if run_test(total_tests, [], 0, [], "Empty input - smallest permitted"):
+        tests_passed += 1
+    
+    # Test 2: Single interval (smallest non-empty)
+    total_tests += 1
+    if run_test(total_tests, [(0, 1)], 1, [0], "Single interval - smallest non-empty"):
+        tests_passed += 1
+    
+    # Test 3: Single interval with different values
+    total_tests += 1
+    if run_test(total_tests, [(5, 10)], 1, [5], "Single interval - non-zero start"):
+        tests_passed += 1
+    
+    # Test 4: Disconnected intervals (non-overlapping)
+    total_tests += 1
+    if run_test(total_tests, [(0, 2), (4, 6), (8, 10)], 1, [0, 4, 8], 
+               "Disconnected structures - non-overlapping intervals"):
+        tests_passed += 1
+    
+    # Test 5: Touch at endpoints (half-open semantics)
+    total_tests += 1
+    if run_test(total_tests, [(0, 5), (5, 10), (10, 15)], 1, [0, 5, 10], 
+               "Touch at endpoints - half-open intervals"):
+        tests_passed += 1
+    
+    # Test 6: Disconnected with varying lengths
+    total_tests += 1
+    if run_test(total_tests, [(0, 10), (20, 25), (30, 35)], 1, [0, 20, 30], 
+               "Disconnected with varying lengths"):
+        tests_passed += 1
+    
+    # Test 7: Zero-duration intervals (should be ignored)
+    total_tests += 1
+    if run_test(total_tests, [(0, 0), (1, 2), (3, 3), (4, 5)], 1, [1, 4], 
+               "Zero-duration intervals - should be ignored"):
+        tests_passed += 1
+    
+    # Test 8: All zero-duration intervals (effectively empty)
+    total_tests += 1
+    if run_test(total_tests, [(0, 0), (1, 1), (2, 2)], 0, [], 
+               "All zero-duration intervals - effectively empty"):
+        tests_passed += 1
+    
+    # Test 9: Very large gaps between intervals
+    total_tests += 1
+    if run_test(total_tests, [(0, 1), (1000, 1001), (1000000, 1000001)], 1, [0, 1000, 1000000], 
+               "Very large gaps between intervals"):
+        tests_passed += 1
+    
+    # Test 10: Intervals with negative values
+    total_tests += 1
+    if run_test(total_tests, [(-5, -3), (-2, 0), (1, 3)], 1, [-5, -2, 1], 
+               "Negative values - valid timestamps"):
+        tests_passed += 1
+    
+    # Test 11: Intervals that are subsets of others
+    total_tests += 1
+    if run_test(total_tests, [(0, 10), (2, 3), (4, 5), (6, 7)], 2, [0], 
+               "Subsets - maximum at start of first"):
+        tests_passed += 1
+    
+    # Test 12: Multiple intervals with same start time
+    total_tests += 1
+    if run_test(total_tests, [(0, 5), (0, 6), (0, 7)], 3, [0], 
+               "Multiple intervals starting at same time"):
+        tests_passed += 1
+    
+    # Test 13: Maximum achieved at multiple different times
+    total_tests += 1
+    if run_test(total_tests, [(0, 10), (1, 3), (2, 4), (5, 7), (6, 8)], 2, [1, 2, 5, 6], 
+               "Maximum achieved at multiple different times"):
+        tests_passed += 1
+    
+    # Test 14: Complex overlapping with maximum at boundaries
+    total_tests += 1
+    if run_test(total_tests, [(0, 3), (1, 4), (2, 5), (3, 6)], 3, [2, 3], 
+               "Complex overlapping with maximum at boundaries"):
+        tests_passed += 1
+    
+    # Test 15: Intervals with same end time
+    total_tests += 1
+    if run_test(total_tests, [(0, 5), (1, 5), (2, 5)], 3, [0], 
+               "Multiple intervals ending at same time"):
+        tests_passed += 1
+    
+    # Test 16: Intervals with mixed durations
+    total_tests += 1
+    if run_test(total_tests, [(0, 100), (1, 2), (3, 4), (5, 6)], 2, [0], 
+               "Mixed durations with one long interval"):
+        tests_passed += 1
+    
+    # Test 17: Disconnected with two separate peaks
+    total_tests += 1
+    if run_test(total_tests, [(0, 3), (1, 4), (10, 13), (11, 14)], 2, [1, 11], 
+               "Disconnected with two separate peaks of same height"):
+        tests_passed += 1
+    
+    # Test 18: Intervals with large numbers
+    total_tests += 1
+    if run_test(total_tests, [(10**9, 10**9 + 1), (10**9 + 2, 10**9 + 3)], 1, [10**9, 10**9 + 2], 
+               "Large integer values"):
+        tests_passed += 1
+    
+    # Test 19: Intervals where max starts at multiple times within overlapping structure
+    total_tests += 1
+    if run_test(total_tests, [(0, 5), (1, 6), (2, 7), (3, 8), (4, 9)], 3, [2, 3, 4], 
+               "Maximum starts at multiple consecutive times"):
+        tests_passed += 1
+    
+    # Test 20: Duplicate intervals
+    total_tests += 1
+    if run_test(total_tests, [(0, 2), (0, 2), (1, 3)], 3, [0], 
+               "Duplicate intervals"):
+        tests_passed += 1
+    
+    # Summary
+    print("\n" + "=" * 80)
+    print(f"TEST SUMMARY: {tests_passed}/{total_tests} tests passed")
+    print("=" * 80)
+    
+    if tests_passed == total_tests:
+        print("✓ ALL TESTS PASSED - Edge cases handled correctly")
+    else:
+        print(f"✗ {total_tests - tests_passed} tests failed")
+    
+    # Additional verification of tie-breaking rules
+    print("\n" + "=" * 80)
+    print("TIE-BREAKING RULES VERIFICATION")
+    print("=" * 80)
+    
+    # Verify deterministic tie-breaking with multiple examples
+    test_cases_tie_breaking = [
+        ([(0, 3), (1, 4), (2, 5), (3, 6)], [2, 3], "Multiple peaks same height"),
+        ([(0, 2), (1, 3), (4, 6), (5, 7)], [1, 5], "Two separate peaks"),
+        ([(0, 5), (1, 6), (2, 7)], [2], "Single maximum at end"),
+        ([(0, 10), (1, 2), (2, 3)], [0], "Maximum at beginning"),
+        ([(0, 1), (1, 2), (2, 3)], [0, 1, 2], "No overlap - all maxima")
+    ]
+    
+    print("\nVerifying tie-breaking rules (all start times achieving max in sorted order):")
+    for intervals, expected_times, desc in test_cases_tie_breaking:
+        _, result_times = find_max_active_meetings(intervals)
+        sorted_expected = sorted(expected_times)
+        sorted_result = sorted(result_times)
+        status = "✓" if sorted_result == sorted_expected else "✗"
+        print(f"  {status} {desc}: {sorted_result} == {sorted_expected}")
+    
+    # Verify endpoint handling
+    print("\nVerifying half-open interval semantics (END before START at same timestamp):")
+    endpoint_tests = [
+        ([(0, 2), (2, 4)], 1, [0, 2], "Meeting ends exactly when another starts"),
+        ([(0, 2), (2, 4), (2, 3)], 2, [0], "Multiple starts at same time as end"),
+        ([(0, 3), (3, 6), (3, 5)], 2, [0], "Multiple starts after end")
+    ]
+    
+    for intervals, expected_count, expected_times, desc in endpoint_tests:
+        result_count, result_times = find_max_active_meetings(intervals)
+        status = "✓" if (result_count == expected_count and result_times == expected_times) else "✗"
+        print(f"  {status} {desc}: max={result_count}, times={result_times} (expected max={expected_count}, times={expected_times})")
+
+
+if __name__ == "__main__":
+    main()

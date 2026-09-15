@@ -1,0 +1,73 @@
+```python
+def lcs(X, Y):
+    """Longest Common Subsequence via O(m*n) DP with deterministic
+    predecessor reconstruction. Tie-break: prefer moving up (i-1)."""
+    m, n = len(X), len(Y)
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+
+    for i in range(1, m + 1):
+        xi = X[i - 1]
+        for j in range(1, n + 1):
+            if xi == Y[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = dp[i - 1][j] if dp[i - 1][j] >= dp[i][j - 1] else dp[i][j - 1]
+
+    # Reconstruct deterministically: emit a char only on a true match
+    # that contributes to the optimum; otherwise prefer moving up.
+    i, j, out = m, n, []
+    while i > 0 and j > 0:
+        if X[i - 1] == Y[j - 1] and dp[i][j] == dp[i - 1][j - 1] + 1:
+            out.append(X[i - 1])
+            i -= 1
+            j -= 1
+        elif dp[i - 1][j] >= dp[i][j - 1]:
+            i -= 1
+        else:
+            j -= 1
+
+    return ''.join(reversed(out))
+
+
+# --- Demo: buggy version vs corrected version ---
+def lcs_buggy(X, Y):
+    m, n = len(X), len(Y)
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if X[i - 1] == Y[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+    i, j, out = m, n, []
+    while i > 0 and j > 0:
+        if dp[i][j] == dp[i - 1][j]:
+            i -= 1
+        elif dp[i][j] == dp[i][j - 1]:
+            j -= 1
+        else:
+            out.append(X[i - 1])   # assumes match — may be wrong!
+            i -= 1
+            j -= 1
+    return ''.join(reversed(out))
+
+
+def is_subseq(s, t):
+    it = iter(t)
+    return all(c in it for c in s)
+
+
+X, Y = "ABCBDAB", "BDCABA"
+
+buggy = lcs_buggy(X, Y)
+print("buggy   :", repr(buggy), "len =", len(buggy),
+      "| common subseq?", is_subseq(buggy, X) and is_subseq(buggy, Y))
+
+fixed = lcs(X, Y)
+print("fixed   :", repr(fixed), "len =", len(fixed),
+      "| common subseq?", is_subseq(fixed, X) and is_subseq(fixed, Y))
+
+assert is_subseq(fixed, X) and is_subseq(fixed, Y)
+assert len(fixed) == 4
+assert lcs(X, Y) == lcs(X, Y)  # deterministic
+```

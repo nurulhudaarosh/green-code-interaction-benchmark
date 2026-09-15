@@ -1,0 +1,176 @@
+"""
+PROBLEM
+=======
+Given an integer matrix M of size R x C (0-indexed), preprocess it so that
+multiple rectangle queries can be answered efficiently. Each query specifies
+a rectangle by its top-left corner (r1, c1) and bottom-right corner (r2, c2),
+inclusive on all four bounds, and asks for one of:
+    - SUM : sum of all elements in the rectangle
+    - MIN : minimum element in the rectangle
+    - MAX : maximum element in the rectangle
+
+KEY CONSTRAINTS
+================
+- Matrix is rectangular (all rows same length), integers only.
+- 0 <= r1 <= r2 <= R-1, 0 <= c1 <= c2 <= C-1 (inclusive bounds, validated).
+- Matrix is static (no updates) — preprocessing is done once, queries follow.
+- Deterministic: no randomness, no network/API calls, no external input.
+- Standard library only.
+
+REQUIRED OUTPUT
+================
+For each query, a single numeric answer (int) corresponding to SUM, MIN,
+or MAX over the specified inclusive rectangle.
+
+ALGORITHM
+=========
+This is intentionally a MIXED workload:
+  1. SUM queries: build a 2D prefix-sum (summed-area) table once in
+     O(R*C) time/space. Each SUM query then answers in O(1) using
+     inclusion-exclusion:
+         sum(r1..r2, c1..c2) = P[r2+1][c2+1] - P[r1][c2+1]
+                                - P[r2+1][c1] + P[r1][c1]
+  2. MIN/MAX queries: no auxiliary structure (e.g. no sparse table) is
+     built. Instead we directly scan the requested sub-rectangle each
+     time, in O((r2-r1+1)*(c2-c1+1)) time per query. This keeps the
+     preprocessing cheap but makes extrema queries proportional to the
+     rectangle's area — a deliberate contrast to the O(1) SUM queries.
+
+Overall preprocessing: O(R*C) time and space (prefix-sum table only).
+Query time: O(1) for SUM, O(area of rectangle) for MIN/MAX.
+"""
+
+from typing import List, Tuple, Union
+
+
+class MatrixQueryEngine:
+    def __init__(self, matrix: List[List[int]]):
+        if not matrix or not matrix[0]:
+            raise ValueError("Matrix must be non-empty.")
+        row_len = len(matrix[0])
+        for row in matrix:
+            if len(row) != row_len:
+                raise ValueError("All rows must have the same length.")
+
+        self.matrix = matrix
+        self.rows = len(matrix)
+        self.cols = row_len
+
+        # Build (rows+1) x (cols+1) prefix-sum table, 1-indexed for convenience.
+        self.prefix = [[0] * (self.cols + 1) for _ in range(self.rows + 1)]
+        for i in range(1, self.rows + 1):
+            row_sum = 0
+            for j in range(1, self.cols + 1):
+                row_sum += matrix[i - 1][j - 1]
+                self.prefix[i][j] = self.prefix[i - 1][j] + row_sum
+
+    def _validate(self, r1: int, c1: int, r2: int, c2: int) -> None:
+        if not (0 <= r1 <= r2 < self.rows):
+            raise IndexError(f"Invalid row range: r1={r1}, r2={r2}")
+        if not (0 <= c1 <= c2 < self.cols):
+            raise IndexError(f"Invalid column range: c1={c1}, c2={c2}")
+
+    def query_sum(self, r1: int, c1: int, r2: int, c2: int) -> int:
+        """O(1) sum over inclusive rectangle using the prefix-sum table."""
+        self._validate(r1, c1, r2, c2)
+        P = self.prefix
+        return (
+            P[r2 + 1][c2 + 1]
+            - P[r1][c2 + 1]
+            - P[r2 + 1][c1]
+            + P[r1][c1]
+        )
+
+    def query_min(self, r1: int, c1: int, r2: int, c2: int) -> int:
+        """Direct scan for minimum over inclusive rectangle."""
+        self._validate(r1, c1, r2, c2)
+        best = self.matrix[r1][c1]
+        for i in range(r1, r2 + 1):
+            row = self.matrix[i]
+            for j in range(c1, c2 + 1):
+                v = row[j]
+                if v < best:
+                    best = v
+        return best
+
+    def query_max(self, r1: int, c1: int, r2: int, c2: int) -> int:
+        """Direct scan for maximum over inclusive rectangle."""
+        self._validate(r1, c1, r2, c2)
+        best = self.matrix[r1][c1]
+        for i in range(r1, r2 + 1):
+            row = self.matrix[i]
+            for j in range(c1, c2 + 1):
+                v = row[j]
+                if v > best:
+                    best = v
+        return best
+
+    def query(self, kind: str, r1: int, c1: int, r2: int, c2: int) -> int:
+        """Dispatch a query by kind: 'SUM', 'MIN', or 'MAX'."""
+        kind = kind.upper()
+        if kind == "SUM":
+            return self.query_sum(r1, c1, r2, c2)
+        elif kind == "MIN":
+            return self.query_min(r1, c1, r2, c2)
+        elif kind == "MAX":
+            return self.query_max(r1, c1, r2, c2)
+        else:
+            raise ValueError(f"Unknown query kind: {kind}")
+
+    def batch_query(
+        self, queries: List[Tuple[str, int, int, int, int]]
+    ) -> List[int]:
+        """Answer a deterministic, ordered list of queries."""
+        return [self.query(kind, r1, c1, r2, c2) for kind, r1, c1, r2, c2 in queries]
+
+
+def _brute_force(kind: str, matrix: List[List[int]], r1, c1, r2, c2) -> int:
+    """Independent brute-force reference used only for self-verification."""
+    vals = [matrix[i][j] for i in range(r1, r2 + 1) for j in range(c1, c2 + 1)]
+    if kind == "SUM":
+        return sum(vals)
+    elif kind == "MIN":
+        return min(vals)
+    elif kind == "MAX":
+        return max(vals)
+    raise ValueError(kind)
+
+
+def main() -> None:
+    matrix = [
+        [1, 2, 3, 4],
+        [5, 6, 7, 8],
+        [9, 10, 11, 12],
+        [13, 14, 15, 16],
+    ]
+
+    engine = MatrixQueryEngine(matrix)
+
+    queries: List[Tuple[str, int, int, int, int]] = [
+        ("SUM", 0, 0, 3, 3),
+        ("SUM", 1, 1, 2, 2),
+        ("MIN", 0, 0, 3, 3),
+        ("MAX", 0, 0, 3, 3),
+        ("MIN", 2, 0, 3, 1),
+        ("MAX", 0, 2, 1, 3),
+        ("SUM", 2, 2, 2, 2),
+    ]
+
+    results = engine.batch_query(queries)
+
+    print("Matrix:")
+    for row in matrix:
+        print(row)
+    print()
+
+    for (kind, r1, c1, r2, c2), result in zip(queries, results):
+        expected = _brute_force(kind, matrix, r1, c1, r2, c2)
+        status = "OK" if result == expected else "MISMATCH"
+        print(
+            f"{kind:4s} rect=({r1},{c1})-({r2},{c2}) "
+            f"-> result={result} expected={expected} [{status}]"
+        )
+
+
+if __name__ == "__main__":
+    main()

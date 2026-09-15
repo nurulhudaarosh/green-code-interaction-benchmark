@@ -1,0 +1,67 @@
+Here is the complete Python function using OpenCV and NumPy, along with image saving via `cv2.imwrite` and structured per-file min/max statistical reporting:
+
+```python
+from pathlib import Path
+import cv2
+import numpy as np
+
+
+def preprocess_images(input_dir: str, output_dir: str) -> dict:
+    """Grayscales and min-max normalizes images to [0, 255] range.
+
+    Args:
+        input_dir: Directory containing input images.
+        output_dir: Directory to save processed PNG images.
+
+    Returns:
+        dict: Mapping of filename to a dictionary with original min and max values:
+              {'filename.ext': {'min': float, 'max': float}}
+    """
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    supported_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
+    stats = {}
+
+    for file_path in input_path.iterdir():
+        if file_path.suffix.lower() not in supported_extensions:
+            continue
+
+        # Load image (returns None if unreadable)
+        img = cv2.imread(str(file_path))
+        if img is None:
+            continue
+
+        # Convert to grayscale
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        # Record original min/max stats before normalization
+        orig_min = float(np.min(gray))
+        orig_max = float(np.max(gray))
+        stats[file_path.name] = {"min": orig_min, "max": orig_max}
+
+        # Min-max normalize to [0, 255]
+        if orig_max > orig_min:
+            # Cast to float32 to prevent integer division/overflow issues
+            normalized = (
+                (gray.astype(np.float32) - orig_min) / (orig_max - orig_min)
+            ) * 255.0
+            processed = normalized.astype(np.uint8)
+        else:
+            # Handle uniform/flat-color images to avoid division by zero
+            processed = np.zeros_like(gray, dtype=np.uint8)
+
+        # Save output as PNG
+        out_file = output_path / f"{file_path.stem}.png"
+        cv2.imwrite(str(out_file), processed)
+
+    return stats
+
+```
+
+### Key Considerations
+
+* **Min-Max Formula:** Scaled as `(gray - min) / (max - min) * 255.0` converted back to `np.uint8`.
+* **Zero-Division Protection:** Handles uniform images (where `orig_max == orig_min`) by outputting a black canvas of zeros instead of throwing a divide-by-zero runtime warning.
+* **Output Format:** Uses `Path.stem` when writing to ensure output files are saved strictly as `.png` format regardless of input extensions.

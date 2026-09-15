@@ -1,0 +1,103 @@
+### Problem Identification & Understanding
+
+The problem asks us to find the length of the **Longest Common Subsequence (LCS)** between two given strings, $S_1$ and $S_2$, and reconstruct one valid LCS string deterministically.
+
+When filling the dynamic programming matrix $DP[i][j]$ (where $i$ is the index in $S_1$ and $j$ is the index in $S_2$):
+
+* If $S_1[i-1] == S_2[j-1]$, $DP[i][j] = DP[i-1][j-1] + 1$.
+* If $S_1[i-1] \neq S_2[j-1]$, $DP[i][j] = \max(DP[i-1][j], DP[i][j-1])$.
+
+**Deterministic Reconstruction Rule:**
+When reconstructing the sequence backwards from $(m, n)$ to $(0, 0)$, if $S_1[i-1] \neq S_2[j-1]$ and $DP[i-1][j] == DP[i][j-1]$ (a tie in DP scores):
+
+* The tie-breaking rule specifies **preferring advancing in the first string**.
+* Advancing in the first string during forward matching corresponds to moving to $i-1$ (decrementing $i$) during the backward reconstruction step.
+
+---
+
+### Key Constraints & Required Output
+
+* **Inputs:** Two strings, $S_1$ and $S_2$.
+* **Constraints:** Lengths $m = \vert{}S_1\vert{}$ and $n = \vert{}S_2\vert{}$ are such that a quadratic time $O(m \cdot n)$ and space $O(m \cdot n)$ dynamic programming algorithm is efficient.
+* **Output:** A tuple or pair containing:
+1. An integer representing the length of the LCS.
+2. A string representing the reconstructed LCS following the exact deterministic tie-breaking rule.
+
+
+
+---
+
+### Algorithm Description
+
+1. **DP Table Construction:**
+Build an $(m+1) \times (n+1)$ matrix $DP$, where $DP[i][j]$ stores the length of the LCS of prefixes $S_1[0 \dots i-1]$ and $S_2[0 \dots j-1]$.
+2. **Backtracking / Predecessor Reconstruction:**
+Start at $i = m, j = n$ with an empty list for characters.
+* If $i > 0$ and $j > 0$ and $S_1[i-1] == S_2[j-1]$:
+Append $S_1[i-1]$ to the result, and move to $(i-1, j-1)$.
+* Else if $i > 0$ and $j > 0$:
+* If $DP[i-1][j] \ge DP[i][j-1]$: move to $(i-1, j)$ (advancing in string $1$).
+* Else: move to $(i, j-1)$ (advancing in string $2$).
+
+
+* Else if $i > 0$: move to $(i-1, j)$.
+* Else if $j > 0$: move to $(i, j-1)$.
+
+
+3. Reverse the collected characters to produce the final LCS string.
+
+---
+
+### Deterministic Python Implementation
+
+```python
+def lcs_with_reconstruction(s1: str, s2: str) -> tuple[int, str]:
+    """
+    Computes the LCS length and reconstructs one LCS string deterministically.
+    Prefers advancing in s1 (moving i -> i-1) when DP scores are equal.
+    """
+    m, n = len(s1), len(s2)
+    
+    # Step 1: Build the DP table
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if s1[i - 1] == s2[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+                
+    lcs_length = dp[m][n]
+    
+    # Step 2: Reconstruct the sequence using the deterministic rule
+    lcs_chars = []
+    i, j = m, n
+    
+    while i > 0 and j > 0:
+        if s1[i - 1] == s2[j - 1]:
+            lcs_chars.append(s1[i - 1])
+            i -= 1
+            j -= 1
+        elif dp[i - 1][j] >= dp[i][j - 1]:
+            # Tie-breaker preference: prefer decrementing i (advancing in s1)
+            i -= 1
+        else:
+            j -= 1
+            
+    # Reverse to get correct order
+    reconstructed_lcs = "".join(reversed(lcs_chars))
+    
+    return lcs_length, reconstructed_lcs
+
+
+# Example usage:
+if __name__ == "__main__":
+    str1 = "ABCBDAB"
+    str2 = "BDCABA"
+    
+    length, lcs_str = lcs_with_reconstruction(str1, str2)
+    print(f"LCS Length: {length}")
+    print(f"Reconstructed LCS: '{lcs_str}'")
+
+```

@@ -1,0 +1,837 @@
+"""
+Maximum Flow Planner — Boundary-Value Handling
+==============================================
+
+PROBLEM RESTATEMENT
+-------------------
+Given a directed capacitated network, a source vertex s, and a sink
+vertex t, compute the maximum possible flow from s to t.
+
+Also return the flow carried by every ORIGINAL edge, preserving the
+exact order in which the edges were provided.
+
+The planner must:
+- use Dinic's blocking-flow algorithm;
+- support directed edges;
+- support non-negative capacities;
+- support parallel edges;
+- preserve original edge order;
+- preserve separate identities of parallel edges;
+- behave deterministically;
+- obey all capacity and flow-conservation rules;
+- use only the Python standard library;
+- use no network, APIs, external services, randomness, or human
+  interaction.
+
+EXISTING REQUIRED OUTPUT
+------------------------
+When operation_summary is not requested:
+
+{
+    "max_flow": <maximum s-t flow>,
+    "edge_flows": [<flow for original edge 0>,
+                   <flow for original edge 1>,
+                   ...]
+}
+
+When operation_summary is explicitly requested, the original fields
+remain unchanged and one additional field is returned:
+
+{
+    "max_flow": ...,
+    "edge_flows": [...],
+    "operation_summary": {
+        "bfs_level_graph_builds": ...,
+        "dfs_blocking_flow_calls": ...,
+        "successful_flow_augmentations": ...,
+        "edge_scans": ...
+    }
+}
+
+BOUNDARY-INPUT HANDLING
+-----------------------
+The implementation uses Python integers, which do not overflow at
+64-bit boundaries.
+
+The tests explicitly cover the common maximum signed 64-bit value:
+
+    MAX_CAPACITY = 2**63 - 1
+
+This verifies that:
+- a single edge can carry the maximum capacity;
+- multiple maximum-capacity edges can be combined;
+- the maximum flow can exceed a signed 64-bit integer;
+- no artificial 32-bit/64-bit overflow occurs;
+- zero is handled correctly;
+- boundary capacities remain within their original limits.
+
+No arbitrary smaller integer sentinel is used for infinity. Python's
+integer arithmetic is exact, and the blocking-flow routine receives
+the sum of relevant capacities as its initial upper bound.
+
+TIE / DETERMINISM RULES
+-----------------------
+There is no optimization tie-breaker beyond the required original
+edge order, but all internal traversal choices are deterministic:
+
+- adjacency lists are populated in original input order;
+- BFS scans adjacency lists in that order;
+- DFS scans adjacency lists in that order;
+- parallel edges are kept as separate residual edges;
+- original edge references are stored explicitly;
+- edge_flows are reconstructed by original edge ID/order.
+
+Thus, repeated execution on identical input produces identical output,
+including operation_summary.
+
+IMPORTANT IMPLEMENTATION DETAIL
+--------------------------------
+A previous class of bugs can occur if the implementation reports
+residual edges directly. That can reorder edges or merge parallel
+edges.
+
+This implementation instead stores:
+
+    (u, v, original_capacity, forward_edge_index)
+
+for every original edge and reconstructs its flow from that exact
+forward residual edge.
+
+"""
+
+from collections import deque
+
+
+MAX_CAPACITY = 2**63 - 1
+
+
+class Dinic:
+    def __init__(self, n):
+        self.n = n
+        self.graph = [[] for _ in range(n)]
+
+        # Stored strictly in original input order.
+        #
+        # (u, v, original_capacity, forward_edge_index)
+        self.original_edges = []
+
+        # Deterministic operation counters.
+        self.bfs_level_graph_builds = 0
+        self.dfs_blocking_flow_calls = 0
+        self.successful_flow_augmentations = 0
+        self.edge_scans = 0
+
+    def add_edge(self, u, v, capacity):
+        if capacity < 0:
+            raise ValueError("Capacity must be non-negative.")
+
+        forward_index = len(self.graph[u])
+        reverse_index = len(self.graph[v])
+
+        # Residual edge format:
+        # [destination, residual_capacity, reverse_edge_index]
+        forward = [v, capacity, reverse_index]
+        reverse = [u, 0, forward_index]
+
+        self.graph[u].append(forward)
+        self.graph[v].append(reverse)
+
+        self.original_edges.append(
+            (u, v, capacity, forward_index)
+        )
+
+    def _build_level_graph(self, source, sink):
+        self.bfs_level_graph_builds += 1
+
+        self.level = [-1] * self.n
+        self.level[source] = 0
+
+        queue = deque([source])
+
+        while queue:
+            u = queue.popleft()
+
+            for edge in self.graph[u]:
+                self.edge_scans += 1
+
+                v, capacity, _ = edge
+
+                if capacity > 0 and self.level[v] == -1:
+                    self.level[v] = self.level[u] + 1
+                    queue.append(v)
+
+        return self.level[sink] != -1
+
+    def _send_blocking_flow(self, u, sink, pushed):
+        self.dfs_blocking_flow_calls += 1
+
+        if u == sink:
+            self.successful_flow_augmentations += 1
+            return pushed
+
+        while self.pointer[u] < len(self.graph[u]):
+            edge_index = self.pointer[u]
+            edge = self.graph[u][edge_index]
+
+            self.edge_scans += 1
+
+            v, capacity, reverse_index = edge
+
+            if (
+                capacity > 0
+                and self.level[v] == self.level[u] + 1
+            ):
+                flow = self._send_blocking_flow(
+                    v,
+                    sink,
+                    min(pushed, capacity)
+                )
+
+                if flow > 0:
+                    edge[1] -= flow
+                    self.graph[v][reverse_index][1] += flow
+                    return flow
+
+            self.pointer[u] += 1
+
+        return 0
+
+    def max_flow(self, source, sink):
+        if source == sink:
+            return 0
+
+        total_flow = 0
+
+        # This is deliberately larger than any single valid capacity
+        # and is safe because Python integers have arbitrary precision.
+        infinity = sum(
+            capacity
+            for _, _, capacity, _ in self.original_edges
+            if capacity > 0
+        )
+
+        if infinity == 0:
+            infinity = 1
+
+        while self._build_level_graph(source, sink):
+            self.pointer = [0] * self.n
+
+            while True:
+                pushed = self._send_blocking_flow(
+                    source,
+                    sink,
+                    infinity
+                )
+
+                if pushed == 0:
+                    break
+
+                total_flow += pushed
+
+        return total_flow
+
+    def get_original_edge_flows(self):
+        """
+        Recover every original edge flow in original input order.
+        """
+        flows = []
+
+        for u, v, original_capacity, forward_index in self.original_edges:
+            remaining_capacity = self.graph[u][forward_index][1]
+
+            flow = original_capacity - remaining_capacity
+
+            flows.append(flow)
+
+        return flows
+
+    def get_operation_summary(self):
+        return {
+            "bfs_level_graph_builds": self.bfs_level_graph_builds,
+            "dfs_blocking_flow_calls": self.dfs_blocking_flow_calls,
+            "successful_flow_augmentations": (
+                self.successful_flow_augmentations
+            ),
+            "edge_scans": self.edge_scans,
+        }
+
+
+def maximum_flow_planner(
+    n,
+    edges,
+    source,
+    sink,
+    include_operation_summary=False
+):
+    """
+    Compute maximum s-t flow using deterministic Dinic.
+
+    The original output is preserved exactly when
+    include_operation_summary=False.
+
+    Parameters:
+        n:
+            Number of vertices.
+
+        edges:
+            List of (u, v, capacity) tuples in original order.
+
+        source:
+            Source vertex.
+
+        sink:
+            Sink vertex.
+
+        include_operation_summary:
+            If True, add the deterministic operation_summary field.
+
+    Returns:
+        Without summary:
+            {
+                "max_flow": int,
+                "edge_flows": list[int]
+            }
+
+        With summary:
+            {
+                "max_flow": int,
+                "edge_flows": list[int],
+                "operation_summary": dict
+            }
+    """
+
+    if n < 0:
+        raise ValueError("Number of vertices cannot be negative.")
+
+    if not (0 <= source < n):
+        raise ValueError("Invalid source vertex.")
+
+    if not (0 <= sink < n):
+        raise ValueError("Invalid sink vertex.")
+
+    dinic = Dinic(n)
+
+    for u, v, capacity in edges:
+        if not (0 <= u < n):
+            raise ValueError("Invalid edge source vertex.")
+
+        if not (0 <= v < n):
+            raise ValueError("Invalid edge destination vertex.")
+
+        if capacity < 0:
+            raise ValueError("Capacity must be non-negative.")
+
+        dinic.add_edge(u, v, capacity)
+
+    result = {
+        "max_flow": dinic.max_flow(source, sink),
+        "edge_flows": dinic.get_original_edge_flows(),
+    }
+
+    if include_operation_summary:
+        result["operation_summary"] = (
+            dinic.get_operation_summary()
+        )
+
+    return result
+
+
+# =====================================================================
+# TESTS
+# =====================================================================
+
+def run_tests():
+
+    # ---------------------------------------------------------------
+    # 1. Basic network
+    # ---------------------------------------------------------------
+    edges = [
+        (0, 1, 10),
+        (0, 2, 10),
+        (1, 3, 4),
+        (2, 3, 6),
+    ]
+
+    result = maximum_flow_planner(
+        4,
+        edges,
+        0,
+        3
+    )
+
+    assert result == {
+        "max_flow": 10,
+        "edge_flows": [4, 6, 4, 6],
+    }
+
+
+    # ---------------------------------------------------------------
+    # 2. Original input order must be preserved
+    # ---------------------------------------------------------------
+    edges = [
+        (2, 3, 7),   # original edge 0
+        (0, 2, 7),   # original edge 1
+        (0, 1, 5),   # original edge 2
+        (1, 3, 5),   # original edge 3
+    ]
+
+    result = maximum_flow_planner(
+        4,
+        edges,
+        0,
+        3
+    )
+
+    assert result == {
+        "max_flow": 12,
+        "edge_flows": [7, 7, 5, 5],
+    }
+
+
+    # ---------------------------------------------------------------
+    # 3. Parallel edges
+    # ---------------------------------------------------------------
+    edges = [
+        (0, 1, 3),
+        (0, 1, 7),
+    ]
+
+    result = maximum_flow_planner(
+        2,
+        edges,
+        0,
+        1
+    )
+
+    assert result == {
+        "max_flow": 10,
+        "edge_flows": [3, 7],
+    }
+
+
+    # ---------------------------------------------------------------
+    # 4. Zero-capacity boundary
+    # ---------------------------------------------------------------
+    edges = [
+        (0, 1, 0),
+        (1, 2, 10),
+    ]
+
+    result = maximum_flow_planner(
+        3,
+        edges,
+        0,
+        2
+    )
+
+    assert result == {
+        "max_flow": 0,
+        "edge_flows": [0, 0],
+    }
+
+
+    # ---------------------------------------------------------------
+    # 5. No path from source to sink
+    # ---------------------------------------------------------------
+    edges = [
+        (0, 1, 100),
+        (2, 3, 100),
+    ]
+
+    result = maximum_flow_planner(
+        4,
+        edges,
+        0,
+        3
+    )
+
+    assert result == {
+        "max_flow": 0,
+        "edge_flows": [0, 0],
+    }
+
+
+    # ---------------------------------------------------------------
+    # 6. Maximum signed 64-bit capacity on a single edge
+    #
+    # This is the important upper-bound capacity test.
+    # ---------------------------------------------------------------
+    M = MAX_CAPACITY
+
+    result = maximum_flow_planner(
+        2,
+        [(0, 1, M)],
+        0,
+        1
+    )
+
+    assert result == {
+        "max_flow": M,
+        "edge_flows": [M],
+    }
+
+
+    # ---------------------------------------------------------------
+    # 7. Two maximum-capacity parallel edges
+    #
+    # The answer is 2 * (2**63 - 1), which is larger than the
+    # maximum signed 64-bit integer.
+    #
+    # This verifies that the implementation does not overflow.
+    # ---------------------------------------------------------------
+    edges = [
+        (0, 1, M),
+        (0, 1, M),
+    ]
+
+    result = maximum_flow_planner(
+        2,
+        edges,
+        0,
+        1
+    )
+
+    assert result == {
+        "max_flow": 2 * M,
+        "edge_flows": [M, M],
+    }
+
+
+    # ---------------------------------------------------------------
+    # 8. Maximum-capacity values on two independent paths
+    #
+    # Maximum flow is again greater than 64-bit signed range.
+    # ---------------------------------------------------------------
+    edges = [
+        (0, 1, M),
+        (0, 2, M),
+        (1, 3, M),
+        (2, 3, M),
+    ]
+
+    result = maximum_flow_planner(
+        4,
+        edges,
+        0,
+        3
+    )
+
+    assert result == {
+        "max_flow": 2 * M,
+        "edge_flows": [M, M, M, M],
+    }
+
+
+    # ---------------------------------------------------------------
+    # 9. Boundary capacity mixed with a small capacity
+    #
+    # The bottleneck is the small edge, so the maximum edge capacity
+    # must not force every edge to carry the maximum value.
+    # ---------------------------------------------------------------
+    edges = [
+        (0, 1, M),
+        (1, 2, 1),
+        (2, 3, M),
+    ]
+
+    result = maximum_flow_planner(
+        4,
+        edges,
+        0,
+        3
+    )
+
+    assert result == {
+        "max_flow": 1,
+        "edge_flows": [1, 1, 1],
+    }
+
+
+    # ---------------------------------------------------------------
+    # 10. Boundary capacity with zero-capacity parallel edge
+    # ---------------------------------------------------------------
+    edges = [
+        (0, 1, 0),
+        (0, 1, M),
+        (0, 1, 0),
+    ]
+
+    result = maximum_flow_planner(
+        2,
+        edges,
+        0,
+        1
+    )
+
+    assert result == {
+        "max_flow": M,
+        "edge_flows": [0, M, 0],
+    }
+
+
+    # ---------------------------------------------------------------
+    # 11. Maximum capacity with residual routing
+    # ---------------------------------------------------------------
+    edges = [
+        (0, 1, M),
+        (0, 2, M),
+        (1, 2, M),
+        (1, 3, M),
+        (2, 3, M),
+    ]
+
+    result = maximum_flow_planner(
+        4,
+        edges,
+        0,
+        3
+    )
+
+    assert result["max_flow"] == 2 * M
+
+    for edge, flow in zip(edges, result["edge_flows"]):
+        assert 0 <= flow <= edge[2]
+
+
+    # ---------------------------------------------------------------
+    # 12. Flow conservation for a boundary-value network
+    # ---------------------------------------------------------------
+    edges = [
+        (0, 1, M),
+        (0, 2, M),
+        (1, 3, M),
+        (2, 3, M),
+    ]
+
+    result = maximum_flow_planner(
+        4,
+        edges,
+        0,
+        3
+    )
+
+    flows = result["edge_flows"]
+
+    # Vertex 1
+    assert flows[0] == flows[2]
+
+    # Vertex 2
+    assert flows[1] == flows[3]
+
+    # Source/sink total flow
+    assert flows[0] + flows[1] == result["max_flow"]
+    assert flows[2] + flows[3] == result["max_flow"]
+
+
+    # ---------------------------------------------------------------
+    # 13. Source equals sink at the boundary case
+    # ---------------------------------------------------------------
+    edges = [
+        (0, 1, M),
+        (1, 2, M),
+    ]
+
+    result = maximum_flow_planner(
+        3,
+        edges,
+        1,
+        1
+    )
+
+    assert result == {
+        "max_flow": 0,
+        "edge_flows": [0, 0],
+    }
+
+
+    # ---------------------------------------------------------------
+    # 14. Empty graph
+    # ---------------------------------------------------------------
+    result = maximum_flow_planner(
+        3,
+        [],
+        0,
+        2
+    )
+
+    assert result == {
+        "max_flow": 0,
+        "edge_flows": [],
+    }
+
+
+    # ---------------------------------------------------------------
+    # 15. Exact original output when optional feature is disabled
+    # ---------------------------------------------------------------
+    result = maximum_flow_planner(
+        2,
+        [(0, 1, M)],
+        0,
+        1,
+        include_operation_summary=False
+    )
+
+    assert list(result.keys()) == [
+        "max_flow",
+        "edge_flows",
+    ]
+
+    assert result == {
+        "max_flow": M,
+        "edge_flows": [M],
+    }
+
+
+    # ---------------------------------------------------------------
+    # 16. operation_summary does not alter the actual answer
+    # ---------------------------------------------------------------
+    without_summary = maximum_flow_planner(
+        4,
+        [
+            (0, 1, M),
+            (0, 2, M),
+            (1, 3, M),
+            (2, 3, M),
+        ],
+        0,
+        3
+    )
+
+    with_summary = maximum_flow_planner(
+        4,
+        [
+            (0, 1, M),
+            (0, 2, M),
+            (1, 3, M),
+            (2, 3, M),
+        ],
+        0,
+        3,
+        include_operation_summary=True
+    )
+
+    assert with_summary["max_flow"] == (
+        without_summary["max_flow"]
+    )
+
+    assert with_summary["edge_flows"] == (
+        without_summary["edge_flows"]
+    )
+
+
+    # ---------------------------------------------------------------
+    # 17. operation_summary exists only when requested
+    # ---------------------------------------------------------------
+    result = maximum_flow_planner(
+        2,
+        [(0, 1, M)],
+        0,
+        1,
+        include_operation_summary=True
+    )
+
+    assert set(result.keys()) == {
+        "max_flow",
+        "edge_flows",
+        "operation_summary",
+    }
+
+    summary = result["operation_summary"]
+
+    assert set(summary.keys()) == {
+        "bfs_level_graph_builds",
+        "dfs_blocking_flow_calls",
+        "successful_flow_augmentations",
+        "edge_scans",
+    }
+
+    assert summary["bfs_level_graph_builds"] >= 1
+    assert summary["dfs_blocking_flow_calls"] >= 1
+    assert summary["successful_flow_augmentations"] >= 1
+    assert summary["edge_scans"] >= 1
+
+
+    # ---------------------------------------------------------------
+    # 18. Determinism at the input boundary
+    # ---------------------------------------------------------------
+    edges = [
+        (0, 1, M),
+        (0, 1, M),
+        (1, 2, M),
+        (1, 2, M),
+    ]
+
+    result_a = maximum_flow_planner(
+        3,
+        edges,
+        0,
+        2,
+        include_operation_summary=True
+    )
+
+    result_b = maximum_flow_planner(
+        3,
+        edges,
+        0,
+        2,
+        include_operation_summary=True
+    )
+
+    assert result_a == result_b
+
+
+    # ---------------------------------------------------------------
+    # 19. Negative capacity is invalid, even though zero and MAX are
+    # valid boundary values.
+    # ---------------------------------------------------------------
+    try:
+        maximum_flow_planner(
+            2,
+            [(0, 1, -1)],
+            0,
+            1
+        )
+        assert False, "Negative capacity should raise ValueError."
+    except ValueError:
+        pass
+
+
+    # ---------------------------------------------------------------
+    # 20. Maximum capacity does not cause artificial overflow when
+    # several edges contribute to the same source-sink flow.
+    # ---------------------------------------------------------------
+    edges = [
+        (0, 1, M),
+        (0, 2, M),
+        (0, 3, M),
+        (1, 4, M),
+        (2, 4, M),
+        (3, 4, M),
+        (4, 5, 3 * M),
+    ]
+
+    result = maximum_flow_planner(
+        6,
+        edges,
+        0,
+        5
+    )
+
+    assert result["max_flow"] == 3 * M
+
+    assert result["edge_flows"] == [
+        M,
+        M,
+        M,
+        M,
+        M,
+        M,
+        3 * M,
+    ]
+
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()

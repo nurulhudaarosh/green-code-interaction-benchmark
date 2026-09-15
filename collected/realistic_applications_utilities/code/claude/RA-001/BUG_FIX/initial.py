@@ -1,0 +1,315 @@
+import csv
+import json
+import statistics
+from dataclasses import dataclass
+from datetime import datetime
+from collections import defaultdict
+from pathlib import Path
+
+
+@dataclass
+class Expense:
+    date: datetime
+    description: str
+    amount: float
+    category: str = "Uncategorized"
+
+
+@dataclass
+class SkippedRecord:
+    row: dict
+    reason: str
+
+
+class ExpenseAnalyzer:
+    """
+    Complete expense analyzer.
+
+    1. Data loading/parsing (CSV or list of dicts)
+    2. Automatic categorization
+    3. Summary statistics (totals, monthly breakdown, averages)
+    4. Anomaly / outlier detection
+    5. Report export (JSON, CSV, and text summary)
+
+    Malformed records are validated and skipped individually (with the
+    reason recorded) instead of aborting the whole load.
+    """
+
+    CATEGORY_KEYWORDS = {
+        "Groceries": ["grocery", "supermarket", "market", "walmart", "aldi"],
+        "Dining": ["restaurant", "cafe", "coffee", "pizza", "diner"],
+        "Transport": ["uber", "lyft", "taxi", "fuel", "gas station", "metro"],
+        "Utilities": ["electric", "water bill", "internet", "gas bill", "phone"],
+        "Entertainment": ["netflix", "spotify", "cinema", "movie", "game"],
+        "Rent": ["rent", "lease", "landlord"],
+        "Shopping": ["amazon", "mall", "clothing", "store"],
+        "Health": ["pharmacy", "doctor", "hospital", "clinic", "gym"],
+    }
+
+    REQUIRED_FIELDS = ("date", "amount")
+
+    def __init__(self):
+        self.expenses: list[Expense] = []
+        self.skipped: list[SkippedRecord] = []
+
+    # ---------- 1. DATA LOADING ----------
+    def load_from_csv(self, filepath: str, date_format: str = "%Y-%m-%d"):
+        path = Path(filepath)
+        if not path.exists():
+            raise FileNotFoundError(f"No such file: {filepath}")
+
+        with open(path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                self._add_row(row, date_format)
+
+    def load_from_records(self, records: list[dict], date_format: str = "%Y-%m-%d"):
+        for row in records:
+            self._add_row(row, date_format)
+
+    def _add_row(self, row: dict, date_format: str):
+        """
+        Validate and add a single row. Never raises: any problem is
+        recorded in self.skipped with a human-readable reason, and
+        processing continues with the next row.
+        """
+        if not isinstance(row, dict):
+            self.skipped.append(SkippedRecord(row=row, reason="Row is not a dict/record"))
+            return
+
+        # Check required fields are present and non-empty
+        missing = [f for f in self.REQUIRED_FIELDS if row.get(f) in (None, "")]
+        if missing:
+            self.skipped.append(
+                SkippedRecord(row=row, reason=f"Missing required field(s): {', '.join(missing)}")
+            )
+            return
+
+        # Validate date
+        raw_date = str(row["date"]).strip()
+        try:
+            date = datetime.strptime(raw_date, date_format)
+        except ValueError:
+            self.skipped.append(
+                SkippedRecord(row=row, reason=f"Invalid date '{raw_date}' (expected format {date_format})")
+            )
+            return
+
+        # Validate amount
+        raw_amount = row["amount"]
+        try:
+            amount = float(str(raw_amount).replace("$", "").replace(",", "").strip())
+        except (ValueError, TypeError):
+            self.skipped.append(
+                SkippedRecord(row=row, reason=f"Invalid amount '{raw_amount}' (not a number)")
+            )
+            return
+
+        if amount < 0:
+            self.skipped.append(
+                SkippedRecord(row=row, reason=f"Negative amount '{raw_amount}' not allowed")
+            )
+            return
+
+        description = str(row.get("description", "")).strip()
+        category = str(row.get("category", "")).strip() or None
+
+        expense = Expense(date=date, description=description, amount=amount)
+        expense.category = category or self.categorize(description)
+        self.expenses.append(expense)
+
+    def skipped_report(self) -> str:
+        if not self.skipped:
+            return "No malformed records were skipped."
+        lines = [f"Skipped {len(self.skipped)} malformed record(s):"]
+        for s in self.skipped:
+            lines.append(f"  - {s.reason} | raw row: {s.row}")
+        return "\n".join(lines)
+
+    # ---------- 2. CATEGORIZATION ----------
+    def categorize(self, description: str) -> str:
+        desc_lower = description.lower()
+        for category, keywords in self.CATEGORY_KEYWORDS.items():
+            if any(kw in desc_lower for kw in keywords):
+                return category
+        return "Uncategorized"
+
+    def recategorize_all(self):
+        for exp in self.expenses:
+            exp.category = self.categorize(exp.description)
+
+    # ---------- 3. SUMMARY STATISTICS ----------
+    def total_spent(self) -> float:
+        return round(sum(e.amount for e in self.expenses), 2)
+
+    def spending_by_category(self) -> dict:
+        totals = defaultdict(float)
+        for e in self.expenses:
+            totals[e.category] += e.amount
+        return {k: round(v, 2) for k, v in sorted(totals.items(), key=lambda x: -x[1])}
+
+    def monthly_breakdown(self) -> dict:
+        totals = defaultdict(float)
+        for e in self.expenses:
+            key = e.date.strftime("%Y-%m")
+            totals[key] += e.amount
+        return {k: round(v, 2) for k, v in sorted(totals.items())}
+
+    def average_transaction(self) -> float:
+        if not self.expenses:
+            return 0.0
+        return round(self.total_spent() / len(self.expenses), 2)
+
+    def summary_stats(self) -> dict:
+        amounts = [e.amount for e in self.expenses]
+        if not amounts:
+            return {}
+        return {
+            "count": len(amounts),
+            "total": round(sum(amounts), 2),
+            "mean": round(statistics.mean(amounts), 2),
+            "median": round(statistics.median(amounts), 2),
+            "stdev": round(statistics.stdev(amounts), 2) if len(amounts) > 1 else 0.0,
+            "min": round(min(amounts), 2),
+            "max": round(max(amounts), 2),
+        }
+
+    # ---------- 4. ANOMALY DETECTION ----------
+    def detect_anomalies(self, z_threshold: float = 2.0) -> list[Expense]:
+        """Flag expenses whose amount is a statistical outlier (z-score based)."""
+        amounts = [e.amount for e in self.expenses]
+        if len(amounts) < 2:
+            return []
+
+        mean = statistics.mean(amounts)
+        stdev = statistics.stdev(amounts)
+        if stdev == 0:
+            return []
+
+        anomalies = []
+        for e in self.expenses:
+            z = (e.amount - mean) / stdev
+            if abs(z) >= z_threshold:
+                anomalies.append(e)
+        return sorted(anomalies, key=lambda e: -abs(e.amount))
+
+    def category_spikes(self, factor: float = 2.0) -> dict:
+        """Flag categories whose monthly spend spikes above `factor` times their average month."""
+        monthly_cat = defaultdict(lambda: defaultdict(float))
+        for e in self.expenses:
+            month = e.date.strftime("%Y-%m")
+            monthly_cat[e.category][month] += e.amount
+
+        spikes = {}
+        for category, months in monthly_cat.items():
+            values = list(months.values())
+            if len(values) < 2:
+                continue
+            avg = statistics.mean(values)
+            for month, val in months.items():
+                if avg > 0 and val >= avg * factor:
+                    spikes.setdefault(category, []).append((month, round(val, 2), round(avg, 2)))
+        return spikes
+
+    # ---------- 5. REPORT EXPORT ----------
+    def export_json(self, filepath: str):
+        report = self._build_report()
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2, default=str)
+
+    def export_csv(self, filepath: str):
+        with open(filepath, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["date", "description", "amount", "category"])
+            for e in self.expenses:
+                writer.writerow([e.date.strftime("%Y-%m-%d"), e.description, e.amount, e.category])
+
+    def text_summary(self) -> str:
+        stats = self.summary_stats()
+        if not stats:
+            return "No expenses recorded."
+
+        lines = []
+        lines.append("=" * 50)
+        lines.append("EXPENSE ANALYSIS REPORT")
+        lines.append("=" * 50)
+        lines.append(f"Total spent:        ${stats['total']:.2f}")
+        lines.append(f"Transactions:       {stats['count']}")
+        lines.append(f"Average amount:     ${stats['mean']:.2f}")
+        lines.append(f"Median amount:      ${stats['median']:.2f}")
+        lines.append(f"Std deviation:      ${stats['stdev']:.2f}")
+        lines.append(f"Min / Max:          ${stats['min']:.2f} / ${stats['max']:.2f}")
+
+        lines.append("\n--- Spending by Category ---")
+        for cat, amt in self.spending_by_category().items():
+            lines.append(f"  {cat:<15} ${amt:.2f}")
+
+        lines.append("\n--- Monthly Breakdown ---")
+        for month, amt in self.monthly_breakdown().items():
+            lines.append(f"  {month}: ${amt:.2f}")
+
+        anomalies = self.detect_anomalies()
+        lines.append(f"\n--- Anomalies Detected ({len(anomalies)}) ---")
+        for e in anomalies:
+            lines.append(f"  {e.date.strftime('%Y-%m-%d')} | {e.description} | ${e.amount:.2f} | {e.category}")
+
+        spikes = self.category_spikes()
+        if spikes:
+            lines.append("\n--- Category Spending Spikes ---")
+            for cat, entries in spikes.items():
+                for month, val, avg in entries:
+                    lines.append(f"  {cat} spiked in {month}: ${val:.2f} (avg ${avg:.2f})")
+
+        if self.skipped:
+            lines.append(f"\n--- Skipped Malformed Records ({len(self.skipped)}) ---")
+            for s in self.skipped:
+                lines.append(f"  {s.reason} | raw row: {s.row}")
+
+        lines.append("=" * 50)
+        return "\n".join(lines)
+
+    def _build_report(self) -> dict:
+        return {
+            "summary_stats": self.summary_stats(),
+            "spending_by_category": self.spending_by_category(),
+            "monthly_breakdown": self.monthly_breakdown(),
+            "anomalies": [
+                {
+                    "date": e.date.strftime("%Y-%m-%d"),
+                    "description": e.description,
+                    "amount": e.amount,
+                    "category": e.category,
+                }
+                for e in self.detect_anomalies()
+            ],
+            "category_spikes": self.category_spikes(),
+            "skipped_records": [
+                {"reason": s.reason, "row": s.row} for s in self.skipped
+            ],
+        }
+
+
+if __name__ == "__main__":
+    sample_data = [
+        {"date": "2026-01-05", "description": "Whole Foods Market", "amount": "85.20"},
+        {"date": "2026-01-12", "description": "Uber ride", "amount": "22.50"},
+        {"date": "2026-01-15", "description": "Netflix subscription", "amount": "15.99"},
+        {"date": "2026-01-20", "description": "Rent payment", "amount": "1200.00"},
+        {"date": "2026-02-02", "description": "Pizza Place", "amount": "34.10"},
+        {"date": "2026-02-10", "description": "Electric bill", "amount": "78.40"},
+        {"date": "2026-02-14", "description": "Amazon order", "amount": "560.00"},  # outlier
+        {"date": "2026-02-18", "description": "Coffee shop", "amount": "6.50"},
+        {"date": "2026-02-25", "description": "Gym membership", "amount": "40.00"},
+        {"date": "2026-03-01", "description": "Rent payment", "amount": "1200.00"},
+        # --- malformed rows below, now handled gracefully instead of crashing ---
+        {"date": "2026-13-40", "description": "Bad date", "amount": "10.00"},
+        {"date": "2026-03-05", "description": "Missing amount"},
+        {"date": "2026-03-06", "description": "Bad amount", "amount": "not_a_number"},
+        {"date": "2026-03-07", "description": "Negative amount", "amount": "-15.00"},
+        {"description": "No date at all", "amount": "12.00"},
+        "not_even_a_dict",
+    ]
+
+    analyzer = ExpenseAnalyzer()
+    analyzer.load_from_records(sample_data)
+    print(analyzer.text_summary())

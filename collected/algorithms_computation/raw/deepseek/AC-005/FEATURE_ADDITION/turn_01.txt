@@ -1,0 +1,104 @@
+I need to solve a problem where we're given an integer sequence and we must find a strictly increasing subsequence of maximum length. Among all such subsequences of maximum length, we must return the one whose **original-index sequence** is lexicographically smallest.
+
+---
+
+### Key constraints and required output:
+- Input: a sequence of integers (length `n`).
+- Output: the sequence of **original indices** (0-based or 1-based? We'll use 0-based internally, but can present as 1-based if requested) that gives a strictly increasing subsequence of maximum length, and among all maximum-length ones, the index sequence is lexicographically smallest.
+- Lexicographic comparison is done on the sequence of indices, not values.
+
+---
+
+### Algorithm:
+We'll use **quadratic dynamic programming**:
+- `dp[i]` = length of the longest strictly increasing subsequence ending at index `i`.
+- `prev[i]` = predecessor index for reconstructing one optimal subsequence ending at `i`.
+- But to handle lexicographically smallest index sequence among optimal solutions, we need a careful tie-breaking.
+
+Standard approach:
+- For each `i` from 0 to n-1:
+  - `dp[i] = 1`, `prev[i] = -1`
+  - For each `j < i`:
+    - If `arr[j] < arr[i]`:
+      - If `dp[j] + 1 > dp[i]`:
+        - Update dp, prev.
+      - Else if `dp[j] + 1 == dp[i]`:
+        - We need to choose the predecessor that gives lexicographically smaller index sequence when prepended to `i`.
+        - Since sequences ending at `i` are `(seq_for_j) + [i]`, the lexicographic order of index sequences is determined by comparing sequences for `j` first, and if equal, then by `i` (but `i` is same). So we compare the index sequences for `j` and the current best predecessor.
+        - We need to store the full index sequence or a way to compare. Since n can be up to a few thousand (quadratic OK up to ~5000), we can store the sequence itself for each `i`, but that would be O(n^2) memory. Instead, we can store predecessor and compare on the fly using recursion or iterative comparison.
+        - Simpler: store `seq[i]` as tuple of indices (or list) for the best sequence ending at `i`. That is O(n^2) memory worst-case (n * avg length) which is O(n^2) total if we store copies, but for n up to 2000 it's fine. For safety, we can store predecessor and compare by tracing back.
+
+We'll store `prev[i]` and also a ranking/hash or directly compare sequences by reconstructing both and comparing lexicographically. Since DP is O(n^2), we can afford O(length) comparison per tie, which is O(n) per tie, leading to O(n^3) worst-case, which might be too slow for n=5000. Better: store the sequence as a tuple for each i (total O(n^2) memory) and compare tuples directly (O(length) but in C for tuple comparison). That is acceptable for n up to 2000-3000.
+
+Given typical contest constraints, n ≤ 2000 is common for O(n^2) DP, so we'll go with storing the index tuple for each i.
+
+---
+
+### Implementation plan:
+1. Read input sequence (list of ints).
+2. Initialize:
+   - `dp = [1]*n`
+   - `best_seq = [None]*n`  # tuple of indices for optimal subsequence ending at i
+   - For each i, `best_seq[i] = (i,)`
+3. For i from 0 to n-1:
+   - For j from 0 to i-1:
+     - If arr[j] < arr[i]:
+       - candidate_len = dp[j] + 1
+       - candidate_seq = best_seq[j] + (i,)
+       - If candidate_len > dp[i]:
+         - update dp[i], best_seq[i]
+       - Else if candidate_len == dp[i]:
+         - Compare candidate_seq with best_seq[i] lexicographically, keep smaller.
+4. After filling, find max_len = max(dp), and collect all indices i where dp[i] == max_len.
+5. Among those, pick the one with lexicographically smallest best_seq[i].
+6. Return that tuple (or list).
+
+---
+
+### Deterministic Python implementation:
+```python
+import sys
+
+def solve():
+    # Read input: first integer n, then n integers
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    n = int(data[0])
+    arr = list(map(int, data[1:1+n]))
+    
+    if n == 0:
+        print()
+        return
+    
+    dp = [1] * n
+    best_seq = [(i,) for i in range(n)]
+    
+    for i in range(n):
+        for j in range(i):
+            if arr[j] < arr[i]:
+                cand_len = dp[j] + 1
+                cand_seq = best_seq[j] + (i,)
+                if cand_len > dp[i]:
+                    dp[i] = cand_len
+                    best_seq[i] = cand_seq
+                elif cand_len == dp[i]:
+                    if cand_seq < best_seq[i]:
+                        best_seq[i] = cand_seq
+    
+    max_len = max(dp)
+    # Find the lexicographically smallest among those with max_len
+    best_overall = None
+    for i in range(n):
+        if dp[i] == max_len:
+            if best_overall is None or best_seq[i] < best_overall:
+                best_overall = best_seq[i]
+    
+    # Output indices (0-based) separated by space; if you want 1-based, add 1.
+    # We'll output 0-based as per typical problem statement, but often they want 1-based.
+    # Let's output 1-based to be safe (most problems use 1-based indices).
+    print(' '.join(str(idx + 1) for idx in best_overall))
+
+if __name__ == "__main__":
+    solve()
+```

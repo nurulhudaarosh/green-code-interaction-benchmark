@@ -1,0 +1,428 @@
+from typing import List, Tuple, Dict
+
+
+def capacity_constrained_knapsack(
+    items: List[Tuple[int, int]],
+    capacity: int,
+    include_operation_summary: bool = False,
+) -> Dict[str, object]:
+    """
+    Capacity-Constrained 0/1 Knapsack.
+
+    Problem:
+        Given indivisible items as (weight, value) pairs and a maximum
+        capacity, select each item at most once to maximize total value.
+
+    Requirements:
+        - Total weight must not exceed capacity.
+        - Each item can be selected at most once.
+        - Maximize total value.
+        - For equal maximum values, return the lexicographically
+          smallest list of original indices.
+        - Use 0/1 knapsack DP with descending capacity updates.
+        - Deterministic behavior.
+        - Use only the Python standard library.
+
+    Original output:
+        {
+            "max_value": int,
+            "selected_indices": List[int]
+        }
+
+    Optional output:
+        If include_operation_summary=True:
+        {
+            "max_value": int,
+            "selected_indices": List[int],
+            "operation_summary": {
+                "major_operations": int
+            }
+        }
+    """
+
+    if capacity < 0:
+        raise ValueError("capacity must be non-negative")
+
+    for index, item in enumerate(items):
+        if len(item) != 2:
+            raise ValueError(
+                f"item {index} must be a (weight, value) pair"
+            )
+
+        weight, value = item
+
+        if not isinstance(weight, int) or not isinstance(value, int):
+            raise TypeError(
+                f"item {index} weight and value must be integers"
+            )
+
+        if weight < 0:
+            raise ValueError(
+                f"item {index} weight must be non-negative"
+            )
+
+    # dp_value[c] = maximum value achievable with capacity c.
+    dp_value = [0] * (capacity + 1)
+
+    # dp_indices[c] = lexicographically smallest tuple of original
+    # indices achieving dp_value[c].
+    dp_indices: List[Tuple[int, ...]] = [()] * (capacity + 1)
+
+    # Counts each DP state transition/major decision.
+    major_operations = 0
+
+    for index, (weight, value) in enumerate(items):
+
+        # Descending capacity is essential for 0/1 knapsack.
+        # It guarantees that the current item cannot be reused.
+        for c in range(capacity, weight - 1, -1):
+
+            major_operations += 1
+
+            candidate_value = dp_value[c - weight] + value
+            candidate_indices = dp_indices[c - weight] + (index,)
+
+            if candidate_value > dp_value[c]:
+                dp_value[c] = candidate_value
+                dp_indices[c] = candidate_indices
+
+            elif (
+                candidate_value == dp_value[c]
+                and candidate_indices < dp_indices[c]
+            ):
+                dp_indices[c] = candidate_indices
+
+    result: Dict[str, object] = {
+        "max_value": dp_value[capacity],
+        "selected_indices": list(dp_indices[capacity]),
+    }
+
+    if include_operation_summary:
+        result["operation_summary"] = {
+            "major_operations": major_operations
+        }
+
+    return result
+
+
+# =========================================================
+# Tests
+# =========================================================
+
+if __name__ == "__main__":
+
+    # -----------------------------------------------------
+    # 1. Original basic case
+    # -----------------------------------------------------
+    items = [
+        (2, 3),  # index 0
+        (3, 4),  # index 1
+        (4, 5),  # index 2
+        (5, 7),  # index 3
+    ]
+
+    result = capacity_constrained_knapsack(items, 7)
+
+    assert result == {
+        "max_value": 10,
+        "selected_indices": [0, 3],
+    }
+
+
+    # -----------------------------------------------------
+    # 2. Operation summary remains optional
+    # -----------------------------------------------------
+    result = capacity_constrained_knapsack(
+        items,
+        7,
+        include_operation_summary=True,
+    )
+
+    assert result == {
+        "max_value": 10,
+        "selected_indices": [0, 3],
+        "operation_summary": {
+            "major_operations": 20,
+        },
+    }
+
+
+    # -----------------------------------------------------
+    # 3. Zero capacity boundary
+    #
+    # No positive-weight item can be selected.
+    # -----------------------------------------------------
+    items = [
+        (1, 100),
+        (2, 200),
+    ]
+
+    result = capacity_constrained_knapsack(items, 0)
+
+    assert result == {
+        "max_value": 0,
+        "selected_indices": [],
+    }
+
+
+    # -----------------------------------------------------
+    # 4. Zero capacity with a zero-weight item
+    #
+    # A zero-weight item is valid and can still be selected.
+    # -----------------------------------------------------
+    items = [
+        (0, 10),  # index 0
+        (1, 20),  # index 1
+    ]
+
+    result = capacity_constrained_knapsack(items, 0)
+
+    assert result == {
+        "max_value": 10,
+        "selected_indices": [0],
+    }
+
+
+    # -----------------------------------------------------
+    # 5. Multiple zero-weight items
+    #
+    # All can be selected because items are indivisible but
+    # each is allowed once and they consume no capacity.
+    # -----------------------------------------------------
+    items = [
+        (0, 5),   # 0
+        (0, 7),   # 1
+        (0, 3),   # 2
+    ]
+
+    result = capacity_constrained_knapsack(items, 0)
+
+    assert result == {
+        "max_value": 15,
+        "selected_indices": [0, 1, 2],
+    }
+
+
+    # -----------------------------------------------------
+    # 6. Maximum capacity boundary for this test domain.
+    #
+    # Python integers are arbitrary precision, so this also
+    # checks that large valid capacities are handled correctly.
+    # -----------------------------------------------------
+    MAX_CAPACITY = 1000
+
+    items = [
+        (MAX_CAPACITY, 999999),  # index 0
+        (1, 1),                  # index 1
+    ]
+
+    result = capacity_constrained_knapsack(
+        items,
+        MAX_CAPACITY,
+    )
+
+    assert result == {
+        "max_value": 999999,
+        "selected_indices": [0],
+    }
+
+
+    # -----------------------------------------------------
+    # 7. Item weight exactly equals capacity
+    # -----------------------------------------------------
+    items = [
+        (10, 50),  # index 0
+        (9, 40),   # index 1
+    ]
+
+    result = capacity_constrained_knapsack(items, 10)
+
+    assert result == {
+        "max_value": 50,
+        "selected_indices": [0],
+    }
+
+
+    # -----------------------------------------------------
+    # 8. Very large valid weight and value
+    #
+    # Python integers handle these values without overflow.
+    # -----------------------------------------------------
+    LARGE = 10**18
+
+    items = [
+        (LARGE, LARGE),       # index 0
+        (LARGE - 1, LARGE - 1),  # index 1
+    ]
+
+    result = capacity_constrained_knapsack(items, LARGE)
+
+    assert result == {
+        "max_value": LARGE,
+        "selected_indices": [0],
+    }
+
+
+    # -----------------------------------------------------
+    # 9. Large values with deterministic tie-breaking
+    #
+    # Both [0] and [1] have the same value and fit.
+    # [0] is lexicographically smaller.
+    # -----------------------------------------------------
+    LARGE = 10**18
+
+    items = [
+        (5, LARGE),  # index 0
+        (5, LARGE),  # index 1
+    ]
+
+    result = capacity_constrained_knapsack(items, 5)
+
+    assert result == {
+        "max_value": LARGE,
+        "selected_indices": [0],
+    }
+
+
+    # -----------------------------------------------------
+    # 10. Lexicographical tie-breaking with multiple items
+    #
+    # [0, 3] and [1, 2] both have weight 7 and value 10.
+    # [0, 3] is lexicographically smaller.
+    # -----------------------------------------------------
+    items = [
+        (2, 5),  # 0
+        (3, 5),  # 1
+        (4, 5),  # 2
+        (5, 5),  # 3
+    ]
+
+    result = capacity_constrained_knapsack(items, 7)
+
+    assert result == {
+        "max_value": 10,
+        "selected_indices": [0, 3],
+    }
+
+
+    # -----------------------------------------------------
+    # 11. 0/1 behavior
+    #
+    # Item 0 cannot be selected twice.
+    # -----------------------------------------------------
+    items = [
+        (2, 3),  # 0
+        (3, 4),  # 1
+    ]
+
+    result = capacity_constrained_knapsack(items, 4)
+
+    assert result == {
+        "max_value": 4,
+        "selected_indices": [1],
+    }
+
+
+    # -----------------------------------------------------
+    # 12. Nothing fits
+    # -----------------------------------------------------
+    items = [
+        (5, 10),
+        (6, 20),
+    ]
+
+    result = capacity_constrained_knapsack(items, 4)
+
+    assert result == {
+        "max_value": 0,
+        "selected_indices": [],
+    }
+
+
+    # -----------------------------------------------------
+    # 13. Empty input
+    # -----------------------------------------------------
+    result = capacity_constrained_knapsack([], 10)
+
+    assert result == {
+        "max_value": 0,
+        "selected_indices": [],
+    }
+
+
+    # -----------------------------------------------------
+    # 14. All items have weight greater than capacity,
+    #     including a large boundary capacity.
+    # -----------------------------------------------------
+    items = [
+        (1001, 10),
+        (2000, 20),
+        (10**18, 30),
+    ]
+
+    result = capacity_constrained_knapsack(items, 1000)
+
+    assert result == {
+        "max_value": 0,
+        "selected_indices": [],
+    }
+
+
+    # -----------------------------------------------------
+    # 15. Operation summary is deterministic
+    # -----------------------------------------------------
+    items = [
+        (2, 3),
+        (3, 4),
+    ]
+
+    result1 = capacity_constrained_knapsack(
+        items,
+        4,
+        include_operation_summary=True,
+    )
+
+    result2 = capacity_constrained_knapsack(
+        items,
+        4,
+        include_operation_summary=True,
+    )
+
+    assert result1 == result2
+
+    # Item 0:
+    # capacities 4, 3, 2 -> 3 operations
+    #
+    # Item 1:
+    # capacities 4, 3 -> 2 operations
+    #
+    # Total = 5.
+    assert result1["operation_summary"] == {
+        "major_operations": 5,
+    }
+
+
+    # -----------------------------------------------------
+    # 16. Boundary case + operation summary
+    # -----------------------------------------------------
+    items = [
+        (0, 10),
+        (5, 20),
+    ]
+
+    result = capacity_constrained_knapsack(
+        items,
+        0,
+        include_operation_summary=True,
+    )
+
+    assert result == {
+        "max_value": 10,
+        "selected_indices": [0],
+        "operation_summary": {
+            "major_operations": 1,
+        },
+    }
+
+
+    print("All tests passed.")

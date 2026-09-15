@@ -1,0 +1,126 @@
+## Problem
+
+Given a **directed graph** with `n` vertices and **non-negative edge weights**, and a source vertex `source`, compute the shortest distance from `source` to every vertex.
+
+* If a vertex is reachable from `source`, return its minimum total path cost.
+* If a vertex is unreachable, return `-1`.
+* Edge weights are non-negative, so **Dijkstra's algorithm** is applicable.
+* The solution should be deterministic and use only Python's standard library.
+
+### Key constraints
+
+1. Graph is **directed**.
+2. All edge weights satisfy `weight >= 0`.
+3. There is one specified source vertex.
+4. Vertices may be unreachable.
+5. Use an **adjacency list** representation.
+6. Use **Dijkstra's algorithm with a binary heap** (`heapq`).
+7. No network, APIs, external services, randomness, or human interaction.
+
+### Required output
+
+Return a list `distances` of length `n` where:
+
+```text
+distances[v] = shortest distance from source to v
+```
+
+and:
+
+```text
+distances[v] = -1
+```
+
+when `v` is unreachable.
+
+## Algorithm
+
+1. Build an adjacency list where `adj[u]` contains `(v, weight)` for every directed edge `u → v`.
+2. Initialize every distance to infinity.
+3. Set `dist[source] = 0`.
+4. Put `(0, source)` into a binary min-heap.
+5. Repeatedly extract the vertex with the smallest known distance.
+6. For each outgoing edge, perform **relaxation**:
+
+   * If `dist[u] + weight < dist[v]`, update `dist[v]`.
+   * Push the updated `(distance, vertex)` into the heap.
+7. Ignore stale heap entries whose distance is no longer optimal.
+8. Convert remaining infinite distances to `-1`.
+
+**Time complexity:** `O((V + E) log V)` with an adjacency list and binary heap.
+**Space complexity:** `O(V + E)`.
+
+```python
+from heapq import heappush, heappop
+from typing import List, Tuple
+
+
+def single_source_route_analyzer(
+    n: int,
+    edges: List[Tuple[int, int, int]],
+    source: int
+) -> List[int]:
+    """
+    Compute shortest distances from source to every vertex
+    in a directed graph with non-negative edge weights.
+
+    Args:
+        n: Number of vertices, numbered 0 to n - 1.
+        edges: List of (u, v, weight) directed edges.
+        source: Source vertex.
+
+    Returns:
+        A list where result[v] is the shortest distance from
+        source to v, or -1 if v is unreachable.
+    """
+
+    # Build adjacency list.
+    adj = [[] for _ in range(n)]
+
+    for u, v, weight in edges:
+        if weight < 0:
+            raise ValueError("Dijkstra's algorithm requires non-negative weights.")
+        adj[u].append((v, weight))
+
+    # Initialize distances.
+    INF = float("inf")
+    dist = [INF] * n
+    dist[source] = 0
+
+    # Binary min-heap: (distance, vertex)
+    heap = [(0, source)]
+
+    while heap:
+        current_dist, u = heappop(heap)
+
+        # Ignore stale heap entries.
+        if current_dist != dist[u]:
+            continue
+
+        # Relax all outgoing edges.
+        for v, weight in adj[u]:
+            new_dist = current_dist + weight
+
+            if new_dist < dist[v]:
+                dist[v] = new_dist
+                heappush(heap, (new_dist, v))
+
+    # Replace unreachable distances with -1.
+    return [-1 if d == INF else int(d) for d in dist]
+
+
+# Example
+if __name__ == "__main__":
+    n = 5
+    edges = [
+        (0, 1, 4),
+        (0, 2, 1),
+        (2, 1, 2),
+        (1, 3, 1),
+        (2, 3, 5),
+    ]
+    source = 0
+
+    print(single_source_route_analyzer(n, edges, source))
+    # Output: [0, 3, 1, 4, -1]
+```

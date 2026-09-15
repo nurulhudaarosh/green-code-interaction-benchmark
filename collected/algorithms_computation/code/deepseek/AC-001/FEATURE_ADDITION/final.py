@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""
+Interval Conflict Analyzer
+
+Find the maximum number of simultaneously active meetings and the sorted times
+at which that maximum begins.
+
+Meetings are given as half-open intervals [start, end).
+End events at the same timestamp are processed before start events.
+
+Original Problem:
+- Input: List of (start, end) tuples representing half-open meeting intervals
+- Output: (max_active, list_of_times) where:
+    - max_active: maximum number of simultaneously active meetings
+    - list_of_times: sorted times at which max_active begins
+- Key constraints: start < end, half-open intervals [start, end)
+- Algorithm: Sweep-line over start/end events, end events at same timestamp before start events
+
+New Feature:
+- Optional operation_summary: returns a deterministic summary of the computation
+  including the number of major computational decisions/operations made by the algorithm.
+"""
+
+from typing import List, Tuple, Dict, Union, Optional
+
+
+def find_max_active_meetings(
+    meetings: List[Tuple[int, int]],
+    include_summary: bool = False
+) -> Union[Tuple[int, List[int]], Tuple[int, List[int], Dict[str, int]]]:
+    """
+    Find the maximum number of simultaneously active meetings and the times
+    when that maximum begins.
+
+    Args:
+        meetings: List of (start, end) tuples, where start < end.
+                  Intervals are half-open: [start, end).
+        include_summary: If True, include an operation_summary field in the return.
+
+    Returns:
+        If include_summary is False:
+            Tuple of (max_active, list_of_times) where:
+                - max_active: maximum number of simultaneously active meetings
+                - list_of_times: sorted times at which max_active begins
+
+        If include_summary is True:
+            Tuple of (max_active, list_of_times, operation_summary) where:
+                - operation_summary: dict containing:
+                    - total_events: total number of events processed
+                    - unique_timestamps: number of unique timestamps
+                    - max_count_comparisons: number of times max was compared/updated
+                    - event_processing_steps: total event processing steps
+                    - sort_operations: number of sorting operations (always 1)
+
+    Raises:
+        ValueError: If meetings list is empty.
+        ValueError: If any meeting interval is invalid (start >= end).
+    """
+    if not meetings:
+        raise ValueError("Meetings list cannot be empty")
+
+    # Initialize operation counters
+    total_events = 0
+    unique_timestamps = 0
+    max_count_comparisons = 0
+    event_processing_steps = 0
+
+    # Create events: (time, type)
+    # type: 0 = end (processed first), 1 = start (processed after end)
+    events = []
+    for start, end in meetings:
+        if start >= end:
+            raise ValueError(f"Invalid meeting interval: [{start}, {end})")
+        events.append((start, 1))   # start event
+        events.append((end, 0))     # end event
+
+    total_events = len(events)
+
+    # Sort events: by time, then by type (end before start)
+    events.sort(key=lambda x: (x[0], x[1]))
+    sort_operations = 1
+
+    current_active = 0
+    max_active = 0
+    max_times = []
+
+    i = 0
+    while i < len(events):
+        time = events[i][0]
+        unique_timestamps += 1
+
+        # Process all events at this timestamp
+        # End events (type 0) are processed before start events (type 1)
+        # due to sorting order
+
+        # First, process all end events at this time
+        while i < len(events) and events[i][0] == time and events[i][1] == 0:
+            current_active -= 1
+            i += 1
+            event_processing_steps += 1
+
+        # Then, process all start events at this time
+        starts_at_this_time = 0
+        while i < len(events) and events[i][0] == time and events[i][1] == 1:
+            current_active += 1
+            starts_at_this_time += 1
+            i += 1
+            event_processing_steps += 1
+
+        # After processing all events at this time, check if we reached a new maximum
+        max_count_comparisons += 1  # Compare with max_active
+        if current_active > max_active:
+            max_active = current_active
+            max_times = [time]
+        elif current_active == max_active and starts_at_this_time > 0:
+            # Only add this time if we actually started meetings here
+            # This prevents adding duplicate times where only endings happened
+            if not max_times or max_times[-1] != time:
+                max_times.append(time)
+
+    # Build operation summary if requested
+    if include_summary:
+        operation_summary = {
+            "total_events": total_events,
+            "unique_timestamps": unique_timestamps,
+            "max_count_comparisons": max_count_comparisons,
+            "event_processing_steps": event_processing_steps,
+            "sort_operations": sort_operations,
+        }
+        return max_active, max_times, operation_summary
+
+    return max_active, max_times
+
+
+def main():
+    """Example usage and test cases."""
+    # Test case 1: Basic overlapping meetings (without summary)
+    meetings1 = [(0, 5), (1, 3), (2, 6), (4, 7)]
+    max_count, times = find_max_active_meetings(meetings1)
+    print("=== Test 1: Without Summary ===")
+    print(f"Meetings: {meetings1}")
+    print(f"Max active: {max_count}")
+    print(f"Times: {times}")
+    print()
+
+    # Test case 2: With summary
+    meetings2 = [(0, 5), (1, 3), (2, 6), (4, 7)]
+    max_count, times, summary = find_max_active_meetings(meetings2, include_summary=True)
+    print("=== Test 2: With Summary ===")
+    print(f"Meetings: {meetings2}")
+    print(f"Max active: {max_count}")
+    print(f"Times: {times}")
+    print(f"Operation Summary: {summary}")
+    print()
+
+    # Test case 3: Multiple meetings starting at the same time
+    meetings3 = [(0, 5), (0, 3), (0, 10), (2, 4)]
+    max_count, times, summary = find_max_active_meetings(meetings3, include_summary=True)
+    print("=== Test 3: Multiple starts at same time ===")
+    print(f"Meetings: {meetings3}")
+    print(f"Max active: {max_count}")
+    print(f"Times: {times}")
+    print(f"Operation Summary: {summary}")
+    print()
+
+    # Test case 4: Meetings with same end time
+    meetings4 = [(0, 5), (1, 5), (2, 5), (3, 6)]
+    max_count, times, summary = find_max_active_meetings(meetings4, include_summary=True)
+    print("=== Test 4: Same end time ===")
+    print(f"Meetings: {meetings4}")
+    print(f"Max active: {max_count}")
+    print(f"Times: {times}")
+    print(f"Operation Summary: {summary}")
+    print()
+
+    # Test case 5: Consecutive meetings (half-open, no overlap)
+    meetings5 = [(0, 1), (1, 2), (2, 3), (3, 4)]
+    max_count, times, summary = find_max_active_meetings(meetings5, include_summary=True)
+    print("=== Test 5: Consecutive meetings (no overlap) ===")
+    print(f"Meetings: {meetings5}")
+    print(f"Max active: {max_count}")
+    print(f"Times: {times}")
+    print(f"Operation Summary: {summary}")
+    print()
+
+    # Test case 6: Complex scenario with multiple max periods
+    meetings6 = [(0, 10), (1, 3), (2, 4), (5, 7), (5, 8)]
+    max_count, times, summary = find_max_active_meetings(meetings6, include_summary=True)
+    print("=== Test 6: Complex with multiple max periods ===")
+    print(f"Meetings: {meetings6}")
+    print(f"Max active: {max_count}")
+    print(f"Times: {times}")
+    print(f"Operation Summary: {summary}")
+    print()
+
+    # Test case 7: Single meeting
+    meetings7 = [(10, 20)]
+    max_count, times, summary = find_max_active_meetings(meetings7, include_summary=True)
+    print("=== Test 7: Single meeting ===")
+    print(f"Meetings: {meetings7}")
+    print(f"Max active: {max_count}")
+    print(f"Times: {times}")
+    print(f"Operation Summary: {summary}")
+    print()
+
+
+if __name__ == "__main__":
+    main()

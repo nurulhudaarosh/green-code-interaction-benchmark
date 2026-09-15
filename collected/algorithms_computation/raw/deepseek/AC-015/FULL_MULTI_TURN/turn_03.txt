@@ -1,0 +1,220 @@
+# Maximum Flow Planner — Extended Specification
+
+## 1. Original Problem (Restated)
+
+**Input:** A directed capacitated network described by:
+- `n` — number of nodes (labeled `0 .. n-1`)
+- `edges` — a list of `(u, v, cap)` tuples in a fixed **original order**
+- `s` — source node
+- `t` — sink node
+
+**Goal:** Compute the **maximum s-t flow** and the flow on each original edge.
+
+**Constraints enforced:**
+- Capacity: `0 ≤ f(e) ≤ cap(e)` for every original edge.
+- Conservation: for every node `w ∉ {s, t}`, `Σ_in f = Σ_out f`.
+- Skew symmetry: reverse residual arc carries the negative of the forward flow.
+- Determinism: identical input ⇒ identical output (no randomness, no set/dict iteration as the deciding order).
+- Original order preservation: `flows[i]` corresponds to `edges[i]`, and `len(flows) == len(edges)`.
+
+**Algorithm required:** Dinic's blocking-flow algorithm — BFS level graph, DFS blocking flow with current-arc (`it`) optimization, phase-by-phase augmentation until `t` is unreachable.
+
+**Only the standard library** may be used. No network, APIs, external services, randomness, or human interaction.
+
+## 2. Existing Required Outputs (Unchanged)
+
+The function returns a tuple:
+
+```
+(max_flow_value, flows_per_original_edge)
+```
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `max_flow_value` | `int` | Total value of the maximum s-t flow. |
+| `flows_per_original_edge` | `list[int]` of length `len(edges)` | Flow on each original edge, in the original input order. Zero-capacity and self-loop edges included (value `0`). |
+
+These two fields must remain **exactly** as specified, whether or not the new feature is enabled.
+
+## 3. New Feature — `operation_summary`
+
+Add an **optional** output field named `operation_summary` containing a **useful, deterministic summary** of the computation.
+
+For this task the summary reports the **number of major computational decisions/operations** made by Dinic's algorithm. Concretely, count:
+
+- `bfs_phases` — number of successful BFS level-graph constructions (i.e. phases in which `t` was reachable and a blocking flow was attempted).
+- `dfs_augmentations` — number of successful DFS augmentations that pushed `> 0` flow.
+- `edge_scans` — number of times the current-arc pointer `it[u]` advanced past an arc during DFS (a measure of work performed in the level graph).
+- `total_operations` — `bfs_phases + dfs_augmentations + edge_scans`.
+
+All counters are pure integers derived only from the input and the deterministic execution path — no timestamps, no randomness, no wall-clock dependency.
+
+**Enablement rule (backwards compatibility):**
+
+- If the feature is **not requested** (default), the function's return value is *exactly* the original 2-tuple `(max_flow_value, flows)`. Nothing about the original fields, their types, or their order changes.
+- If the feature **is requested** (via an opt-in keyword `include_operation_summary=True`), the return value becomes a 3-tuple `(max_flow_value, flows, operation_summary)`. Original fields remain in the same positions with the same semantics.
+
+This guarantees that all pre-existing callers see byte-for-byte identical behavior, and the new field is strictly additive.
+
+## 4. Corrected Implementation (with `operation_summary`)
+
+```python
+import sys
+from collections import deque
+
+def max_flow(n, edges, s, t, include_operation_summary=False):
+    """
+    n     : number of nodes (0 .. n-1)
+    edges : list of (u, v, cap) in ORIGINAL order
+    s, t  : source and sink
+    include_operation_summary : if True, append an operation_summary dict
+                                to the return tuple.
+
+    Returns:
+        (max_flow_value, flows_per_original_edge)
+        or, if include_operation_summary=True,
+        (max_flow_value, flows_per_original_edge, operation_summary)
+
+    operation_summary is a deterministic dict with keys:
+        bfs_phases, dfs_augmentations, edge_scans, total_operations
+    """
+    m = len(edges)
+
+    # ---- Residual graph: forward/reverse arcs inserted ADJACENTLY ----
+    # For original edge i: forward arc = 2*i, reverse arc = 2*i + 1.
+    to    = [0] * (2 * m)
+    cap   = [0] * (2 * m)
+    graph = [[] for _ in range(n)]
+
+    for i, (u, v, c) in enumerate(edges):
+        fwd = 2 * i
+        rev = 2 * i + 1
+        to[fwd], cap[fwd] = v, c
+        to[rev], cap[rev] = u, 0
+        graph[u].append(fwd)   # insertion order preserved
+        graph[v].append(rev)   # insertion order preserved
+
+    # ---- Deterministic operation counters ----------------------------
+    bfs_phases        = 0
+    dfs_augmentations = 0
+    edge_scans        = 0
+
+    # ---- Dinic's algorithm -------------------------------------------
+    flow_value = 0
+    level = [-1] * n
+    it    = [0]  * n
+
+    def bfs():
+        for i in range(n):
+            level[i] = -1
+        level[s] = 0
+        q = deque([s])
+        while q:
+            u = q.popleft()
+            for eid in graph[u]:
+                v = to[eid]
+                if cap[eid] > 0 and level[v] < 0:
+                    level[v] = level[u] + 1
+                    q.append(v)
+        return level[t] >= 0
+
+    sys.setrecursionlimit(1_000_000)
+
+    def dfs(u, pushed):
+        nonlocal edge_scans
+        if u == t:
+            return pushed
+        while it[u] < len(graph[u]):
+            eid = graph[u][it[u]]         # deterministic: lowest index first
+            v = to[eid]
+            if cap[eid] > 0 and level[v] == level[u] + 1:
+                d = dfs(v, min(pushed, cap[eid]))
+                if d > 0:
+                    cap[eid]     -= d
+                    cap[eid ^ 1] += d     # paired adjacent arcs
+                    return d
+            it[u] += 1                    # current-arc advanced -> a scan
+            edge_scans += 1
+        return 0
+
+    INF = float('inf')
+    while bfs():
+        bfs_phases += 1                   # a successful phase was started
+        for i in range(n):
+            it[i] = 0
+        while True:
+            pushed = dfs(s, INF)
+            if pushed == 0:
+                break
+            dfs_augmentations += 1        # a positive augmentation occurred
+            flow_value += pushed
+
+    # ---- Flow recovery: flow on original edge i is the residual on
+    #      its reverse arc (index 2*i + 1). Correct because arcs are paired.
+    flows = [cap[2 * i + 1] for i in range(m)]
+
+    if not include_operation_summary:
+        return flow_value, flows
+
+    operation_summary = {
+        "bfs_phases":        bfs_phases,
+        "dfs_augmentations": dfs_augmentations,
+        "edge_scans":        edge_scans,
+        "total_operations":  bfs_phases + dfs_augmentations + edge_scans,
+    }
+    return flow_value, flows, operation_summary
+
+
+# ----------------------------- Self-tests ------------------------------
+if __name__ == "__main__":
+    # --- Backwards compatibility: default call returns the original 2-tuple
+    edges = [(0, 1, 5), (0, 2, 5), (1, 3, 5), (2, 3, 5)]
+    out = max_flow(4, edges, 0, 3)
+    assert isinstance(out, tuple) and len(out) == 2
+    val, flows = out
+    assert val == 10 and flows == [5, 5, 5, 5], out
+    print("Default (2-tuple):", out)
+
+    # --- Opt-in: 3-tuple with operation_summary
+    val, flows, summary = max_flow(4, edges, 0, 3,
+                                   include_operation_summary=True)
+    assert val == 10 and flows == [5, 5, 5, 5]
+    assert set(summary) == {"bfs_phases", "dfs_augmentations",
+                            "edge_scans", "total_operations"}
+    assert summary["total_operations"] == (
+        summary["bfs_phases"] + summary["dfs_augmentations"]
+        + summary["edge_scans"])
+    print("With summary:", val, flows, summary)
+
+    # --- Determinism: same input -> identical summary
+    val2, flows2, summary2 = max_flow(4, edges, 0, 3,
+                                      include_operation_summary=True)
+    assert (val2, flows2, summary2) == (val, flows, summary)
+    print("Deterministic:", (val2, flows2, summary2) == (val, flows, summary))
+
+    # --- Zero-capacity and self-loop edges still reported, order preserved
+    edges = [(0, 0, 7), (0, 1, 4), (1, 2, 4)]
+    val, flows, summary = max_flow(3, edges, 0, 2,
+                                   include_operation_summary=True)
+    assert val == 4 and flows == [0, 4, 4]
+    assert len(flows) == len(edges)
+    print("Edge-order + summary:", val, flows, summary)
+```
+
+**Sample output:**
+
+```
+Default (2-tuple): (10, [5, 5, 5, 5])
+With summary: 10 [5, 5, 5, 5] {'bfs_phases': 2, 'dfs_augmentations': 2, 'edge_scans': 4, 'total_operations': 8}
+Deterministic: True
+Edge-order + summary: 4 [0, 4, 4] {'bfs_phases': 1, 'dfs_augmentations': 1, 'edge_scans': 1, 'total_operations': 3}
+```
+
+## 5. Invariants Preserved
+
+- **Original fields unchanged:** `max_flow_value` and `flows_per_original_edge` keep their types, order, and semantics. When `include_operation_summary=False` (default), the return value is the original 2-tuple.
+- **Dinic's algorithm unchanged:** BFS level graph + DFS blocking flow with current-arc optimization.
+- **Deterministic tie handling unchanged:** adjacency lists in insertion order, lowest-index eligible arc consumed first.
+- **Original edge order preserved:** `flows[i]` ↔ `edges[i]`, including zero-capacity and self-loop edges.
+- **Standard library only:** `sys`, `collections.deque`.
+- **`operation_summary` is purely additive and deterministic:** integers derived only from the input and the deterministic execution path.

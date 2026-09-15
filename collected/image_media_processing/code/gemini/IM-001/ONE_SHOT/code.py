@@ -1,0 +1,39 @@
+from pathlib import Path
+from PIL import Image, UnidentifiedImageError
+
+SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+
+
+def batch_resize(
+    input_dir: str | Path,
+    output_dir: str | Path,
+    target_size: tuple[int, int],
+) -> int:
+    """Resizes all PNG and JPEG images in input_dir to target_size and saves to output_dir.
+
+    Args:
+        input_dir: Path to the directory containing source images.
+        output_dir: Path to the directory where resized images will be saved.
+        target_size: A (width, height) tuple specifying output dimensions.
+
+    Returns:
+        The total count of successfully processed images.
+    """
+    in_path = Path(input_dir)
+    out_path = Path(output_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    processed_count = 0
+
+    for file_path in in_path.iterdir():
+        if file_path.is_file() and file_path.suffix.lower() in SUPPORTED_EXTENSIONS:
+            try:
+                with Image.open(file_path) as img:
+                    # LANCZOS provides high-quality downsampling/upsampling
+                    resized_img = img.resize(target_size, Image.Resampling.LANCZOS)
+                    resized_img.save(out_path / file_path.name)
+                    processed_count += 1
+            except (UnidentifiedImageError, OSError) as err:
+                print(f"Skipping corrupted or unreadable file {file_path.name}: {err}")
+
+    return processed_count

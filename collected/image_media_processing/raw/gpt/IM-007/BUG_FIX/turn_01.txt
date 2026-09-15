@@ -1,0 +1,60 @@
+Here’s a straightforward Pillow implementation of classic **average hash (aHash)**. It returns the hash as a binary string, making Hamming distance easy to compute.
+
+```python
+from PIL import Image
+
+
+def compute_ahash(image_path, hash_size=8):
+    """
+    Compute the classic average-hash (aHash) perceptual hash.
+
+    Parameters
+    ----------
+    image_path : str
+        Path to the input image.
+    hash_size : int
+        Size of the square hash grid. Default is 8 (64-bit hash).
+
+    Returns
+    -------
+    str
+        Binary hash string of length hash_size * hash_size.
+    """
+    if not isinstance(hash_size, int) or hash_size <= 0:
+        raise ValueError("hash_size must be a positive integer")
+
+    with Image.open(image_path) as img:
+        # Convert to grayscale and resize to hash_size x hash_size.
+        gray = img.convert("L").resize((hash_size, hash_size))
+
+        pixels = list(gray.getdata())
+        average = sum(pixels) / len(pixels)
+
+        # 1 if pixel >= average, otherwise 0.
+        return "".join("1" if pixel >= average else "0" for pixel in pixels)
+
+
+def hamming_distance(hash_a, hash_b):
+    """
+    Compute the Hamming distance between two binary hashes.
+
+    Parameters
+    ----------
+    hash_a, hash_b : str
+        Binary hash strings.
+
+    Returns
+    -------
+    int
+        Number of differing bits.
+    """
+    if len(hash_a) != len(hash_b):
+        raise ValueError("Hashes must have the same length")
+
+    if any(bit not in "01" for bit in hash_a + hash_b):
+        raise ValueError("Hashes must contain only '0' and '1'")
+
+    return sum(a != b for a, b in zip(hash_a, hash_b))
+```
+
+For example, an 8×8 hash produces a **64-bit** string. Two visually similar images should generally have a small Hamming distance, while substantially different images tend to have a larger distance.

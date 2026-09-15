@@ -1,0 +1,96 @@
+Here's an initial expense analyzer — it loads expenses (from a list of dicts or CSV), then summarizes totals by category and by month:
+
+```python
+import csv
+from collections import defaultdict
+from datetime import datetime
+
+class ExpenseAnalyzer:
+    def __init__(self):
+        self.expenses = []  # each item: {"date": "YYYY-MM-DD", "category": str, "amount": float, "description": str}
+
+    def add_expense(self, date, category, amount, description=""):
+        self.expenses.append({
+            "date": date,
+            "category": category,
+            "amount": float(amount),
+            "description": description
+        })
+
+    def load_from_csv(self, filepath):
+        """Expects columns: date, category, amount, description"""
+        with open(filepath, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                self.add_expense(
+                    row["date"],
+                    row["category"],
+                    row["amount"],
+                    row.get("description", "")
+                )
+
+    def total_spent(self):
+        return sum(e["amount"] for e in self.expenses)
+
+    def total_by_category(self):
+        totals = defaultdict(float)
+        for e in self.expenses:
+            totals[e["category"]] += e["amount"]
+        return dict(sorted(totals.items(), key=lambda x: -x[1]))
+
+    def total_by_month(self):
+        totals = defaultdict(float)
+        for e in self.expenses:
+            month_key = datetime.strptime(e["date"], "%Y-%m-%d").strftime("%Y-%m")
+            totals[month_key] += e["amount"]
+        return dict(sorted(totals.items()))
+
+    def top_expenses(self, n=5):
+        return sorted(self.expenses, key=lambda x: -x["amount"])[:n]
+
+    def average_expense(self):
+        return self.total_spent() / len(self.expenses) if self.expenses else 0
+
+    def print_summary(self):
+        print("=" * 40)
+        print("EXPENSE SUMMARY")
+        print("=" * 40)
+        print(f"Total spent: ${self.total_spent():,.2f}")
+        print(f"Number of transactions: {len(self.expenses)}")
+        print(f"Average transaction: ${self.average_expense():,.2f}")
+
+        print("\nBy Category:")
+        for cat, amt in self.total_by_category().items():
+            print(f"  {cat:<20} ${amt:,.2f}")
+
+        print("\nBy Month:")
+        for month, amt in self.total_by_month().items():
+            print(f"  {month:<10} ${amt:,.2f}")
+
+        print("\nTop 5 Expenses:")
+        for e in self.top_expenses(5):
+            print(f"  {e['date']}  {e['category']:<15} ${e['amount']:,.2f}  {e['description']}")
+
+
+# --- Example usage with sample data ---
+if __name__ == "__main__":
+    analyzer = ExpenseAnalyzer()
+
+    sample_data = [
+        ("2024-01-05", "Groceries", 85.40, "Weekly shop"),
+        ("2024-01-10", "Rent", 1200.00, "January rent"),
+        ("2024-01-15", "Entertainment", 45.00, "Movies"),
+        ("2024-01-20", "Groceries", 62.30, "Weekly shop"),
+        ("2024-02-01", "Utilities", 150.00, "Electric bill"),
+        ("2024-02-05", "Groceries", 90.10, "Weekly shop"),
+        ("2024-02-10", "Rent", 1200.00, "February rent"),
+        ("2024-02-18", "Dining", 34.50, "Dinner out"),
+    ]
+
+    for date, category, amount, desc in sample_data:
+        analyzer.add_expense(date, category, amount, desc)
+
+    analyzer.print_summary()
+```
+
+This covers the core pieces: adding expenses, loading from CSV, and summarizing by category/month/top items. Let me know what you'd like to build on next — budget alerts, recurring expense detection, visualizations, or a proper CSV/receipt import.

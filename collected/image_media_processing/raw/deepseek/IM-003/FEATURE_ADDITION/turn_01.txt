@@ -1,0 +1,94 @@
+```python
+import os
+from pathlib import Path
+from PIL import Image
+
+# Supported input formats
+INPUT_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.tif', '.webp'}
+
+# Target format configuration
+FORMAT_CONFIG = {
+    'png': {'ext': '.png', 'pil_format': 'PNG'},
+    'jpeg': {'ext': '.jpg', 'pil_format': 'JPEG'},
+}
+
+
+def _flatten_transparency(img, background=(255, 255, 255)):
+    """Composite an RGBA image onto an opaque background."""
+    if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+        # Convert palette images with transparency to RGBA
+        rgba = img.convert('RGBA')
+        bg = Image.new('RGB', rgba.size, background)
+        bg.paste(rgba, mask=rgba.split()[-1])  # use alpha channel as mask
+        return bg
+    # For grayscale-with-alpha or other modes, convert directly
+    if img.mode not in ('RGB', 'L'):
+        return img.convert('RGB')
+    return img
+
+
+def convert_format(input_dir, output_dir, target_format):
+    """
+    Convert all images in input_dir to target_format ('png' or 'jpeg')
+    and write them to output_dir.
+
+    Returns a dict with 'converted', 'skipped', and 'failed' file lists.
+    """
+    target_format = target_format.lower().strip()
+    if target_format not in FORMAT_CONFIG:
+        raise ValueError(f"target_format must be 'png' or 'jpeg', got {target_format!r}")
+
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+
+    if not input_path.is_dir():
+        raise NotADirectoryError(f"Input directory does not exist: {input_dir}")
+
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    config = FORMAT_CONFIG[target_format]
+    out_ext = config['ext']
+    pil_format = config['pil_format']
+
+    results = {'converted': [], 'skipped': [], 'failed': []}
+
+    for src in sorted(input_path.iterdir()):
+        if not src.is_file():
+            continue
+
+        ext = src.suffix.lower()
+        if ext not in INPUT_EXTENSIONS:
+            results['skipped'].append(str(src))
+            continue
+
+        # Skip files already in target format (no re-encode needed)
+        if ext == out_ext or (target_format == 'jpeg' and ext in ('.jpg', '.jpeg')):
+            results['skipped'].append(str(src))
+            continue
+
+        dest = output_path / (src.stem + out_ext)
+
+        try:
+            with Image.open(src) as img:
+                # Preserve EXIF orientation if present
+                try:
+                    from PIL import ImageOps
+                    img = ImageOps.exif_transpose(img)
+                except Exception:
+                    pass
+
+                if target_format == 'jpeg':
+                    img = _flatten_transparency(img)
+                    img.save(dest, pil_format, quality=95, optimize=True)
+                else:
+                    # PNG: keep alpha channel if present
+                    if img.mode not in ('RGB', 'RGBA', 'L', 'LA', 'P'):
+                        img = img.convert('RGBA')
+                    img.save(dest, pil_format, optimize=True)
+
+            results['converted'].append(str(dest))
+        except Exception as e:
+            results['failed'].append((str(src), str(e)))
+
+    return results
+```

@@ -1,0 +1,149 @@
+```python
+import os
+from pathlib import Path
+from PIL import Image
+
+
+def _has_alpha(img):
+    """Return True if the image has any transparency that needs flattening."""
+    if img.mode in ("RGBA", "LA"):
+        return True
+    if img.mode == "P" and "transparency" in img.info:
+        return True
+    return False
+
+
+def _flatten_on_background(img, background_color):
+    """Composite an image with transparency onto a solid background color,
+    returning an RGB image. Non-transparent images are converted to RGB
+    directly (no compositing needed)."""
+    if _has_alpha(img):
+        rgba = img.convert("RGBA")
+        background = Image.new("RGB", rgba.size, background_color)
+        background.paste(rgba, mask=rgba.split()[-1])  # alpha as mask
+        return background
+    # No alpha -> plain RGB conversion is safe (no transparency to lose)
+    return img.convert("RGB")
+
+
+def _validate_background_color(background_color):
+    """Return a normalized (R, G, B) tuple or raise ValueError."""
+    if (not isinstance(background_color, (tuple, list))
+            or len(background_color) != 3
+            or not all(isinstance(c, int) and 0 <= c <= 255
+                       for c in background_color)):
+        raise ValueError(
+            "background_color must be a tuple/list of three integers in 0..255"
+        )
+    return tuple(background_color)
+
+
+def convert_format(input_dir, output_dir, target_format,
+                   background_color=(255, 255, 255)):
+    """
+    Convert all images in input_dir to the target format (PNG or JPEG).
+
+    Every recognized image file is re-encoded to the target format and
+    counted as converted -- including files already in the target format
+    (e.g. a .jpg when target_format is 'JPEG', or a .png when target_format
+    is 'PNG'). Re-encoding normalizes mode, quality, and metadata and lets
+    the caller rely on a uniform output.
+
+    For JPEG output, any transparency in the source is flattened onto a
+    solid background color (default white). Transparent pixels become that
+    background color, not black.
+
+    Args:
+        input_dir (str): Directory containing source images.
+        output_dir (str): Directory where converted images will be saved.
+        target_format (str): Either 'PNG' or 'JPEG' (case-insensitive).
+        background_color (tuple): (R, G, B) integers in 0..255, used only
+            when flattening transparency for JPEG output. Defaults to white.
+
+    Returns:
+        dict: Summary with 'converted', 'skipped', and 'failed' file lists.
+    """
+    target_format = target_format.upper()
+    if target_format not in ("PNG", "JPEG"):
+        raise ValueError("target_format must be 'PNG' or 'JPEG'")
+
+    background_color = _validate_background_color(background_color)
+
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+
+    if not input_path.is_dir():
+        raise NotADirectoryError(f"Input directory not found: {input_dir}")
+
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    pil_format = "JPEG" if target_format == "JPEG" else "PNG"
+    extension = ".jpg" if target_format == "JPEG" else ".png"
+
+    # Extensions recognized as image inputs. Anything not in this set is
+    # skipped outright (not an image we know how to open).
+    valid_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".gif",
+                        ".tiff", ".tif", ".webp", ".ico"}
+
+    result = {"converted": [], "skipped": [], "failed": []}
+
+    for file_path in input_path.iterdir():
+        if not file_path.is_file():
+            continue
+
+        # Skip non-image files entirely.
+        if file_path.suffix.lower() not in valid_extensions:
+            result["skipped"].append(str(file_path))
+            continue
+
+        output_file = output_path / (file_path.stem + extension)
+
+        # Skip only when input and output resolve to the exact same path,
+        # which would mean re-encoding a file onto itself in place.
+        # Note: an already-target-format image in a *different* directory
+        # is NOT skipped -- it flows through and is re-encoded.
+        if output_file.resolve() == file_path.resolve():
+            result["skipped"].append(str(file_path))
+            continue
+
+        try:
+            with Image.open(file_path) as img:
+                img.load()
+
+                if pil_format == "JPEG":
+                    # Flatten onto the chosen background to avoid black
+                    # regions where the source was transparent.
+                    img_to_save = _flatten_on_background(
+                        img, background_color
+                    )
+                    img_to_save.save(output_file, "JPEG",
+                                     quality=95, optimize=True)
+                else:
+                    # PNG: preserve alpha where possible.
+                    if img.mode == "P" and "transparency" in img.info:
+                        img_to_save = img.convert("RGBA")
+                    elif img.mode not in ("RGB", "RGBA", "L", "LA",
+                                          "I", "I;16", "1"):
+                        img_to_save = img.convert("RGBA")
+                    else:
+                        img_to_save = img
+                    img_to_save.save(output_file, "PNG", optimize=True)
+
+                result["converted"].append(str(output_file))
+
+        except Exception as e:
+            result["failed"].append((str(file_path), str(e)))
+
+    return result
+
+
+if __name__ == "__main__":
+    # Default: transparent -> white. Existing .jpg/.png inputs are still
+    # re-encoded and counted as converted.
+    summary = convert_format("input_images", "output_images", "JPEG")
+    print(f"Converted: {len(summary['converted'])}")
+    print(f"Skipped:   {len(summary['skipped'])}")
+    print(f"Failed:    {len(summary['failed'])}")
+    for path, err in summary["failed"]:
+        print(f"  {path}: {err}")
+```

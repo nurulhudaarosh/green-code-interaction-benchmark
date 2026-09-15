@@ -1,0 +1,195 @@
+## Restated problem — Longest Increasing Route
+
+Given an integer sequence, find a **strictly increasing subsequence of maximum length**.
+
+A subsequence must:
+
+* preserve the original order of elements;
+* satisfy `a[i1] < a[i2] < ... < a[ik]`;
+* have maximum possible length.
+
+If several maximum-length subsequences exist, the required answer is the one whose **sequence of original indices is lexicographically smallest**.
+
+The implementation must use **quadratic dynamic programming**, with **explicit predecessor/index-sequence tie breaking**, and must produce the same deterministic result regardless of incidental loop ordering.
+
+### Expected output
+
+Return:
+
+```text
+(maximum_length, lexicographically_smallest_index_sequence)
+```
+
+with **0-based original indices**.
+
+---
+
+## Demonstrating the tie-breaking defect
+
+A common incorrect implementation keeps only the first equally good predecessor:
+
+
+
+The problem is the strict `>`: an equally long candidate is ignored even when it produces a lexicographically smaller index sequence.
+
+For example:
+
+```text
+a = [1, 2, 1, 2, 3]
+```
+
+Two maximum-length increasing subsequences are:
+
+```text
+indices [0, 1, 4]  -> values [1, 2, 3]
+indices [0, 3, 4]  -> values [1, 2, 3]
+```
+
+Both have length `3`, but:
+
+```text
+[0, 1, 4] < [0, 3, 4]
+```
+
+so the required answer is:
+
+```text
+(3, [0, 1, 4])
+```
+
+An implementation that resolves equal-length states merely by whichever predecessor happens to be encountered first does **not explicitly enforce this requirement** and can return the wrong index sequence when iteration/order or state construction changes.
+
+---
+
+## Corrected implementation
+
+The fix is to store the **complete index sequence** for each DP state and explicitly compare equal-length candidates lexicographically.
+
+```python
+from typing import Sequence
+
+
+def longest_increasing_route(
+    sequence: Sequence[int],
+) -> tuple[int, list[int]]:
+    """
+    Return the maximum length strictly increasing subsequence and,
+    among all optimal subsequences, the lexicographically smallest
+    sequence of original 0-based indices.
+
+    Uses quadratic dynamic programming with explicit
+    index-sequence tie breaking.
+    """
+    n = len(sequence)
+
+    if n == 0:
+        return 0, []
+
+    # dp[i] is the lexicographically smallest index sequence among
+    # all longest strictly increasing subsequences ending at i.
+    dp: list[tuple[int, ...]] = [() for _ in range(n)]
+
+    for i in range(n):
+        # A subsequence containing only sequence[i].
+        best = (i,)
+
+        for j in range(i):
+            # Strictly increasing requirement.
+            if sequence[j] < sequence[i]:
+                candidate = dp[j] + (i,)
+
+                # Primary criterion: maximum length.
+                # Secondary criterion: lexicographically smallest
+                # original-index sequence.
+                if len(candidate) > len(best):
+                    best = candidate
+                elif (
+                    len(candidate) == len(best)
+                    and candidate < best
+                ):
+                    best = candidate
+
+        dp[i] = best
+
+    # Select the best subsequence globally.
+    answer = dp[0]
+
+    for i in range(1, n):
+        candidate = dp[i]
+
+        if len(candidate) > len(answer):
+            answer = candidate
+        elif (
+            len(candidate) == len(answer)
+            and candidate < answer
+        ):
+            answer = candidate
+
+    return len(answer), list(answer)
+
+
+# Small regression tests
+def _run_tests() -> None:
+    assert longest_increasing_route([]) == (0, [])
+
+    assert longest_increasing_route([5]) == (1, [0])
+
+    assert longest_increasing_route(
+        [1, 2, 3, 4]
+    ) == (4, [0, 1, 2, 3])
+
+    assert longest_increasing_route(
+        [4, 3, 2, 1]
+    ) == (1, [0])
+
+    # Important tie-breaking case.
+    assert longest_increasing_route(
+        [1, 2, 1, 2, 3]
+    ) == (3, [0, 1, 4])
+
+    # Duplicate values cannot both be selected because the
+    # subsequence must be strictly increasing.
+    assert longest_increasing_route(
+        [1, 1, 1]
+    ) == (1, [0])
+
+    assert longest_increasing_route(
+        [3, 1, 2, 2, 4]
+    ) == (3, [1, 2, 4])
+
+
+if __name__ == "__main__":
+    _run_tests()
+    print("All tests passed.")
+```
+
+### What changed
+
+The unrelated requirements remain unchanged:
+
+* **strictly increasing** condition: `sequence[j] < sequence[i]`;
+* **maximum length** remains the primary objective;
+* **0-based original indices** are returned;
+* **quadratic DP** is still used;
+* standard library only;
+* deterministic behavior.
+
+The essential correction is the explicit comparison:
+
+
+
+and the same tie-breaking rule is applied again when selecting the global answer.
+
+Thus, for the regression case:
+
+```text
+[1, 2, 1, 2, 3]
+```
+
+the implementation deterministically returns:
+
+```text
+(3, [0, 1, 4])
+```
+
+rather than depending on which equally optimal predecessor happened to be encountered first.

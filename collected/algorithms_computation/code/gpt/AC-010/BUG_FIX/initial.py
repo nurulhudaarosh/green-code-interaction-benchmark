@@ -1,0 +1,143 @@
+# Matrix Chain Multiplication - Interval Dynamic Programming
+# Deterministic tie-breaking: choose the smallest split index k.
+
+def matrix_chain_order(p):
+    """
+    Given matrix dimensions p0..pn, find:
+      1. Minimum scalar multiplication cost.
+      2. An optimal parenthesization.
+
+    Matrix Ai has dimensions p[i-1] x p[i].
+
+    Returns:
+        (minimum_cost, parenthesization)
+
+    Example:
+        p = [10, 20, 30]
+        -> (6000, "(A1A2)")
+    """
+
+    if not isinstance(p, (list, tuple)):
+        raise TypeError("p must be a list or tuple of positive integers")
+
+    if len(p) < 2:
+        raise ValueError("p must contain at least two dimensions")
+
+    if any(not isinstance(x, int) or isinstance(x, bool) or x <= 0 for x in p):
+        raise ValueError("All matrix dimensions must be positive integers")
+
+    n = len(p) - 1
+
+    # dp[i][j] = minimum cost for Ai...Aj
+    dp = [[0] * (n + 1) for _ in range(n + 1)]
+
+    # split[i][j] = optimal split index k
+    split = [[0] * (n + 1) for _ in range(n + 1)]
+
+    # Chain length starts at 2 because length 1 has zero cost.
+    for length in range(2, n + 1):
+        for i in range(1, n - length + 2):
+            j = i + length - 1
+
+            best_cost = None
+            best_k = None
+
+            # Try every possible split.
+            # Iterating k from small to large naturally gives
+            # the required smallest-k tie-breaking.
+            for k in range(i, j):
+                cost = (
+                    dp[i][k]
+                    + dp[k + 1][j]
+                    + p[i - 1] * p[k] * p[j]
+                )
+
+                if best_cost is None or cost < best_cost:
+                    best_cost = cost
+                    best_k = k
+
+            dp[i][j] = best_cost
+            split[i][j] = best_k
+
+    def build_parenthesization(i, j):
+        if i == j:
+            return f"A{i}"
+
+        k = split[i][j]
+
+        left = build_parenthesization(i, k)
+        right = build_parenthesization(k + 1, j)
+
+        return f"({left}{right})"
+
+    parenthesization = build_parenthesization(1, n)
+
+    return dp[1][n], parenthesization
+
+
+# ---------------------------------------------------------
+# Tests
+# ---------------------------------------------------------
+
+def run_tests():
+    # One matrix: no multiplication is needed.
+    cost, order = matrix_chain_order([10, 20])
+    assert cost == 0
+    assert order == "A1"
+
+    # Two matrices.
+    cost, order = matrix_chain_order([10, 20, 30])
+    assert cost == 6000
+    assert order == "(A1A2)"
+
+    # Classic Matrix Chain Multiplication example.
+    p = [30, 35, 15, 5, 10, 20, 25]
+    cost, order = matrix_chain_order(p)
+
+    assert cost == 15125
+    assert order == "((A1(A2A3))((A4A5)A6))"
+
+    # Tie-breaking example:
+    # [10, 10, 10, 10] has equal cost for both splits.
+    # The smallest split index must be chosen.
+    cost, order = matrix_chain_order([10, 10, 10, 10])
+
+    assert cost == 2000
+    assert order == "(A1(A2A3))"
+
+    # Another tie case.
+    cost, order = matrix_chain_order([5, 5, 5, 5])
+    assert cost == 250
+    assert order == "(A1(A2A3))"
+
+    # Invalid inputs.
+    try:
+        matrix_chain_order([])
+        assert False
+    except ValueError:
+        pass
+
+    try:
+        matrix_chain_order([10])
+        assert False
+    except ValueError:
+        pass
+
+    try:
+        matrix_chain_order([10, 0, 20])
+        assert False
+    except ValueError:
+        pass
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()
+
+    # Example usage
+    dimensions = [30, 35, 15, 5, 10, 20, 25]
+    minimum_cost, parenthesization = matrix_chain_order(dimensions)
+
+    print("Minimum scalar multiplication cost:", minimum_cost)
+    print("Optimal parenthesization:", parenthesization)

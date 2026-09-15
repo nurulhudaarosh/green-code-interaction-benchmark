@@ -1,0 +1,92 @@
+from datetime import datetime
+from collections import defaultdict
+
+def analyze_user_sessions(events):
+    """
+    Analyzes login/logout events for users.
+    
+    1. Sorts events chronologically per user.
+    2. Pairs each login with the next valid logout to create raw intervals.
+    3. Merges overlapping or contiguous intervals to avoid double-counting.
+    4. Calculates active seconds from the merged non-overlapping intervals.
+    """
+    user_events = defaultdict(list)
+    for event in events:
+        ts = datetime.fromisoformat(event["timestamp"])
+        user_events[event["user"]].append((ts, event["type"]))
+
+    summaries = []
+
+    for user in sorted(user_events.keys()):
+        ev_list = user_events[user]
+        # Sort chronologically by timestamp
+        ev_list.sort(key=lambda x: x[0])
+
+        # Step 1: Extract all raw intervals (login to next valid logout)
+        raw_intervals = []
+        current_login = None
+
+        for ts, ev_type in ev_list:
+            if ev_type == "login":
+                if current_login is None:
+                    current_login = ts
+            elif ev_type == "logout":
+                if current_login is not None:
+                    raw_intervals.append((current_login, ts))
+                    current_login = None
+
+        if not raw_intervals:
+            summaries.append({
+                "user": user,
+                "total_active_seconds": 0,
+                "merged_sessions": []
+            })
+            continue
+
+        # Step 2: Sort raw intervals by start time (ensures proper order for interval merging)
+        raw_intervals.sort(key=lambda x: x[0])
+
+        # Step 3: Merge overlapping or touching intervals
+        merged_intervals = []
+        curr_start, curr_end = raw_intervals[0]
+
+        for next_start, next_end in raw_intervals[1:]:
+            # If the next interval overlaps or touches the current interval
+            if next_start <= curr_end:
+                curr_end = max(curr_end, next_end)
+            else:
+                merged_intervals.append((curr_start, curr_end))
+                curr_start, curr_end = next_start, next_end
+        
+        merged_intervals.append((curr_start, curr_end))
+
+        # Step 4: Calculate total active seconds from non-overlapping merged intervals
+        total_seconds = sum((end - start).total_seconds() for start, end in merged_intervals)
+
+        summaries.append({
+            "user": user,
+            "total_active_seconds": int(total_seconds),
+            "merged_sessions": [
+                {"start": start.isoformat(), "end": end.isoformat()} 
+                for start, end in merged_intervals
+            ]
+        })
+
+    return summaries
+
+
+# Example Usage:
+if __name__ == "__main__":
+    # Test case with overlapping intervals:
+    # Interval 1: 08:00 to 09:00
+    # Interval 2: 08:30 to 10:00 (overlaps Interval 1)
+    # Total merged active span should be 08:00 to 10:00 = 7200 seconds (2 hours)
+    logs = [
+        {"user": "alice", "type": "login", "timestamp": "2026-09-12T08:00:00"},
+        {"user": "alice", "type": "logout", "timestamp": "2026-09-12T09:00:00"},
+        {"user": "alice", "type": "login", "timestamp": "2026-09-12T08:30:00"},
+        {"user": "alice", "type": "logout", "timestamp": "2026-09-12T10:00:00"},
+    ]
+
+    results = analyze_user_sessions(logs)
+    print(results)

@@ -1,0 +1,11 @@
+{
+  "task_id": "FD-003",
+  "model": "gpt",
+  "interaction": "FULL_MULTI_TURN",
+  "turn": 3,
+  "saved_at": "2026-09-03T21:01:21.078604+00:00",
+  "response_sha256": "b63804638ca251cc29328be3226802db975658c1a6900d98a0b30f599f44cb6c",
+  "code_sha256": "576e37320020a91cd144d586da9bd3655467b8b47d6e7a3ad7402008e222d94e",
+  "raw_file": ".collection/raw/gpt/FD-003/FULL_MULTI_TURN/turn_03.txt",
+  "code_file": ".collection/code/gpt/FD-003/FULL_MULTI_TURN/turn_03.py"
+}

@@ -1,0 +1,63 @@
+from pathlib import Path
+from PIL import Image
+import numpy as np
+
+
+def preprocess_images(input_dir, output_dir, clip_percentile=None):
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    stats = {}
+
+    for file in input_dir.iterdir():
+        if not file.is_file():
+            continue
+
+        try:
+            # Convert image to grayscale
+            img = Image.open(file).convert("L")
+            arr = np.array(img, dtype=np.float32)
+
+            # Original min/max statistics
+            original_min = float(arr.min())
+            original_max = float(arr.max())
+
+            stats[file.name] = {
+                "min": original_min,
+                "max": original_max
+            }
+
+            # Determine min/max for normalization
+            if clip_percentile is not None:
+                if not 0 <= clip_percentile < 50:
+                    raise ValueError(
+                        "clip_percentile must be between 0 and 50."
+                    )
+
+                lo = float(np.percentile(arr, clip_percentile))
+                hi = float(np.percentile(arr, 100 - clip_percentile))
+            else:
+                lo = original_min
+                hi = original_max
+
+            # Handle flat images / zero normalization range
+            if hi == lo:
+                normalized = np.zeros_like(arr, dtype=np.uint8)
+            else:
+                # Clip pixel values to the computed percentile range
+                clipped = np.clip(arr, lo, hi)
+
+                # Min-max normalize to full 0-255 range
+                normalized = (
+                    (clipped - lo) / (hi - lo) * 255
+                ).astype(np.uint8)
+
+            # Save as PNG
+            output_path = output_dir / f"{file.stem}.png"
+            Image.fromarray(normalized).save(output_path, "PNG")
+
+        except Exception as e:
+            print(f"Skipping {file.name}: {e}")
+
+    return stats

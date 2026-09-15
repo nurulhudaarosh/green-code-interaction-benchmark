@@ -1,0 +1,107 @@
+### Restatement of Problem & Expected Behavior
+
+**Problem:**
+
+The **Matrix Chain Planner** (Matrix Chain Multiplication) takes a sequence of matrix dimensions $p_0, p_1, \dots, p_n$ representing a chain of $n$ matrices where matrix $A_i$ has shape $p_{i-1} \times p_i$. It must compute:
+
+1. The **minimum scalar multiplication cost** required to compute the product $A_1 A_2 \dots A_n$.
+2. The **optimal parenthesization** string representing the evaluation order.
+
+**Expected Behavior & Tie-Handling Constraint:**
+
+The solution must use **interval dynamic programming** over all matrix-chain ranges $l \in [2..n]$. When multiple split indices $k$ ($i \le k < j$) yield the exact same minimum multiplication cost for a subproblem $A_{i..j}$, the algorithm **must choose the smallest split index $k$**.
+
+---
+
+### Defect Demonstration
+
+The defect in the previous implementation lies in handling subchains of length $n = 1$ and returning raw concatenated matrix names without clear multiplication formatting or failing to properly validate inputs.
+
+More specifically, look at how the parenthesization builder structures single matrix elements vs. multi-matrix products, or test on identical-dimension chains where equal costs frequently occur across multiple split points $k$:
+
+Consider a chain of 4 square matrices of identical size $10 \times 10$:
+
+* **Dimensions:** `p = [10, 10, 10, 10, 10]` ($A_1, A_2, A_3, A_4$)
+* Subproblem $A_{1..4}$ has cost $2000$.
+* Split $k=1 \implies A_1 (A_2 A_3 A_4) \implies 0 + 1000 + (10 \cdot 10 \cdot 10) = 2000$.
+* Split $k=2 \implies (A_1 A_2)(A_3 A_4) \implies 1000 + 1000 + (10 \cdot 10 \cdot 10) = 3000$.
+* Split $k=3 \implies (A_1 A_2 A_3) A_4 \implies 1000 + 0 + (10 \cdot 10 \cdot 10) = 2000$.
+
+Both split $k=1$ and split $k=3$ yield cost **2000**.
+
+If the inner loop doesn't strictly preserve the first minimal cost encountered (or if cost initializations or conditions inadvertently overwrite $k=1$ with $k=3$), it violates the smallest split index rule. Furthermore, edge cases like $n=0$ or improper single-matrix boundaries could produce invalid formatting.
+
+Let's demonstrate with a explicit Python snippet:
+
+
+
+---
+
+### Corrected Implementation
+
+Below is the robust, deterministic Python implementation. It explicitly ensures that:
+
+1. **Interval DP** evaluates all range lengths $l \in [2..n]$.
+2. The inner loop evaluates $k$ in increasing order ($i \le k < j$) with strict inequality (`<`), guaranteeing that **the smallest split index $k$ is preserved on cost ties**.
+3. All inputs are handled cleanly with robust formatting.
+
+```python
+def matrix_chain_order(p):
+    """
+    Computes the minimum scalar multiplication cost and optimal parenthesization
+    for a chain of matrices with dimensions given by sequence p.
+    
+    Tie-breaking rule: Strictly picks the smallest split index k when costs are equal.
+    """
+    if not p or len(p) < 2:
+        return 0, ""
+
+    n = len(p) - 1  # Number of matrices
+
+    if n == 1:
+        return 0, "A1"
+
+    # m[i][j]: minimum cost to multiply A_i through A_j
+    # s[i][j]: optimal split index k for subchain A_i through A_j
+    # 1-based indexing for matrices A_1 ... A_n
+    m = [[0] * (n + 1) for _ in range(n + 1)]
+    s = [[0] * (n + 1) for _ in range(n + 1)]
+
+    # Interval DP: l is the length of the matrix chain subproblem
+    for l in range(2, n + 1):
+        for i in range(1, n - l + 2):
+            j = i + l - 1
+            m[i][j] = float('inf')
+            
+            # Iterate k from i to j - 1 in strictly ascending order
+            for k in range(i, j):
+                cost = m[i][k] + m[k + 1][j] + p[i - 1] * p[k] * p[j]
+                
+                # Strict inequality strictly enforces picking the smallest k on tie
+                if cost < m[i][j]:
+                    m[i][j] = cost
+                    s[i][j] = k
+
+    # Reconstruct optimal parenthesization string
+    def build_string(i, j):
+        if i == j:
+            return f"A{i}"
+        k = s[i][j]
+        left = build_string(i, k)
+        right = build_string(k + 1, j)
+        return f"({left}{right})"
+
+    return m[1][n], build_string(1, n)
+
+
+# Verification Test
+if __name__ == "__main__":
+    # Test case with identical dimensions to force ties across multiple split points
+    test_p = [10, 10, 10, 10, 10]
+    cost, parenthesization = matrix_chain_order(test_p)
+    
+    print(f"Dimensions: {test_p}")
+    print(f"Minimum Cost: {cost}")
+    print(f"Parenthesization: {parenthesization}")
+
+```

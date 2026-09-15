@@ -1,0 +1,11 @@
+{
+  "task_id": "AC-013",
+  "model": "gemini",
+  "interaction": "FEATURE_ADDITION",
+  "turn": 2,
+  "saved_at": "2026-09-12T15:47:33.868116+00:00",
+  "response_sha256": "e2dcdf60462f7a20d6033ab9f4d8c5bdfaef615f3761f01b2a7da625f5ee719d",
+  "code_sha256": "cd099f9aabd82796d03b8cdb184b2d98261ef2f1d07a6f4ec889e9595b8f9547",
+  "raw_file": ".collection/raw/gemini/AC-013/FEATURE_ADDITION/turn_02.txt",
+  "code_file": ".collection/code/gemini/AC-013/FEATURE_ADDITION/final.py"
+}

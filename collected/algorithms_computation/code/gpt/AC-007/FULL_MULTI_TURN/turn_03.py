@@ -1,0 +1,218 @@
+from typing import Iterable, List, Tuple, Dict, Union
+
+
+class DSU:
+    """Disjoint Set Union with path compression and union by size."""
+
+    def __init__(self, n: int) -> None:
+        self.parent = list(range(n))
+        self.size = [1] * n
+
+    def find(self, x: int) -> int:
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]
+            x = self.parent[x]
+        return x
+
+    def union(self, a: int, b: int) -> bool:
+        root_a = self.find(a)
+        root_b = self.find(b)
+
+        if root_a == root_b:
+            return False
+
+        if self.size[root_a] < self.size[root_b]:
+            root_a, root_b = root_b, root_a
+
+        self.parent[root_b] = root_a
+        self.size[root_a] += self.size[root_b]
+        return True
+
+
+def minimum_spanning_forest(
+    n: int,
+    edges: Iterable[Tuple[int, int, int, int]],
+    include_operation_summary: bool = False,
+) -> Union[
+    Tuple[int, List[int]],
+    Tuple[int, List[int], Dict[str, int]]
+]:
+    """
+    Construct a Minimum Spanning Forest using Kruskal's algorithm.
+
+    Each edge is:
+        (u, v, weight, original_edge_id)
+
+    Edges are processed by:
+        1. increasing weight
+        2. increasing original edge ID for equal weights
+
+    If include_operation_summary is False:
+        returns (total_cost, selected_edge_ids)
+
+    If include_operation_summary is True:
+        returns
+        (total_cost, selected_edge_ids, operation_summary)
+
+    operation_summary reports the number of major edge-processing
+    decisions/operations performed by Kruskal.
+    """
+
+    if n < 0:
+        raise ValueError("Number of vertices cannot be negative.")
+
+    edge_list = list(edges)
+
+    # Validate edge endpoints.
+    for u, v, _, _ in edge_list:
+        if not (0 <= u < n and 0 <= v < n):
+            raise ValueError(
+                f"Invalid edge endpoint: ({u}, {v}) for n={n}"
+            )
+
+    # Deterministic Kruskal ordering:
+    # weight first, then original edge ID.
+    edge_list.sort(key=lambda edge: (edge[2], edge[3]))
+
+    dsu = DSU(n)
+
+    total_cost = 0
+    selected_edge_ids: List[int] = []
+    major_operations = 0
+
+    for u, v, weight, edge_id in edge_list:
+        # Every processed edge is one major operation.
+        major_operations += 1
+
+        # Self-loops cannot be included in an MSF.
+        if u == v:
+            continue
+
+        # Select only if the edge connects different components.
+        if dsu.union(u, v):
+            total_cost += weight
+            selected_edge_ids.append(edge_id)
+
+    # Preserve the original output when the feature is disabled.
+    if not include_operation_summary:
+        return total_cost, selected_edge_ids
+
+    operation_summary = {
+        "major_operations": major_operations
+    }
+
+    return total_cost, selected_edge_ids, operation_summary
+
+
+# ------------------------------------------------------------
+# Tests
+# ------------------------------------------------------------
+
+def test_original_output_unchanged():
+    edges = [
+        (0, 1, 4, 0),
+        (0, 2, 1, 1),
+        (1, 2, 2, 2),
+        (1, 3, 5, 3),
+        (2, 3, 3, 4),
+        (3, 4, 2, 5),
+    ]
+
+    result = minimum_spanning_forest(5, edges)
+
+    assert result == (8, [1, 2, 5, 4])
+
+
+def test_operation_summary():
+    edges = [
+        (0, 1, 4, 0),
+        (0, 2, 1, 1),
+        (1, 2, 2, 2),
+        (1, 3, 5, 3),
+        (2, 3, 3, 4),
+        (3, 4, 2, 5),
+    ]
+
+    result = minimum_spanning_forest(
+        5,
+        edges,
+        include_operation_summary=True
+    )
+
+    assert result == (
+        8,
+        [1, 2, 5, 4],
+        {"major_operations": 6}
+    )
+
+
+def test_equal_weight_deterministic_tie():
+    # Input order is intentionally different from original ID order.
+    edges = [
+        (0, 2, 1, 2),
+        (1, 2, 1, 1),
+        (0, 1, 1, 0),
+    ]
+
+    result = minimum_spanning_forest(
+        3,
+        edges,
+        include_operation_summary=True
+    )
+
+    # Equal weights must be processed by original edge ID:
+    # ID 0 -> ID 1 -> ID 2.
+    assert result == (
+        2,
+        [0, 1],
+        {"major_operations": 3}
+    )
+
+
+def test_disconnected_graph():
+    edges = [
+        (0, 1, 5, 0),
+        (2, 3, 2, 1),
+    ]
+
+    result = minimum_spanning_forest(
+        4,
+        edges,
+        include_operation_summary=True
+    )
+
+    assert result == (
+        7,
+        [1, 0],
+        {"major_operations": 2}
+    )
+
+
+def test_cycle_and_self_loop():
+    edges = [
+        (0, 0, 1, 0),  # Self-loop: skipped.
+        (0, 1, 2, 1),  # Selected.
+        (0, 1, 3, 2),  # Cycle: rejected.
+    ]
+
+    result = minimum_spanning_forest(
+        2,
+        edges,
+        include_operation_summary=True
+    )
+
+    assert result == (
+        2,
+        [1],
+        {"major_operations": 3}
+    )
+
+
+if __name__ == "__main__":
+    test_original_output_unchanged()
+    test_operation_summary()
+    test_equal_weight_deterministic_tie()
+    test_disconnected_graph()
+    test_cycle_and_self_loop()
+
+    print("All tests passed.")

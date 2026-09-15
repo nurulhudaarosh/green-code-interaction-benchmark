@@ -1,0 +1,177 @@
+from collections import deque
+from typing import Dict, List, Tuple, Union
+
+
+class DinicMaxFlow:
+    """Computes Maximum s-t Flow using Dinic's blocking-flow algorithm.
+
+    Supports deterministic operation summaries while preserving original output
+    contracts.
+    """
+
+    def __init__(self, num_nodes: int):
+        self.n = num_nodes
+        self.graph = [[] for _ in range(num_nodes)]
+        self.raw_edges = []
+        self.num_original_edges = 0
+
+    def add_edge(self, u: int, v: int, capacity: float) -> int:
+        """Adds a directed edge from u to v with specified capacity.
+
+        Returns:
+            orig_idx (int): 0-based insertion index of the edge.
+        """
+        orig_idx = self.num_original_edges
+        self.num_original_edges += 1
+
+        fwd_id = len(self.raw_edges)
+        rev_id = fwd_id + 1
+
+        forward_edge = {
+            "u": u,
+            "v": v,
+            "cap": float(capacity),
+            "flow": 0.0,
+            "rev": rev_id,
+            "orig_idx": orig_idx,
+            "is_original": True,
+        }
+        backward_edge = {
+            "u": v,
+            "v": u,
+            "cap": 0.0,
+            "flow": 0.0,
+            "rev": fwd_id,
+            "orig_idx": orig_idx,
+            "is_original": False,
+        }
+
+        self.raw_edges.append(forward_edge)
+        self.raw_edges.append(backward_edge)
+
+        self.graph[u].append(fwd_id)
+        self.graph[v].append(rev_id)
+
+        return orig_idx
+
+    def _bfs(self, s: int, t: int) -> bool:
+        """Builds level graph via BFS."""
+        self.level = [-1] * self.n
+        self.level[s] = 0
+        queue = deque([s])
+
+        while queue:
+            u = queue.popleft()
+            for edge_id in self.graph[u]:
+                edge = self.raw_edges[edge_id]
+                residual_cap = edge["cap"] - edge["flow"]
+                if residual_cap > 1e-9 and self.level[edge["v"]] == -1:
+                    self.level[edge["v"]] = self.level[u] + 1
+                    queue.append(edge["v"])
+
+        return self.level[t] != -1
+
+    def _dfs(
+        self, u: int, t: int, pushed: float, metrics: Dict[str, int]
+    ) -> float:
+        """Pushes blocking flow through level graph via DFS and tracks metrics."""
+        if pushed <= 0:
+            return 0.0
+        if u == t:
+            metrics["dfs_augmentations"] += 1
+            return pushed
+
+        while self.ptr[u] < len(self.graph[u]):
+            cid = self.ptr[u]
+            edge_id = self.graph[u][cid]
+            edge = self.raw_edges[edge_id]
+            v = edge["v"]
+            residual_cap = edge["cap"] - edge["flow"]
+
+            metrics["dfs_steps"] += 1
+
+            if self.level[u] + 1 == self.level[v] and residual_cap > 1e-9:
+                tr = self._dfs(v, t, min(pushed, residual_cap), metrics)
+                if tr > 1e-9:
+                    edge["flow"] += tr
+                    self.raw_edges[edge["rev"]]["flow"] -= tr
+                    return tr
+
+            # Edge pruned or saturated
+            self.ptr[u] += 1
+
+        return 0.0
+
+    def solve(
+        self, s: int, t: int, return_summary: bool = False
+    ) -> Union[Tuple[float, List[float]], Tuple[float, List[float], Dict]]:
+        """Computes the maximum s-t flow.
+
+        Args:
+            s: Source node index
+            t: Sink node index
+            return_summary: If True, returns an additional `operation_summary`
+              dict.
+
+        Returns:
+            - If return_summary=False: (max_flow, edge_flows) [Original signature]
+            - If return_summary=True: (max_flow, edge_flows, operation_summary)
+        """
+        for edge in self.raw_edges:
+            edge["flow"] = 0.0
+
+        max_flow = 0.0
+        INF = float("inf")
+
+        metrics = {"bfs_phases": 0, "dfs_augmentations": 0, "dfs_steps": 0}
+
+        while self._bfs(s, t):
+            metrics["bfs_phases"] += 1
+            self.ptr = [0] * self.n
+            while True:
+                pushed = self._dfs(s, t, INF, metrics)
+                if pushed <= 1e-9:
+                    break
+                max_flow += pushed
+
+        edge_flows = [0.0] * self.num_original_edges
+        for edge_id in range(0, len(self.raw_edges), 2):
+            edge = self.raw_edges[edge_id]
+            edge_flows[edge["orig_idx"]] = max(0.0, edge["flow"])
+
+        if not return_summary:
+            return max_flow, edge_flows
+
+        operation_summary = {
+            "bfs_phases": metrics["bfs_phases"],
+            "dfs_augmentations": metrics["dfs_augmentations"],
+            "dfs_steps": metrics["dfs_steps"],
+            "max_flow": max_flow,
+            "edge_flows": edge_flows,
+        }
+
+        return max_flow, edge_flows, operation_summary
+
+
+# --- Demonstration & Verification ---
+if __name__ == "__main__":
+    solver = DinicMaxFlow(num_nodes=4)
+
+    solver.add_edge(0, 1, 10.0)  # Edge 0
+    solver.add_edge(0, 2, 10.0)  # Edge 1
+    solver.add_edge(1, 2, 2.0)  # Edge 2
+    solver.add_edge(1, 3, 4.0)  # Edge 3
+    solver.add_edge(2, 3, 8.0)  # Edge 4
+
+    # 1. Backward-compatible call (Default signature unchanged)
+    max_flow, flows = solver.solve(s=0, t=3)
+    print("--- Backward Compatible Output ---")
+    print(f"Max Flow: {max_flow}")
+    print(f"Edge Flows: {flows}\n")
+
+    # 2. Extended call with operation_summary
+    max_flow, flows, summary = solver.solve(s=0, t=3, return_summary=True)
+    print("--- Extended Output with operation_summary ---")
+    print(f"BFS Level Phases: {summary['bfs_phases']}")
+    print(f"DFS Augmentation Paths: {summary['dfs_augmentations']}")
+    print(f"DFS Graph Traversals/Steps: {summary['dfs_steps']}")

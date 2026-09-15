@@ -1,0 +1,287 @@
+from typing import List, Optional, Tuple
+
+Coordinate = Tuple[int, int]
+Result = Tuple[int, int, Optional[Coordinate]]
+
+
+def largest_threshold_region(
+    grid: List[List[float]],
+    T: float,
+) -> Result:
+    """
+    Return the largest 4-connected region of cells with value >= T.
+
+    Result:
+        (size, perimeter, smallest_coordinate)
+
+    Tie-breaking:
+        1. Larger size
+        2. Larger perimeter
+        3. Smaller lexicographical coordinate
+
+    Empty grid / no qualifying cells:
+        (0, 0, None)
+    """
+
+    if not grid or not grid[0]:
+        return (0, 0, None)
+
+    rows = len(grid)
+    cols = len(grid[0])
+
+    if any(len(row) != cols for row in grid):
+        raise ValueError("grid must be rectangular")
+
+    visited = [[False] * cols for _ in range(rows)]
+
+    directions = (
+        (-1, 0),  # up
+        (1, 0),   # down
+        (0, -1),  # left
+        (0, 1),   # right
+    )
+
+    best_size = 0
+    best_perimeter = 0
+    best_coordinate: Optional[Coordinate] = None
+
+    for start_row in range(rows):
+        for start_col in range(cols):
+
+            if visited[start_row][start_col]:
+                continue
+
+            if grid[start_row][start_col] < T:
+                continue
+
+            # Iterative flood fill.
+            stack = [(start_row, start_col)]
+            visited[start_row][start_col] = True
+
+            region_size = 0
+            region_perimeter = 0
+            region_smallest = (start_row, start_col)
+
+            while stack:
+                row, col = stack.pop()
+                region_size += 1
+
+                # Explicitly track the smallest coordinate.
+                if (row, col) < region_smallest:
+                    region_smallest = (row, col)
+
+                for dr, dc in directions:
+                    nr = row + dr
+                    nc = col + dc
+
+                    # Outside the grid = exposed side.
+                    if nr < 0 or nr >= rows or nc < 0 or nc >= cols:
+                        region_perimeter += 1
+                        continue
+
+                    # Below threshold = exposed side.
+                    if grid[nr][nc] < T:
+                        region_perimeter += 1
+                        continue
+
+                    # Qualifying unvisited cell.
+                    if not visited[nr][nc]:
+                        visited[nr][nc] = True
+                        stack.append((nr, nc))
+
+            # Apply all tie-breaking rules deterministically.
+            candidate_key = (
+                region_size,
+                region_perimeter,
+                tuple(-x for x in region_smallest),
+            )
+
+            if best_coordinate is None:
+                better = True
+            else:
+                best_key = (
+                    best_size,
+                    best_perimeter,
+                    tuple(-x for x in best_coordinate),
+                )
+                better = candidate_key > best_key
+
+            if better:
+                best_size = region_size
+                best_perimeter = region_perimeter
+                best_coordinate = region_smallest
+
+    return (best_size, best_perimeter, best_coordinate)
+
+
+# ================================================================
+# Tests
+# ================================================================
+
+def run_tests() -> None:
+
+    # ------------------------------------------------------------
+    # 1. Repeated values form ONE region when 4-connected.
+    # ------------------------------------------------------------
+    grid = [
+        [5, 5, 5],
+        [5, 5, 5],
+    ]
+
+    assert largest_threshold_region(grid, 5) == (6, 10, (0, 0))
+
+    # All six repeated 5s are connected.
+    # A 2x3 rectangle has perimeter 10.
+
+    # ------------------------------------------------------------
+    # 2. Repeated values in separate components remain separate.
+    # ------------------------------------------------------------
+    grid = [
+        [5, 5, 1, 5, 5],
+        [5, 5, 1, 5, 5],
+    ]
+
+    # Two regions:
+    # left  = size 4, perimeter 8, coordinate (0, 0)
+    # right = size 4, perimeter 8, coordinate (0, 3)
+    #
+    # Same size and perimeter -> smaller coordinate wins.
+    assert largest_threshold_region(grid, 5) == (4, 8, (0, 0))
+
+    # ------------------------------------------------------------
+    # 3. Repeated values with different values still belong to
+    #    the same region when every value meets the threshold.
+    # ------------------------------------------------------------
+    grid = [
+        [5, 6, 7],
+        [8, 9, 10],
+    ]
+
+    assert largest_threshold_region(grid, 5) == (6, 10, (0, 0))
+
+    # ------------------------------------------------------------
+    # 4. Deterministic tie: larger perimeter wins.
+    # ------------------------------------------------------------
+    grid = [
+        [5, 5, 1, 5],
+        [5, 5, 1, 5],
+        [1, 1, 1, 5],
+        [1, 1, 1, 5],
+    ]
+
+    # Left component:
+    #   size = 4
+    #   perimeter = 8
+    #
+    # Right component:
+    #   size = 4
+    #   perimeter = 10
+    #
+    # Equal size -> right component wins because perimeter is larger.
+    assert largest_threshold_region(grid, 5) == (4, 10, (0, 3))
+
+    # ------------------------------------------------------------
+    # 5. Deterministic tie: same size and perimeter -> smallest
+    #    coordinate wins.
+    # ------------------------------------------------------------
+    grid = [
+        [5, 5, 1, 5, 5],
+        [1, 1, 1, 1, 1],
+        [5, 5, 1, 5, 5],
+    ]
+
+    # Four components, each:
+    #   size = 2
+    #   perimeter = 6
+    #
+    # Coordinates:
+    #   (0,0), (0,3), (2,0), (2,3)
+    #
+    # Smallest coordinate is (0,0).
+    assert largest_threshold_region(grid, 5) == (2, 6, (0, 0))
+
+    # ------------------------------------------------------------
+    # 6. Tie must NOT depend on flood-fill stack order.
+    # ------------------------------------------------------------
+    grid = [
+        [5, 5, 1, 5, 5],
+        [5, 5, 1, 5, 5],
+    ]
+
+    # Two identical 2x2 components:
+    # left  -> (4, 8, (0,0))
+    # right -> (4, 8, (0,3))
+    #
+    # The left component must always win.
+    assert largest_threshold_region(grid, 5) == (4, 8, (0, 0))
+
+    # ------------------------------------------------------------
+    # 7. Threshold is inclusive.
+    # ------------------------------------------------------------
+    grid = [
+        [5, 5],
+        [4, 5],
+    ]
+
+    assert largest_threshold_region(grid, 5) == (3, 8, (0, 0))
+
+    # ------------------------------------------------------------
+    # 8. Diagonal cells are NOT connected.
+    # ------------------------------------------------------------
+    grid = [
+        [5, 1],
+        [1, 5],
+    ]
+
+    assert largest_threshold_region(grid, 5) == (1, 4, (0, 0))
+
+    # ------------------------------------------------------------
+    # 9. Every exposed side is counted.
+    # ------------------------------------------------------------
+    grid = [
+        [5],
+    ]
+
+    # Single cell has four exposed sides.
+    assert largest_threshold_region(grid, 5) == (1, 4, (0, 0))
+
+    # ------------------------------------------------------------
+    # 10. No qualifying cells.
+    # ------------------------------------------------------------
+    grid = [
+        [1, 2],
+        [3, 4],
+    ]
+
+    assert largest_threshold_region(grid, 5) == (0, 0, None)
+
+    # ------------------------------------------------------------
+    # 11. Empty grid.
+    # ------------------------------------------------------------
+    assert largest_threshold_region([], 5) == (0, 0, None)
+
+    # ------------------------------------------------------------
+    # 12. Empty first row.
+    # ------------------------------------------------------------
+    assert largest_threshold_region([[]], 5) == (0, 0, None)
+
+    # ------------------------------------------------------------
+    # 13. Non-rectangular grid remains invalid.
+    # ------------------------------------------------------------
+    try:
+        largest_threshold_region(
+            [
+                [5, 5],
+                [5],
+            ],
+            5,
+        )
+        assert False, "Expected ValueError"
+    except ValueError:
+        pass
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()

@@ -1,0 +1,218 @@
+import os
+from PIL import Image
+
+def batch_resize(input_dir, output_dir, target_size, resample_filter=Image.Resampling.LANCZOS):
+    """
+    Resizes every PNG/JPEG image in input_dir to target_size and saves to output_dir.
+    
+    Args:
+        input_dir (str): Path to directory containing input images
+        output_dir (str): Path to directory where resized images will be saved
+        target_size (tuple): Desired size as (width, height)
+        resample_filter (int): Resampling filter to use. Options:
+            - Image.Resampling.NEAREST (0) - Nearest neighbor (fastest, lowest quality)
+            - Image.Resampling.BILINEAR (2) - Bilinear interpolation
+            - Image.Resampling.BICUBIC (3) - Bicubic interpolation
+            - Image.Resampling.LANCZOS (1) - Lanczos interpolation (default, highest quality)
+    
+    Returns:
+        dict: {
+            'processed_count': int,  # Number of images successfully processed
+            'skipped': list          # List of filenames that were skipped (errors or invalid)
+        }
+    
+    Raises:
+        ValueError: If an invalid resample_filter is provided
+        FileNotFoundError: If input_dir does not exist
+    """
+    # Validate input directory exists
+    if not os.path.exists(input_dir):
+        raise FileNotFoundError(f"Input directory '{input_dir}' does not exist")
+    
+    # Validate resample_filter
+    valid_filters = {
+        Image.Resampling.NEAREST,
+        Image.Resampling.BILINEAR,
+        Image.Resampling.BICUBIC,
+        Image.Resampling.LANCZOS
+    }
+    
+    # Also support legacy PIL constants for backward compatibility
+    legacy_filters = {
+        Image.NEAREST,
+        Image.BILINEAR,
+        Image.BICUBIC,
+        Image.LANCZOS
+    }
+    
+    if resample_filter not in valid_filters and resample_filter not in legacy_filters:
+        raise ValueError(
+            f"Invalid resample_filter. Must be one of: NEAREST, BILINEAR, BICUBIC, LANCZOS"
+        )
+    
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Supported image extensions
+    extensions = {'.png', '.jpg', '.jpeg', '.PNG', '.JPG', '.JPEG'}
+    
+    processed_count = 0
+    skipped_files = []
+    
+    # Get list of files in input directory
+    try:
+        files = os.listdir(input_dir)
+    except OSError as e:
+        raise OSError(f"Could not read input directory '{input_dir}': {e}")
+    
+    # If directory is empty or has no valid image files, return early
+    if not files:
+        return {'processed_count': 0, 'skipped': []}
+    
+    # Check if there are any valid image files
+    has_image_files = any(any(filename.endswith(ext) for ext in extensions) for filename in files)
+    if not has_image_files:
+        # Still return empty result, but no error
+        return {'processed_count': 0, 'skipped': []}
+    
+    # Iterate through all files in input directory
+    for filename in files:
+        # Check if file has a supported image extension
+        if not any(filename.endswith(ext) for ext in extensions):
+            skipped_files.append(filename)
+            continue
+        
+        input_path = os.path.join(input_dir, filename)
+        
+        try:
+            # Open the image
+            with Image.open(input_path) as img:
+                # Convert to RGB if necessary (for PNG with alpha)
+                if img.mode in ('RGBA', 'LA', 'P'):
+                    img = img.convert('RGB')
+                
+                # Resize the image using the specified filter
+                resized_img = img.resize(target_size, resample_filter)
+                
+                # Construct output path (preserve original filename)
+                output_path = os.path.join(output_dir, filename)
+                
+                # Determine format from extension
+                ext = os.path.splitext(filename)[1].lower()
+                if ext in ('.jpg', '.jpeg'):
+                    resized_img.save(output_path, 'JPEG', quality=85)
+                else:  # PNG
+                    resized_img.save(output_path, 'PNG')
+                
+                processed_count += 1
+                
+        except Exception as e:
+            # Log error and skip this file
+            print(f"Error processing {filename}: {e}")
+            skipped_files.append(filename)
+            continue
+    
+    return {
+        'processed_count': processed_count,
+        'skipped': skipped_files
+    }
+
+
+# Optional: Version with thumbnail mode (maintains aspect ratio)
+def batch_resize_thumbnail(input_dir, output_dir, target_size, resample_filter=Image.Resampling.LANCZOS):
+    """
+    Resize while maintaining aspect ratio using thumbnail method.
+    
+    Args:
+        input_dir (str): Path to directory containing input images
+        output_dir (str): Path to directory where resized images will be saved
+        target_size (tuple): Maximum size as (width, height) - images will be scaled
+                           to fit within these dimensions while preserving aspect ratio
+        resample_filter (int): Resampling filter to use
+    
+    Returns:
+        dict: {
+            'processed_count': int,  # Number of images successfully processed
+            'skipped': list          # List of filenames that were skipped (errors or invalid)
+        }
+    """
+    # Validate input directory exists
+    if not os.path.exists(input_dir):
+        raise FileNotFoundError(f"Input directory '{input_dir}' does not exist")
+    
+    # Validate resample_filter
+    valid_filters = {
+        Image.Resampling.NEAREST,
+        Image.Resampling.BILINEAR,
+        Image.Resampling.BICUBIC,
+        Image.Resampling.LANCZOS
+    }
+    
+    legacy_filters = {
+        Image.NEAREST,
+        Image.BILINEAR,
+        Image.BICUBIC,
+        Image.LANCZOS
+    }
+    
+    if resample_filter not in valid_filters and resample_filter not in legacy_filters:
+        raise ValueError(
+            f"Invalid resample_filter. Must be one of: NEAREST, BILINEAR, BICUBIC, LANCZOS"
+        )
+    
+    os.makedirs(output_dir, exist_ok=True)
+    extensions = {'.png', '.jpg', '.jpeg', '.PNG', '.JPG', '.JPEG'}
+    processed_count = 0
+    skipped_files = []
+    
+    # Get list of files in input directory
+    try:
+        files = os.listdir(input_dir)
+    except OSError as e:
+        raise OSError(f"Could not read input directory '{input_dir}': {e}")
+    
+    # If directory is empty or has no valid image files, return early
+    if not files:
+        return {'processed_count': 0, 'skipped': []}
+    
+    # Check if there are any valid image files
+    has_image_files = any(any(filename.endswith(ext) for ext in extensions) for filename in files)
+    if not has_image_files:
+        return {'processed_count': 0, 'skipped': []}
+    
+    for filename in files:
+        if not any(filename.endswith(ext) for ext in extensions):
+            skipped_files.append(filename)
+            continue
+        
+        input_path = os.path.join(input_dir, filename)
+        
+        try:
+            with Image.open(input_path) as img:
+                # Convert to RGB if needed
+                if img.mode in ('RGBA', 'LA', 'P'):
+                    img = img.convert('RGB')
+                
+                # Create a copy and resize maintaining aspect ratio
+                img_copy = img.copy()
+                img_copy.thumbnail(target_size, resample_filter)
+                
+                output_path = os.path.join(output_dir, filename)
+                ext = os.path.splitext(filename)[1].lower()
+                
+                if ext in ('.jpg', '.jpeg'):
+                    img_copy.save(output_path, 'JPEG', quality=85)
+                else:
+                    img_copy.save(output_path, 'PNG')
+                
+                processed_count += 1
+                
+        except Exception as e:
+            print(f"Error processing {filename}: {e}")
+            skipped_files.append(filename)
+            continue
+    
+    return {
+        'processed_count': processed_count,
+        'skipped': skipped_files
+    }

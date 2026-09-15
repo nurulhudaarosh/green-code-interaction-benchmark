@@ -1,0 +1,45 @@
+Here's the fix. The core issue: `img.resize((max_dim, max_dim))` forces the image into a square, ignoring its original proportions. `img.thumbnail()` instead scales down so the **longest** side hits `max_dim`, computing the other side automatically to preserve the ratio — and it does this in place.
+
+```python
+from pathlib import Path
+from PIL import Image
+
+def generate_thumbnails(input_dir, cache_dir, max_dim=128):
+    """
+    Recursively walk input_dir, creating aspect-ratio-preserving thumbnails
+    (longest side = max_dim) in cache_dir, mirroring the source tree.
+
+    Returns a list of (source_path, thumbnail_path) tuples for images
+    that were successfully processed.
+    """
+    input_dir = Path(input_dir)
+    cache_dir = Path(cache_dir)
+    image_exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"}
+
+    results = []
+
+    for src_path in input_dir.rglob("*"):
+        if not src_path.is_file() or src_path.suffix.lower() not in image_exts:
+            continue
+
+        rel_path = src_path.relative_to(input_dir)
+        dest_path = cache_dir / rel_path
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            with Image.open(src_path) as img:
+                if img.mode in ("P", "RGBA", "LA"):
+                    img = img.convert("RGB")
+
+                # FIX: thumbnail() preserves aspect ratio by scaling so the
+                # longest side fits within max_dim; resize() would stretch
+                # the image to exactly max_dim x max_dim regardless of ratio.
+                img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+
+                img.save(dest_path)
+                results.append((src_path, dest_path))
+        except Exception as e:
+            print(f"Skipping {src_path}: {e}")
+
+    return results
+```

@@ -1,0 +1,109 @@
+```python
+import csv
+import statistics
+from collections import defaultdict, deque
+
+
+def analyze_transactions(input_path: str, output_path: str,
+                          account_field: str = "account_id",
+                          timestamp_field: str = "timestamp",
+                          amount_field: str = "amount",
+                          id_field: str = "transaction_id",
+                          window_size: int = 5):
+    """
+    Reads transactions from a CSV, orders them per account, computes
+    statistics from the 5 immediately preceding transactions for each
+    account, and flags unusually high amounts (mean + 3 * population stdev).
+
+    Zero-deviation rule: if the preceding window has population stdev == 0
+    (i.e. all preceding amounts are identical), a transaction is flagged
+    only if its amount is strictly greater than that common value — since
+    mean + 3*0 == mean, "greater than" is the correct trigger condition.
+
+    Output is deterministic: rows are sorted by account, then timestamp,
+    then transaction id (as a tiebreaker), and written in that fixed order.
+    """
+    rows = []
+    with open(input_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            rows.append({
+                "account_id": row[account_field],
+                "timestamp": row[timestamp_field],
+                "amount": float(row[amount_field]),
+                "transaction_id": row.get(id_field, ""),
+            })
+
+    # Group transactions per account
+    by_account = defaultdict(list)
+    for row in rows:
+        by_account[row["account_id"]].append(row)
+
+    # Deterministic ordering within each account: timestamp, then id as tiebreaker
+    for account_id in by_account:
+        by_account[account_id].sort(key=lambda r: (r["timestamp"], r["transaction_id"]))
+
+    results = []
+
+    for account_id in sorted(by_account.keys()):
+        history = deque(maxlen=window_size)
+
+        for txn in by_account[account_id]:
+            amount = txn["amount"]
+
+            if len(history) < window_size:
+                # Not enough preceding transactions to compute a meaningful window
+                mean = None
+                pop_stdev = None
+                threshold = None
+                is_unusual = False
+            else:
+                preceding = list(history)
+                mean = statistics.mean(preceding)
+                pop_stdev = statistics.pstdev(preceding)
+                threshold = mean + 3 * pop_stdev
+
+                if pop_stdev == 0:
+                    # Zero-deviation rule: threshold equals mean exactly,
+                    # so flag only strictly-greater-than-mean amounts.
+                    is_unusual = amount > mean
+                else:
+                    is_unusual = amount > threshold
+
+            results.append({
+                "account_id": account_id,
+                "transaction_id": txn["transaction_id"],
+                "timestamp": txn["timestamp"],
+                "amount": amount,
+                "preceding_mean": round(mean, 6) if mean is not None else "",
+                "preceding_pop_stdev": round(pop_stdev, 6) if pop_stdev is not None else "",
+                "threshold": round(threshold, 6) if threshold is not None else "",
+                "is_unusual_high": is_unusual,
+            })
+
+            history.append(amount)
+
+    # Results are already deterministic: grouped by sorted account_id,
+    # then in-account chronological order (timestamp, transaction_id).
+    fieldnames = [
+        "account_id", "transaction_id", "timestamp", "amount",
+        "preceding_mean", "preceding_pop_stdev", "threshold", "is_unusual_high",
+    ]
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for r in results:
+            writer.writerow(r)
+
+    return results
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) != 3:
+        print("Usage: python transaction_analyzer.py <input_csv> <output_csv>")
+        sys.exit(1)
+
+    analyze_transactions(sys.argv[1], sys.argv[2])
+```

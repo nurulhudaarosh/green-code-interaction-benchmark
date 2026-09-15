@@ -1,0 +1,41 @@
+import os
+from pathlib import Path
+from PIL import Image
+
+def extract_metadata(input_dir):
+    """
+    Extracts metadata from all valid images in input_dir.
+    Returns a list of dicts sorted by filename.
+    """
+    image_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.tiff'}
+    metadata_list = []
+    
+    dir_path = Path(input_dir)
+    if not dir_path.is_dir():
+        return []
+    
+    for file_path in dir_path.iterdir():
+        if file_path.is_file() and file_path.suffix.lower() in image_extensions:
+            try:
+                file_size = os.path.getsize(file_path)
+                
+                with Image.open(file_path) as img:
+                    width, height = img.size
+                    img_format = img.format
+                    img_mode = img.mode
+                
+                aspect_ratio = round(width / height, 3) if height > 0 else 0.0
+                
+                metadata_list.append({
+                    "filename": file_path.name,
+                    "format": img_format,
+                    "mode": img_mode,
+                    "width": width,
+                    "height": height,
+                    "aspect_ratio": aspect_ratio,
+                    "file_size_bytes": file_size
+                })
+            except (IOError, SyntaxError):
+                continue
+    
+    return sorted(metadata_list, key=lambda x: x["filename"])

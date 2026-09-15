@@ -1,0 +1,118 @@
+import csv
+from collections import defaultdict
+from decimal import Decimal, InvalidOperation
+
+
+def parse_positive_decimal(value):
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    try:
+        number = Decimal(value)
+    except (InvalidOperation, ValueError):
+        return None
+    if not number.is_finite() or number <= 0:
+        return None
+    return number
+
+
+def parse_units(value):
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    try:
+        units = int(value)
+    except (TypeError, ValueError):
+        return None
+    if units <= 0:
+        return None
+    return units
+
+
+def aggregate_sales(input_path, output_path):
+    totals = defaultdict(lambda: {"units": 0, "revenue": Decimal("0")})
+
+    with open(input_path, "r", newline="", encoding="utf-8") as infile:
+        reader = csv.DictReader(infile)
+        required = {"region", "category", "units", "unit_price"}
+        if reader.fieldnames is None or not required.issubset(
+            {name.strip().lower() for name in reader.fieldnames if name}
+        ):
+            raise ValueError(
+                "CSV must contain columns: region, category, units, unit_price"
+            )
+
+        normalized = {}
+        for name in reader.fieldnames:
+            if name is not None:
+                normalized[name] = name.strip().lower()
+
+        for row in reader:
+            data = {normalized.get(k, k): v for k, v in row.items() if k is not None}
+
+            region = (data.get("region") or "").strip()
+            category = (data.get("category") or "").strip()
+            if not region or not category:
+                continue
+
+            units = parse_units(data.get("units"))
+            unit_price = parse_positive_decimal(data.get("unit_price"))
+            if units is None or unit_price is None:
+                continue
+
+            entry = totals[(region, category)]
+            entry["units"] += units
+            entry["revenue"] += unit_price * units
+
+    rows = []
+    for (region, category), entry in totals.items():
+        units = entry["units"]
+        revenue = entry["revenue"]
+        weighted_avg = (revenue / units) if units > 0 else Decimal("0")
+        rows.append(
+            {
+                "region": region,
+                "category": category,
+                "total_units": units,
+                "total_revenue": revenue,
+                "weighted_avg_unit_price": weighted_avg,
+            }
+        )
+
+    rows.sort(key=lambda r: (r["region"], r["category"]))
+
+    with open(output_path, "w", newline="", encoding="utf-8") as outfile:
+        fieldnames = [
+            "region",
+            "category",
+            "total_units",
+            "total_revenue",
+            "weighted_avg_unit_price",
+        ]
+        writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(
+                {
+                    "region": row["region"],
+                    "category": row["category"],
+                    "total_units": row["total_units"],
+                    "total_revenue": f"{row['total_revenue'].quantize(Decimal('0.01'))}",
+                    "weighted_avg_unit_price": f"{row['weighted_avg_unit_price'].quantize(Decimal('0.01'))}",
+                }
+            )
+
+    return rows
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) != 3:
+        print("Usage: python sales_aggregator.py <input.csv> <output.csv>")
+        sys.exit(1)
+    aggregate_sales(sys.argv[1], sys.argv[2])

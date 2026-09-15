@@ -1,0 +1,38 @@
+from PIL import Image
+import os
+
+def preprocess_images(input_dir, output_dir):
+    os.makedirs(output_dir, exist_ok=True)
+    stats = {}
+
+    for filename in os.listdir(input_dir):
+        input_path = os.path.join(input_dir, filename)
+
+        if not os.path.isfile(input_path):
+            continue
+
+        try:
+            img = Image.open(input_path).convert("L")
+
+            pixels = list(img.getdata())
+            min_val = min(pixels)
+            max_val = max(pixels)
+
+            stats[filename] = {"min": min_val, "max": max_val}
+
+            # Handle all flat images, including fully black and fully white
+            if min_val == max_val:
+                normalized = Image.new("L", img.size, min_val)
+            else:
+                normalized = img.point(
+                    lambda p: int((p - min_val) * 255 / (max_val - min_val))
+                )
+
+            output_filename = os.path.splitext(filename)[0] + ".png"
+            output_path = os.path.join(output_dir, output_filename)
+            normalized.save(output_path, "PNG")
+
+        except Exception:
+            continue
+
+    return stats

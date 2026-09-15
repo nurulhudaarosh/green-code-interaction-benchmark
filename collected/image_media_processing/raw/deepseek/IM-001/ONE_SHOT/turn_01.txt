@@ -1,0 +1,64 @@
+```python
+import os
+from PIL import Image
+
+def batch_resize(input_dir, output_dir, target_size):
+    """
+    Resizes every PNG/JPEG image in input_dir to target_size and saves to output_dir.
+    
+    Args:
+        input_dir (str): Path to the directory containing source images
+        output_dir (str): Path to the directory where resized images will be saved
+        target_size (tuple): Desired size as (width, height)
+    
+    Returns:
+        int: Number of images successfully processed
+    """
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Supported image extensions
+    image_extensions = {'.png', '.jpg', '.jpeg'}
+    
+    processed_count = 0
+    
+    # Iterate through all files in input directory
+    for filename in os.listdir(input_dir):
+        # Check if file is an image (PNG or JPEG)
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in image_extensions:
+            continue
+        
+        # Construct full file paths
+        input_path = os.path.join(input_dir, filename)
+        output_path = os.path.join(output_dir, filename)
+        
+        try:
+            # Open the image
+            with Image.open(input_path) as img:
+                # Convert RGBA to RGB for JPEG compatibility if needed
+                # (JPEG doesn't support alpha channel)
+                if ext in {'.jpg', '.jpeg'} and img.mode == 'RGBA':
+                    # Create a white background and paste the image
+                    background = Image.new('RGB', img.size, (255, 255, 255))
+                    background.paste(img, mask=img.split()[3])  # Use alpha channel as mask
+                    img = background
+                elif ext in {'.jpg', '.jpeg'} and img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                # Resize the image using LANCZOS (high quality downsampling)
+                resized_img = img.resize(target_size, Image.Resampling.LANCZOS)
+                
+                # Save the resized image
+                # Determine save format
+                save_format = 'PNG' if ext == '.png' else 'JPEG'
+                resized_img.save(output_path, format=save_format)
+                
+                processed_count += 1
+                
+        except Exception as e:
+            print(f"Error processing {filename}: {e}")
+            continue
+    
+    return processed_count
+```

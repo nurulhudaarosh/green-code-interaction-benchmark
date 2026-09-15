@@ -1,0 +1,132 @@
+### Problem Statement & Key Constraints
+
+We are given a numeric grid (a 2D matrix) and a scalar threshold $T$.
+
+* **Target Region:** A set of cells that are **4-connected** (up, down, left, right) where every cell's value is greater than or equal to $T$ ($\ge T$).
+* **Metrics per Region:**
+1. **Size:** The number of cells in the region.
+2. **Perimeter:** The number of exposed grid edges. An edge of a cell in the region contributes 1 to the perimeter if it borders the boundary of the grid OR a cell with a value strictly less than $T$ (or an unvisited cell outside the region).
+3. **Smallest Coordinate:** The minimum coordinate $(r, c)$ among all cells belonging to the region, compared lexicographically (i.e., smaller row index $r$, then smaller column index $c$).
+
+
+* **Tie-breaking Criteria:**
+1. Primary: Largest **Size**
+2. Secondary: Largest **Perimeter**
+3. Tertiary: Smallest **Coordinate** $(r, c)$
+
+
+
+**Required Output:**
+A tuple or structured output containing `(max_size, max_perimeter, min_coordinate)`. If no cell meets the threshold $T$, return `(0, 0, None)`.
+
+---
+
+### Algorithm Overview
+
+1. **Grid Traversal:** Iterate through each cell $(r, c)$ in the grid using a boolean matrix `visited` to keep track of processed cells.
+2. **Iterative Flood Fill (BFS / Breadth-First Search):** When an unvisited cell with value $\ge T$ is encountered:
+* Initialize region counters: `size = 0`, `perimeter = 0`, and `min_coord = (r, c)`.
+* Use a queue for BFS to traverse all 4-connected reachable cells that also have value $\ge T$.
+
+
+3. **Perimeter Calculation:** For every cell popped from the queue:
+* Increment `size` by 1.
+* Update `min_coord = min(min_coord, current_cell_coord)`.
+* Check all 4 adjacent directions:
+* If an adjacent direction leads out of bounds OR to a cell with value $< T$, increment `perimeter` by 1.
+* If an adjacent cell has value $\ge T$ and hasn't been visited yet, mark it visited and add it to the queue.
+
+
+
+
+4. **Region Selection:** Update the global best region using the specified tie-breaking order.
+
+---
+
+### Python Implementation
+
+```python
+from collections import deque
+
+def find_largest_region(grid, T):
+    """
+    Finds the largest 4-connected region with cell values >= T.
+    
+    Returns:
+        tuple: (size, perimeter, (min_row, min_col))
+        If no cell >= T exists, returns (0, 0, None).
+    """
+    if not grid or not grid[0]:
+        return (0, 0, None)
+    
+    rows = len(grid)
+    cols = len(grid[0])
+    visited = [[False] * cols for _ in range(rows)]
+    
+    best_size = 0
+    best_perimeter = 0
+    best_min_coord = None
+    
+    # 4-directional offsets: Up, Down, Left, Right
+    directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+    
+    for r in range(rows):
+        for c in range(cols):
+            if not visited[r][c] and grid[r][c] >= T:
+                # Start iterative flood fill (BFS)
+                visited[r][c] = True
+                queue = deque([(r, c)])
+                
+                current_size = 0
+                current_perimeter = 0
+                current_min_coord = (r, c)
+                
+                while queue:
+                    curr_r, curr_c = queue.popleft()
+                    current_size += 1
+                    current_min_coord = min(current_min_coord, (curr_r, curr_c))
+                    
+                    for dr, dc in directions:
+                        nr, nc = curr_r + dr, curr_c + dc
+                        
+                        # Check boundary and value condition for perimeter counting
+                        if 0 <= nr < rows and 0 <= nc < cols:
+                            if grid[nr][nc] >= T:
+                                if not visited[nr][nc]:
+                                    visited[nr][nc] = True
+                                    queue.append((nr, nc))
+                            else:
+                                # Neighbor value is below threshold
+                                current_perimeter += 1
+                        else:
+                            # Neighbor is outside the grid boundary
+                            current_perimeter += 1
+                
+                # Tie-breaking selection logic
+                # Criteria: Max Size -> Max Perimeter -> Min Coordinate
+                if (best_min_coord is None or
+                    current_size > best_size or
+                    (current_size == best_size and current_perimeter > best_perimeter) or
+                    (current_size == best_size and current_perimeter == best_perimeter and current_min_coord < best_min_coord)):
+                    
+                    best_size = current_size
+                    best_perimeter = current_perimeter
+                    best_min_coord = current_min_coord
+                    
+    return (best_size, best_perimeter, best_min_coord)
+
+
+# Example Usage
+if __name__ == "__main__":
+    sample_grid = [
+        [1, 5, 5, 2],
+        [0, 5, 3, 1],
+        [4, 4, 4, 0],
+        [4, 1, 4, 4]
+    ]
+    threshold = 4
+    
+    size, perimeter, min_coord = find_largest_region(sample_grid, threshold)
+    print(f"Size: {size}, Perimeter: {perimeter}, Smallest Coord: {min_coord}")
+
+```

@@ -1,0 +1,107 @@
+### Problem Statement
+
+Given a list of positive integer coin denominations $C = [c_1, c_2, \dots, c_k]$ and a non-negative target amount $A$, find the minimum total number of coins needed to sum to $A$. Each coin denomination can be used an unlimited number of times.
+
+---
+
+### Constraints & Output Requirements
+
+* **Input:**
+* Denominations list $C$: Positive integers ($c_i > 0$).
+* Target amount $A$: Non-negative integer ($A \ge 0$).
+
+
+* **Output:** A tuple `(min_coins, combination)`:
+* `min_coins` (integer): Minimum number of coins used to sum to $A$. Returns `-1` if $A$ cannot be formed.
+* `combination` (list of integers): A list containing the specific coins chosen to make the amount $A$, sorted in non-decreasing order. Returns `[]` (empty list) if $A$ cannot be formed.
+
+
+* **Special Cases:**
+* For $A = 0$, the output is `(0, [])`.
+
+
+
+---
+
+### Algorithm Overview
+
+We use a 1D Unbounded Knapsack Dynamic Programming approach with explicit parent tracking:
+
+1. **DP State Array (`dp`):** `dp[i]` stores the minimum number of coins needed to form amount $i$.
+* Initialization: `dp[0] = 0`, and `dp[i] = infinity` for $i > 0$.
+
+
+2. **Parent Array (`parent`):** `parent[i]` stores the coin value $c$ used as the last step to reach amount $i$.
+* Initialization: `parent[i] = -1` for all $i$.
+
+
+3. **Transition:** For each amount $i$ from $1$ to $A$ and each coin $c \in C$:
+* If $i - c \ge 0$ and `dp[i - c] + 1 < dp[i]`:
+* Update `dp[i] = dp[i - c] + 1`
+* Update `parent[i] = c`
+
+
+
+
+4. **Deterministic Reconstruction:**
+* If `dp[A] == infinity`, return `(-1, [])`.
+* Otherwise, trace backwards from target $A$ using `parent[A]`, pushing the used coins into a list until $A = 0$.
+* Sort the coin list to ensure deterministic output.
+
+
+
+---
+
+### Python Implementation
+
+```python
+from typing import List, Tuple
+
+def min_coin_change(coins: List[int], amount: int) -> Tuple[int, List[int]]:
+    if amount == 0:
+        return 0, []
+    if amount < 0 or not coins:
+        return -1, []
+
+    # Sort denominations to ensure deterministic state transitions
+    coins = sorted(list(set(coins)))
+
+    # Initialize DP array and Parent array
+    inf = float('inf')
+    dp = [inf] * (amount + 1)
+    parent = [-1] * (amount + 1)
+    dp[0] = 0
+
+    # Fill DP table
+    for i in range(1, amount + 1):
+        for coin in coins:
+            if i - coin >= 0 and dp[i - coin] + 1 < dp[i]:
+                dp[i] = dp[i - coin] + 1
+                parent[i] = coin
+
+    # If amount cannot be formed
+    if dp[amount] == inf:
+        return -1, []
+
+    # Reconstruct the coin combination deterministically
+    combination = []
+    curr = amount
+    while curr > 0:
+        coin_used = parent[curr]
+        combination.append(coin_used)
+        curr -= coin_used
+
+    combination.sort()
+    return int(dp[amount]), combination
+
+
+# Example Usage & Test
+if __name__ == "__main__":
+    denominations = [1, 2, 5]
+    target = 11
+    count, chosen_coins = min_coin_change(denominations, target)
+    print(f"Target: {target}")
+    print(f"Minimum Coins: {count}")
+    print(f"Coins Used: {chosen_coins}")
+
+```

@@ -1,0 +1,124 @@
+```python
+Interval Conflict Analyzer
+===========================
+
+Problem
+-------
+Given half-open meeting intervals [start, end), find:
+  1. max_count   - the maximum number of meetings simultaneously active
+                    at any instant.
+  2. begin_times - the sorted, deduplicated list of times at which the
+                    active-meeting count rises to reach that max_count.
+
+Because intervals are half-open, a meeting ending at time t is no longer
+counted as active at t, so it does not overlap with a meeting starting
+at t.
+
+Key constraints
+----------------
+- Each interval must satisfy start < end (half-open, non-empty).
+- At a tied timestamp, END events must be processed before START events.
+  This must be guaranteed by the sort key itself, not by input order,
+  so the result is deterministic regardless of how intervals are listed.
+- begin_times records only *rises into* the max level, not every
+  timestamp at which the max is merely sustained.
+
+Required output
+----------------
+(max_count, begin_times), with begin_times sorted ascending, no duplicates.
+
+Algorithm (sweep line)
+-----------------------
+1. Convert each interval (s, e) into two events: (s, +1) and (e, -1).
+2. Sort events by the key (time, delta). Since -1 < +1, this places all
+   end events at a given timestamp before all start events at that same
+   timestamp -- independent of input order (fixes the reported defect).
+3. Sweep through events, grouping all events at an identical timestamp
+   so they are applied atomically as one net change to the running count.
+4. Whenever a timestamp's net effect increases the count:
+     - if the new count exceeds the max seen so far, start a new
+       begin_times list with this timestamp.
+     - if the new count equals the current max, append this timestamp.
+5. Non-increasing timestamps do not affect begin_times.
+
+Complexity: O(n log n) sort, O(n) sweep.
+Standard library only; no network, APIs, randomness, or human interaction.
+```
+
+from typing import List, Tuple
+
+
+def max_concurrent_meetings(
+    intervals: List[Tuple[float, float]]
+) -> Tuple[int, List[float]]:
+    """
+    Compute (max_count, begin_times) for half-open meeting intervals.
+
+    Raises:
+        ValueError: if any interval has start >= end.
+    """
+    events: List[Tuple[float, int]] = []
+    for s, e in intervals:
+        if s >= e:
+            raise ValueError(f"Invalid interval (start >= end): ({s}, {e})")
+        events.append((s, 1))   # start event
+        events.append((e, -1))  # end event
+
+    # FIX: tie-break on delta itself (-1 before +1), so end-before-start
+    # ordering is enforced by the key, not by incidental input order.
+    events.sort(key=lambda ev: (ev[0], ev[1]))
+
+    count = 0
+    max_count = 0
+    begin_times: List[float] = []
+
+    i, n = 0, len(events)
+    while i < n:
+        t = events[i][0]
+        j = i
+        net_delta = 0
+        while j < n and events[j][0] == t:
+            net_delta += events[j][1]
+            j += 1
+
+        prev_count = count
+        count += net_delta
+
+        if count > prev_count:  # net rise at this timestamp
+            if count > max_count:
+                max_count = count
+                begin_times = [t]
+            elif count == max_count:
+                begin_times.append(t)
+
+        i = j
+
+    return max_count, begin_times
+
+
+if __name__ == "__main__":
+    # Regression test: the exact defect demonstrated above must now be fixed,
+    # regardless of input order.
+    assert max_concurrent_meetings([(0, 5), (5, 10)]) == (1, [0, 5])
+    assert max_concurrent_meetings([(5, 10), (0, 5)]) == (1, [0, 5])
+
+    # Original checks still hold.
+    assert max_concurrent_meetings([]) == (0, [])
+    assert max_concurrent_meetings([(0, 30), (5, 10), (15, 20)]) == (2, [5, 15])
+    assert max_concurrent_meetings([(1, 4), (2, 5), (3, 6)]) == (3, [3])
+    assert max_concurrent_meetings(
+        [(0, 2), (0, 2), (5, 7), (5, 7)]
+    ) == (2, [0, 5])
+
+    # Order-independence check: shuffled input order must not change output.
+    intervals_a = [(0, 30), (5, 10), (15, 20)]
+    intervals_b = [(15, 20), (0, 30), (5, 10)]
+    assert max_concurrent_meetings(intervals_a) == max_concurrent_meetings(intervals_b)
+
+    try:
+        max_concurrent_meetings([(5, 5)])
+        raise AssertionError("expected ValueError for zero-length interval")
+    except ValueError:
+        pass
+
+    print("All checks passed.")

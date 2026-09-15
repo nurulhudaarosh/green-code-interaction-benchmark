@@ -1,0 +1,110 @@
+### Problem Identification & Understanding
+
+The problem asks us to find the minimum total number of coins needed to make a target change amount $A$, given a set of unique coin denominations $C = \{c_1, c_2, \dots, c_k\}$. Each denomination can be used an unlimited number of times (unbounded coin change problem).
+
+Beyond computing the minimum count, we must also reconstruct and return the exact coin combination that achieves this minimal count. If no valid combination can sum to $A$, the algorithm must indicate failure by returning a count of `-1` and an empty list.
+
+---
+
+### Key Constraints & Required Output
+
+* **Inputs:**
+* `coins`: A list of positive integers representing available coin denominations.
+* `amount`: A non-negative integer representing the target value.
+
+
+* **Constraints:**
+* Coin denominations are strictly positive ($c_i > 0$).
+* Coins can be reused infinitely.
+* Amount $A \ge 0$. (If $A = 0$, the minimum coins required is $0$ with an empty combination `[]`).
+
+
+* **Output:**
+* A tuple `(min_coins, combination)` where:
+* `min_coins`: An integer indicating the minimum number of coins (or `-1` if unreachable).
+* `combination`: A list of integers representing the specific coins used (sorted for deterministic output), or `[]` if unreachable.
+
+
+
+
+
+---
+
+### Algorithm Description
+
+1. **Dynamic Programming Array:**
+We initialize an array `dp` of size `amount + 1` filled with infinity ($\infty$), representing the minimum coins needed for each amount from $0$ to `amount`. Set `dp[0] = 0`.
+2. **Reconstruction Tracker:**
+We initialize a `parent` array of size `amount + 1` filled with `-1`. `parent[i]` will store the specific coin used to reach state `i` in the optimal path.
+3. **Determinism:**
+To guarantee a deterministic coin combination across runs, we sort the `coins` array beforehand.
+4. **State Transition:**
+For each sub-amount $i$ from $1$ to `amount`:
+For each coin $c \in \text{sorted\_coins}$:
+If $i - c \ge 0$ and $\text{dp}[i - c] + 1 < \text{dp}[i]$:
+$\text{dp}[i] = \text{dp}[i - c] + 1$
+$\text{parent}[i] = c$
+5. **Backtracking / Reconstruction:**
+If `dp[amount]` remains $\infty$, return `(-1, [])`.
+Otherwise, backtrack from `amount` using the `parent` array to build the coin list until reaching $0$. Sort the resulting list for consistent output.
+
+---
+
+### Python Solution
+
+```python
+def min_coin_change(coins: list[int], amount: int) -> tuple[int, list[int]]:
+    """
+    Finds the minimum number of coins needed to reach `amount` and 
+    returns a tuple (minimum_coin_count, list_of_coins_used).
+    Returns (-1, []) if the amount cannot be formed.
+    """
+    if amount == 0:
+        return 0, []
+    if not coins or amount < 0:
+        return -1, []
+
+    # Sort denominations to enforce deterministic coin selection during ties
+    sorted_coins = sorted(coins)
+
+    # dp[i] will store the minimum number of coins needed for amount i
+    dp = [float('inf')] * (amount + 1)
+    # parent[i] will store the last coin denomination used to achieve amount i optimally
+    parent = [-1] * (amount + 1)
+
+    dp[0] = 0
+
+    for i in range(1, amount + 1):
+        for coin in sorted_coins:
+            if i - coin >= 0 and dp[i - coin] + 1 < dp[i]:
+                dp[i] = dp[i - coin] + 1
+                parent[i] = coin
+
+    # If the target amount is unreachable
+    if dp[amount] == float('inf'):
+        return -1, []
+
+    # Reconstruct the deterministic combination of coins used
+    result_coins = []
+    curr = amount
+    while curr > 0:
+        coin_used = parent[curr]
+        result_coins.append(coin_used)
+        curr -= coin_used
+
+    # Sort the returned coins for clean, deterministic presentation
+    result_coins.sort()
+
+    return dp[amount], result_coins
+
+
+# Verification / Example Usage
+if __name__ == "__main__":
+    test_coins = [1, 2, 5]
+    target = 11
+    count, combination = min_coin_change(test_coins, target)
+    print(f"Target: {target}, Coins: {test_coins}")
+    print(f"Minimum Count: {count}")
+    print(f"Coins Used: {combination}")
+
+```

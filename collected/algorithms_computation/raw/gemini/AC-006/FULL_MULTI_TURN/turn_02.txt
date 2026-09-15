@@ -1,0 +1,156 @@
+### Problem Statement & Expected Behavior
+
+**Problem:**
+
+Given a 2D numerical grid and a threshold $T$, find the largest 4-connected region of cells where every cell in the region has a value $\ge T$.
+
+**Expected Behavior & Tie-Breaking Rules:**
+
+1. **Target Region:** Formed by 4-connected adjacent cells with values $\ge T$.
+2. **Key Metrics:**
+* **Size:** Total number of cells in the region.
+* **Perimeter:** Total count of exposed unit edges (grid boundaries or edges adjacent to cells with value $< T$).
+* **Smallest Coordinate:** The coordinate $(r, c)$ in the region with the smallest row $r$, and then column $c$ (lexicographically smallest coordinate).
+
+
+3. **Tie-Handling Ordering:**
+* Primary: Maximize **Size**.
+* Secondary: Maximize **Perimeter**.
+* Tertiary: Minimize **Smallest Coordinate** (prefer smaller row index $r$, then smaller column index $c$).
+
+
+4. **Return Value:** `(size, perimeter, (min_row, min_col))`. If no cell meets threshold $T$, return `(0, 0, None)`.
+
+---
+
+### Defect Analysis & Demonstration
+
+#### The Bug
+
+In the previous implementation, when a cell $(nr, nc)$ was popped or expanded, it checked its neighbors:
+
+
+
+While marking `visited` upon insertion prevents redundant queue additions, tracking `min_r` and `min_c` by only updating them inside the loop as `curr_r, curr_c` was correct, **but** the key comparison tuple constructed for tie-breaking was:
+
+
+
+Comparing `-min_r` and `-min_c` correctly handles maximizing positive numbers, but coordinate comparison needs strict lexicographical ordering on $(min\_r, min\_c)$ inverted.
+
+More critically, in certain boundary cases with disjoint components, when tracking `min_r, min_c`, initialized to the start cell `(r, c)` of the BFS traversal, if the BFS visits a cell with a *smaller* coordinate than the starting cell `(r, c)`, the starting cell was assumed to be minimal until overwritten. While `(r, c)` is the first cell hit in top-to-bottom left-to-right grid scanning, a 4-connected shape can snake upwards or to the left from a lower branch if scanned in a different order or if visited from a different direction!
+
+#### Example Demonstrating the Issue
+
+Consider this 3x3 grid with threshold $T = 5$:
+
+$$\begin{bmatrix} 0 & 5 & 5 \\ 5 & 5 & 0 \\ 0 & 0 & 0  \end{bmatrix}$$
+
+The valid cells $\ge 5$ are $(0, 1), (0, 2), (1, 0), (1, 1)$. They all form **one single 4-connected region**.
+If we scan the grid top-to-bottom, left-to-right:
+
+1. Outer loop hits $(0, 1)$ first.
+2. BFS starts at $(0, 1)$.
+3. Neighbor $(1, 1)$ is added, then from $(1, 1)$, neighbor $(1, 0)$ is added.
+4. Cell $(1, 0)$ has coordinate $(1, 0)$. The minimum coordinate overall in this region is $(0, 1)$.
+
+However, suppose another grid layout has two distinct candidate regions of equal size and perimeter, say:
+
+* Region A: smallest coordinate $(0, 2)$
+* Region B: smallest coordinate $(1, 0)$
+
+If we compare candidate keys `(-min_r, -min_c)`:
+
+* Region A: `(size, perim, -0, -2)`
+* Region B: `(size, perim, -1, -0)`
+
+Since `0 > -1`, standard Python tuple comparison evaluates Region A's key `(-0, -2)` as **greater than** Region B's key `(-1, -0)`, selecting Region A (coordinate `(0, 2)`).
+
+However, lexicographically $(1, 0)$ vs $(0, 2)$: $(0, 2)$ is indeed smaller than $(1, 0)$.
+
+Now consider **Region C** with min coord $(0, 1)$ vs **Region D** with min coord $(0, 2)$:
+
+* Region C key: `(size, perim, 0, -1)`
+* Region D key: `(size, perim, 0, -2)`
+
+`0 == 0`, but `-1 > -2`, so Region C wins! That correctly picks $(0, 1)$ over $(0, 2)$.
+
+However, to strictly and cleanly avoid bug-prone negative integer tuple tricks, we can directly implement custom Python comparison or express the full tuple key cleanly.
+
+---
+
+### Corrected Implementation
+
+```python
+from collections import deque
+
+def find_largest_region(grid, T):
+    """
+    Finds the largest 4-connected region with cell values >= T.
+    
+    Returns:
+        (size, perimeter, (min_row, min_col)) if a region exists,
+        else (0, 0, None).
+    """
+    if not grid or not grid[0]:
+        return (0, 0, None)
+    
+    rows, cols = len(grid), len(grid[0])
+    visited = set()
+    best_candidate = None
+    
+    # 4-directional vectors: Up, Down, Left, Right
+    directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+    
+    for r in range(rows):
+        for c in range(cols):
+            if grid[r][c] >= T and (r, c) not in visited:
+                # Start iterative flood fill (BFS)
+                queue = deque([(r, c)])
+                visited.add((r, c))
+                
+                size = 0
+                perimeter = 0
+                min_coord = (r, c)
+                
+                while queue:
+                    curr_r, curr_c = queue.popleft()
+                    size += 1
+                    
+                    # Update minimum coordinate found in this region
+                    if (curr_r, curr_c) < min_coord:
+                        min_coord = (curr_r, curr_c)
+                    
+                    # Count exposed edges and discover unvisited region cells
+                    for dr, dc in directions:
+                        nr, nc = curr_r + dr, curr_c + dc
+                        
+                        # Edge exposed to boundary or cell < T
+                        if not (0 <= nr < rows and 0 <= nc < cols) or grid[nr][nc] < T:
+                            perimeter += 1
+                        elif (nr, nc) not in visited:
+                            visited.add((nr, nc))
+                            queue.append((nr, nc))
+                
+                candidate = (size, perimeter, min_coord)
+                
+                # Deterministic Tie-Handling:
+                # 1. Larger size
+                # 2. Larger perimeter
+                # 3. Smaller coordinate (min_coord)
+                if best_candidate is None:
+                    best_candidate = candidate
+                else:
+                    b_size, b_perim, b_coord = best_candidate
+                    c_size, c_perim, c_coord = candidate
+                    
+                    if (c_size > b_size) or \
+                       (c_size == b_size and c_perim > b_perim) or \
+                       (c_size == b_size and c_perim == b_perim and c_coord < b_coord):
+                        best_candidate = candidate
+                        
+    if best_candidate is None:
+        return (0, 0, None)
+        
+    return best_candidate
+
+```

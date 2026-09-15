@@ -1,0 +1,122 @@
+```python
+import json
+import sys
+from collections import defaultdict
+
+
+def analyze_ndjson(input_stream):
+    """Analyzes NDJSON stream containing user and request metadata.
+
+    Ignores malformed lines, tracks metrics per user, finds the most
+    frequent endpoint (with lexical tie-breaking), and returns a
+    deterministic dictionary sorted by user ID.
+    """
+    user_metrics = defaultdict(
+        lambda: {
+            "request_count": 0,
+            "error_count": 0,
+            "total_latency": 0.0,
+            "endpoints": defaultdict(int),
+        }
+    )
+
+    malformed_lines_count = 0
+
+    for line in input_stream:
+        line = line.strip()
+        if not line:
+            continue
+
+        try:
+            data = json.loads(line)
+            if not isinstance(data, dict):
+                malformed_lines_count += 1
+                continue
+
+            user_data = data.get("user", {})
+            request_data = data.get("request", {})
+
+            user_id = user_data.get("id")
+            endpoint = request_data.get("endpoint")
+            latency = request_data.get("latency")
+            status = request_data.get("status")
+
+            # Validate required fields and types
+            if (
+                user_id is None
+                or endpoint is None
+                or not isinstance(latency, (int, float))
+                or not isinstance(status, int)
+            ):
+                malformed_lines_count += 1
+                continue
+
+            stats = user_metrics[str(user_id)]
+            stats["request_count"] += 1
+            stats["total_latency"] += float(latency)
+            stats["endpoints"][str(endpoint)] += 1
+
+            if status >= 400:
+                stats["error_count"] += 1
+
+        except (json.JSONDecodeError, AttributeError, TypeError):
+            malformed_lines_count += 1
+
+    # Process final results
+    sorted_users = {}
+    for user_id in sorted(user_metrics.keys()):
+        stats = user_metrics[user_id]
+        req_count = stats["request_count"]
+
+        avg_latency = (
+            round(stats["total_latency"] / req_count, 4) if req_count > 0 else 0.0
+        )
+
+        # Find most requested endpoint with lexical tie-breaking:
+        # Highest count (-count for descending order), then alphabetically (endpoint name)
+        most_requested_endpoint = None
+        if stats["endpoints"]:
+            most_requested_endpoint = min(
+                stats["endpoints"].items(), key=lambda x: (-x[1], x[0])
+            )[0]
+
+        sorted_users[user_id] = {
+            "request_count": req_count,
+            "error_count": stats["error_count"],
+            "average_latency": avg_latency,
+            "most_requested_endpoint": most_requested_endpoint,
+        }
+
+    return {
+        "malformed_lines_count": malformed_lines_count,
+        "users": sorted_users,
+    }
+
+
+def process_ndjson_file(file_path):
+    with open(file_path, "r", encoding="utf-8") as f:
+        analysis_result = analyze_ndjson(f)
+
+    # Return deterministic JSON with sorted keys
+    return json.dumps(analysis_result, indent=2, sort_keys=True)
+
+
+if __name__ == "__main__":
+    # Example usage: process from standard input or a provided filename
+    if len(sys.argv) > 1:
+        print(process_ndjson_file(sys.argv[1]))
+    else:
+        # Fallback demonstration with inline sample data
+        from io import StringIO
+
+        sample_ndjson = """{"user": {"id": "usr_102"}, "request": {"endpoint": "/api/v1/users", "latency": 120.5, "status": 200}}
+{"user": {"id": "usr_101"}, "request": {"endpoint": "/api/v1/login", "latency": 80.0, "status": 200}}
+{"user": {"id": "usr_101"}, "request": {"endpoint": "/api/v1/data", "latency": 250.0, "status": 500}}
+INVALID_JSON_LINE
+{"user": {"id": "usr_101"}, "request": {"endpoint": "/api/v1/login", "latency": 90.0, "status": 200}}
+{"user": {"id": "usr_102"}, "request": {"endpoint": "/api/v1/users", "latency": 110.0, "status": 404}}"""
+
+        result = analyze_ndjson(StringIO(sample_ndjson))
+        print(json.dumps(result, indent=2, sort_keys=True))
+
+```

@@ -1,0 +1,205 @@
+```python
+Interval Conflict Analyzer
+
+Original Problem:
+Given a collection of half-open meeting intervals [start, end), find:
+1. The maximum number of simultaneously active meetings.
+2. The sorted times at which that maximum begins.
+
+Original Requirements:
+- Intervals are half-open: [start, end).
+- A meeting is active at time t when start <= t < end.
+- End events at the same timestamp occur before start events.
+- Results must be deterministic.
+- Maximum-start times must be sorted.
+- Use a sweep-line over start/end events.
+- Use only the Python standard library.
+- Do not use network access, APIs, external services, randomness, or
+  human interaction.
+- Zero-length intervals [t, t) contain no active time and are ignored.
+
+Existing Output:
+    (
+        maximum_active_meetings,
+        sorted_maximum_start_times
+    )
+
+New Feature:
+When operation_summary is requested, return an additional
+`operation_summary` field containing a deterministic summary of the
+major computational decisions/operations made by the algorithm.
+
+The summary reports:
+- event_operations: number of individual start/end events processed
+- timestamp_decisions: number of distinct timestamps examined
+- maximum_updates: number of times a new maximum was established
+
+The feature is disabled by default so the original return format and
+requirements remain unchanged.
+
+New Output when requested:
+    (
+        maximum_active_meetings,
+        sorted_maximum_start_times,
+        operation_summary
+    )
+
+Example:
+    intervals = [(1, 4), (2, 5), (4, 6)]
+
+    Without summary:
+        (2, [2])
+
+    With summary:
+        (
+            2,
+            [2],
+            {
+                "event_operations": 6,
+                "timestamp_decisions": 5,
+                "maximum_updates": 2
+            }
+        )
+
+
+Algorithm:
+Use a sweep-line over start/end events.
+
+For every non-empty interval [start, end):
+    - Add (start, +1) for a start event.
+    - Add (end, -1) for an end event.
+
+Sort events by (time, delta). Since -1 sorts before +1,
+end events at the same timestamp occur before start events.
+
+At each distinct timestamp:
+    1. Process all events at that timestamp.
+    2. Update the number of active meetings.
+    3. If the new active count exceeds the previous maximum,
+       record that timestamp as a new maximum beginning.
+    4. If the active count returns to the existing maximum after
+       being below it, record that timestamp as another beginning.
+
+Complexity:
+- Let n be the number of intervals.
+- There are at most 2n events.
+- Sorting takes O(n log n).
+- The sweep takes O(n).
+- Overall: O(n log n) time and O(n) space.
+```
+
+
+def interval_conflict_analyzer(intervals, operation_summary=False):
+    """
+    Analyze overlapping half-open meeting intervals.
+
+    Parameters:
+        intervals:
+            Iterable of (start, end) pairs.
+
+        operation_summary:
+            If False (default), preserve the original output format:
+                (maximum_active_meetings, maximum_start_times)
+
+            If True, return an additional deterministic operation_summary:
+                (
+                    maximum_active_meetings,
+                    maximum_start_times,
+                    operation_summary
+                )
+
+    Returns:
+        Without operation_summary:
+            tuple[int, list]
+
+        With operation_summary:
+            tuple[int, list, dict]
+    """
+
+    events = []
+
+    for start, end in intervals:
+        # [start, end) is empty when start == end.
+        if start >= end:
+            continue
+
+        events.append((start, 1))   # Start event
+        events.append((end, -1))    # End event
+
+    if not events:
+        if operation_summary:
+            return (
+                0,
+                [],
+                {
+                    "event_operations": 0,
+                    "timestamp_decisions": 0,
+                    "maximum_updates": 0,
+                },
+            )
+
+        return 0, []
+
+    # At the same timestamp, -1 (end) is sorted before +1 (start).
+    events.sort()
+
+    active = 0
+    maximum = 0
+    maximum_starts = []
+
+    event_operations = 0
+    timestamp_decisions = 0
+    maximum_updates = 0
+
+    i = 0
+
+    while i < len(events):
+        time = events[i][0]
+        timestamp_decisions += 1
+
+        previous_active = active
+
+        # Process every event at this timestamp.
+        while i < len(events) and events[i][0] == time:
+            active += events[i][1]
+            event_operations += 1
+            i += 1
+
+        # A new maximum has been established.
+        if active > maximum:
+            maximum = active
+            maximum_starts = [time]
+            maximum_updates += 1
+
+        # The existing maximum starts again after the count
+        # was previously below it.
+        elif active == maximum and previous_active < maximum:
+            maximum_starts.append(time)
+
+    maximum_starts.sort()
+
+    if operation_summary:
+        summary = {
+            "event_operations": event_operations,
+            "timestamp_decisions": timestamp_decisions,
+            "maximum_updates": maximum_updates,
+        }
+
+        return maximum, maximum_starts, summary
+
+    # Original behavior is unchanged when the feature is disabled.
+    return maximum, maximum_starts
+
+
+if __name__ == "__main__":
+    intervals = [
+        (1, 4),
+        (2, 5),
+        (4, 6),
+    ]
+
+    # Original behavior: exactly the original two fields.
+    print(interval_conflict_analyzer(intervals))
+
+    # New behavior: includes the additional operation_summary field.
+    print(interval_conflict_analyzer(intervals, operation_summary=True))

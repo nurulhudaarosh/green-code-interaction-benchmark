@@ -1,0 +1,90 @@
+import hashlib
+import os
+import re
+import sys
+from collections import defaultdict
+
+
+def normalize_text(text: str) -> str:
+    """Case-fold and collapse all whitespace runs to single spaces, then strip."""
+    return re.sub(r"\s+", " ", text).strip().casefold()
+
+
+def content_hash(path: str) -> str:
+    """Read a text file, normalize it, and return its SHA-256 hex digest."""
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        raw = f.read()
+    normalized = normalize_text(raw)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def find_duplicates(root: str) -> dict:
+    """
+    Recursively inspect regular .txt files under `root`.
+    Ignore symlinks and non-.txt files.
+    Return {hash: [paths...]} for groups with more than one file.
+    """
+    groups = defaultdict(list)
+
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        # Prune symlinked directories (os.walk lists them but won't follow by default;
+        # still, filter out entries that are symlinks so we don't descend into them).
+        dirnames[:] = [
+            d for d in dirnames
+            if not os.path.islink(os.path.join(dirpath, d))
+        ]
+
+        for name in filenames:
+            if not name.lower().endswith(".txt"):
+                continue
+
+            full = os.path.join(dirpath, name)
+
+            # Skip symlinks (files or dirs) and non-regular files.
+            if os.path.islink(full):
+                continue
+            if not os.path.isfile(full):
+                continue
+
+            try:
+                digest = content_hash(full)
+            except OSError as e:
+                print(f"Warning: could not read {full}: {e}", file=sys.stderr)
+                continue
+
+            groups[digest].append(full)
+
+    return {h: sorted(paths) for h, paths in groups.items() if len(paths) > 1}
+
+
+def main():
+    if len(sys.argv) != 2:
+        print("Usage: python dup_txt_finder.py <directory>", file=sys.stderr)
+        sys.exit(1)
+
+    root = sys.argv[1]
+    if not os.path.isdir(root):
+        print(f"Error: {root} is not a directory", file=sys.stderr)
+        sys.exit(1)
+
+    duplicates = find_duplicates(root)
+
+    if not duplicates:
+        print("No duplicate .txt files found.")
+        return
+
+    # Deterministic output: sort groups by their canonical (first) path.
+    ordered = sorted(
+        duplicates.values(),
+        key=lambda paths: (paths[0].casefold(), paths[0]),
+    )
+
+    for i, paths in enumerate(ordered, 1):
+        print(f"Duplicate group {i}:")
+        for p in paths:
+            print(f"  {p}")
+        print()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,161 @@
+### Problem Restatement & Requirements
+
+**Original Problem:**
+
+Given a directed, capacitated network with $V$ vertices and $E$ edges, compute the maximum $s\text{-}t$ flow from a designated source $s$ to a sink $t$, as well as the net flow value along each original edge in the network.
+
+**Existing Required Outputs:**
+
+1. `max_flow` *(integer or numerical value)*: The maximum total flow transported from $s$ to $t$.
+2. `edge_flows` *(list/array)*: The final flow carried by each edge, matching the exact order in which edges were provided in the original input.
+
+---
+
+### Enhanced Feature: Deterministic `operation_summary`
+
+When requested (via `return_summary=True`), the solver returns a third output field, `operation_summary`, detailing major algorithmic decision milestones encountered during Dinic's Algorithm:
+
+* `bfs_phases`: Total number of Level Graph constructions (BFS passes).
+* `dfs_path_augmentations`: Total number of successfully pushed bottleneck blocking flow paths.
+* `visited_edges`: Total number of edge traversals/scans during DFS phases (including dead-end edge advances).
+
+---
+
+### Python Implementation
+
+```python
+from collections import deque
+from typing import List, Tuple, Dict, Any, Union
+
+class DinicMaxFlowPlanner:
+    def __init__(self, num_nodes: int):
+        self.n = num_nodes
+        self.graph = [[] for _ in range(num_nodes)]
+        self.edges = []  # Stores edge records
+        self.level = []
+        self.ptr = []
+        
+        # Operation tracking counters
+        self.bfs_phases = 0
+        self.dfs_path_augmentations = 0
+        self.visited_edges = 0
+
+    def add_edge(self, u: int, v: int, cap: int) -> int:
+        """Adds a directed edge (u, v) with capacity cap. Returns original edge index."""
+        forward_idx = len(self.edges)
+        # Forward edge
+        self.edges.append({'u': u, 'v': v, 'cap': cap, 'flow': 0, 'rev': forward_idx + 1})
+        self.graph[u].append(forward_idx)
+        
+        # Reverse residual edge
+        self.edges.append({'u': v, 'v': u, 'cap': 0, 'flow': 0, 'rev': forward_idx})
+        self.graph[v].append(forward_idx + 1)
+        
+        return forward_idx // 2
+
+    def _bfs(self, s: int, t: int) -> bool:
+        """Builds level graph using BFS."""
+        self.level = [-1] * self.n
+        self.level[s] = 0
+        queue = deque([s])
+        
+        while queue:
+            u = queue.popleft()
+            for edge_idx in self.graph[u]:
+                edge = self.edges[edge_idx]
+                if edge['cap'] - edge['flow'] > 0 and self.level[edge['v']] == -1:
+                    self.level[edge['v']] = self.level[u] + 1
+                    queue.append(edge['v'])
+                    
+        is_reachable = self.level[t] != -1
+        if is_reachable:
+            self.bfs_phases += 1
+        return is_reachable
+
+    def _dfs(self, u: int, t: int, pushed: int) -> int:
+        """Pushes blocking flow strictly using the level graph."""
+        if pushed == 0 or u == t:
+            if u == t and pushed > 0:
+                self.dfs_path_augmentations += 1
+            return pushed
+        
+        for i in range(self.ptr[u], len(self.graph[u])):
+            edge_idx = self.graph[u][i]
+            edge = self.edges[edge_idx]
+            v = edge['v']
+            
+            self.visited_edges += 1
+            
+            if self.level[u] + 1 != self.level[v] or edge['cap'] - edge['flow'] == 0:
+                self.ptr[u] += 1
+                continue
+            
+            tr = self._dfs(v, t, min(pushed, edge['cap'] - edge['flow']))
+            if tr == 0:
+                self.ptr[u] += 1
+                continue
+            
+            # Augment residual capacity
+            self.edges[edge_idx]['flow'] += tr
+            self.edges[edge_idx ^ 1]['flow'] -= tr
+            return tr
+            
+        return 0
+
+    def compute_max_flow(
+        self, s: int, t: int, return_summary: bool = False
+    ) -> Union[Tuple[int, List[int]], Tuple[int, List[int], Dict[str, Any]]]:
+        """
+        Computes max flow and edge flows.
+        If return_summary is False: returns (max_flow, edge_flows)
+        If return_summary is True: returns (max_flow, edge_flows, operation_summary)
+        """
+        flow_value = 0
+        INF = float('inf')
+        
+        while self._bfs(s, t):
+            self.ptr = [0] * self.n
+            while True:
+                pushed = self._dfs(s, t, INF)
+                if pushed == 0:
+                    break
+                flow_value += pushed
+                
+        # Extract net flow corresponding strictly to original input edge indices
+        edge_flows = [self.edges[i]['flow'] for i in range(0, len(self.edges), 2)]
+        
+        if not return_summary:
+            return flow_value, edge_flows
+        
+        operation_summary = {
+            "bfs_phases": self.bfs_phases,
+            "dfs_path_augmentations": self.dfs_path_augmentations,
+            "visited_edges": self.visited_edges,
+            "total_computational_decisions": self.bfs_phases + self.dfs_path_augmentations + self.visited_edges
+        }
+        
+        return flow_value, edge_flows, operation_summary
+
+
+# Example Usage Demonstration
+if __name__ == "__main__":
+    solver = DinicMaxFlowPlanner(num_nodes=4)
+    input_edges = [(0, 1, 10), (0, 2, 10), (1, 2, 2), (1, 3, 4), (2, 3, 10)]
+    for u, v, cap in input_edges:
+        solver.add_edge(u, v, cap)
+        
+    # Standard output (Backward compatible)
+    max_f, flows = solver.compute_max_flow(s=0, t=3, return_summary=False)
+    print(f"Standard Mode -> Max Flow: {max_f}, Edge Flows: {flows}")
+    
+    # Enhanced output (With operation_summary)
+    solver_summary = DinicMaxFlowPlanner(num_nodes=4)
+    for u, v, cap in input_edges:
+        solver_summary.add_edge(u, v, cap)
+        
+    max_f, flows, summary = solver_summary.compute_max_flow(s=0, t=3, return_summary=True)
+    print(f"\nEnhanced Mode -> Max Flow: {max_f}")
+    print(f"Edge Flows: {flows}")
+    print("Operation Summary:", summary)
+
+```

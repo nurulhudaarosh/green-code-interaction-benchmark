@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""
+Offline Python NDJSON Analyzer
+
+This script analyzes NDJSON (Newline Delimited JSON) files to extract user and request metrics.
+It handles malformed JSON lines gracefully, tracks them, and produces deterministic output.
+
+Usage:
+    python ndjson_analyzer.py <input_file.ndjson> [output_file.json]
+"""
+
+import json
+import sys
+from collections import defaultdict
+from typing import Dict, List, Tuple, Optional, Set
+import os
+
+
+class NDJSONAnalyzer:
+    def __init__(self):
+        self.user_stats: Dict[str, Dict] = defaultdict(
+            lambda: {
+                'request_count': 0,
+                'error_count': 0,
+                'total_latency': 0,
+                'endpoint_counts': defaultdict(int),
+                'latencies': []
+            }
+        )
+        self.malformed_lines: List[Tuple[int, str]] = []
+        self.total_lines = 0
+
+    def analyze_file(self, filepath: str) -> None:
+        """Analyze the NDJSON file line by line."""
+        with open(filepath, 'r', encoding='utf-8') as f:
+            for line_num, line in enumerate(f, 1):
+                self.total_lines += 1
+                line = line.strip()
+                if not line:
+                    continue
+                
+                try:
+                    self._process_line(line, line_num)
+                except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+                    self.malformed_lines.append((line_num, line[:100] + '...' if len(line) > 100 else line))
+
+    def _process_line(self, line: str, line_num: int) -> None:
+        """Process a single JSON line."""
+        data = json.loads(line)
+        
+        # Extract nested user and request fields
+        user = data.get('user')
+        request = data.get('request')
+        
+        if user is None or request is None:
+            raise ValueError(f"Missing 'user' or 'request' field at line {line_num}")
+        
+        # Convert user to string for consistent handling
+        user_id = str(user)
+        
+        # Extract request details
+        endpoint = request.get('endpoint', '')
+        latency = request.get('latency')
+        status = request.get('status', 200)
+        is_error = request.get('error', False) or (isinstance(status, int) and status >= 400)
+        
+        # Validate latency
+        if latency is None or not isinstance(latency, (int, float)):
+            raise ValueError(f"Invalid latency value at line {line_num}: {latency}")
+        
+        # Update user statistics
+        stats = self.user_stats[user_id]
+        stats['request_count'] += 1
+        stats['total_latency'] += latency
+        stats['latencies'].append(latency)
+        
+        if is_error:
+            stats['error_count'] += 1
+        
+        # Track endpoint - this will be used for most-requested endpoint calculation
+        stats['endpoint_counts'][endpoint] += 1
+
+    def calculate_average_latency(self, stats: Dict) -> float:
+        """Calculate average latency for a user."""
+        if stats['request_count'] == 0:
+            return 0.0
+        return stats['total_latency'] / stats['request_count']
+
+    def get_most_requested_endpoint(self, stats: Dict) -> str:
+        """
+        Determine the most-requested endpoint with lexical tie-breaking.
+        If two endpoints have the same count, choose the lexically smaller endpoint.
+        """
+        if not stats['endpoint_counts']:
+            return ''
+        
+        # Find the maximum count
+        max_count = max(stats['endpoint_counts'].values())
+        
+        # Get all endpoints with the maximum count
+        top_endpoints = [endpoint for endpoint, count in stats['endpoint_counts'].items() 
+                        if count == max_count]
+        
+        # Lexical tie-breaking: return the lexicographically smallest endpoint
+        # Python's min() will give us the lexicographically smallest string
+        return min(top_endpoints) if top_endpoints else ''
+
+    def get_results(self) -> Dict:
+        """Get processed results with deterministic ordering."""
+        results = {}
+        
+        # Process each user and sort by user ID
+        for user_id in sorted(self.user_stats.keys()):
+            stats = self.user_stats[user_id]
+            results[user_id] = {
+                'request_count': stats['request_count'],
+                'error_count': stats['error_count'],
+                'average_latency': round(self.calculate_average_latency(stats), 2),
+                'most_requested_endpoint': self.get_most_requested_endpoint(stats)
+            }
+        
+        return results
+
+    def write_output(self, output_path: str) -> None:
+        """Write results to a JSON file with deterministic ordering."""
+        results = self.get_results()
+        
+        output_data = {
+            'results': results,
+            'metadata': {
+                'total_lines_processed': self.total_lines,
+                'malformed_lines_count': len(self.malformed_lines),
+                'unique_users': len(self.user_stats)
+            }
+        }
+        
+        # Add malformed line details if any
+        if self.malformed_lines:
+            output_data['malformed_lines'] = [
+                {'line_number': line_num, 'content': content}
+                for line_num, content in self.malformed_lines[:10]  # Limit to first 10
+            ]
+        
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(output_data, f, indent=2, sort_keys=True, ensure_ascii=False)
+        
+        # Also print summary to console
+        print(f"Analysis complete! Results written to: {output_path}")
+        print(f"Total lines processed: {self.total_lines}")
+        print(f"Malformed JSON lines: {len(self.malformed_lines)}")
+        print(f"Unique users: {len(self.user_stats)}")
+
+    def print_summary(self) -> None:
+        """Print a human-readable summary of the analysis."""
+        print("\n" + "="*60)
+        print("ANALYSIS SUMMARY")
+        print("="*60)
+        print(f"Total lines processed: {self.total_lines}")
+        print(f"Malformed JSON lines: {len(self.malformed_lines)}")
+        print(f"Unique users: {len(self.user_stats)}")
+        print("-"*60)
+        
+        for user_id in sorted(self.user_stats.keys()):
+            stats = self.user_stats[user_id]
+            avg_latency = self.calculate_average_latency(stats)
+            most_requested = self.get_most_requested_endpoint(stats)
+            print(f"\nUser: {user_id}")
+            print(f"  Request count: {stats['request_count']}")
+            print(f"  Error count: {stats['error_count']}")
+            print(f"  Average latency: {avg_latency:.2f}")
+            print(f"  Most requested endpoint: {most_requested}")
+            # Show endpoint distribution for transparency
+            if len(stats['endpoint_counts']) > 1:
+                print(f"  Endpoint distribution:")
+                for endpoint, count in sorted(stats['endpoint_counts'].items()):
+                    print(f"    {endpoint}: {count}")
+        
+        if self.malformed_lines:
+            print("\n" + "-"*60)
+            print("First 5 malformed lines:")
+            for i, (line_num, content) in enumerate(self.malformed_lines[:5]):
+                print(f"  Line {line_num}: {content}")
+
+
+def main():
+    """Main entry point for the script."""
+    if len(sys.argv) < 2:
+        print("Usage: python ndjson_analyzer.py <input_file.ndjson> [output_file.json]")
+        print("Example: python ndjson_analyzer.py data.ndjson results.json")
+        sys.exit(1)
+    
+    input_file = sys.argv[1]
+    output_file = sys.argv[2] if len(sys.argv) > 2 else 'analysis_results.json'
+    
+    # Check if input file exists
+    if not os.path.exists(input_file):
+        print(f"Error: Input file '{input_file}' not found.")
+        sys.exit(1)
+    
+    try:
+        # Create analyzer and process file
+        analyzer = NDJSONAnalyzer()
+        print(f"Analyzing file: {input_file}")
+        analyzer.analyze_file(input_file)
+        
+        # Print summary to console
+        analyzer.print_summary()
+        
+        # Write output
+        analyzer.write_output(output_file)
+        
+    except Exception as e:
+        print(f"Error during analysis: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

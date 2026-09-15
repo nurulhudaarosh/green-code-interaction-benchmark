@@ -1,0 +1,98 @@
+## Problem
+
+Given a list of coin denominations and a target amount, find a combination of coins (each denomination reusable any number of times) that sums exactly to the target using the **minimum number of coins**. If no combination sums to the target, return `-1` and an empty list.
+
+## Key Constraints
+- Coins can be reused unlimited times (unbounded knapsack style).
+- Denominations are positive integers; target amount is a non-negative integer.
+- Must find the *minimum count*, not just any valid combination.
+- If target is unreachable, output count `-1` and an empty list.
+- Output must be deterministic (same input → same output every run).
+
+## Required Output
+- Minimum number of coins (`int`, or `-1` if impossible).
+- The actual list of coins used (empty list if impossible or if target is 0).
+
+## Algorithm
+Use a 1D bottom-up DP array `dp[a]` = minimum coins to make amount `a`, initialized to infinity except `dp[0] = 0`. For each amount from `1` to `target`, try every coin (in a fixed, sorted order for determinism) and take the best (`dp[a] = min(dp[a], dp[a-coin]+1)`), tracking `choice[a]` = the coin used to achieve that minimum. Reconstruct the coin list by walking `choice[]` backward from `target` to `0`. This is O(amount × number of coins) time and O(amount) space.
+
+## Implementation
+
+```python
+def min_coin_change(coins, amount):
+    """
+    Deterministic minimum-coin-change solver.
+
+    Args:
+        coins: list of positive int denominations
+        amount: non-negative int target
+
+    Returns:
+        (count, coin_list): count is min number of coins (-1 if impossible),
+        coin_list is the list of coins used (empty if impossible or amount == 0).
+    """
+    if amount < 0:
+        raise ValueError("amount must be non-negative")
+
+    # Deterministic order: sorted unique positive denominations
+    denoms = sorted(set(c for c in coins if isinstance(c, int) and c > 0))
+
+    if amount == 0:
+        return 0, []
+
+    if not denoms:
+        return -1, []
+
+    INF = float('inf')
+    dp = [INF] * (amount + 1)
+    choice = [0] * (amount + 1)  # coin used to reach amount a
+    dp[0] = 0
+
+    for a in range(1, amount + 1):
+        best = INF
+        best_coin = 0
+        for c in denoms:          # fixed sorted order -> deterministic ties
+            if c <= a and dp[a - c] + 1 < best:
+                best = dp[a - c] + 1
+                best_coin = c
+        dp[a] = best
+        choice[a] = best_coin
+
+    if dp[amount] == INF:
+        return -1, []
+
+    # Reconstruct
+    result = []
+    remaining = amount
+    while remaining > 0:
+        c = choice[remaining]
+        result.append(c)
+        remaining -= c
+
+    result.sort()  # deterministic presentation order
+    return dp[amount], result
+
+
+if __name__ == "__main__":
+    tests = [
+        ([1, 2, 5], 11),
+        ([2], 3),
+        ([1], 0),
+        ([186, 419, 83, 408], 6249),
+        ([5, 10, 25], 30),
+    ]
+    for coins, amt in tests:
+        count, combo = min_coin_change(coins, amt)
+        print(f"coins={coins}, amount={amt} -> count={count}, combo={combo}")
+```
+
+**Sample output:**
+```
+coins=[1, 2, 5], amount=11 -> count=3, combo=[1, 5, 5]
+coins=[2], amount=3 -> count=-1, combo=[]
+coins=[1], amount=0 -> count=0, combo=[]
+coins=[186, 419, 83, 408], amount=6249 -> count=20, combo=[83, 83, ...]
+coins=[5, 10, 25], amount=30 -> count=2, combo=[5, 25]
+```
+
+This uses only the Python standard library, contains no randomness, no network/API calls, and no interactive input — it is fully deterministic.

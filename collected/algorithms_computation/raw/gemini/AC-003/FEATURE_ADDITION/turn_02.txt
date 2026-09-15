@@ -1,0 +1,115 @@
+### Restatement of the Problem & Original Output Requirements
+
+**Original Problem:**
+Given a directed graph with $V$ non-negative edge-weighted vertices and a source vertex $S$, compute the shortest distance from $S$ to every vertex $i \in \{0, 1, \dots, V-1\}$, representing unreachable vertices with `-1`.
+
+**Original Output Requirements:**
+
+* A list/array of integers where the $i$-th element is the shortest path distance from $S$ to vertex $i$, or `-1` if unreachable.
+* Pure standard library implementation with deterministic execution and non-negative edge weights.
+
+---
+
+### New Feature: Operation Summary
+
+When requested (via a flag or parameter), the algorithm returns a structure containing both the shortest distances and an `operation_summary` object tracking total major algorithmic decisions:
+
+1. **`heap_pops`**: Number of standard heap extraction operations.
+2. **`stale_pops_skipped`**: Number of popping operations where `current_dist > distances[u]` (stale entries skipped).
+3. **`edge_relaxations_attempted`**: Total adjacent edges inspected during node exploration.
+4. **`distance_updates`**: Total number of successful edge relaxations resulting in a shorter distance update and heap push.
+
+---
+
+### Enhanced Python Implementation
+
+```python
+import heapq
+from typing import List, Tuple, Dict, Any, Union
+
+def analyze_single_source_routes(
+    num_vertices: int,
+    adj_list: List[List[Tuple[int, int]]],
+    source: int,
+    include_summary: bool = False
+) -> Union[List[int], Dict[str, Any]]:
+    """
+    Computes shortest path distances from source using Dijkstra's algorithm.
+    Optionally returns an operation summary of key algorithmic decisions.
+
+    :param num_vertices: Total number of vertices in graph.
+    :param adj_list: Adjacency list adj_list[u] = [(v, weight), ...].
+    :param source: Index of source vertex.
+    :param include_summary: If True, returns a dict with 'distances' and 'operation_summary'.
+                            If False, returns only the List[int] of distances.
+    :return: List of distances OR Dict containing 'distances' and 'operation_summary'.
+    """
+    distances = [float('inf')] * num_vertices
+    distances[source] = 0
+
+    min_heap = [(0, source)]
+
+    # Metrics counters
+    heap_pops = 0
+    stale_pops_skipped = 0
+    edge_relaxations_attempted = 0
+    distance_updates = 0
+
+    while min_heap:
+        current_dist, u = heapq.heappop(min_heap)
+        heap_pops += 1
+
+        if current_dist > distances[u]:
+            stale_pops_skipped += 1
+            continue
+
+        for v, weight in adj_list[u]:
+            edge_relaxations_attempted += 1
+            distance_through_u = current_dist + weight
+
+            if distance_through_u < distances[v]:
+                distances[v] = distance_through_u
+                distance_updates += 1
+                heapq.heappush(min_heap, (distance_through_u, v))
+
+    # Format distances (-1 for unreachable)
+    final_distances = [dist if dist != float('inf') else -1 for dist in distances]
+
+    if not include_summary:
+        return final_distances
+
+    return {
+        "distances": final_distances,
+        "operation_summary": {
+            "heap_pops": heap_pops,
+            "stale_pops_skipped": stale_pops_skipped,
+            "edge_relaxations_attempted": edge_relaxations_attempted,
+            "distance_updates": distance_updates,
+            "total_decisions": heap_pops + edge_relaxations_attempted
+        }
+    }
+
+
+# --- Verification Example ---
+if __name__ == "__main__":
+    V = 5
+    source_node = 0
+    graph = [
+        [(1, 4), (2, 1)],  # 0 -> 1(4), 2(1)
+        [(3, 1)],          # 1 -> 3(1)
+        [(1, 2), (3, 5)],  # 2 -> 1(2), 3(5)
+        [],                # 3 -> none
+        []                 # 4 -> unreachable
+    ]
+
+    # Original requirement behavior
+    default_res = analyze_single_source_routes(V, graph, source_node, include_summary=False)
+    print("Standard output:", default_res)
+    # Output: [0, 3, 1, 4, -1]
+
+    # Enhanced feature behavior
+    summary_res = analyze_single_source_routes(V, graph, source_node, include_summary=True)
+    print("Enhanced output with operation summary:")
+    print(summary_res)
+
+```

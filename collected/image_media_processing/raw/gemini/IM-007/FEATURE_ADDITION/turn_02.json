@@ -1,0 +1,11 @@
+{
+  "task_id": "IM-007",
+  "model": "gemini",
+  "interaction": "FEATURE_ADDITION",
+  "turn": 2,
+  "saved_at": "2026-09-13T19:31:45.936238+00:00",
+  "response_sha256": "c93e82cdf2502558f342ffe630104ac9fa3809c007f413c9cf4282c16cef78bd",
+  "code_sha256": "c8fdad329439fb1ae5b21324f25c819a6c282f27a40a7c0bfaa1ffb082abbd2a",
+  "raw_file": ".collection/raw/gemini/IM-007/FEATURE_ADDITION/turn_02.txt",
+  "code_file": ".collection/code/gemini/IM-007/FEATURE_ADDITION/final.py"
+}

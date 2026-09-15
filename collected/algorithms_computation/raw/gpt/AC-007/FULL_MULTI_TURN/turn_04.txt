@@ -1,0 +1,412 @@
+## Restated problem
+
+Given an **undirected weighted graph**, construct its **Minimum Spanning Forest (MSF)** using **Kruskal's algorithm with a Disjoint Set Union (DSU)**.
+
+Requirements:
+
+* Vertices are numbered `0` through `n - 1`.
+* Each edge is `(u, v, weight, original_edge_id)`.
+* The graph may be disconnected.
+* Process edges by `(weight, original_edge_id)`.
+* Equal-weight edges must therefore be processed by increasing original edge ID.
+* Select an edge only when its endpoints are in different DSU components.
+* Return the original outputs:
+
+  * `total_cost`
+  * `selected_edge_ids`
+* When requested, additionally return:
+
+  * `operation_summary = {"major_operations": ...}`
+* Boundary input values must be handled correctly without changing the original behavior.
+* Use only the Python standard library.
+
+For boundary testing, the implementation below explicitly supports the normal Python integer range without imposing artificial limits on vertex IDs, edge IDs, or weights. It also checks invalid vertex endpoints.
+
+```python
+from typing import Iterable, List, Tuple, Dict, Union
+
+
+class DSU:
+    """Disjoint Set Union with path compression and union by size."""
+
+    def __init__(self, n: int) -> None:
+        self.parent = list(range(n))
+        self.size = [1] * n
+
+    def find(self, x: int) -> int:
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]
+            x = self.parent[x]
+        return x
+
+    def union(self, a: int, b: int) -> bool:
+        root_a = self.find(a)
+        root_b = self.find(b)
+
+        if root_a == root_b:
+            return False
+
+        if self.size[root_a] < self.size[root_b]:
+            root_a, root_b = root_b, root_a
+
+        self.parent[root_b] = root_a
+        self.size[root_a] += self.size[root_b]
+        return True
+
+
+def minimum_spanning_forest(
+    n: int,
+    edges: Iterable[Tuple[int, int, int, int]],
+    include_operation_summary: bool = False,
+) -> Union[
+    Tuple[int, List[int]],
+    Tuple[int, List[int], Dict[str, int]]
+]:
+    """
+    Construct a Minimum Spanning Forest using Kruskal's algorithm.
+
+    Each edge:
+        (u, v, weight, original_edge_id)
+
+    Processing order:
+        1. Smaller weight first.
+        2. For equal weights, smaller original edge ID first.
+
+    Original output:
+        (total_cost, selected_edge_ids)
+
+    Optional output:
+        (total_cost, selected_edge_ids,
+         {"major_operations": number_of_processed_edges})
+    """
+
+    if n < 0:
+        raise ValueError("Number of vertices cannot be negative.")
+
+    edge_list = list(edges)
+
+    # Validate endpoints.
+    for u, v, _, _ in edge_list:
+        if not (0 <= u < n and 0 <= v < n):
+            raise ValueError(
+                f"Invalid edge endpoint: ({u}, {v}) for n={n}"
+            )
+
+    # Deterministic Kruskal ordering.
+    edge_list.sort(key=lambda edge: (edge[2], edge[3]))
+
+    dsu = DSU(n)
+
+    total_cost = 0
+    selected_edge_ids: List[int] = []
+    major_operations = 0
+
+    for u, v, weight, edge_id in edge_list:
+        major_operations += 1
+
+        # Self-loops cannot be part of an MSF.
+        if u == v:
+            continue
+
+        # Select only if the endpoints are in different components.
+        if dsu.union(u, v):
+            total_cost += weight
+            selected_edge_ids.append(edge_id)
+
+    if not include_operation_summary:
+        return total_cost, selected_edge_ids
+
+    return (
+        total_cost,
+        selected_edge_ids,
+        {"major_operations": major_operations},
+    )
+
+
+# ============================================================
+# ORIGINAL BEHAVIOR TEST
+# ============================================================
+
+def test_original_output_unchanged():
+    edges = [
+        (0, 1, 4, 0),
+        (0, 2, 1, 1),
+        (1, 2, 2, 2),
+        (1, 3, 5, 3),
+        (2, 3, 3, 4),
+        (3, 4, 2, 5),
+    ]
+
+    result = minimum_spanning_forest(5, edges)
+
+    assert result == (8, [1, 2, 5, 4])
+
+
+# ============================================================
+# ORIGINAL TIE-BREAKING TEST
+# ============================================================
+
+def test_equal_weight_tie_breaking():
+    # Input order is deliberately NOT ID order.
+    edges = [
+        (0, 2, 1, 2),
+        (1, 2, 1, 1),
+        (0, 1, 1, 0),
+    ]
+
+    result = minimum_spanning_forest(3, edges)
+
+    # Required processing:
+    # ID 0 -> ID 1 -> ID 2
+    assert result == (2, [0, 1])
+
+
+# ============================================================
+# BOUNDARY: MINIMUM NUMBER OF VERTICES
+# ============================================================
+
+def test_minimum_vertex_count():
+    # n = 0: empty graph.
+    result = minimum_spanning_forest(0, [])
+
+    assert result == (0, [])
+
+
+def test_single_vertex():
+    # n = 1 with no edges.
+    result = minimum_spanning_forest(1, [])
+
+    assert result == (0, [])
+
+
+# ============================================================
+# BOUNDARY: MAXIMUM VERTEX INDEX
+# ============================================================
+
+def test_maximum_vertex_index():
+    # Vertex n-1 is the largest valid vertex index.
+    n = 3
+    edges = [
+        (0, 2, 5, 10),
+        (1, 2, 1, 11),
+        (0, 1, 3, 12),
+    ]
+
+    result = minimum_spanning_forest(n, edges)
+
+    assert result == (4, [11, 12])
+
+
+# ============================================================
+# BOUNDARY: VERY LARGE WEIGHTS
+# ============================================================
+
+def test_large_weight_boundary():
+    # Python integers safely support arbitrarily large integer values.
+    huge = 10**18
+
+    edges = [
+        (0, 1, huge, 0),
+        (1, 2, huge - 1, 1),
+        (0, 2, huge, 2),
+    ]
+
+    result = minimum_spanning_forest(3, edges)
+
+    assert result == (
+        2 * huge - 1,
+        [1, 0],
+    )
+
+
+# ============================================================
+# BOUNDARY: VERY SMALL / NEGATIVE WEIGHTS
+# ============================================================
+
+def test_negative_weight_boundary():
+    edges = [
+        (0, 1, -10**18, 0),
+        (1, 2, -10**18, 1),
+        (0, 2, -10**18 + 1, 2),
+    ]
+
+    result = minimum_spanning_forest(3, edges)
+
+    assert result == (
+        -2 * 10**18,
+        [0, 1],
+    )
+
+
+# ============================================================
+# BOUNDARY: EXTREME INTEGER VALUES
+# ============================================================
+
+def test_extreme_integer_values():
+    minimum = -(10**100)
+    maximum = 10**100
+
+    edges = [
+        (0, 1, maximum, 100),
+        (1, 2, minimum, 101),
+        (0, 2, maximum, 102),
+    ]
+
+    result = minimum_spanning_forest(3, edges)
+
+    assert result == (
+        maximum + minimum,
+        [101, 100],
+    )
+
+
+# ============================================================
+# BOUNDARY: EXTREME EDGE IDs WITH TIE-BREAKING
+# ============================================================
+
+def test_extreme_edge_ids_tie_breaking():
+    minimum_id = -(10**100)
+    maximum_id = 10**100
+
+    # All weights are equal.
+    # Original ID must determine processing order.
+    edges = [
+        (0, 2, 7, maximum_id),
+        (1, 2, 7, 0),
+        (0, 1, 7, minimum_id),
+    ]
+
+    result = minimum_spanning_forest(3, edges)
+
+    # Processing order:
+    # minimum_id -> 0 -> maximum_id
+    assert result == (
+        14,
+        [minimum_id, 0],
+    )
+
+
+# ============================================================
+# BOUNDARY: DISCONNECTED GRAPH
+# ============================================================
+
+def test_boundary_disconnected_graph():
+    # Maximum valid index is used in separate components.
+    n = 5
+
+    edges = [
+        (0, 1, 10**18, 0),
+        (3, 4, -10**18, 1),
+    ]
+
+    result = minimum_spanning_forest(
+        n,
+        edges,
+        include_operation_summary=True,
+    )
+
+    assert result == (
+        0,
+        [1, 0],
+        {"major_operations": 2},
+    )
+
+
+# ============================================================
+# BOUNDARY: SELF-LOOPS
+# ============================================================
+
+def test_boundary_self_loops():
+    edges = [
+        (0, 0, -10**100, 0),
+        (1, 1, 10**100, 1),
+        (0, 1, 5, 2),
+    ]
+
+    result = minimum_spanning_forest(
+        2,
+        edges,
+        include_operation_summary=True,
+    )
+
+    assert result == (
+        5,
+        [2],
+        {"major_operations": 3},
+    )
+
+
+# ============================================================
+# OPERATION SUMMARY
+# ============================================================
+
+def test_operation_summary():
+    edges = [
+        (0, 1, 1, 0),
+        (1, 2, 2, 1),
+        (0, 2, 3, 2),
+    ]
+
+    result = minimum_spanning_forest(
+        3,
+        edges,
+        include_operation_summary=True,
+    )
+
+    assert result == (
+        3,
+        [0, 1],
+        {"major_operations": 3},
+    )
+
+
+# ============================================================
+# INVALID BOUNDARY VALUES
+# ============================================================
+
+def test_invalid_negative_vertex_count():
+    try:
+        minimum_spanning_forest(-1, [])
+        assert False, "Expected ValueError"
+    except ValueError:
+        pass
+
+
+def test_invalid_vertex_endpoint():
+    try:
+        minimum_spanning_forest(
+            3,
+            [(0, 3, 1, 0)]
+        )
+        assert False, "Expected ValueError"
+    except ValueError:
+        pass
+
+
+# ============================================================
+# RUN ALL TESTS
+# ============================================================
+
+if __name__ == "__main__":
+    test_original_output_unchanged()
+    test_equal_weight_tie_breaking()
+
+    test_minimum_vertex_count()
+    test_single_vertex()
+    test_maximum_vertex_index()
+
+    test_large_weight_boundary()
+    test_negative_weight_boundary()
+    test_extreme_integer_values()
+    test_extreme_edge_ids_tie_breaking()
+
+    test_boundary_disconnected_graph()
+    test_boundary_self_loops()
+
+    test_operation_summary()
+
+    test_invalid_negative_vertex_count()
+    test_invalid_vertex_endpoint()
+
+    print("All tests passed.")
+```

@@ -1,0 +1,130 @@
+from typing import Dict, List, Optional, Any
+from dataclasses import dataclass
+
+
+@dataclass
+class ReorderDecision:
+    sku: str
+    should_reorder: bool
+    quantity: int
+    reason: str
+    current_stock: Optional[int] = None
+    reorder_level: Optional[int] = None
+
+
+# Simulated inventory data (could come from DB/API)
+INVENTORY: Dict[str, Dict[str, Any]] = {
+    "SKU-001": {"stock": 5,  "reorder_level": 10, "reorder_qty": 50},
+    "SKU-002": {"stock": 0,  "reorder_level": 10, "reorder_qty": 50},
+    "SKU-003": {"stock": 10, "reorder_level": 10, "reorder_qty": 50},  # boundary
+    "SKU-004": {"stock": 11, "reorder_level": 10, "reorder_qty": 50},
+    "SKU-005": {"stock": 3,  "reorder_level": 0,  "reorder_qty": 20},  # zero reorder level
+    "SKU-006": {"stock": -2, "reorder_level": 5,  "reorder_qty": 25},  # bad data
+    "SKU-007": {"stock": 2,  "reorder_level": 10, "reorder_qty": 0},   # zero qty
+}
+
+
+def evaluate_sku(sku: str, data: Optional[Dict[str, Any]]) -> ReorderDecision:
+    """Evaluate a single SKU, handling all edge cases."""
+    # Unknown SKU
+    if data is None:
+        return ReorderDecision(sku, False, 0, "unknown_sku")
+
+    stock = data.get("stock")
+    reorder_level = data.get("reorder_level")
+    reorder_qty = data.get("reorder_qty")
+
+    # Missing / invalid fields
+    if stock is None or reorder_level is None:
+        return ReorderDecision(sku, False, 0, "missing_fields")
+
+    if not isinstance(stock, (int, float)) or not isinstance(reorder_level, (int, float)):
+        return ReorderDecision(sku, False, 0, "invalid_types")
+
+    # Negative stock → data error, don't auto-order (needs investigation)
+    if stock < 0:
+        return ReorderDecision(
+            sku, False, 0, "negative_stock",
+            current_stock=stock, reorder_level=reorder_level
+        )
+
+    # Zero reorder level means reordering is disabled for this SKU
+    if reorder_level == 0:
+        return ReorderDecision(
+            sku, False, 0, "reorder_disabled",
+            current_stock=stock, reorder_level=reorder_level
+        )
+
+    # Zero or missing reorder quantity → can't place an order
+    if not reorder_qty or reorder_qty <= 0:
+        return ReorderDecision(
+            sku, False, 0, "invalid_reorder_qty",
+            current_stock=stock, reorder_level=reorder_level
+        )
+
+    # Boundary: stock == reorder_level triggers reorder (<=)
+    if stock <= reorder_level:
+        return ReorderDecision(
+            sku, True, int(reorder_qty), "at_or_below_reorder_level",
+            current_stock=stock, reorder_level=reorder_level
+        )
+
+    return ReorderDecision(
+        sku, False, 0, "sufficient_stock",
+        current_stock=stock, reorder_level=reorder_level
+    )
+
+
+def process_orders(requested_skus: Optional[List[str]] = None,
+                   inventory: Optional[Dict[str, Dict[str, Any]]] = None
+                   ) -> List[ReorderDecision]:
+    """Process a batch of SKUs. Handles empty input gracefully."""
+    inventory = inventory if inventory is not None else INVENTORY
+    requested_skus = requested_skus or []
+
+    if not requested_skus:
+        return []  # empty data → empty result, no crash
+
+    results = []
+    for sku in requested_skus:
+        data = inventory.get(sku)  # None → unknown SKU
+        results.append(evaluate_sku(sku, data))
+    return results
+
+
+def print_report(decisions: List[ReorderDecision]) -> None:
+    if not decisions:
+        print("No SKUs to process (empty input).")
+        return
+
+    print(f"{'SKU':<10} {'REORDER':<8} {'QTY':<6} {'STOCK':<7} {'LEVEL':<7} REASON")
+    print("-" * 70)
+    for d in decisions:
+        stock = "-" if d.current_stock is None else d.current_stock
+        level = "-" if d.reorder_level is None else d.reorder_level
+        print(f"{d.sku:<10} {str(d.should_reorder):<8} {d.quantity:<6} "
+              f"{str(stock):<7} {str(level):<7} {d.reason}")
+
+
+if __name__ == "__main__":
+    # Case 1: empty input
+    print("=== Empty input ===")
+    print_report(process_orders([]))
+
+    # Case 2: mixed scenarios including unknown SKU
+    print("\n=== Mixed scenarios ===")
+    skus = [
+        "SKU-001",  # below reorder level
+        "SKU-002",  # zero stock
+        "SKU-003",  # boundary (stock == level)
+        "SKU-004",  # sufficient
+        "SKU-005",  # zero reorder level
+        "SKU-006",  # negative stock
+        "SKU-007",  # zero reorder qty
+        "SKU-999",  # unknown SKU
+    ]
+    print_report(process_orders(skus))
+
+    # Case 3: None input
+    print("\n=== None input ===")
+    print_report(process_orders(None))

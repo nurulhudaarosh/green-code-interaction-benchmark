@@ -1,0 +1,124 @@
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
+
+
+@dataclass
+class Transaction:
+    item_id: str
+    quantity: int  # Positive for additions/received, negative for sales/dispatches
+    timestamp: datetime
+
+
+@dataclass
+class AuditRecord:
+    item_id: str
+    physical_count: int
+    timestamp: datetime
+
+
+@dataclass
+class Discrepancy:
+    item_id: str
+    expected_qty: int
+    physical_count: int
+    discrepancy: int  # physical_count - expected_qty
+    status: str  # 'SURPLUS', 'DEFICIT', or 'BALANCED'
+
+
+class InventoryReconciler:
+    """Handles inventory ledger tracking and physical count reconciliation."""
+
+    def __init__(self, initial_stock: Optional[Dict[str, int]] = None):
+        self.ledger: Dict[str, int] = defaultdict(
+            int, initial_stock if initial_stock else {}
+        )
+        self.transaction_history: List[Transaction] = []
+
+    def record_transaction(self, item_id: str, quantity: int, timestamp: Optional[datetime] = None) -> None:
+        """Records a stock movement (positive for additions, negative for reductions)."""
+        ts = timestamp or datetime.now()
+        self.ledger[item_id] += quantity
+        self.transaction_history.append(Transaction(item_id, quantity, ts))
+
+    def reconcile(
+        self, audit_records: List[AuditRecord], auto_adjust: bool = False
+    ) -> Tuple[List[Discrepancy], Dict[str, int]]:
+        """
+        Compares physical counts against system records.
+        
+        Args:
+            audit_records: Physical inventory count data.
+            auto_adjust: If True, updates system ledger to match physical count.
+            
+        Returns:
+            Tuple of (Discrepancy reports, Updated inventory ledger)
+        """
+        discrepancies: List[Discrepancy] = []
+
+        for record in audit_records:
+            item_id = record.item_id
+            expected_qty = self.ledger.get(item_id, 0)
+            physical_qty = record.physical_count
+            diff = physical_qty - expected_qty
+
+            if diff > 0:
+                status = "SURPLUS"
+            elif diff < 0:
+                status = "DEFICIT"
+            else:
+                status = "BALANCED"
+
+            discrepancy_entry = Discrepancy(
+                item_id=item_id,
+                expected_qty=expected_qty,
+                physical_count=physical_qty,
+                discrepancy=diff,
+                status=status,
+            )
+            discrepancies.append(discrepancy_entry)
+
+            if auto_adjust and diff != 0:
+                # Log adjustment transaction to balance system ledger with physical reality
+                self.record_transaction(
+                    item_id=item_id,
+                    quantity=diff,
+                    timestamp=record.timestamp,
+                )
+
+        return discrepancies, dict(self.ledger)
+
+
+# --- Basic Usage Example ---
+if __name__ == "__main__":
+    now = datetime.now()
+
+    # 1. Initialize system ledger with starting stock
+    reconciler = InventoryReconciler(initial_stock={"SKU-100": 50, "SKU-200": 30, "SKU-300": 15})
+
+    # 2. Record dynamic transactions (Sales & Restocks)
+    reconciler.record_transaction("SKU-100", -5, now)   # Sale
+    reconciler.record_transaction("SKU-200", 10, now)   # Restock
+    # SKU-100 system expected: 45
+    # SKU-200 system expected: 40
+    # SKU-300 system expected: 15
+
+    # 3. Physical audit counts
+    physical_audit = [
+        AuditRecord(item_id="SKU-100", physical_count=42, timestamp=now),  # 3 missing (Deficit)
+        AuditRecord(item_id="SKU-200", physical_count=40, timestamp=now),  # Match (Balanced)
+        AuditRecord(item_id="SKU-300", physical_count=18, timestamp=now),  # 3 extra (Surplus)
+    ]
+
+    # 4. Reconcile and auto-adjust system ledger
+    reports, updated_stock = reconciler.reconcile(physical_audit, auto_adjust=True)
+
+    # Output Reconciliation Results
+    print(f"{'ITEM ID':<10} | {'EXPECTED':<8} | {'PHYSICAL':<8} | {'DIFF':<6} | {'STATUS'}")
+    print("-" * 50)
+    for r in reports:
+        print(f"{r.item_id:<10} | {r.expected_qty:<8} | {r.physical_count:<8} | {r.discrepancy:<+6} | {r.status}")
+
+    print("\nUpdated System Ledger Post-Adjustment:")
+    print(updated_stock)

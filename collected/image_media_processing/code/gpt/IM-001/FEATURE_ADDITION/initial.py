@@ -1,0 +1,22 @@
+from pathlib import Path
+from PIL import Image
+
+def batch_resize(input_dir, output_dir, target_size):
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    valid_extensions = {".png", ".jpg", ".jpeg"}
+    count = 0
+
+    for file_path in input_dir.iterdir():
+        if not file_path.is_file() or file_path.suffix.lower() not in valid_extensions:
+            continue
+
+        with Image.open(file_path) as img:
+            resized = img.resize(target_size, Image.Resampling.LANCZOS)
+            resized.save(output_dir / file_path.name)
+
+        count += 1
+
+    return count

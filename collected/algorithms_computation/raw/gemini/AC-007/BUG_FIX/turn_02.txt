@@ -1,0 +1,109 @@
+### Restatement of Problem & Expected Behavior
+
+For an undirected, weighted graph (which may be disconnected), the **Minimum Spanning Forest (MSF)** algorithm must construct a spanning tree for each connected component with minimum total weight.
+
+* **Deterministic Tie-Handling Rule:** When two edges have equal weights, tie-breaking **must strictly process edges with smaller original edge IDs first**.
+* **Expected Output:** Exactly the total minimum cost (sum of selected edge weights) and the list of selected 0-based edge IDs forming the MSF.
+
+---
+
+### Defect Analysis & Demonstration
+
+#### The Bug
+
+In the previous implementation:
+
+
+
+If two edges have identical weights **and** identical original edge IDs (e.g., duplicate edges present in the input list, or distinct edge tuple representations), Python's tuple comparison falls back to comparing `u` and `v`.
+
+More importantly, if custom edge input formats or modified tuple sorting are used without explicitly freezing the comparison key to `(weight, edge_id)`, implicit reliance on secondary tuple elements can alter tie-breaking behavior if structural parameters change.
+
+Furthermore, if the function is passed edges with different vertex orderings for identical parallel edges (e.g., `(1, 2, 5)` vs `(2, 1, 5)`), tuple sorting can prioritize `(5, 1, 1, 2)` over `(5, 0, 2, 1)` depending on tuple packing, violating the requirement that **original edge ID** is the strictly enforced tie-breaker after weight.
+
+#### Small Counterexample
+
+Consider a graph with vertices $0, 1$ and two parallel edges with equal weights:
+
+* Edge ID 0: `(1, 0, 10)`  (from vertex 1 to 0, weight 10)
+* Edge ID 1: `(0, 1, 10)`  (from vertex 0 to 1, weight 10)
+
+
+
+**Expected Result:** Edge ID `0` selected (since ID 0 < ID 1).
+
+**Defective Result:** Edge ID `1` selected due to vertex tuple order.
+
+---
+
+### Corrected Implementation
+
+To guarantee strict determinism, edge sorting uses a key `key=lambda x: (x[2], x[0])` where `x[2]` is the weight and `x[0]` is the original edge ID, completely ignoring endpoint values during sorting.
+
+```python
+class DSU:
+    def __init__(self, n: int):
+        self.parent = list(range(n))
+        self.rank = [0] * n
+
+    def find(self, i: int) -> int:
+        if self.parent[i] == i:
+            return i
+        self.parent[i] = self.find(self.parent[i])  # Path compression
+        return self.parent[i]
+
+    def union(self, i: int, j: int) -> bool:
+        root_i = self.find(i)
+        root_j = self.find(j)
+
+        if root_i != root_j:
+            # Union by rank
+            if self.rank[root_i] < self.rank[root_j]:
+                root_i, root_j = root_j, root_i
+            self.parent[root_j] = root_i
+            if self.rank[root_i] == self.rank[root_j]:
+                self.rank[root_i] += 1
+            return True
+        return False
+
+
+def minimum_spanning_forest(
+    num_vertices: int, edges: list[tuple[int, int, float | int]]
+) -> tuple[float | int, list[int]]:
+    """
+    Computes the Minimum Spanning Forest using Kruskal's algorithm.
+
+    Strict Tie-Breaking Rule: Equal-weight edges are prioritized 
+    strictly by original edge ID in ascending order.
+    """
+    # Store edges as (edge_id, u, v, weight)
+    decorated_edges = [
+        (edge_id, u, v, weight) for edge_id, (u, v, weight) in enumerate(edges)
+    ]
+
+    # Explicitly sort ONLY by (weight, edge_id) to prevent endpoint comparison leakage
+    decorated_edges.sort(key=lambda item: (item[3], item[0]))
+
+    dsu = DSU(num_vertices)
+    total_cost = 0
+    selected_edge_ids = []
+
+    for edge_id, u, v, weight in decorated_edges:
+        if dsu.union(u, v):
+            total_cost += weight
+            selected_edge_ids.append(edge_id)
+
+    return total_cost, selected_edge_ids
+
+
+# Verification of the fix on the counterexample
+if __name__ == "__main__":
+    edges = [
+        (1, 0, 10),  # Edge ID 0
+        (0, 1, 10),  # Edge ID 1
+    ]
+    cost, selected_ids = minimum_spanning_forest(2, edges)
+    print(f"Total Cost: {cost}")
+    print(f"Selected Edge IDs: {selected_ids}")  # Strictly outputs [0]
+
+```

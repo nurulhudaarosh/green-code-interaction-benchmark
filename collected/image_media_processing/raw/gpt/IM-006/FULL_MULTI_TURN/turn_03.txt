@@ -1,0 +1,35 @@
+```python id="58321"
+import os
+from PIL import Image
+
+def extract_metadata(input_dir):
+    results = []
+
+    for filename in os.listdir(input_dir):
+        path = os.path.join(input_dir, filename)
+
+        if not os.path.isfile(path):
+            continue
+
+        try:
+            with Image.open(path) as img:
+                img.verify()
+
+            with Image.open(path) as img:
+                width, height = img.width, img.height
+
+                results.append({
+                    "filename": filename,
+                    "format": img.format,
+                    "mode": img.mode,
+                    "width": width,
+                    "height": height,
+                    "file_size_bytes": os.path.getsize(path),
+                    "aspect_ratio": round(width / height, 3)
+                })
+
+        except (OSError, Image.UnidentifiedImageError, ZeroDivisionError):
+            continue
+
+    return sorted(results, key=lambda x: x["filename"])
+```

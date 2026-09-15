@@ -1,0 +1,44 @@
+id="48127"
+from PIL import Image
+
+
+def compute_ahash(image_path, hash_size=8):
+    """
+    Compute the classic average hash (aHash).
+
+    Each resized grayscale pixel is compared against the
+    mean pixel value of the entire resized image.
+
+    Returns:
+        str: Binary hash of length hash_size * hash_size.
+    """
+    if not isinstance(hash_size, int) or hash_size <= 0:
+        raise ValueError("hash_size must be a positive integer")
+
+    with Image.open(image_path) as img:
+        # Convert to grayscale and resize.
+        gray = img.convert("L").resize((hash_size, hash_size))
+
+        pixels = list(gray.getdata())
+
+        # True mean of the resized grayscale pixels.
+        mean = sum(pixels) / len(pixels)
+
+        # Compare against the image-specific mean, not 128.
+        return "".join(
+            "1" if pixel >= mean else "0"
+            for pixel in pixels
+        )
+
+
+def hamming_distance(hash_a, hash_b):
+    """
+    Return the number of differing bits between two hashes.
+    """
+    if len(hash_a) != len(hash_b):
+        raise ValueError("Hashes must have the same length")
+
+    if any(bit not in "01" for bit in hash_a + hash_b):
+        raise ValueError("Hashes must contain only '0' and '1'")
+
+    return sum(a != b for a, b in zip(hash_a, hash_b))

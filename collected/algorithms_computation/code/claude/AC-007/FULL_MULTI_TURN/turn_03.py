@@ -1,0 +1,174 @@
+"""
+Minimum Spanning Forest via Kruskal's Algorithm + Disjoint Set Union (DSU).
+
+PROBLEM
+-------
+Given an undirected weighted graph (possibly disconnected), construct a
+minimum spanning forest: a minimum-cost spanning tree for each connected
+component. Return the total cost and the original IDs of the selected edges.
+
+REQUIRED OUTPUTS (always present)
+-----------------------------------
+1. total_cost         — sum of weights of selected edges.
+2. selected_edge_ids  — original IDs of edges chosen, in acceptance order.
+
+OPTIONAL OUTPUT (only when include_operation_summary=True)
+------------------------------------------------------------
+3. operation_summary  — dict of deterministic counts of the algorithm's
+   major decisions:
+     - edges_considered : edges actually examined in the sorted scan
+                           (excludes edges never reached after early stop)
+     - self_loops_skipped
+     - cycle_rejections : edges rejected because endpoints already connected
+     - unions_performed : successful DSU unions (== len(selected_edge_ids))
+     - total_decisions  : edges_considered (one decision per edge examined)
+   When the flag is False/omitted, this field is absent entirely and all
+   other behavior, fields, and values are unchanged.
+
+KEY CONSTRAINTS
+----------------
+1. Graph may be disconnected -> forest, not a single tree.
+2. Equal-weight edges processed in ascending original-ID order.
+3. Self-loops (u == v) ignored (never contribute to connectivity).
+4. Standard library only; no randomness, network, external services, or
+   human interaction. Fully deterministic: same input -> same output always.
+
+ALGORITHM (Kruskal + DSU)
+--------------------------
+1. Sort edges by (weight, edge_id) ascending — this fixes tie handling.
+2. Init DSU: each vertex its own set (path compression + union by rank).
+3. Scan sorted edges; for each: skip self-loops, else attempt union.
+   If union succeeds (different components) -> select edge, add cost.
+   If union fails (same component) -> reject as a cycle.
+4. Stop once every component is fully connected, or edges are exhausted.
+   Complexity: O(E log E).
+"""
+
+from dataclasses import dataclass
+from typing import Hashable, List, Sequence, Tuple, Union
+
+
+@dataclass(frozen=True)
+class Edge:
+    edge_id: int
+    u: Hashable
+    v: Hashable
+    weight: float
+
+
+class DisjointSetUnion:
+    """Union-Find with union by rank and path compression."""
+
+    def __init__(self, elements: Sequence[Hashable]):
+        self._parent = {e: e for e in elements}
+        self._rank = {e: 0 for e in elements}
+
+    def find(self, x: Hashable) -> Hashable:
+        root = x
+        while self._parent[root] != root:
+            root = self._parent[root]
+        while self._parent[x] != root:
+            self._parent[x], x = root, self._parent[x]
+        return root
+
+    def union(self, a: Hashable, b: Hashable) -> bool:
+        ra, rb = self.find(a), self.find(b)
+        if ra == rb:
+            return False
+        if self._rank[ra] < self._rank[rb]:
+            ra, rb = rb, ra
+        self._parent[rb] = ra
+        if self._rank[ra] == self._rank[rb]:
+            self._rank[ra] += 1
+        return True
+
+
+def _tie_break_key(edge: Edge) -> Tuple[float, int]:
+    """Deterministic Kruskal ordering key: weight first, original ID breaks ties."""
+    return (edge.weight, edge.edge_id)
+
+
+def minimum_spanning_forest(
+    vertices: Sequence[Hashable],
+    edges: Sequence[Edge],
+    include_operation_summary: bool = False,
+) -> Union[Tuple[float, List[int]], Tuple[float, List[int], dict]]:
+    vertex_set = set(vertices)
+    for e in edges:
+        if e.u not in vertex_set or e.v not in vertex_set:
+            raise ValueError(f"Edge {e.edge_id} references a vertex not in 'vertices'")
+
+    sorted_edges = sorted(edges, key=_tie_break_key)
+    dsu = DisjointSetUnion(vertex_set)
+
+    total_cost: float = 0
+    selected_ids: List[int] = []
+    remaining_components = len(vertex_set)
+
+    edges_considered = 0
+    self_loops_skipped = 0
+    cycle_rejections = 0
+
+    if remaining_components == 0:
+        if include_operation_summary:
+            summary = {
+                "edges_considered": 0,
+                "self_loops_skipped": 0,
+                "cycle_rejections": 0,
+                "unions_performed": 0,
+                "total_decisions": 0,
+            }
+            return 0, [], summary
+        return 0, []
+
+    for e in sorted_edges:
+        if remaining_components == 1:
+            break
+        edges_considered += 1
+        if e.u == e.v:
+            self_loops_skipped += 1
+            continue
+        if dsu.union(e.u, e.v):
+            total_cost += e.weight
+            selected_ids.append(e.edge_id)
+            remaining_components -= 1
+        else:
+            cycle_rejections += 1
+
+    if include_operation_summary:
+        summary = {
+            "edges_considered": edges_considered,
+            "self_loops_skipped": self_loops_skipped,
+            "cycle_rejections": cycle_rejections,
+            "unions_performed": len(selected_ids),
+            "total_decisions": edges_considered,
+        }
+        return total_cost, selected_ids, summary
+
+    return total_cost, selected_ids
+
+
+if __name__ == "__main__":
+    vertices = [0, 1, 2, 3, 4, 5]  # vertex 5 isolated -> forest, not a tree
+    edges = [
+        Edge(0, 0, 1, 4),
+        Edge(1, 0, 2, 4),
+        Edge(2, 1, 2, 2),
+        Edge(3, 1, 3, 5),
+        Edge(4, 2, 3, 5),  # tie with edge 3 -> lower id (3) wins
+        Edge(5, 3, 4, 3),
+        Edge(6, 2, 4, 6),
+    ]
+
+    # Default (unchanged) behavior — exactly the original two fields.
+    total_cost, chosen_ids = minimum_spanning_forest(vertices, edges)
+    print("Total cost:", total_cost)
+    print("Selected edge IDs:", chosen_ids)
+
+    # New opt-in behavior — adds operation_summary without altering the rest.
+    total_cost, chosen_ids, summary = minimum_spanning_forest(
+        vertices, edges, include_operation_summary=True
+    )
+    print("Total cost:", total_cost)
+    print("Selected edge IDs:", chosen_ids)
+    print("Operation summary:", summary)

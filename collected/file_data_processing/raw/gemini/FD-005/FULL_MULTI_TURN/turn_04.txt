@@ -1,0 +1,93 @@
+```python
+import csv
+import io
+import sys
+
+SEVERITY_ORDER = {
+    "CRITICAL": 6,
+    "FATAL": 6,
+    "ERROR": 5,
+    "WARN": 4,
+    "WARNING": 4,
+    "INFO": 3,
+    "DEBUG": 2,
+    "TRACE": 1,
+}
+
+
+def sort_csv_logs(
+    input_source,
+    output_destination,
+    timestamp_col="timestamp",
+    severity_col="severity",
+):
+    """Sorts CSV logs deterministically while fully preserving complex messages
+
+    containing embedded commas, quotes, and newlines.
+
+    Stable Tie-Breaking Protocol:
+      1. Timestamp (Ascending)
+      2. Severity (Descending)
+      3. Original zero-based sequence number (Ascending - guarantees stability
+         when timestamp and severity are identical across records)
+    """
+    # Use dialect="excel" to strictly handle standard CSV field wrapping,
+    # escaped double quotes (""), and embedded commas without splitting.
+    reader = csv.DictReader(input_source, dialect="excel")
+    fieldnames = reader.fieldnames if reader.fieldnames else []
+
+    # Preserve or append the zero-based sequence field in the output schema
+    output_fieldnames = list(fieldnames)
+    if "sequence" not in output_fieldnames:
+        output_fieldnames.append("sequence")
+
+    indexed_rows = []
+    for seq_num, row in enumerate(reader):
+        row["sequence"] = seq_num
+
+        sev_name = str(row.get(severity_col, "")).strip().upper()
+        sev_priority = SEVERITY_ORDER.get(sev_name, 0)
+
+        # Composite sort key: timestamp ASC -> severity DESC -> sequence ASC
+        sort_key = (
+            str(row.get(timestamp_col, "")),
+            -sev_priority,
+            seq_num,
+        )
+
+        indexed_rows.append((sort_key, row))
+
+    # Python's Timsort is stable by default; explicitly using sequence guarantees
+    # complete tie-breaking determinism across execution environments.
+    indexed_rows.sort(key=lambda x: x[0])
+
+    writer = csv.DictWriter(
+        output_destination,
+        fieldnames=output_fieldnames,
+        dialect="excel",
+        lineterminator="\n",
+        quoting=csv.QUOTE_MINIMAL,
+    )
+
+    writer.writeheader()
+    for _, row in indexed_rows:
+        writer.writerow(row)
+
+
+if __name__ == "__main__":
+    # Test case covering identical timestamps & severities, embedded commas, and quotes
+    sample_data = (
+        'timestamp,severity,message\n'
+        '2026-09-12T10:00:00,ERROR,"Error A: connection failed, host: ""db1"", port: 5432"\n'
+        '2026-09-12T10:00:00,ERROR,"Error B: identical timestamp and severity as Error A"\n'
+        '2026-09-12T10:00:00,ERROR,"Error C: another identical tie, must stay third"\n'
+        '2026-09-12T08:00:00,INFO,"System rebooted, status: OK, errors: 0"\n'
+    )
+
+    input_buf = io.StringIO(sample_data)
+    output_buf = io.StringIO()
+
+    sort_csv_logs(input_buf, output_buf)
+    print(output_buf.getvalue())
+
+```

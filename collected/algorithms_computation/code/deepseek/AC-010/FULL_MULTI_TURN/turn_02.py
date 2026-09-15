@@ -1,0 +1,135 @@
+def matrix_chain_order(p):
+    """
+    Find optimal parenthesization for matrix chain multiplication.
+    
+    Args:
+        p: List of dimensions where matrix i has dimensions p[i-1] × p[i]
+        
+    Returns:
+        tuple: (minimum_cost, parenthesization_string)
+    """
+    n = len(p) - 1  # number of matrices
+    
+    if n == 0:
+        return 0, ""
+    if n == 1:
+        return 0, "M1"
+    
+    # dp[i][j] = minimum cost to multiply matrices i..j (1-indexed)
+    dp = [[0] * (n + 1) for _ in range(n + 1)]
+    split = [[0] * (n + 1) for _ in range(n + 1)]
+    
+    # length of chain to consider
+    for length in range(2, n + 1):
+        for i in range(1, n - length + 2):
+            j = i + length - 1
+            dp[i][j] = float('inf')
+            
+            # Try all possible split positions
+            for k in range(i, j):
+                cost = dp[i][k] + dp[k+1][j] + p[i-1] * p[k] * p[j]
+                
+                # Choose smaller cost, or if equal, choose smaller k
+                if cost < dp[i][j]:
+                    dp[i][j] = cost
+                    split[i][j] = k
+                elif cost == dp[i][j] and k < split[i][j]:
+                    split[i][j] = k
+    
+    # Build parenthesization string
+    def build_parenthesization(i, j):
+        if i == j:
+            return f"M{i}"
+        k = split[i][j]
+        left = build_parenthesization(i, k)
+        right = build_parenthesization(k+1, j)
+        return f"({left}{right})"
+    
+    min_cost = dp[1][n]
+    parenthesization = build_parenthesization(1, n)
+    
+    return min_cost, parenthesization
+
+
+def matrix_chain_multiply(p):
+    """
+    Wrapper function that returns the formatted output.
+    
+    Args:
+        p: List of dimensions
+        
+    Returns:
+        str: Formatted output string
+    """
+    if len(p) < 2:
+        return "0\n"
+    
+    cost, paren = matrix_chain_order(p)
+    return f"{cost}\n{paren}\n"
+
+
+# Test cases to verify correctness
+if __name__ == "__main__":
+    # Test 1: Equal costs case - should choose smallest split index
+    # p = [2, 2, 3, 3]
+    # Both (M1(M2M3)) and ((M1M2)M3) cost 30
+    # Smallest split index is k=1, so should output (M1(M2M3))
+    p1 = [2, 2, 3, 3]
+    print("Test 1 - Equal costs (should choose k=1):")
+    print(matrix_chain_multiply(p1))
+    print("-" * 50)
+    
+    # Test 2: Classic example from problem
+    p2 = [10, 100, 5, 50]
+    print("Test 2 - Classic example:")
+    print(matrix_chain_multiply(p2))
+    print("-" * 50)
+    
+    # Test 3: Single matrix
+    p3 = [10, 20]
+    print("Test 3 - Single matrix:")
+    print(matrix_chain_multiply(p3))
+    print("-" * 50)
+    
+    # Test 4: 4 matrices with unique optimal solution
+    p4 = [5, 4, 6, 2, 7]
+    print("Test 4 - 4 matrices:")
+    print(matrix_chain_multiply(p4))
+    print("-" * 50)
+    
+    # Test 5: 6 matrices from textbook example
+    p5 = [30, 35, 15, 5, 10, 20, 25]
+    print("Test 5 - Textbook example:")
+    print(matrix_chain_multiply(p5))
+    print("-" * 50)
+    
+    # Test 6: Equal costs at multiple levels
+    # p = [1, 2, 4, 8, 16] creates multiple equal-cost scenarios
+    p6 = [1, 2, 4, 8, 16]
+    print("Test 6 - Multiple equal costs:")
+    print(matrix_chain_multiply(p6))
+    print("-" * 50)
+    
+    # Test 7: Another equal costs case
+    # Need: p0*p2*(p1+p3) = p1*p3*(p0+p2)
+    # p = [3, 4, 6, 9]: 3*6*(4+9) = 18*13 = 234, 4*9*(3+6) = 36*9 = 324 (not equal)
+    # p = [2, 3, 5, 6]: 2*5*(3+6) = 10*9 = 90, 3*6*(2+5) = 18*7 = 126 (not equal)
+    # p = [4, 6, 8, 12]: 4*8*(6+12) = 32*18 = 576, 6*12*(4+8) = 72*12 = 864 (not equal)
+    # Let's find one: need 6*(p1+p3) = 5*p1*p3 (using p0=2,p2=3 from before)
+    # p1=2,p3=3 gives: 6*5 = 30, 5*6 = 30 ✓
+    p7 = [2, 2, 3, 3]
+    print("Test 7 - Equal costs (verification):")
+    print(matrix_chain_multiply(p7))
+    print("-" * 50)
+    
+    # Test 8: Empty or invalid input
+    p8 = []
+    print("Test 8 - Empty input:")
+    print(matrix_chain_multiply(p8))
+    print("-" * 50)
+    
+    # Test 9: Two matrices
+    p9 = [10, 20, 30]
+    print("Test 9 - Two matrices:")
+    print(matrix_chain_multiply(p9))
+    print("-" * 50)

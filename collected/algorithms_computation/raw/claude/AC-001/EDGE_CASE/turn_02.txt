@@ -1,0 +1,328 @@
+```python
+Interval Conflict Analyzer
+===========================
+
+RESTATED PROBLEM
+-----------------
+We are given a collection of meeting intervals, each expressed as a
+half-open interval [start, end) on the real (numeric) timeline, where
+`start` and `end` are timestamps and start < end for every meeting. A
+meeting is considered "active" at an instant t exactly when
+start <= t < end (the end instant itself is excluded).
+
+The Interval Conflict Analyzer must determine, across the entire
+timeline spanned by the given meetings:
+
+  1. The maximum number of meetings that are ever simultaneously
+     active at any single instant in time (call this M, the "peak
+     conflict count").
+  2. The complete, sorted, de-duplicated list of timestamps at which
+     the active-meeting count freshly climbs to reach M. "Freshly
+     climbs" means the count was strictly lower immediately before
+     this timestamp's events were applied and becomes exactly M once
+     they are applied. If the count reaches M, later drops below M,
+     and later climbs back to exactly M at a different timestamp, that
+     later timestamp is also included.
+
+KEY CONSTRAINTS
+----------------
+- Intervals are half-open: [start, end). A meeting is NOT counted as
+  active at its own end time, so two meetings meeting exactly
+  back-to-back (one's end equals another's start) never count as
+  overlapping.
+- Every meeting must satisfy start < end. Zero-length ([t, t)) or
+  inverted (start > end) intervals are invalid and must be rejected.
+- Tie-breaking rule at a shared timestamp: all "end" events at a given
+  time are processed (removing meetings from the active set) strictly
+  BEFORE any "start" events at that same time are processed (adding
+  meetings to the active set). This reflects half-open semantics
+  correctly and must be preserved exactly.
+- Determinism: no randomness, no network/API/service calls, no
+  external or interactive input beyond the given interval list; the
+  same input must always produce the same output on every run.
+- Standard library only.
+
+DIFFICULT / EDGE CASES EXPLICITLY HANDLED
+-------------------------------------------
+- Smallest permitted input: a single valid meeting interval. With
+  exactly one meeting, the peak conflict count is 1, and the single
+  begin time is that meeting's own start timestamp. (An empty input,
+  i.e. zero meetings, is also explicitly supported as a degenerate
+  "smallest" case and yields a peak of 0 with no begin times, since
+  there is never any active meeting to count.)
+- Empty structure: `intervals = []` is valid input, not an error. It
+  represents "no meetings scheduled" rather than a malformed request.
+- Disconnected structures: meetings that form two or more separate
+  clusters with time gaps between them (no meeting in one cluster ever
+  overlaps a meeting in another cluster). The algorithm must still
+  find the correct global peak count and, if that peak recurs
+  identically in more than one disconnected cluster, must report every
+  timestamp at which it is freshly reached -- not just the first one
+  encountered chronologically.
+- Fully disjoint meetings (every meeting is its own disconnected
+  cluster, none overlapping any other at all): the peak is 1, and
+  every meeting's start timestamp is a begin time, since the count
+  climbs from 0 to 1 at each one independently.
+
+REQUIRED OUTPUT
+----------------
+A tuple (max_count, begin_times):
+  - max_count: an integer, the maximum number of simultaneously active
+    meetings (0 if there are no meetings at all).
+  - begin_times: a sorted list of the distinct timestamps at which the
+    active-meeting count first (or, upon recurrence, again freshly)
+    climbs to max_count.
+
+ALGORITHM (sweep line over start/end events)
+---------------------------------------------
+1. Validate input: every interval must have start < end.
+2. Build two kinds of events per meeting:
+       (start, +1)   -- a meeting becomes active
+       (end,   -1)   -- a meeting stops being active
+3. Sort all events primarily by timestamp. For events sharing the same
+   timestamp, process -1 (end) events strictly before +1 (start)
+   events, since a meeting ending at t no longer counts as active at
+   t, while a meeting starting at t does count as active at t.
+4. Sweep through time in order of distinct timestamps. At each
+   distinct timestamp, apply ALL deltas that occur at that timestamp
+   at once (first the removals, then the additions) to get the new
+   active count.
+5. Track the running maximum count seen so far:
+     - If the new count exceeds the running maximum, update the
+       maximum and reset the list of "begin times" to just this
+       timestamp.
+     - If the new count equals the running maximum AND the count just
+       increased to reach it at this timestamp (i.e. it was lower
+       immediately before this timestamp's updates), record this
+       timestamp as another "begin time".
+     - Otherwise, do nothing.
+6. Return the maximum count and the sorted list of begin times.
+   (If there were no events at all -- the empty-input case -- return
+   (0, []) immediately without sweeping.)
+
+This runs in O(n log n) time due to sorting the 2n events, and O(n)
+space, which is optimal for this class of interval-sweep problems.
+```
+
+from typing import List, Tuple, Sequence
+
+
+def max_simultaneous_meetings(
+    intervals: Sequence[Tuple[float, float]]
+) -> Tuple[int, List[float]]:
+    """
+    Compute the maximum number of simultaneously active half-open
+    meeting intervals [start, end) and the sorted list of timestamps at
+    which that maximum is freshly reached (each time it is freshly
+    reached, in case it recurs after dropping -- including across
+    disconnected clusters of meetings).
+
+    Args:
+        intervals: a sequence of (start, end) pairs with start < end.
+                   May be empty.
+
+    Returns:
+        (max_count, begin_times):
+            max_count   -- int, the peak number of concurrently active
+                            meetings (0 if `intervals` is empty).
+            begin_times -- sorted list of timestamps at which the active
+                            count first climbs to max_count.
+
+    Raises:
+        ValueError: if any interval has start >= end, or if an interval
+                    is not a 2-element (start, end) pair.
+    """
+    # ---- Validation -----------------------------------------------
+    cleaned: List[Tuple[float, float]] = []
+    for item in intervals:
+        if len(item) != 2:
+            raise ValueError(f"Each interval must be a (start, end) pair, got: {item!r}")
+        start, end = item
+        if not (start < end):
+            raise ValueError(
+                f"Invalid interval {item!r}: start must be strictly less than end."
+            )
+        cleaned.append((start, end))
+
+    # ---- Empty / smallest-input degenerate case -----------------------
+    # Zero meetings: nothing is ever active, so the peak is 0 and there
+    # are no begin times. This is a valid input, not an error.
+    if not cleaned:
+        return 0, []
+
+    # ---- Build events ------------------------------------------------
+    # Each event is (time, kind, delta) where kind is used only to force
+    # the correct processing order at equal timestamps:
+    #   kind = 0  -> "end" event   (processed first at a given time)
+    #   kind = 1  -> "start" event (processed second at a given time)
+    EVENT_END = 0
+    EVENT_START = 1
+
+    events: List[Tuple[float, int, int]] = []
+    for start, end in cleaned:
+        events.append((start, EVENT_START, +1))
+        events.append((end, EVENT_END, -1))
+
+    # Sort by (time, kind): end events (kind=0) sort before start events
+    # (kind=1) at the same timestamp, per the half-open interval rule.
+    events.sort(key=lambda e: (e[0], e[1]))
+
+    # ---- Sweep, grouping by distinct timestamp -----------------------
+    # This loop is agnostic to whether the meetings form one connected
+    # block or many disconnected clusters separated by gaps: each
+    # distinct timestamp is processed independently, so gaps simply
+    # produce stretches where active_count is 0 between clusters, and
+    # a recurring peak in a later cluster is still recorded correctly.
+    max_count = 0
+    begin_times: List[float] = []
+
+    active_count = 0
+    idx = 0
+    n_events = len(events)
+
+    while idx < n_events:
+        current_time = events[idx][0]
+        count_before_this_time = active_count
+
+        # Apply every event that shares this exact timestamp. Because of
+        # the sort order, all EVENT_END entries for this timestamp are
+        # guaranteed to appear before all EVENT_START entries for it.
+        while idx < n_events and events[idx][0] == current_time:
+            active_count += events[idx][2]
+            idx += 1
+
+        new_count = active_count
+
+        if new_count > max_count:
+            max_count = new_count
+            begin_times = [current_time]
+        elif new_count == max_count and new_count > count_before_this_time:
+            # The count freshly climbed (possibly again, after a dip,
+            # e.g. in a separate disconnected cluster) to the current
+            # maximum at this timestamp.
+            begin_times.append(current_time)
+
+    begin_times.sort()
+    return max_count, begin_times
+
+
+def _self_test() -> None:
+    """A deterministic set of sanity checks, including edge cases."""
+
+    # --- Original core behavior -------------------------------------
+
+    # Simple overlap: [0,5) and [2,7) overlap on [2,5) -> max 2 meetings,
+    # count first reaches 2 at time 2.
+    assert max_simultaneous_meetings([(0, 5), (2, 7)]) == (2, [2])
+
+    # Half-open boundary: [0,5) and [5,10) do NOT overlap at t=5.
+    assert max_simultaneous_meetings([(0, 5), (5, 10)]) == (1, [0])
+
+    # Three meetings all overlapping at time 2.
+    assert max_simultaneous_meetings([(0, 10), (1, 6), (2, 3)]) == (3, [2])
+
+    # Max reached, drops, then reached again at a different time.
+    result = max_simultaneous_meetings([(0, 1), (0, 2), (3, 4), (3, 5)])
+    assert result == (2, [0, 3]), result
+
+    # Single meeting.
+    assert max_simultaneous_meetings([(1.5, 3.5)]) == (1, [1.5])
+
+    # Invalid intervals should raise.
+    try:
+        max_simultaneous_meetings([(5, 5)])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Expected ValueError for zero-length interval")
+
+    try:
+        max_simultaneous_meetings([(5, 3)])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Expected ValueError for inverted interval")
+
+    # --- New: smallest permitted input --------------------------------
+
+    # Absolute smallest input: zero meetings.
+    assert max_simultaneous_meetings([]) == (0, [])
+
+    # Smallest non-empty input: exactly one meeting. Peak is 1, and the
+    # begin time is that meeting's own start.
+    assert max_simultaneous_meetings([(0, 1)]) == (1, [0])
+
+    # Smallest non-empty input with non-integer / negative timestamps,
+    # to confirm no hidden assumption about integer or non-negative time.
+    assert max_simultaneous_meetings([(-2.5, -1.5)]) == (1, [-2.5])
+
+    # --- New: empty / disconnected structures --------------------------
+
+    # Two fully disjoint meetings (a gap between them, no overlap at
+    # all): each is its own disconnected cluster. Peak is 1, and BOTH
+    # start times are begin times, since the count climbs 0 -> 1 at
+    # each independently.
+    result = max_simultaneous_meetings([(0, 2), (10, 12)])
+    assert result == (1, [0, 10]), result
+
+    # Three disconnected clusters, each with a different internal peak;
+    # only the clusters achieving the global peak should contribute
+    # begin times. Cluster A: (0,5),(1,3) -> peak 2 at t=1.
+    # Cluster B (isolated, gap): (10,11) -> peak 1 at t=10 (not global).
+    # Cluster C (gap): (20,25),(21,23),(22,24) -> peak 3 at t=22.
+    meetings = [
+        (0, 5), (1, 3),          # cluster A, local peak 2
+        (10, 11),                # cluster B, local peak 1
+        (20, 25), (21, 23), (22, 24),  # cluster C, local peak 3 (global)
+    ]
+    result = max_simultaneous_meetings(meetings)
+    assert result == (3, [22]), result
+
+    # Two disconnected clusters that both independently reach the same
+    # global peak: the analyzer must report begin times from BOTH
+    # clusters, sorted, not just the first one found.
+    # Cluster A: (0,5),(1,4) -> peak 2 at t=1.
+    # Cluster B (gap): (10,15),(11,14) -> peak 2 at t=11.
+    meetings = [(0, 5), (1, 4), (10, 15), (11, 14)]
+    result = max_simultaneous_meetings(meetings)
+    assert result == (2, [1, 11]), result
+
+    # Disconnected structure where a cluster touches back-to-back
+    # (end == start) with another cluster: half-open semantics mean
+    # these are still effectively "disconnected" at that instant, and
+    # must not be counted as overlapping.
+    meetings = [(0, 5), (5, 10)]  # touching, not overlapping
+    result = max_simultaneous_meetings(meetings)
+    assert result == (1, [0]), result
+
+    print("All self-tests passed.")
+
+
+def main() -> None:
+    """Deterministic demonstration using a fixed, hard-coded dataset."""
+    meetings = [
+        (9, 10),
+        (9, 12),
+        (10, 11),
+        (11, 13),
+        (12, 14),
+        (14, 15),
+        (14, 16),
+    ]
+
+    print("Meetings (half-open [start, end)):")
+    for m in meetings:
+        print(f"  {m}")
+
+    max_count, begin_times = max_simultaneous_meetings(meetings)
+
+    print()
+    print(f"Maximum simultaneously active meetings: {max_count}")
+    print(f"Times at which this maximum begins:     {begin_times}")
+
+    print()
+    _self_test()
+
+
+if __name__ == "__main__":
+    main()

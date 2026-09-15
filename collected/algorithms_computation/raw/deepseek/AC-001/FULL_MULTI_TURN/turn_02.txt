@@ -1,0 +1,212 @@
+```python
+"""
+Problem: Interval Conflict Analyzer
+
+Given half-open meeting intervals [start, end), find the maximum number of
+simultaneously active meetings and the sorted times at which that maximum begins.
+
+Expected behavior:
+- Intervals are half-open: [start, end)
+- A meeting is active at time t if start <= t < end
+- At a given timestamp, END events occur BEFORE START events
+- Return: (maximum_count, sorted_list_of_start_times)
+- Deterministic tie handling: When multiple start times achieve the same maximum,
+  return all of them in sorted order
+- Return (0, []) for empty input
+
+Algorithm: Sweep-line over events
+1. Create events: (time, type) where type=0 for END, type=1 for START
+2. Sort by (time, type) so END (0) comes before START (1) at same timestamp
+3. Sweep through events, maintaining current active count
+4. Track maximum count and the start times when this maximum is first achieved
+5. For each START event, record the time if count after adding equals max_count
+
+Bug report: The current implementation incorrectly handles the case where multiple
+start times achieve the same maximum. Specifically, when a new maximum is reached
+at a start time, and then later another start time reaches the same maximum,
+the implementation may fail to record all such times correctly due to flawed
+logic in tracking when to add times to the result list.
+
+Demonstration of the defect:
+Consider intervals: [(0, 3), (1, 4), (2, 5), (3, 6)]
+Events: (0,S), (1,S), (2,S), (3,E), (3,S), (4,E), (5,E), (6,E)
+- At time 0: count=1 (max=1, record [0])
+- At time 1: count=2 (max=2, record [1])
+- At time 2: count=3 (max=3, record [2])
+- At time 3: End first, count=2, then Start, count=3 (max=3, should record [2,3])
+The bug: The previous implementation might not correctly add time 3 to the result
+because of improper handling when current_count == max_count.
+
+Correct implementation fixes:
+1. Track start_count at each timestamp to know if we actually started meetings
+2. Only add times when start_count > 0 and (current_count > max_count OR current_count == max_count)
+3. Ensure we properly initialize max_count to 0 and only start recording when we hit max
+4. Handle the edge case where the first event is an END event (shouldn't happen with valid intervals)
+"""
+
+from typing import List, Tuple
+
+
+def find_max_active_meetings(intervals: List[Tuple[int, int]]) -> Tuple[int, List[int]]:
+    """
+    Find the maximum number of simultaneously active meetings and the sorted
+    times at which that maximum begins.
+
+    Args:
+        intervals: List of [start, end) meeting intervals
+
+    Returns:
+        Tuple of (max_count, list_of_start_times)
+        Returns (0, []) for empty input
+    """
+    if not intervals:
+        return 0, []
+
+    # Create events: (time, type)
+    # type: 0 for END, 1 for START (END before START at same timestamp)
+    events = []
+    for start, end in intervals:
+        events.append((start, 1))  # START event
+        events.append((end, 0))    # END event
+
+    # Sort by time, then by type (END=0 comes before START=1)
+    events.sort(key=lambda x: (x[0], x[1]))
+
+    max_count = 0
+    current_count = 0
+    result_times = []
+
+    i = 0
+    while i < len(events):
+        time = events[i][0]
+        
+        # Process all END events at this timestamp first
+        while i < len(events) and events[i][0] == time and events[i][1] == 0:
+            current_count -= 1
+            i += 1
+        
+        # Count START events at this timestamp
+        start_count = 0
+        while i < len(events) and events[i][0] == time and events[i][1] == 1:
+            current_count += 1
+            start_count += 1
+            i += 1
+        
+        # After processing all events at this timestamp, update max and results
+        if start_count > 0:  # Only consider timestamps where meetings actually start
+            if current_count > max_count:
+                # New maximum reached
+                max_count = current_count
+                result_times = [time]
+            elif current_count == max_count:
+                # Same maximum reached at this start time
+                # Avoid duplicates: check if this time is already the last recorded
+                if not result_times or result_times[-1] != time:
+                    result_times.append(time)
+
+    return max_count, result_times
+
+
+def main():
+    """Test the function with comprehensive test cases."""
+    
+    print("=" * 60)
+    print("INTERVAL CONFLICT ANALYZER - TEST SUITE")
+    print("=" * 60)
+    
+    # Test case 1: Basic overlapping intervals (demonstrates the bug fix)
+    intervals1 = [(0, 3), (1, 4), (2, 5), (3, 6)]
+    count1, times1 = find_max_active_meetings(intervals1)
+    print(f"\nTest 1: Multiple intervals with overlapping at boundaries")
+    print(f"Intervals: {intervals1}")
+    print(f"Expected: max=3, times=[2, 3]")
+    print(f"Got:      max={count1}, times={times1}")
+    assert count1 == 3, f"Expected max=3, got {count1}"
+    assert times1 == [2, 3], f"Expected times=[2, 3], got {times1}"
+    print("✓ PASSED")
+    
+    # Test case 2: Touch at endpoints (half-open intervals)
+    intervals2 = [(0, 5), (5, 10), (10, 15)]
+    count2, times2 = find_max_active_meetings(intervals2)
+    print(f"\nTest 2: Touch at endpoints (half-open)")
+    print(f"Intervals: {intervals2}")
+    print(f"Expected: max=1, times=[0, 5, 10]")
+    print(f"Got:      max={count2}, times={times2}")
+    assert count2 == 1, f"Expected max=1, got {count2}"
+    assert times2 == [0, 5, 10], f"Expected times=[0, 5, 10], got {times2}"
+    print("✓ PASSED")
+    
+    # Test case 3: Multiple meetings starting at same time
+    intervals3 = [(0, 5), (0, 6), (0, 7), (1, 2)]
+    count3, times3 = find_max_active_meetings(intervals3)
+    print(f"\nTest 3: Multiple meetings starting at same time")
+    print(f"Intervals: {intervals3}")
+    print(f"Expected: max=3, times=[0]")
+    print(f"Got:      max={count3}, times={times3}")
+    assert count3 == 3, f"Expected max=3, got {count3}"
+    assert times3 == [0], f"Expected times=[0], got {times3}"
+    print("✓ PASSED")
+    
+    # Test case 4: Empty input
+    intervals4 = []
+    count4, times4 = find_max_active_meetings(intervals4)
+    print(f"\nTest 4: Empty input")
+    print(f"Intervals: {intervals4}")
+    print(f"Expected: max=0, times=[]")
+    print(f"Got:      max={count4}, times={times4}")
+    assert count4 == 0, f"Expected max=0, got {count4}"
+    assert times4 == [], f"Expected times=[], got {times4}"
+    print("✓ PASSED")
+    
+    # Test case 5: End events before start events at same timestamp
+    intervals5 = [(0, 2), (2, 4), (2, 3)]
+    count5, times5 = find_max_active_meetings(intervals5)
+    print(f"\nTest 5: End before start at same timestamp")
+    print(f"Intervals: {intervals5}")
+    print(f"Expected: max=2, times=[0]")
+    print(f"Got:      max={count5}, times={times5}")
+    assert count5 == 2, f"Expected max=2, got {count5}"
+    assert times5 == [0], f"Expected times=[0], got {times5}"
+    print("✓ PASSED")
+    
+    # Test case 6: All meetings non-overlapping
+    intervals6 = [(0, 1), (2, 3), (4, 5)]
+    count6, times6 = find_max_active_meetings(intervals6)
+    print(f"\nTest 6: All non-overlapping")
+    print(f"Intervals: {intervals6}")
+    print(f"Expected: max=1, times=[0, 2, 4]")
+    print(f"Got:      max={count6}, times={times6}")
+    assert count6 == 1, f"Expected max=1, got {count6}"
+    assert times6 == [0, 2, 4], f"Expected times=[0, 2, 4], got {times6}"
+    print("✓ PASSED")
+    
+    # Test case 7: Complex overlapping with multiple max times
+    intervals7 = [(0, 10), (1, 3), (2, 4), (5, 7), (6, 8)]
+    count7, times7 = find_max_active_meetings(intervals7)
+    print(f"\nTest 7: Complex overlapping with multiple max times")
+    print(f"Intervals: {intervals7}")
+    print(f"Expected: max=2, times=[1, 2, 5, 6]")
+    print(f"Got:      max={count7}, times={times7}")
+    assert count7 == 2, f"Expected max=2, got {count7}"
+    assert times7 == [1, 2, 5, 6], f"Expected times=[1, 2, 5, 6], got {times7}"
+    print("✓ PASSED")
+    
+    # Test case 8: Maximum achieved multiple times with same start time
+    intervals8 = [(0, 5), (1, 6), (2, 7)]
+    count8, times8 = find_max_active_meetings(intervals8)
+    print(f"\nTest 8: Strictly increasing then decreasing")
+    print(f"Intervals: {intervals8}")
+    print(f"Expected: max=3, times=[2]")
+    print(f"Got:      max={count8}, times={times8}")
+    assert count8 == 3, f"Expected max=3, got {count8}"
+    assert times8 == [2], f"Expected times=[2], got {times8}"
+    print("✓ PASSED")
+    
+    print("\n" + "=" * 60)
+    print("ALL TESTS PASSED ✓")
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    main()
+```

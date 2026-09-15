@@ -1,0 +1,48 @@
+```python
+def clean_inventory(records):
+    """Remove duplicate SKUs and invalid inventory records."""
+    cleaned = {}
+    invalid = []
+
+    for record in records:
+        if not isinstance(record, dict):
+            invalid.append(record)
+            continue
+
+        sku = record.get("sku")
+        quantity = record.get("quantity")
+
+        # Validate SKU and quantity
+        if not isinstance(sku, str) or not sku.strip():
+            invalid.append(record)
+            continue
+        if not isinstance(quantity, (int, float)) or isinstance(quantity, bool) or quantity < 0:
+            invalid.append(record)
+            continue
+
+        sku = sku.strip()
+
+        # Duplicate SKU: keep the latest valid record
+        cleaned[sku] = {
+            "sku": sku,
+            "quantity": quantity
+        }
+
+    return list(cleaned.values()), invalid
+
+
+# Example
+records = [
+    {"sku": "A101", "quantity": 10},
+    {"sku": "B202", "quantity": 5},
+    {"sku": "A101", "quantity": 15},   # duplicate -> latest kept
+    {"sku": "", "quantity": 8},        # invalid
+    {"sku": "C303", "quantity": -2},   # invalid
+    {"sku": "D404", "quantity": "10"}  # invalid
+]
+
+valid_records, invalid_records = clean_inventory(records)
+
+print("Valid:", valid_records)
+print("Invalid:", invalid_records)
+```

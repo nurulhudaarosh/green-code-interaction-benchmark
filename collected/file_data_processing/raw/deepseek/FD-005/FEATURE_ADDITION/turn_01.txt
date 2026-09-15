@@ -1,0 +1,95 @@
+```python
+import csv
+import sys
+from datetime import datetime
+
+SEVERITY_ORDER = {
+    "CRITICAL": 5,
+    "FATAL": 5,
+    "ERROR": 4,
+    "WARN": 3,
+    "WARNING": 3,
+    "INFO": 2,
+    "DEBUG": 1,
+    "TRACE": 0,
+}
+
+
+def parse_timestamp(ts):
+    ts = ts.strip()
+    formats = (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S.%f",
+        "%Y-%m-%dT%H:%M:%S.%f",
+        "%Y/%m/%d %H:%M:%S",
+        "%d-%m-%Y %H:%M:%S",
+        "%Y-%m-%d",
+    )
+    for fmt in formats:
+        try:
+            return datetime.strptime(ts, fmt)
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.min
+
+
+def sort_logs(input_path, output_path):
+    with open(input_path, "r", newline="", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        rows = list(reader)
+
+    if not rows:
+        with open(output_path, "w", newline="", encoding="utf-8") as f:
+            pass
+        return
+
+    header = rows[0]
+    data_rows = rows[1:]
+
+    indexed = []
+    for seq, row in enumerate(data_rows):
+        if not row:
+            continue
+        timestamp = row[0] if len(row) > 0 else ""
+        severity = row[1].strip().upper() if len(row) > 1 else ""
+        message = row[2] if len(row) > 2 else ""
+        indexed.append(
+            {
+                "seq": seq,
+                "timestamp_raw": timestamp,
+                "timestamp": parse_timestamp(timestamp),
+                "severity": severity,
+                "severity_rank": SEVERITY_ORDER.get(severity, -1),
+                "message": message,
+            }
+        )
+
+    indexed.sort(
+        key=lambda r: (
+            r["timestamp"],
+            -r["severity_rank"],
+            r["seq"],
+        )
+    )
+
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f, quoting=csv.QUOTE_MINIMAL, lineterminator="\n")
+        writer.writerow(header)
+        for r in indexed:
+            writer.writerow([r["timestamp_raw"], r["severity"], r["message"]])
+
+
+def main():
+    if len(sys.argv) != 3:
+        print("Usage: python log_sorter.py <input.csv> <output.csv>")
+        sys.exit(1)
+    sort_logs(sys.argv[1], sys.argv[2])
+
+
+if __name__ == "__main__":
+    main()
+```

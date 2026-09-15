@@ -1,0 +1,40 @@
+Here’s the extended version with `filter_type="gaussian"` by default and support for both Gaussian and box blur:
+
+```python
+from pathlib import Path
+from PIL import Image, ImageFilter
+import shutil
+
+
+def apply_blur(input_dir, output_dir, radius, filter_type="gaussian"):
+    if radius < 0:
+        raise ValueError("radius must be non-negative")
+
+    if filter_type not in {"gaussian", "box"}:
+        raise ValueError("filter_type must be 'gaussian' or 'box'")
+
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    image_extensions = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tiff", ".webp"}
+
+    for src in input_dir.iterdir():
+        if not src.is_file() or src.suffix.lower() not in image_extensions:
+            continue
+
+        dst = output_dir / src.name
+
+        # Radius 0 is an exact passthrough.
+        if radius == 0:
+            shutil.copy2(src, dst)
+            continue
+
+        with Image.open(src) as img:
+            if filter_type == "gaussian":
+                result = img.filter(ImageFilter.GaussianBlur(radius))
+            else:  # filter_type == "box"
+                result = img.filter(ImageFilter.BoxBlur(radius))
+
+            result.save(dst)
+```

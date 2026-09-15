@@ -1,0 +1,212 @@
+"""
+Problem:
+Maintain an integer array under two types of operations:
+1. Point replacement: replace the value at a given index.
+2. Inclusive range-sum query: find the sum of all elements from left to right.
+
+Return every range-sum result in the same order as the queries.
+
+Key constraints:
+- The array can be large, so O(n) work for every operation is too slow.
+- Point updates and range-sum queries should be efficient.
+- Indices are 0-based.
+- Range queries are inclusive: [left, right].
+- The solution must be deterministic and use only Python's standard library.
+
+Required output:
+- A list containing the result of every range-sum query, in operation order.
+
+Algorithm:
+Use a Fenwick Tree (Binary Indexed Tree).
+- update(index, delta): O(log n)
+- prefix_sum(index): O(log n)
+- range_sum(left, right):
+      prefix_sum(right) - prefix_sum(left - 1)
+  => O(log n)
+
+For a replacement operation, if the old value is old and the new
+value is new, update the Fenwick Tree by:
+    delta = new - old
+
+Example operation format:
+    ("update", index, new_value)
+    ("query", left, right)
+
+Example:
+    arr = [1, 3, 5]
+    operations = [
+        ("query", 0, 2),      # 9
+        ("update", 1, 10),
+        ("query", 0, 1)       # 11
+    ]
+
+Output:
+    [9, 11]
+"""
+
+
+class FenwickTree:
+    def __init__(self, values):
+        self.n = len(values)
+        self.tree = [0] * (self.n + 1)
+
+        # Build the Fenwick tree in O(n).
+        for i, value in enumerate(values, start=1):
+            self.tree[i] += value
+            parent = i + (i & -i)
+            if parent <= self.n:
+                self.tree[parent] += self.tree[i]
+
+    def update(self, index, delta):
+        """Add delta to the value at 0-based index."""
+        i = index + 1
+
+        while i <= self.n:
+            self.tree[i] += delta
+            i += i & -i
+
+    def prefix_sum(self, index):
+        """Return sum of values from index 0 through index."""
+        if index < 0:
+            return 0
+
+        total = 0
+        i = index + 1
+
+        while i > 0:
+            total += self.tree[i]
+            i -= i & -i
+
+        return total
+
+    def range_sum(self, left, right):
+        """Return inclusive sum from left through right."""
+        return self.prefix_sum(right) - self.prefix_sum(left - 1)
+
+
+def mutable_range_sum_engine(array, operations):
+    """
+    Maintain an integer array with point replacements and range-sum queries.
+
+    Parameters:
+        array:
+            Initial list of integers.
+
+        operations:
+            List of operations:
+                ("update", index, new_value)
+                ("query", left, right)
+
+    Returns:
+        List of answers for all query operations.
+    """
+
+    # Keep the current values so replacement updates can calculate
+    # the required difference.
+    values = list(array)
+
+    fenwick = FenwickTree(values)
+    results = []
+
+    for operation in operations:
+        operation_type = operation[0]
+
+        if operation_type == "update":
+            _, index, new_value = operation
+
+            old_value = values[index]
+            delta = new_value - old_value
+
+            values[index] = new_value
+            fenwick.update(index, delta)
+
+        elif operation_type == "query":
+            _, left, right = operation
+
+            results.append(fenwick.range_sum(left, right))
+
+        else:
+            raise ValueError(f"Unknown operation: {operation_type}")
+
+    return results
+
+
+# ---------------------------------------------------------
+# Tests
+# ---------------------------------------------------------
+
+def run_tests():
+    # Basic example
+    array = [1, 3, 5]
+    operations = [
+        ("query", 0, 2),
+        ("update", 1, 10),
+        ("query", 0, 1),
+    ]
+
+    assert mutable_range_sum_engine(array, operations) == [9, 11]
+
+    # Single element query
+    array = [7, 2, 9]
+    operations = [
+        ("query", 1, 1),
+        ("update", 1, 20),
+        ("query", 1, 1),
+    ]
+
+    assert mutable_range_sum_engine(array, operations) == [2, 20]
+
+    # Full range and negative values
+    array = [-5, 10, -3, 8]
+    operations = [
+        ("query", 0, 3),
+        ("query", 1, 2),
+        ("update", 2, 5),
+        ("query", 0, 3),
+    ]
+
+    assert mutable_range_sum_engine(array, operations) == [10, 7, 18]
+
+    # Updating a value to the same value
+    array = [4, 6, 8]
+    operations = [
+        ("update", 1, 6),
+        ("query", 0, 2),
+    ]
+
+    assert mutable_range_sum_engine(array, operations) == [18]
+
+    # Multiple updates at the same position
+    array = [1, 2, 3]
+    operations = [
+        ("update", 0, 10),
+        ("update", 0, -5),
+        ("update", 0, 100),
+        ("query", 0, 0),
+        ("query", 0, 2),
+    ]
+
+    assert mutable_range_sum_engine(array, operations) == [100, 105]
+
+    # Empty operation list
+    assert mutable_range_sum_engine([1, 2, 3], []) == []
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()
+
+    # Example usage
+    arr = [1, 3, 5]
+
+    ops = [
+        ("query", 0, 2),
+        ("update", 1, 10),
+        ("query", 0, 1),
+        ("update", 2, 7),
+        ("query", 1, 2),
+    ]
+
+    print(mutable_range_sum_engine(arr, ops))
+    # Output: [9, 11, 17]

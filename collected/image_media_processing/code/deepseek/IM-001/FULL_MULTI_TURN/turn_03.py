@@ -1,0 +1,155 @@
+import os
+from PIL import Image
+
+def batch_resize(input_dir, output_dir, target_size, resample_filter=Image.Resampling.LANCZOS):
+    """
+    Resizes every PNG/JPEG image in input_dir to target_size and saves to output_dir.
+    
+    Args:
+        input_dir (str): Path to directory containing input images
+        output_dir (str): Path to directory where resized images will be saved
+        target_size (tuple): Desired size as (width, height)
+        resample_filter (int): Resampling filter to use. Options:
+            - Image.Resampling.NEAREST (0) - Nearest neighbor (fastest, lowest quality)
+            - Image.Resampling.BILINEAR (2) - Bilinear interpolation
+            - Image.Resampling.BICUBIC (3) - Bicubic interpolation
+            - Image.Resampling.LANCZOS (1) - Lanczos interpolation (default, highest quality)
+    
+    Returns:
+        int: Number of images successfully processed
+    
+    Raises:
+        ValueError: If an invalid resample_filter is provided
+    """
+    # Validate resample_filter
+    valid_filters = {
+        Image.Resampling.NEAREST,
+        Image.Resampling.BILINEAR,
+        Image.Resampling.BICUBIC,
+        Image.Resampling.LANCZOS
+    }
+    
+    # Also support legacy PIL constants for backward compatibility
+    legacy_filters = {
+        Image.NEAREST,
+        Image.BILINEAR,
+        Image.BICUBIC,
+        Image.LANCZOS
+    }
+    
+    if resample_filter not in valid_filters and resample_filter not in legacy_filters:
+        raise ValueError(
+            f"Invalid resample_filter. Must be one of: NEAREST, BILINEAR, BICUBIC, LANCZOS"
+        )
+    
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Supported image extensions
+    extensions = {'.png', '.jpg', '.jpeg', '.PNG', '.JPG', '.JPEG'}
+    
+    processed_count = 0
+    
+    # Iterate through all files in input directory
+    for filename in os.listdir(input_dir):
+        # Check if file has a supported image extension
+        if any(filename.endswith(ext) for ext in extensions):
+            input_path = os.path.join(input_dir, filename)
+            
+            try:
+                # Open the image
+                with Image.open(input_path) as img:
+                    # Convert to RGB if necessary (for PNG with alpha)
+                    if img.mode in ('RGBA', 'LA', 'P'):
+                        img = img.convert('RGB')
+                    
+                    # Resize the image using the specified filter
+                    resized_img = img.resize(target_size, resample_filter)
+                    
+                    # Construct output path (preserve original filename)
+                    output_path = os.path.join(output_dir, filename)
+                    
+                    # Determine format from extension
+                    ext = os.path.splitext(filename)[1].lower()
+                    if ext in ('.jpg', '.jpeg'):
+                        resized_img.save(output_path, 'JPEG', quality=85)
+                    else:  # PNG
+                        resized_img.save(output_path, 'PNG')
+                    
+                    processed_count += 1
+                    
+            except Exception as e:
+                print(f"Error processing {filename}: {e}")
+                continue
+    
+    return processed_count
+
+
+# Optional: Version with thumbnail mode (maintains aspect ratio)
+def batch_resize_thumbnail(input_dir, output_dir, target_size, resample_filter=Image.Resampling.LANCZOS):
+    """
+    Resize while maintaining aspect ratio using thumbnail method.
+    
+    Args:
+        input_dir (str): Path to directory containing input images
+        output_dir (str): Path to directory where resized images will be saved
+        target_size (tuple): Maximum size as (width, height) - images will be scaled
+                           to fit within these dimensions while preserving aspect ratio
+        resample_filter (int): Resampling filter to use
+    
+    Returns:
+        int: Number of images successfully processed
+    """
+    # Validate resample_filter (same validation as above)
+    valid_filters = {
+        Image.Resampling.NEAREST,
+        Image.Resampling.BILINEAR,
+        Image.Resampling.BICUBIC,
+        Image.Resampling.LANCZOS
+    }
+    
+    legacy_filters = {
+        Image.NEAREST,
+        Image.BILINEAR,
+        Image.BICUBIC,
+        Image.LANCZOS
+    }
+    
+    if resample_filter not in valid_filters and resample_filter not in legacy_filters:
+        raise ValueError(
+            f"Invalid resample_filter. Must be one of: NEAREST, BILINEAR, BICUBIC, LANCZOS"
+        )
+    
+    os.makedirs(output_dir, exist_ok=True)
+    extensions = {'.png', '.jpg', '.jpeg', '.PNG', '.JPG', '.JPEG'}
+    processed_count = 0
+    
+    for filename in os.listdir(input_dir):
+        if any(filename.endswith(ext) for ext in extensions):
+            input_path = os.path.join(input_dir, filename)
+            
+            try:
+                with Image.open(input_path) as img:
+                    # Convert to RGB if needed
+                    if img.mode in ('RGBA', 'LA', 'P'):
+                        img = img.convert('RGB')
+                    
+                    # Create a copy and resize maintaining aspect ratio
+                    img_copy = img.copy()
+                    img_copy.thumbnail(target_size, resample_filter)
+                    
+                    output_path = os.path.join(output_dir, filename)
+                    ext = os.path.splitext(filename)[1].lower()
+                    
+                    if ext in ('.jpg', '.jpeg'):
+                        img_copy.save(output_path, 'JPEG', quality=85)
+                    else:
+                        img_copy.save(output_path, 'PNG')
+                    
+                    processed_count += 1
+                    
+            except Exception as e:
+                print(f"Error processing {filename}: {e}")
+                continue
+    
+    return processed_count

@@ -1,0 +1,93 @@
+```python
+from typing import List, Tuple
+
+class RectangleStatisticsEngine:
+    """
+    Pre-processes an integer matrix to answer submatrix queries for 
+    sum, minimum, and maximum using a mixed preprocessing/query workload.
+    """
+    def __init__(self, matrix: List[List[int]]):
+        if not matrix or not matrix[0]:
+            raise ValueError("Input matrix must be non-empty and 2-dimensional.")
+            
+        self.matrix = matrix
+        self.R = len(matrix)
+        self.C = len(matrix[0])
+        
+        # Verify uniform column length
+        for row in matrix:
+            if len(row) != self.C:
+                raise ValueError("All rows in matrix must have identical lengths.")
+        
+        # 2D Prefix Sum construction (1-indexed prefix table)
+        # pref[i][j] stores sum of matrix[0..i-1][0..j-1]
+        self.pref = [[0] * (self.C + 1) for _ in range(self.R + 1)]
+        for r in range(1, self.R + 1):
+            for c in range(1, self.C + 1):
+                self.pref[r][c] = (
+                    self.matrix[r - 1][c - 1]
+                    + self.pref[r - 1][c]
+                    + self.pref[r][c - 1]
+                    - self.pref[r - 1][c - 1]
+                )
+
+    def query(self, r1: int, c1: int, r2: int, c2: int) -> Tuple[int, int, int]:
+        """
+        Executes inclusive range query for rectangle defined by (r1, c1) to (r2, c2).
+        
+        Returns:
+            Tuple[int, int, int]: (rectangle_sum, rectangle_min, rectangle_max)
+        """
+        # Strict validation of coordinate bounds
+        if not (0 <= r1 < self.R and 0 <= r2 < self.R and 0 <= c1 < self.C and 0 <= c2 < self.C):
+            raise IndexError(f"Query coordinates ({r1}, {c1}), ({r2}, {c2}) are out of grid bounds ({self.R}x{self.C}).")
+            
+        if r1 > r2 or c1 > c2:
+            raise ValueError(f"Invalid query rectangle: top-left ({r1}, {c1}) must be <= bottom-right ({r2}, {c2}).")
+
+        # 1. Sum query via 2D Prefix Sum Table - O(1)
+        rect_sum = (
+            self.pref[r2 + 1][c2 + 1]
+            - self.pref[r1][c2 + 1]
+            - self.pref[r2 + 1][c1]
+            + self.pref[r1][c1]
+        )
+
+        # 2. Extrema query via deterministic row-major direct scanning - O(H * W)
+        rect_min = self.matrix[r1][c1]
+        rect_max = self.matrix[r1][c1]
+
+        # Explicit deterministic row-major order: top to bottom (r1..r2), left to right (c1..c2)
+        for r in range(r1, r2 + 1):
+            for c in range(c1, c2 + 1):
+                val = self.matrix[r][c]
+                # Strict comparison ensures deterministic behavior on ties
+                if val < rect_min:
+                    rect_min = val
+                if val > rect_max:
+                    rect_max = val
+
+        return rect_sum, rect_min, rect_max
+
+
+# Verification of Deterministic Engine
+if __name__ == "__main__":
+    matrix = [
+        [10, -2,  3,  4],
+        [ 5,  6, -2,  8],
+        [ 9,  1,  0, 12]
+    ]
+
+    engine = RectangleStatisticsEngine(matrix)
+
+    # Valid range query (r1=0, c1=1) to (r2=2, c2=2)
+    # Subgrid:
+    # [-2,  3]
+    # [ 6, -2]
+    # [ 1,  0]
+    # Sum: 6, Min: -2, Max: 6
+    res_sum, res_min, res_max = engine.query(0, 1, 2, 2)
+    print(f"Query Result -> Sum: {res_sum}, Min: {res_min}, Max: {res_max}")
+    assert (res_sum, res_min, res_max) == (6, -2, 6)
+
+```

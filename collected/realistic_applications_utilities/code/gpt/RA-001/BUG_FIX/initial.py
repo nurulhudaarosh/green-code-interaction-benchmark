@@ -1,0 +1,551 @@
+#!/usr/bin/env python3
+
+import argparse
+import csv
+import json
+import sys
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+from typing import Any
+
+
+REQUIRED_FIELDS = ("date", "description", "category", "amount")
+
+
+@dataclass(frozen=True)
+class Transaction:
+    date: date
+    description: str
+    category: str
+    amount: Decimal
+
+
+@dataclass(frozen=True)
+class MalformedRecord:
+    index: int
+    record: Any
+    reason: str
+
+
+@dataclass
+class AnalysisResult:
+    transactions: list[Transaction]
+    malformed: list[MalformedRecord]
+
+
+def parse_date(value: Any) -> date:
+    if value is None:
+        raise ValueError("date is missing")
+
+    text = str(value).strip()
+
+    if not text:
+        raise ValueError("date is empty")
+
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        pass
+
+    try:
+        return datetime.fromisoformat(
+            text.replace("Z", "+00:00")
+        ).date()
+    except ValueError:
+        raise ValueError(
+            f"invalid date {text!r}; expected YYYY-MM-DD"
+        )
+
+
+def parse_amount(value: Any) -> Decimal:
+    if value is None:
+        raise ValueError("amount is missing")
+
+    if isinstance(value, bool):
+        raise ValueError("amount must be numeric, not boolean")
+
+    text = str(value).strip()
+
+    if not text:
+        raise ValueError("amount is empty")
+
+    text = text.replace(",", "").strip()
+
+    if text.startswith("$"):
+        text = text[1:].strip()
+
+    try:
+        amount = Decimal(text)
+    except InvalidOperation:
+        raise ValueError(f"invalid amount {value!r}")
+
+    if not amount.is_finite():
+        raise ValueError("amount must be finite")
+
+    return amount
+
+
+def clean_text(value: Any, field_name: str) -> str:
+    if value is None:
+        raise ValueError(f"{field_name} is missing")
+
+    text = str(value).strip()
+
+    if not text:
+        raise ValueError(f"{field_name} is empty")
+
+    return text
+
+
+def normalize_record(record: Any) -> Transaction:
+    """
+    Convert a raw record into a valid Transaction.
+
+    Malformed records are rejected instead of being silently converted
+    into zero-value or partially valid transactions.
+    """
+    if not isinstance(record, dict):
+        raise ValueError("record must be an object/dictionary")
+
+    missing = [
+        field
+        for field in REQUIRED_FIELDS
+        if field not in record
+    ]
+
+    if missing:
+        raise ValueError(
+            "missing required field(s): " + ", ".join(missing)
+        )
+
+    transaction_date = parse_date(record["date"])
+    description = clean_text(
+        record["description"],
+        "description",
+    )
+    category = clean_text(
+        record["category"],
+        "category",
+    )
+    amount = parse_amount(record["amount"])
+
+    return Transaction(
+        date=transaction_date,
+        description=description,
+        category=category,
+        amount=amount,
+    )
+
+
+def load_csv(path: Path) -> list[Any]:
+    records = []
+
+    with path.open(
+        "r",
+        encoding="utf-8-sig",
+        newline="",
+    ) as file:
+        reader = csv.DictReader(file)
+
+        if reader.fieldnames is None:
+            raise ValueError("CSV file has no header row")
+
+        reader.fieldnames = [
+            field.strip() if field is not None else field
+            for field in reader.fieldnames
+        ]
+
+        for row in reader:
+            records.append(dict(row))
+
+    return records
+
+
+def load_json(path: Path) -> list[Any]:
+    with path.open("r", encoding="utf-8") as file:
+        data = json.load(file)
+
+    if isinstance(data, list):
+        return data
+
+    if isinstance(data, dict):
+        transactions = data.get("transactions")
+
+        if isinstance(transactions, list):
+            return transactions
+
+        raise ValueError(
+            "JSON object must contain a 'transactions' array"
+        )
+
+    raise ValueError(
+        "JSON input must be an array of transaction records"
+    )
+
+
+def load_records(path: Path) -> list[Any]:
+    suffix = path.suffix.lower()
+
+    if suffix == ".csv":
+        return load_csv(path)
+
+    if suffix == ".json":
+        return load_json(path)
+
+    raise ValueError(
+        f"unsupported file type {suffix!r}; use .csv or .json"
+    )
+
+
+def validate_records(records: list[Any]) -> AnalysisResult:
+    """
+    Validate each record independently.
+
+    A malformed transaction does not terminate the entire analysis.
+    It is recorded separately and excluded from all calculations.
+    """
+    valid = []
+    malformed = []
+
+    for index, raw_record in enumerate(records, start=1):
+        try:
+            transaction = normalize_record(raw_record)
+
+        except (TypeError, ValueError) as exc:
+            malformed.append(
+                MalformedRecord(
+                    index=index,
+                    record=raw_record,
+                    reason=str(exc),
+                )
+            )
+            continue
+
+        valid.append(transaction)
+
+    return AnalysisResult(
+        transactions=valid,
+        malformed=malformed,
+    )
+
+
+def total_spending(
+    transactions: list[Transaction],
+) -> Decimal:
+    return sum(
+        (transaction.amount for transaction in transactions),
+        Decimal("0"),
+    )
+
+
+def spending_by_category(
+    transactions: list[Transaction],
+) -> dict[str, Decimal]:
+    totals = defaultdict(lambda: Decimal("0"))
+
+    for transaction in transactions:
+        totals[transaction.category] += transaction.amount
+
+    return dict(
+        sorted(
+            totals.items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+    )
+
+
+def spending_by_month(
+    transactions: list[Transaction],
+) -> dict[str, Decimal]:
+    totals = defaultdict(lambda: Decimal("0"))
+
+    for transaction in transactions:
+        month = transaction.date.strftime("%Y-%m")
+        totals[month] += transaction.amount
+
+    return dict(sorted(totals.items()))
+
+
+def spending_by_date(
+    transactions: list[Transaction],
+) -> dict[str, Decimal]:
+    totals = defaultdict(lambda: Decimal("0"))
+
+    for transaction in transactions:
+        day = transaction.date.isoformat()
+        totals[day] += transaction.amount
+
+    return dict(sorted(totals.items()))
+
+
+def largest_expense(
+    transactions: list[Transaction],
+) -> Transaction | None:
+    if not transactions:
+        return None
+
+    return max(
+        transactions,
+        key=lambda transaction: transaction.amount,
+    )
+
+
+def average_expense(
+    transactions: list[Transaction],
+) -> Decimal:
+    if not transactions:
+        return Decimal("0")
+
+    return (
+        total_spending(transactions)
+        / Decimal(len(transactions))
+    )
+
+
+def money(value: Decimal) -> str:
+    return f"{value:,.2f}"
+
+
+def transaction_to_dict(
+    transaction: Transaction,
+) -> dict[str, str]:
+    return {
+        "date": transaction.date.isoformat(),
+        "description": transaction.description,
+        "category": transaction.category,
+        "amount": money(transaction.amount),
+    }
+
+
+def malformed_to_dict(
+    record: MalformedRecord,
+) -> dict[str, Any]:
+    return {
+        "record_number": record.index,
+        "record": record.record,
+        "reason": record.reason,
+    }
+
+
+def build_report(
+    result: AnalysisResult,
+) -> dict[str, Any]:
+    transactions = result.transactions
+
+    largest = largest_expense(transactions)
+
+    return {
+        "summary": {
+            "valid_transactions": len(transactions),
+            "malformed_transactions": len(
+                result.malformed
+            ),
+            "total_spending": money(
+                total_spending(transactions)
+            ),
+            "average_transaction": money(
+                average_expense(transactions)
+            ),
+            "largest_expense": (
+                transaction_to_dict(largest)
+                if largest
+                else None
+            ),
+        },
+        "by_category": {
+            category: money(amount)
+            for category, amount
+            in spending_by_category(transactions).items()
+        },
+        "by_month": {
+            month: money(amount)
+            for month, amount
+            in spending_by_month(transactions).items()
+        },
+        "by_date": {
+            day: money(amount)
+            for day, amount
+            in spending_by_date(transactions).items()
+        },
+        "malformed_records": [
+            malformed_to_dict(record)
+            for record in result.malformed
+        ],
+    }
+
+
+def print_text_report(
+    result: AnalysisResult,
+) -> None:
+    transactions = result.transactions
+    malformed = result.malformed
+
+    print("=" * 60)
+    print("EXPENSE ANALYZER")
+    print("=" * 60)
+
+    print("\nSUMMARY")
+    print("-" * 60)
+
+    print(
+        f"Valid transactions      : {len(transactions)}"
+    )
+    print(
+        f"Malformed transactions  : {len(malformed)}"
+    )
+    print(
+        f"Total spending          : "
+        f"{money(total_spending(transactions))}"
+    )
+    print(
+        f"Average transaction     : "
+        f"{money(average_expense(transactions))}"
+    )
+
+    largest = largest_expense(transactions)
+
+    if largest:
+        print(
+            f"Largest expense         : "
+            f"{largest.description} "
+            f"({money(largest.amount)})"
+        )
+    else:
+        print("Largest expense         : None")
+
+    print("\nSPENDING BY CATEGORY")
+    print("-" * 60)
+
+    category_totals = spending_by_category(
+        transactions
+    )
+
+    if category_totals:
+        for category, amount in category_totals.items():
+            print(
+                f"{category:<35} "
+                f"{money(amount):>15}"
+            )
+    else:
+        print("No valid transactions.")
+
+    print("\nSPENDING BY MONTH")
+    print("-" * 60)
+
+    month_totals = spending_by_month(transactions)
+
+    if month_totals:
+        for month, amount in month_totals.items():
+            print(
+                f"{month:<35} "
+                f"{money(amount):>15}"
+            )
+    else:
+        print("No valid transactions.")
+
+    if malformed:
+        print("\nMALFORMED RECORDS")
+        print("-" * 60)
+
+        for item in malformed:
+            print(
+                f"Record #{item.index}: "
+                f"{item.reason}"
+            )
+            print(
+                f"  Raw record: {item.record}"
+            )
+
+    print("\n" + "=" * 60)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Analyze expense transactions "
+            "from CSV or JSON."
+        )
+    )
+
+    parser.add_argument(
+        "input_file",
+        type=Path,
+        help="Path to a CSV or JSON file.",
+    )
+
+    parser.add_argument(
+        "--format",
+        choices=("text", "json"),
+        default="text",
+        help="Output format. Default: text.",
+    )
+
+    parser.add_argument(
+        "--show-invalid",
+        action="store_true",
+        help=(
+            "Show malformed transaction details "
+            "in JSON output."
+        ),
+    )
+
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+
+    if not args.input_file.exists():
+        print(
+            f"Error: file not found: {args.input_file}",
+            file=sys.stderr,
+        )
+        return 1
+
+    if not args.input_file.is_file():
+        print(
+            f"Error: not a regular file: "
+            f"{args.input_file}",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        records = load_records(args.input_file)
+        result = validate_records(records)
+
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValueError,
+    ) as exc:
+        print(
+            f"Error: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+
+    if args.format == "json":
+        report = build_report(result)
+
+        if not args.show_invalid:
+            report.pop("malformed_records", None)
+
+        print(
+            json.dumps(
+                report,
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+    else:
+        print_text_report(result)
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

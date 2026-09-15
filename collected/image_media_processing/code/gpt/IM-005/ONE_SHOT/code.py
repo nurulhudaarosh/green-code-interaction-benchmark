@@ -1,0 +1,59 @@
+from pathlib import Path
+from PIL import Image, ImageFilter
+import shutil
+
+
+def apply_blur(input_dir, output_dir, radius):
+    """
+    Apply Gaussian blur to every image in input_dir.
+
+    Parameters:
+        input_dir (str | Path): Directory containing input images.
+        output_dir (str | Path): Directory where processed images are saved.
+        radius (float | int): Gaussian blur radius.
+            - 0: passthrough (image is copied unchanged)
+            - negative: rejected with ValueError
+
+    Returns:
+        list[str]: Paths of the processed images.
+    """
+    if radius < 0:
+        raise ValueError("radius must be non-negative")
+
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+
+    if not input_dir.is_dir():
+        raise ValueError(f"Input directory does not exist: {input_dir}")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    image_extensions = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+    processed_files = []
+
+    for input_path in input_dir.rglob("*"):
+        if not input_path.is_file() or input_path.suffix.lower() not in image_extensions:
+            continue
+
+        # Preserve the relative directory structure
+        relative_path = input_path.relative_to(input_dir)
+        output_path = output_dir / relative_path
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if radius == 0:
+            # Passthrough: copy the original file unchanged
+            shutil.copy2(input_path, output_path)
+        else:
+            with Image.open(input_path) as img:
+                blurred = img.filter(ImageFilter.GaussianBlur(radius=radius))
+
+                # Preserve the original format when possible
+                save_kwargs = {}
+                if img.format:
+                    save_kwargs["format"] = img.format
+
+                blurred.save(output_path, **save_kwargs)
+
+        processed_files.append(str(output_path))
+
+    return processed_files

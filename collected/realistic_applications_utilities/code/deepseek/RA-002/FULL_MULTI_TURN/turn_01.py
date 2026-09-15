@@ -1,0 +1,172 @@
+"""
+Inventory Reconciliation System
+Reconciles physical counts against system records, identifies discrepancies,
+and produces a detailed report with adjustments.
+"""
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
+from datetime import datetime
+from enum import Enum
+
+
+class DiscrepancyType(Enum):
+    MATCH = "match"
+    SHORTAGE = "shortage"          # physical < system
+    OVERAGE = "overage"            # physical > system
+    MISSING_IN_SYSTEM = "missing_in_system"
+    MISSING_IN_PHYSICAL = "missing_in_physical"
+
+
+@dataclass
+class InventoryItem:
+    sku: str
+    description: str
+    system_qty: int = 0
+    physical_qty: int = 0
+    unit_cost: float = 0.0
+
+    @property
+    def variance(self) -> int:
+        return self.physical_qty - self.system_qty
+
+    @property
+    def variance_value(self) -> float:
+        return self.variance * self.unit_cost
+
+    @property
+    def discrepancy_type(self) -> DiscrepancyType:
+        if self.system_qty == 0 and self.physical_qty > 0:
+            return DiscrepancyType.MISSING_IN_SYSTEM
+        if self.physical_qty == 0 and self.system_qty > 0:
+            return DiscrepancyType.MISSING_IN_PHYSICAL
+        if self.variance == 0:
+            return DiscrepancyType.MATCH
+        return DiscrepancyType.SHORTAGE if self.variance < 0 else DiscrepancyType.OVERAGE
+
+
+@dataclass
+class ReconciliationReport:
+    timestamp: str
+    total_items: int = 0
+    matched: int = 0
+    discrepancies: List[InventoryItem] = field(default_factory=list)
+    total_variance_value: float = 0.0
+    tolerance: int = 0  # allowed qty variance before flagging
+
+    def summary(self) -> str:
+        lines = [
+            "=" * 60,
+            f"INVENTORY RECONCILIATION REPORT — {self.timestamp}",
+            "=" * 60,
+            f"Total SKUs reviewed : {self.total_items}",
+            f"Matched             : {self.matched}",
+            f"Discrepancies       : {len(self.discrepancies)}",
+            f"Net variance value  : ${self.total_variance_value:,.2f}",
+            f"Tolerance threshold : ±{self.tolerance} units",
+            "-" * 60,
+        ]
+        if not self.discrepancies:
+            lines.append("✓ No discrepancies found. Inventory is balanced.")
+        else:
+            lines.append(f"{'SKU':<12}{'Type':<22}{'Sys':>6}{'Phys':>6}{'Var':>6}{'Value':>12}")
+            lines.append("-" * 60)
+            for item in sorted(self.discrepancies, key=lambda i: abs(i.variance_value), reverse=True):
+                lines.append(
+                    f"{item.sku:<12}{item.discrepancy_type.value:<22}"
+                    f"{item.system_qty:>6}{item.physical_qty:>6}"
+                    f"{item.variance:>+6}{item.variance_value:>12,.2f}"
+                )
+        lines.append("=" * 60)
+        return "\n".join(lines)
+
+
+class InventoryReconciler:
+    """Reconciles physical counts against system records."""
+
+    def __init__(self, tolerance: int = 0):
+        self.tolerance = tolerance
+        self._items: Dict[str, InventoryItem] = {}
+
+    def load_system_records(self, records: List[dict]) -> "InventoryReconciler":
+        for r in records:
+            self._items[r["sku"]] = InventoryItem(
+                sku=r["sku"],
+                description=r.get("description", ""),
+                system_qty=r.get("qty", 0),
+                unit_cost=r.get("unit_cost", 0.0),
+            )
+        return self
+
+    def load_physical_counts(self, counts: List[dict]) -> "InventoryReconciler":
+        for c in counts:
+            sku = c["sku"]
+            if sku in self._items:
+                self._items[sku].physical_qty = c.get("qty", 0)
+            else:
+                # Found physically but not in system
+                self._items[sku] = InventoryItem(
+                    sku=sku,
+                    description=c.get("description", ""),
+                    system_qty=0,
+                    physical_qty=c.get("qty", 0),
+                    unit_cost=c.get("unit_cost", 0.0),
+                )
+        return self
+
+    def reconcile(self) -> ReconciliationReport:
+        report = ReconciliationReport(
+            timestamp=datetime.now().isoformat(timespec="seconds"),
+            tolerance=self.tolerance,
+        )
+        for item in self._items.values():
+            report.total_items += 1
+            if abs(item.variance) <= self.tolerance:
+                report.matched += 1
+            else:
+                report.discrepancies.append(item)
+                report.total_variance_value += item.variance_value
+        return report
+
+    def adjustments(self, report: ReconciliationReport) -> List[dict]:
+        """Suggested adjustment entries to sync system to physical."""
+        return [
+            {
+                "sku": i.sku,
+                "adjust_qty": i.variance,
+                "new_system_qty": i.physical_qty,
+                "reason": i.discrepancy_type.value,
+                "value_impact": round(i.variance_value, 2),
+            }
+            for i in report.discrepancies
+        ]
+
+
+# ---------------- Demo ----------------
+if __name__ == "__main__":
+    system = [
+        {"sku": "A100", "description": "Widget",     "qty": 100, "unit_cost": 2.50},
+        {"sku": "B200", "description": "Gadget",     "qty": 50,  "unit_cost": 10.00},
+        {"sku": "C300", "description": "Gizmo",      "qty": 75,  "unit_cost": 5.00},
+        {"sku": "D400", "description": "Doohickey",  "qty": 20,  "unit_cost": 15.00},
+        {"sku": "E500", "description": "Thingamajig","qty": 200, "unit_cost": 1.25},
+    ]
+    physical = [
+        {"sku": "A100", "qty": 100},   # match
+        {"sku": "B200", "qty": 47},    # shortage
+        {"sku": "C300", "qty": 80},    # overage
+        {"sku": "D400", "qty": 0},     # missing in physical
+        {"sku": "F600", "qty": 12, "unit_cost": 3.00},  # missing in system
+    ]
+
+    reconciler = (
+        InventoryReconciler(tolerance=0)
+        .load_system_records(system)
+        .load_physical_counts(physical)
+    )
+    report = reconciler.reconcile()
+    print(report.summary())
+
+    print("\nSuggested Adjustments:")
+    for adj in reconciler.adjustments(report):
+        print(f"  {adj}")

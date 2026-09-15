@@ -1,0 +1,178 @@
+```python
+"""
+Capacity-Constrained Knapsack
+
+Problem:
+Given indivisible items, where each item has a weight and value, and a
+maximum capacity, select a subset of items such that:
+
+1. Total weight does not exceed the capacity.
+2. Total value is maximized.
+3. Each item can be selected at most once (0/1 knapsack).
+4. Return the original indices of selected items.
+5. If multiple selections have the same maximum value, choose the
+   lexicographically smallest list of original indices.
+6. The result must be deterministic.
+
+Original required output:
+{
+    "max_value": int,
+    "total_weight": int,
+    "selected_indices": list[int]
+}
+
+New optional feature:
+When operation_summary=True, also return:
+
+{
+    "operation_summary": {
+        "major_operations": int
+    }
+}
+
+The major operation count is the number of item/capacity DP decisions
+considered by the algorithm. For n items and capacity C:
+
+    major_operations = n * (C + 1)
+
+When operation_summary is disabled or not requested, the original output
+fields remain unchanged and no operation_summary field is returned.
+
+Algorithm:
+Use 0/1 knapsack dynamic programming with descending capacity updates.
+The descending update ensures that each item is used at most once.
+
+Tie handling:
+For equal values, compare the selected original-index lists and keep
+the lexicographically smallest one.
+"""
+
+from typing import List, Dict, Any
+
+
+def capacity_constrained_knapsack(
+    items: List[tuple[int, int]],
+    capacity: int,
+    operation_summary: bool = False,
+) -> Dict[str, Any]:
+    """
+    Solve the Capacity-Constrained 0/1 Knapsack problem.
+
+    Parameters:
+        items:
+            List of (weight, value) pairs.
+            The position in the list is the item's original index.
+
+        capacity:
+            Maximum allowed total weight.
+
+        operation_summary:
+            If True, include the deterministic operation_summary field.
+
+    Returns:
+        A dictionary containing:
+            max_value
+            total_weight
+            selected_indices
+
+        If operation_summary=True, also contains:
+            operation_summary
+    """
+
+    if capacity < 0:
+        raise ValueError("capacity must be non-negative")
+
+    for weight, value in items:
+        if weight < 0:
+            raise ValueError("item weights must be non-negative")
+
+    n = len(items)
+
+    # dp[w] = best value achievable with capacity at most w.
+    dp = [0] * (capacity + 1)
+
+    # selected[w] = lexicographically smallest list of original indices
+    # achieving dp[w].
+    selected = [[] for _ in range(capacity + 1)]
+
+    # Track the actual weight of the selected solution for each capacity.
+    weights = [0] * (capacity + 1)
+
+    major_operations = 0
+
+    # 0/1 knapsack: process every item once.
+    for index, (item_weight, item_value) in enumerate(items):
+
+        # Descending capacity update is essential for 0/1 knapsack.
+        for current_capacity in range(capacity, item_weight - 1, -1):
+            major_operations += 1
+
+            previous_capacity = current_capacity - item_weight
+
+            candidate_value = (
+                dp[previous_capacity] + item_value
+            )
+
+            candidate_indices = (
+                selected[previous_capacity] + [index]
+            )
+
+            candidate_weight = (
+                weights[previous_capacity] + item_weight
+            )
+
+            if candidate_value > dp[current_capacity]:
+                dp[current_capacity] = candidate_value
+                selected[current_capacity] = candidate_indices
+                weights[current_capacity] = candidate_weight
+
+            elif candidate_value == dp[current_capacity]:
+                # Deterministic tie-breaking:
+                # lexicographically smallest original-index list.
+                if candidate_indices < selected[current_capacity]:
+                    selected[current_capacity] = candidate_indices
+                    weights[current_capacity] = candidate_weight
+
+    result = {
+        "max_value": dp[capacity],
+        "total_weight": weights[capacity],
+        "selected_indices": selected[capacity],
+    }
+
+    if operation_summary:
+        result["operation_summary"] = {
+            "major_operations": major_operations
+        }
+
+    return result
+
+
+# ---------------------------------------------------------
+# Example usage
+# ---------------------------------------------------------
+
+if __name__ == "__main__":
+    items = [
+        (2, 3),  # index 0
+        (3, 4),  # index 1
+        (4, 5),  # index 2
+        (5, 6),  # index 3
+    ]
+
+    capacity = 5
+
+    # Original behavior: no operation_summary field.
+    result = capacity_constrained_knapsack(
+        items,
+        capacity
+    )
+    print(result)
+
+    # New behavior: operation_summary is included.
+    result_with_summary = capacity_constrained_knapsack(
+        items,
+        capacity,
+        operation_summary=True
+    )
+    print(result_with_summary)
+```

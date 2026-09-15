@@ -1,0 +1,11 @@
+{
+  "task_id": "AC-007",
+  "model": "gpt",
+  "interaction": "ONE_SHOT",
+  "turn": 1,
+  "saved_at": "2026-09-06T03:29:52.660640+00:00",
+  "response_sha256": "6d980ceaa3541765ad1eff1092b061dba6441f7a4c3f02092ff1d29cac8111fd",
+  "code_sha256": "b8bc0e0876a9a59062085074df1b792adaabefc6d8c70d45dce985fc2284a416",
+  "raw_file": ".collection/raw/gpt/AC-007/ONE_SHOT/turn_01.txt",
+  "code_file": ".collection/code/gpt/AC-007/ONE_SHOT/code.py"
+}

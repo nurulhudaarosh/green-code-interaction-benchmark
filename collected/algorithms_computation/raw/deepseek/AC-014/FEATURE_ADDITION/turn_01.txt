@@ -1,0 +1,147 @@
+## Problem Identification
+
+We need to solve **1D k-means clustering** (also known as optimal partition of sorted points):
+
+Given:
+- A sorted list of 1D points `x[0..n-1]`
+- An integer `k` (number of clusters)
+
+We must partition the points into `k` **contiguous** clusters (since points are sorted, clusters are just consecutive segments) to minimize:
+
+\[
+\text{Cost} = \sum_{c=1}^{k} \sum_{i \in C_c} (x_i - \mu_c)^2
+\]
+
+where \(\mu_c\) is the mean of cluster \(C_c\).
+
+**Return:**
+- The minimum total cost
+- The final boundary indices (where clusters split)
+
+---
+
+## Key Constraints
+
+- Points are 1D and sorted.
+- Clusters must be contiguous in sorted order.
+- We must use **exactly k clusters** (assuming \(k \le n\)).
+- Standard library only, deterministic, no randomness/external calls.
+
+---
+
+## Algorithm: Prefix Sums + Interval-Cost DP
+
+For a contiguous interval `[i, j]` (inclusive), the minimal sum of squared deviations from the mean is:
+
+\[
+\text{cost}(i, j) = \sum_{t=i}^{j} x_t^2 - \frac{\left(\sum_{t=i}^{j} x_t\right)^2}{j-i+1}
+\]
+
+This can be computed in O(1) using prefix sums of `x` and `x^2`.
+
+**DP formulation:**
+Let `dp[m][i]` = minimum cost to partition first `i` points into `m` clusters.
+
+Base case:
+- `dp[1][i] = cost(0, i-1)`
+
+Transition:
+\[
+dp[m][i] = \min_{p < i} \left( dp[m-1][p] + \text{cost}(p, i-1) \right)
+\]
+
+We also store `split[m][i]` = the starting index of the last cluster in this optimal partition.
+
+Time: O(k·n²), Space: O(k·n). For moderate n (e.g., a few thousand) this is fine.
+
+---
+
+## Python Implementation
+
+```python
+def kmeans_1d(points, k):
+    n = len(points)
+    if k <= 0 or k > n:
+        raise ValueError("k must be between 1 and n")
+
+    # Prefix sums
+    pref = [0.0] * (n + 1)
+    pref2 = [0.0] * (n + 1)
+    for i, x in enumerate(points):
+        pref[i + 1] = pref[i] + x
+        pref2[i + 1] = pref2[i] + x * x
+
+    def interval_cost(i, j):
+        """Cost of points[i..j] inclusive."""
+        cnt = j - i + 1
+        s = pref[j + 1] - pref[i]
+        s2 = pref2[j + 1] - pref2[i]
+        return s2 - (s * s) / cnt
+
+    INF = float('inf')
+    dp = [[INF] * (n + 1) for _ in range(k + 1)]
+    split = [[-1] * (n + 1) for _ in range(k + 1)]
+
+    # Base: 1 cluster
+    for i in range(1, n + 1):
+        dp[1][i] = interval_cost(0, i - 1)
+        split[1][i] = 0
+
+    # DP for m >= 2 clusters
+    for m in range(2, k + 1):
+        for i in range(m, n + 1):  # need at least m points
+            best = INF
+            best_p = -1
+            for p in range(m - 1, i):  # previous cut position
+                c = dp[m - 1][p] + interval_cost(p, i - 1)
+                if c < best:
+                    best = c
+                    best_p = p
+            dp[m][i] = best
+            split[m][i] = best_p
+
+    # Reconstruct boundaries
+    boundaries = []
+    i = n
+    for m in range(k, 0, -1):
+        p = split[m][i]
+        boundaries.append((p, i - 1))  # cluster covers [p, i-1]
+        i = p
+    boundaries.reverse()
+
+    return dp[k][n], boundaries
+
+
+# ---------------- Example usage ----------------
+if __name__ == "__main__":
+    pts = [1.0, 2.0, 3.0, 10.0, 11.0, 12.0, 20.0]
+    k = 3
+    cost, bounds = kmeans_1d(pts, k)
+    print("Points:", pts)
+    print("k =", k)
+    print("Minimum cost:", cost)
+    print("Cluster boundaries (start, end) inclusive:")
+    for b in bounds:
+        print(" ", b, "->", pts[b[0]:b[1] + 1])
+```
+
+**Sample output:**
+```
+Points: [1.0, 2.0, 3.0, 10.0, 11.0, 12.0, 20.0]
+k = 3
+Minimum cost: 2.0
+Cluster boundaries (start, end) inclusive:
+  (0, 2) -> [1.0, 2.0, 3.0]
+  (3, 5) -> [10.0, 11.0, 12.0]
+  (6, 6) -> [20.0]
+```
+
+---
+
+## Summary
+
+- **Problem:** Minimize sum of squared deviations for k contiguous clusters of sorted 1D points.
+- **Key idea:** O(1) interval cost via prefix sums + dynamic programming.
+- **Output:** Minimum cost and boundary indices.
+- **Complexity:** O(k·n²) time, O(k·n) space.
+- **Properties:** Deterministic, standard library only, no external dependencies.

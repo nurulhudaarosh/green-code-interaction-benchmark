@@ -1,0 +1,138 @@
+### Problem Restatement: Dependency Build Planner
+
+Given a set of package names and directed prerequisite dependencies (where a pair `(A, B)` means `A` is a prerequisite for `B`), determine:
+
+1. A valid, deterministic build order for all packages.
+2. The total number of dependency levels (the maximum path length / depth of prerequisite dependencies).
+
+**Key Constraints & Rules:**
+
+* **Cycle Detection:** If a circular dependency exists in the system (including self-loops like `A -> A`), return an empty build order `[]` and `-1` for levels.
+* **Deterministic Tie-Breaking:** When multiple packages are eligible to be built at the same time (i.e., all their prerequisites are satisfied), process them in **lexicographical (alphabetical) order**.
+* **Repeated/Duplicate Values:** Input dependency lists may contain duplicate pairs (e.g., `[("A", "B"), ("A", "B")]`). These must be deduplicated so in-degree counts are not artificially inflated.
+* **Undeclared Packages:** Packages referenced solely in dependency tuples but omitted from the package set should be dynamically registered into the build graph.
+
+---
+
+### Python Implementation
+
+```python
+import heapq
+from typing import Dict, List, Set, Tuple
+
+def get_build_order(packages: Set[str], dependencies: List[Tuple[str, str]]) -> Tuple[List[str], int]:
+    """
+    Determines a deterministic build order and the total number of dependency levels.
+    Explicitly handles duplicate dependency edges, self-loops, and deterministic ties.
+    
+    :param packages: Set of target package names.
+    :param dependencies: List of (prerequisite, dependent) pairs.
+    :return: Tuple of (build_order_list, number_of_levels). Returns ([], -1) if a cycle exists.
+    """
+    # 1. Expand package set to include any packages referenced solely in dependencies
+    all_packages: Set[str] = set(packages)
+    for prereq, dependent in dependencies:
+        all_packages.add(prereq)
+        all_packages.add(dependent)
+
+    if not all_packages:
+        return [], 0
+
+    # 2. Deduplicate dependencies and check for self-loops
+    unique_deps: Set[Tuple[str, str]] = set()
+    for prereq, dependent in dependencies:
+        if prereq == dependent:
+            # A self-loop is a direct cycle of length 1
+            return [], -1
+        unique_deps.add((prereq, dependent))
+
+    # 3. Initialize graph structures
+    adj_list: Dict[str, List[str]] = {p: [] for p in all_packages}
+    in_degree: Dict[str, int] = {p: 0 for p in all_packages}
+    level: Dict[str, int] = {p: 1 for p in all_packages}
+
+    for prereq, dependent in unique_deps:
+        adj_list[prereq].append(dependent)
+        in_degree[dependent] += 1
+
+    # 4. Initialize min-heap with zero in-degree nodes for lexicographical tie-breaking
+    min_heap: List[str] = [p for p in all_packages if in_degree[p] == 0]
+    heapq.heapify(min_heap)
+
+    build_order: List[str] = []
+    max_levels = 0
+
+    # 5. Kahn's Algorithm with Priority Queue
+    while min_heap:
+        current = heapq.heappop(min_heap)
+        build_order.append(current)
+
+        current_level = level[current]
+        if current_level > max_levels:
+            max_levels = current_level
+
+        for neighbor in adj_list[current]:
+            in_degree[neighbor] -= 1
+            # Track longest prerequisite path depth
+            level[neighbor] = max(level[neighbor], current_level + 1)
+
+            if in_degree[neighbor] == 0:
+                heapq.heappush(min_heap, neighbor)
+
+    # 6. Cycle verification: if processed node count < total nodes, a cycle exists
+    if len(build_order) != len(all_packages):
+        return [], -1
+
+    return build_order, max_levels
+
+
+# ==========================================
+# Comprehensive Test Suite
+# ==========================================
+if __name__ == "__main__":
+    # Test 1: Standard Valid DAG
+    pkgs1 = {"A", "B", "C", "D", "E"}
+    deps1 = [("A", "B"), ("A", "C"), ("B", "D"), ("C", "D"), ("E", "A")]
+    order1, levels1 = get_build_order(pkgs1, deps1)
+    assert order1 == ["E", "A", "B", "C", "D"], f"Expected ['E', 'A', 'B', 'C', 'D'], got {order1}"
+    assert levels1 == 4, f"Expected 4 levels, got {levels1}"
+
+    # Test 2: Circular Dependency Cycle
+    pkgs2 = {"A", "B", "C"}
+    deps2 = [("A", "B"), ("B", "C"), ("C", "A")]
+    order2, levels2 = get_build_order(pkgs2, deps2)
+    assert order2 == [], f"Expected [], got {order2}"
+    assert levels2 == -1, f"Expected -1, got {levels2}"
+
+    # Test 3: Deterministic Ties (Multiple zero in-degree nodes processed alphabetically)
+    # C, B, A have no prerequisites -> processed as A, then B, then C
+    pkgs3 = {"C", "B", "A", "D"}
+    deps3 = [("A", "D"), ("B", "D"), ("C", "D")]
+    order3, levels3 = get_build_order(pkgs3, deps3)
+    assert order3 == ["A", "B", "C", "D"], f"Expected ['A', 'B', 'C', 'D'], got {order3}"
+    assert levels3 == 2, f"Expected 2 levels, got {levels3}"
+
+    # Test 4: Repeated / Duplicate Dependency Entries
+    pkgs4 = {"A", "B"}
+    deps4 = [("A", "B"), ("A", "B"), ("A", "B")]
+    order4, levels4 = get_build_order(pkgs4, deps4)
+    assert order4 == ["A", "B"], f"Expected ['A', 'B'], got {order4}"
+    assert levels4 == 2, f"Expected 2 levels, got {levels4}"
+
+    # Test 5: Self-Loop Edge Case
+    pkgs5 = {"A", "B"}
+    deps5 = [("A", "A")]
+    order5, levels5 = get_build_order(pkgs5, deps5)
+    assert order5 == [], f"Expected [], got {order5}"
+    assert levels5 == -1, f"Expected -1, got {levels5}"
+
+    # Test 6: Implicit / Undeclared Packages
+    pkgs6 = set()
+    deps6 = [("Core", "Utils"), ("Utils", "App")]
+    order6, levels6 = get_build_order(pkgs6, deps6)
+    assert order6 == ["Core", "Utils", "App"], f"Expected ['Core', 'Utils', 'App'], got {order6}"
+    assert levels6 == 3, f"Expected 3 levels, got {levels6}"
+
+    print("All Dependency Build Planner tests passed successfully!")
+
+```

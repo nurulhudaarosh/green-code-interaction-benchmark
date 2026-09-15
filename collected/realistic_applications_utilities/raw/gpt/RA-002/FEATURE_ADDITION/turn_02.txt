@@ -1,0 +1,58 @@
+```python
+class Inventory:
+    def __init__(self):
+        self.items = {}
+
+    def add_item(self, sku, name, quantity, low_stock_threshold=0):
+        if not isinstance(sku, str) or not sku.strip():
+            raise ValueError("SKU must be a non-empty string")
+        if sku in self.items:
+            raise ValueError(f"Duplicate SKU: {sku}")
+        if not isinstance(quantity, int) or quantity < 0:
+            raise ValueError("Quantity must be a non-negative integer")
+        if not isinstance(low_stock_threshold, int) or low_stock_threshold < 0:
+            raise ValueError("Low-stock threshold must be a non-negative integer")
+
+        self.items[sku] = {
+            "name": name,
+            "quantity": quantity,
+            "low_stock_threshold": low_stock_threshold
+        }
+
+    def update_quantity(self, sku, quantity):
+        if sku not in self.items:
+            raise KeyError(f"SKU not found: {sku}")
+        if not isinstance(quantity, int) or quantity < 0:
+            raise ValueError("Quantity must be a non-negative integer")
+        self.items[sku]["quantity"] = quantity
+
+    def get_item(self, sku):
+        if sku not in self.items:
+            raise KeyError(f"SKU not found: {sku}")
+        return self.items[sku].copy()
+
+    def low_stock_report(self):
+        """Return items whose quantity is at or below their threshold."""
+        return [
+            {
+                "sku": sku,
+                "name": item["name"],
+                "quantity": item["quantity"],
+                "low_stock_threshold": item["low_stock_threshold"]
+            }
+            for sku, item in self.items.items()
+            if item["quantity"] <= item["low_stock_threshold"]
+        ]
+
+
+# Example usage
+inventory = Inventory()
+
+inventory.add_item("SKU001", "Laptop", 10, 3)
+inventory.add_item("SKU002", "Mouse", 2, 5)
+inventory.add_item("SKU003", "Keyboard", 8, 2)
+
+print("Low-stock report:")
+for item in inventory.low_stock_report():
+    print(item)
+```

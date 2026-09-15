@@ -1,0 +1,36 @@
+from pathlib import Path
+from PIL import Image
+
+def generate_thumbnails(input_dir, cache_dir, max_dim=128):
+    """
+    Recursively walk input_dir, creating aspect-ratio-preserving thumbnails
+    (max dimension = max_dim) in cache_dir, mirroring the source tree.
+
+    Returns a list of (source_path, thumbnail_path) tuples for images
+    that were successfully processed.
+    """
+    input_dir = Path(input_dir)
+    cache_dir = Path(cache_dir)
+    image_exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"}
+
+    results = []
+
+    for src_path in input_dir.rglob("*"):
+        if not src_path.is_file() or src_path.suffix.lower() not in image_exts:
+            continue
+
+        rel_path = src_path.relative_to(input_dir)
+        dest_path = cache_dir / rel_path
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            with Image.open(src_path) as img:
+                img = img.convert("RGB") if img.mode in ("P", "RGBA", "LA") else img
+                # thumbnail() preserves aspect ratio and modifies in place
+                img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+                img.save(dest_path)
+                results.append((src_path, dest_path))
+        except Exception as e:
+            print(f"Skipping {src_path}: {e}")
+
+    return results

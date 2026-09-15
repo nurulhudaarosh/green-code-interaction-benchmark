@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+"""
+process_customer_events.py
+
+Offline utility for cleaning and summarizing customer event CSV files.
+
+Pipeline
+--------
+1. Read the input CSV (expects at least: customer_id, timestamp, status, amount).
+2. De-duplicate exact (customer_id, timestamp) pairs, keeping the LAST
+   occurrence found in the file (i.e. later rows win on a collision).
+3. From the de-duplicated rows, keep only the chronologically LATEST
+   record for each customer_id.
+4. From that retained set, compute count and total amount grouped by status.
+5. Write two deterministic CSV outputs, both sorted for stable diffs:
+     - <output-prefix>_latest_by_customer.csv  (sorted by customer_id)
+     - <output-prefix>_status_summary.csv      (sorted by status)
+
+No network access is used or required; this is a pure stdlib script.
+
+Usage
+-----
+    python3 process_customer_events.py input.csv --output-prefix result
+
+Produces:
+    result_latest_by_customer.csv
+    result_status_summary.csv
+
+Timestamp parsing
+------------------
+Timestamps are parsed with datetime.fromisoformat after a light
+normalization step that accepts a trailing 'Z' (UTC) suffix. If your
+timestamps use a different format, adjust `parse_timestamp` below.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import sys
+from collections import defaultdict
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Tuple
+
+REQUIRED_COLUMNS = ("customer_id", "timestamp", "status", "amount")
+
+
+def parse_timestamp(raw: str) -> datetime:
+    """Parse an ISO-8601-ish timestamp string into a datetime object.
+
+    Accepts a trailing 'Z' as shorthand for UTC (fromisoformat in Python
+    < 3.11 doesn't understand 'Z' natively).
+    """
+    value = raw.strip()
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"Could not parse timestamp {raw!r}: {exc}") from exc
+
+
+def parse_amount(raw: str) -> float:
+    try:
+        return float(raw.strip())
+    except ValueError as exc:
+        raise ValueError(f"Could not parse amount {raw!r}: {exc}") from exc
+
+
+def read_rows(input_path: Path) -> List[Dict[str, str]]:
+    with input_path.open("r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        missing = [c for c in REQUIRED_COLUMNS if c not in (reader.fieldnames or [])]
+        if missing:
+            raise ValueError(
+                f"Input CSV is missing required column(s): {', '.join(missing)}. "
+                f"Found columns: {reader.fieldnames}"
+            )
+        return list(reader)
+
+
+def dedupe_keep_last(rows: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Collapse rows sharing the same (customer_id, timestamp) key,
+    keeping the last occurrence encountered in file order.
+    """
+    last_by_key: Dict[Tuple[str, str], Dict[str, str]] = {}
+    for row in rows:
+        key = (row["customer_id"], row["timestamp"])
+        last_by_key[key] = row  # later occurrence overwrites earlier one
+    # Preserve stable relative order based on first time each key appeared,
+    # so downstream processing (and any debugging) is deterministic.
+    seen_order: List[Tuple[str, str]] = []
+    seen_set = set()
+    for row in rows:
+        key = (row["customer_id"], row["timestamp"])
+        if key not in seen_set:
+            seen_set.add(key)
+            seen_order.append(key)
+    return [last_by_key[key] for key in seen_order]
+
+
+def latest_record_per_customer(rows: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """From de-duplicated rows, keep the chronologically latest record
+    for each customer_id. Since (customer_id, timestamp) pairs are unique
+    after de-duplication, ties on timestamp cannot occur here.
+    """
+    latest: Dict[str, Tuple[datetime, Dict[str, str]]] = {}
+    for row in rows:
+        ts = parse_timestamp(row["timestamp"])
+        cust = row["customer_id"]
+        if cust not in latest or ts > latest[cust][0]:
+            latest[cust] = (ts, row)
+    return [row for _, row in latest.values()]
+
+
+def summarize_by_status(rows: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    counts: Dict[str, int] = defaultdict(int)
+    totals: Dict[str, float] = defaultdict(float)
+    for row in rows:
+        status = row["status"]
+        counts[status] += 1
+        totals[status] += parse_amount(row["amount"])
+    summary = [
+        {
+            "status": status,
+            "count": str(counts[status]),
+            "total_amount": f"{totals[status]:.2f}",
+        }
+        for status in counts
+    ]
+    summary.sort(key=lambda r: r["status"])
+    return summary
+
+
+def write_csv(path: Path, rows: List[Dict[str, str]], fieldnames: List[str]) -> None:
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({k: row.get(k, "") for k in fieldnames})
+
+
+def run(input_path: Path, output_prefix: str) -> Tuple[Path, Path]:
+    rows = read_rows(input_path)
+    deduped = dedupe_keep_last(rows)
+    latest = latest_record_per_customer(deduped)
+
+    # Deterministic sort by customer_id for the main output.
+    # Sort numerically when possible, falling back to string sort so
+    # mixed/non-numeric customer_id values don't crash the script.
+    def customer_sort_key(row: Dict[str, str]):
+        cid = row["customer_id"]
+        try:
+            return (0, float(cid), "")
+        except ValueError:
+            return (1, 0.0, cid)
+
+    latest_sorted = sorted(latest, key=customer_sort_key)
+
+    summary = summarize_by_status(latest)
+
+    original_fieldnames = list(rows[0].keys()) if rows else list(REQUIRED_COLUMNS)
+
+    latest_out = Path(f"{output_prefix}_latest_by_customer.csv")
+    summary_out = Path(f"{output_prefix}_status_summary.csv")
+
+    write_csv(latest_out, latest_sorted, original_fieldnames)
+    write_csv(summary_out, summary, ["status", "count", "total_amount"])
+
+    return latest_out, summary_out
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Clean and summarize a customer event CSV file (offline, stdlib only)."
+    )
+    parser.add_argument("input_csv", type=Path, help="Path to the input CSV file")
+    parser.add_argument(
+        "--output-prefix",
+        default="output",
+        help="Prefix for output filenames (default: 'output')",
+    )
+    args = parser.parse_args()
+
+    if not args.input_csv.exists():
+        print(f"Error: input file not found: {args.input_csv}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        latest_out, summary_out = run(args.input_csv, args.output_prefix)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Wrote latest-record-per-customer file: {latest_out}")
+    print(f"Wrote status summary file: {summary_out}")
+
+
+if __name__ == "__main__":
+    main()

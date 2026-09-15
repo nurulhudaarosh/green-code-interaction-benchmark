@@ -1,0 +1,484 @@
+# Dependency Build Planner
+# Deterministic Kahn Topological Sort with Min-Heap
+# Standard library only
+
+
+from heapq import heappush, heappop
+
+
+def dependency_build_planner(
+    packages,
+    dependencies,
+    include_operation_summary=False
+):
+    """
+    Given packages and prerequisite dependencies, return:
+
+        (build_order, dependency_levels)
+
+    By default.
+
+    If include_operation_summary=True, return:
+
+        (build_order, dependency_levels, operation_summary)
+
+    Dependency format:
+        (A, B) means A must be built before B.
+
+    Original rules:
+    - Repeated package values are treated as one package.
+    - Repeated dependency pairs are treated as one dependency.
+    - Only explicitly supplied packages are included.
+    - The smallest currently-ready package is selected first.
+    - Dependency levels represent the longest prerequisite chain.
+    - If a cycle exists, return ([], -1).
+    - Empty input returns ([], 0).
+
+    New optional feature:
+    - When enabled, operation_summary reports the number of
+      major computational decisions/operations made by the algorithm.
+    - The summary is deterministic.
+    - The original two-field result is unchanged when disabled.
+    """
+
+    # --------------------------------------------------------
+    # Operation counter
+    # --------------------------------------------------------
+    #
+    # Count major algorithmic decisions:
+    #
+    # 1. Each unique valid dependency edge added.
+    # 2. Each package selected from the min-heap.
+    # 3. Each dependent edge processed during Kahn's algorithm.
+    #
+    # This produces a deterministic summary because the same
+    # input always produces the same number of these operations.
+    operation_count = 0
+
+    # --------------------------------------------------------
+    # Remove repeated package values.
+    # --------------------------------------------------------
+    package_set = set(packages)
+
+    # Empty package collection.
+    if not package_set:
+        if include_operation_summary:
+            return [], 0, 0
+
+        return [], 0
+
+    # --------------------------------------------------------
+    # Build graph and indegree table.
+    # --------------------------------------------------------
+    graph = {
+        package: set()
+        for package in package_set
+    }
+
+    indegree = {
+        package: 0
+        for package in package_set
+    }
+
+    # --------------------------------------------------------
+    # Add dependencies.
+    #
+    # Only dependencies between explicitly supplied packages
+    # are considered.
+    #
+    # Repeated dependency pairs are ignored.
+    # --------------------------------------------------------
+    for prerequisite, package in dependencies:
+
+        if prerequisite not in package_set:
+            continue
+
+        if package not in package_set:
+            continue
+
+        if package not in graph[prerequisite]:
+            graph[prerequisite].add(package)
+            indegree[package] += 1
+
+            # One major operation: unique dependency registered.
+            operation_count += 1
+
+    # --------------------------------------------------------
+    # Track longest prerequisite depth.
+    #
+    # A package without prerequisites has depth 1.
+    # --------------------------------------------------------
+    depth = {
+        package: 1
+        for package in package_set
+    }
+
+    # --------------------------------------------------------
+    # Min-heap containing all currently buildable packages.
+    # --------------------------------------------------------
+    ready = []
+
+    for package in package_set:
+        if indegree[package] == 0:
+            heappush(ready, package)
+
+    build_order = []
+
+    # --------------------------------------------------------
+    # Kahn's topological sorting.
+    # --------------------------------------------------------
+    while ready:
+
+        # Smallest ready package is always selected.
+        current = heappop(ready)
+
+        # One major operation: package selection.
+        operation_count += 1
+
+        build_order.append(current)
+
+        # Process every dependent package.
+        for dependent in sorted(graph[current]):
+
+            # One major operation: dependency processing.
+            operation_count += 1
+
+            # Track longest prerequisite chain.
+            depth[dependent] = max(
+                depth[dependent],
+                depth[current] + 1
+            )
+
+            # Remove current prerequisite.
+            indegree[dependent] -= 1
+
+            # If all prerequisites are complete, the package
+            # becomes ready.
+            if indegree[dependent] == 0:
+                heappush(ready, dependent)
+
+    # --------------------------------------------------------
+    # Cycle detection.
+    # --------------------------------------------------------
+    if len(build_order) != len(package_set):
+
+        if include_operation_summary:
+            return [], -1, operation_count
+
+        return [], -1
+
+    # --------------------------------------------------------
+    # Number of dependency levels.
+    # --------------------------------------------------------
+    levels = max(depth.values())
+
+    # --------------------------------------------------------
+    # Preserve the original output unless the new feature
+    # was explicitly requested.
+    # --------------------------------------------------------
+    if include_operation_summary:
+        return build_order, levels, operation_count
+
+    return build_order, levels
+
+
+# ============================================================
+# Tests
+# ============================================================
+
+def run_tests():
+
+    # --------------------------------------------------------
+    # 1. Original simple chain
+    # --------------------------------------------------------
+    packages = ["A", "B", "C"]
+
+    dependencies = [
+        ("A", "B"),
+        ("B", "C")
+    ]
+
+    assert dependency_build_planner(
+        packages,
+        dependencies
+    ) == (
+        ["A", "B", "C"],
+        3
+    )
+
+    # --------------------------------------------------------
+    # 2. Deterministic tie handling
+    # --------------------------------------------------------
+    packages = ["B", "A", "C"]
+
+    dependencies = [
+        ("A", "C"),
+        ("B", "C")
+    ]
+
+    assert dependency_build_planner(
+        packages,
+        dependencies
+    ) == (
+        ["A", "B", "C"],
+        2
+    )
+
+    # --------------------------------------------------------
+    # 3. Independent packages
+    # --------------------------------------------------------
+    packages = ["D", "B", "A", "C"]
+
+    dependencies = []
+
+    assert dependency_build_planner(
+        packages,
+        dependencies
+    ) == (
+        ["A", "B", "C", "D"],
+        1
+    )
+
+    # --------------------------------------------------------
+    # 4. Longest prerequisite depth
+    # --------------------------------------------------------
+    packages = ["A", "B", "C", "D"]
+
+    dependencies = [
+        ("A", "B"),
+        ("A", "C"),
+        ("B", "D"),
+        ("C", "D")
+    ]
+
+    assert dependency_build_planner(
+        packages,
+        dependencies
+    ) == (
+        ["A", "B", "C", "D"],
+        3
+    )
+
+    # --------------------------------------------------------
+    # 5. Repeated package values
+    # --------------------------------------------------------
+    packages = [
+        "A",
+        "B",
+        "A",
+        "C",
+        "B"
+    ]
+
+    dependencies = [
+        ("A", "B"),
+        ("B", "C")
+    ]
+
+    assert dependency_build_planner(
+        packages,
+        dependencies
+    ) == (
+        ["A", "B", "C"],
+        3
+    )
+
+    # --------------------------------------------------------
+    # 6. Repeated dependency pairs
+    # --------------------------------------------------------
+    packages = ["A", "B", "C"]
+
+    dependencies = [
+        ("A", "B"),
+        ("A", "B"),
+        ("B", "C"),
+        ("B", "C")
+    ]
+
+    assert dependency_build_planner(
+        packages,
+        dependencies
+    ) == (
+        ["A", "B", "C"],
+        3
+    )
+
+    # --------------------------------------------------------
+    # 7. Cycle
+    # --------------------------------------------------------
+    packages = ["A", "B", "C"]
+
+    dependencies = [
+        ("A", "B"),
+        ("B", "C"),
+        ("C", "A")
+    ]
+
+    assert dependency_build_planner(
+        packages,
+        dependencies
+    ) == (
+        [],
+        -1
+    )
+
+    # --------------------------------------------------------
+    # 8. Self-cycle
+    # --------------------------------------------------------
+    packages = ["A", "B"]
+
+    dependencies = [
+        ("A", "A")
+    ]
+
+    assert dependency_build_planner(
+        packages,
+        dependencies
+    ) == (
+        [],
+        -1
+    )
+
+    # --------------------------------------------------------
+    # 9. Single package
+    # --------------------------------------------------------
+    packages = ["A"]
+
+    dependencies = []
+
+    assert dependency_build_planner(
+        packages,
+        dependencies
+    ) == (
+        ["A"],
+        1
+    )
+
+    # --------------------------------------------------------
+    # 10. Empty input
+    # --------------------------------------------------------
+    assert dependency_build_planner(
+        [],
+        []
+    ) == (
+        [],
+        0
+    )
+
+    # --------------------------------------------------------
+    # 11. Do not add packages not explicitly supplied
+    # --------------------------------------------------------
+    packages = ["A", "B"]
+
+    dependencies = [
+        ("A", "C")
+    ]
+
+    assert dependency_build_planner(
+        packages,
+        dependencies
+    ) == (
+        ["A", "B"],
+        1
+    )
+
+    # --------------------------------------------------------
+    # 12. Operation summary enabled
+    #
+    # Unique dependencies:
+    #   A -> B
+    #   B -> C
+    #
+    # Operations:
+    #   2 dependency registrations
+    #   3 package selections
+    #   2 dependent-edge processes
+    #
+    # Total = 7
+    # --------------------------------------------------------
+    packages = ["A", "B", "C"]
+
+    dependencies = [
+        ("A", "B"),
+        ("B", "C")
+    ]
+
+    assert dependency_build_planner(
+        packages,
+        dependencies,
+        include_operation_summary=True
+    ) == (
+        ["A", "B", "C"],
+        3,
+        7
+    )
+
+    # --------------------------------------------------------
+    # 13. Operation summary with repeated dependencies
+    #
+    # Duplicate edges do not count as new operations.
+    # --------------------------------------------------------
+    packages = ["A", "B"]
+
+    dependencies = [
+        ("A", "B"),
+        ("A", "B"),
+        ("A", "B")
+    ]
+
+    assert dependency_build_planner(
+        packages,
+        dependencies,
+        include_operation_summary=True
+    ) == (
+        ["A", "B"],
+        2,
+        3
+    )
+
+    # --------------------------------------------------------
+    # 14. Operation summary for cycle
+    #
+    # Three unique dependency registrations.
+    # No package can be selected.
+    # No dependent edge is processed.
+    #
+    # Total = 3
+    # --------------------------------------------------------
+    packages = ["A", "B", "C"]
+
+    dependencies = [
+        ("A", "B"),
+        ("B", "C"),
+        ("C", "A")
+    ]
+
+    assert dependency_build_planner(
+        packages,
+        dependencies,
+        include_operation_summary=True
+    ) == (
+        [],
+        -1,
+        3
+    )
+
+    # --------------------------------------------------------
+    # 15. Operation summary disabled preserves original output
+    # --------------------------------------------------------
+    result = dependency_build_planner(
+        ["A", "B"],
+        [("A", "B")]
+    )
+
+    assert len(result) == 2
+    assert result == (
+        ["A", "B"],
+        2
+    )
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()

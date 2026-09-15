@@ -1,0 +1,130 @@
+I understand the problem:  
+We have an integer sequence. We need to find a **strictly increasing subsequence** (SIS) of **maximum length**.  
+Among all such longest SIS, we need the one whose **original index sequence** is **lexicographically smallest**.  
+The "original-index sequence" means the list of 0-based positions in the original array (or 1-based, but we'll choose consistent).  
+
+**Key constraints** (not given explicitly, but typical):  
+- Sequence length `n` could be up to perhaps 2000–5000 for quadratic DP, so O(n²) is acceptable.  
+- We need deterministic output (no randomness).  
+
+**Required output**:  
+The indices (0-based) of the chosen subsequence, in increasing order.  
+
+**Algorithm**:  
+
+1. Let `a` be the array of length `n`.  
+2. Let `dp[i]` = length of the longest strictly increasing subsequence ending at index `i`.  
+3. Let `prev[i]` = the index of the previous element in the optimal subsequence ending at `i` (or -1 if none).  
+
+But we need the **lexicographically smallest index sequence** among those with maximal total length.  
+
+To handle tie-breaking correctly:  
+
+- We do DP from left to right. For each `i`, we consider all `j < i` with `a[j] < a[i]`.  
+- If `dp[j] + 1 > dp[i]`, we update `dp[i]` and set `prev[i] = j`.  
+- If `dp[j] + 1 == dp[i]`, we need to choose the predecessor that gives the lexicographically smallest index sequence (when prepended to the sequence ending at `i`).  
+
+Since sequences are compared lexicographically by their indices, a sequence is smaller if at the first position where they differ, the index is smaller.  
+
+For a fixed `i`, the sequence ending at `i` is `(sequence for j) + [i]`.  
+When comparing two candidates `j1` and `j2` (both with same length), we compare the sequences `seq(j1) + [i]` vs `seq(j2) + [i]`.  
+Since the last element `i` is common, the comparison reduces to comparing `seq(j1)` vs `seq(j2)`.  
+
+Thus, we need to store for each `i` the **lexicographically smallest index sequence** among all optimal subsequences ending at `i`.  
+
+We can store `best_seq[i]` as a tuple of indices, but that would be O(n²) memory. Instead, we store `prev[i]` and also a ranking mechanism:  
+
+We can store for each `i` the **entire sequence** as a tuple (for simplicity) since n might be small (≤ 2000).  
+
+But to be efficient, we store `prev[i]` and also a **rank** or **comparison** function that can compare two sequences given their `prev` links.  
+
+A simpler approach:  
+- For each `i`, store `prev[i]` and also store `seq_key[i]` as a tuple of indices (list) for the best sequence ending at `i`.  
+- This is O(n²) memory in worst case but fine for n ≤ 2000.  
+
+However, to avoid O(n²) memory, we can compute the final answer by backtracking from the best ending index.  
+
+We need to find the global best: among all `i` with maximum `dp[i]`, choose the one whose sequence is lexicographically smallest.  
+
+To compare sequences lexicographically without storing them all, we can store for each index `i` a "signature" or we can reconstruct on the fly.  
+
+A robust method:  
+- Store `prev[i]` (predecessor index).  
+- When comparing two candidate predecessors `j1` and `j2` for the same `i`, we need to decide which yields a lexicographically smaller sequence ending at `i`.  
+- Since the last element is `i`, we compare sequences ending at `j1` and `j2`.  
+- So we can define a function `compare_seq(i, j)` that compares the sequence ending at `i` and the one ending at `j` lexicographically, using recursion and memoization.  
+
+But recursion depth could be O(n). Better: we can store for each index a "rank" that orders sequences lexicographically.  
+
+We can compute ranks in increasing order of length:  
+- For length 1, sequence is just `[index]`.  
+- For longer, rank comparison:  
+
+We can assign a tuple (length, rank_of_sequence_without_last, last_index) but that's not directly lexicographic.  
+
+Simplest deterministic implementation for clarity: store full sequence tuple for each `i`. This is O(n²) memory but fine for typical constraints (n ≤ 2000). We'll implement that.  
+
+Steps:  
+
+1. Initialize `dp = [1]*n`, `prev = [-1]*n`, `seq = [None]*n`  
+2. For each `i` from 0 to n-1:  
+   - Set `seq[i] = (i,)`  
+   - For each `j` from 0 to i-1:  
+        if `a[j] < a[i]`:  
+            cand_len = dp[j] + 1  
+            if cand_len > dp[i]:  
+                dp[i] = cand_len  
+                prev[i] = j  
+                seq[i] = seq[j] + (i,)  
+            elif cand_len == dp[i]:  
+                # compare seq[j] + (i,) vs seq[i]  
+                candidate_seq = seq[j] + (i,)  
+                if candidate_seq < seq[i]:  
+                    prev[i] = j  
+                    seq[i] = candidate_seq  
+
+3. After loop, find `best_len = max(dp)`  
+4. Collect all indices `i` with `dp[i] == best_len`  
+5. Among them, choose the one with the smallest `seq[i]` (lexicographically).  
+6. Return that sequence (list of indices).  
+
+**Edge cases**:  
+- Empty sequence? The problem says integer sequence, could be empty? Usually not, but if n=0, return empty list.  
+
+**Implementation** in Python:  
+
+```python
+def longest_increasing_subsequence_indices(a):
+    n = len(a)
+    if n == 0:
+        return []
+    
+    dp = [1] * n
+    prev = [-1] * n
+    seq = [None] * n
+    
+    for i in range(n):
+        seq[i] = (i,)
+        for j in range(i):
+            if a[j] < a[i]:
+                cand_len = dp[j] + 1
+                if cand_len > dp[i]:
+                    dp[i] = cand_len
+                    prev[i] = j
+                    seq[i] = seq[j] + (i,)
+                elif cand_len == dp[i]:
+                    candidate = seq[j] + (i,)
+                    if candidate < seq[i]:
+                        prev[i] = j
+                        seq[i] = candidate
+    
+    best_len = max(dp)
+    candidates = [i for i in range(n) if dp[i] == best_len]
+    best_seq = min(seq[i] for i in candidates)
+    return list(best_seq)
+```
+
+This is O(n²) time and O(n²) memory worst-case (due to storing tuples).  
+We can reduce memory by only storing `prev` and using a comparison function, but this is simpler and deterministic.  
+
+We'll output this as the solution.

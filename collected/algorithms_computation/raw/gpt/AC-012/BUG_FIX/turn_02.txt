@@ -1,0 +1,164 @@
+```python
+"""
+Longest Common Subsequence (LCS)
+
+Problem:
+Given two strings, compute the LCS length and reconstruct one LCS.
+
+Required behavior:
+- Use quadratic dynamic programming.
+- Reconstruct the LCS deterministically.
+- If dp[i + 1][j] == dp[i][j + 1], prefer advancing
+  in the first string.
+- Return exactly: (lcs_length, lcs_string)
+- Use only the Python standard library.
+
+Bug:
+A buggy implementation might use:
+    dp[i + 1][j] > dp[i][j + 1]
+
+This sends ties to the second string.
+
+Example:
+    A = "ABC"
+    B = "BAC"
+
+At the initial position:
+    dp[1][0] == dp[0][1] == 2
+
+The required rule is to advance in A, so the correct
+condition is:
+    dp[i + 1][j] >= dp[i][j + 1]
+
+This produces the deterministic LCS "BC".
+"""
+
+
+from typing import Tuple
+
+
+def lcs(a: str, b: str) -> Tuple[int, str]:
+    """
+    Compute the LCS length and reconstruct one deterministic LCS.
+
+    Tie-breaking:
+    When the two DP scores are equal, advance in the first string.
+    """
+
+    n = len(a)
+    m = len(b)
+
+    # dp[i][j] = LCS length of a[i:] and b[j:]
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+
+    # Fill DP table from bottom-right to top-left.
+    for i in range(n - 1, -1, -1):
+        for j in range(m - 1, -1, -1):
+            if a[i] == b[j]:
+                dp[i][j] = 1 + dp[i + 1][j + 1]
+            else:
+                dp[i][j] = max(
+                    dp[i + 1][j],
+                    dp[i][j + 1]
+                )
+
+    # Predecessor reconstruction.
+    result = []
+    i = 0
+    j = 0
+
+    while i < n and j < m:
+        if a[i] == b[j]:
+            result.append(a[i])
+            i += 1
+            j += 1
+
+        elif dp[i + 1][j] >= dp[i][j + 1]:
+            # Correct deterministic tie handling:
+            # equal scores -> advance in the first string.
+            i += 1
+
+        else:
+            j += 1
+
+    return dp[0][0], "".join(result)
+
+
+def is_subsequence(s: str, target: str) -> bool:
+    """Check whether s is a subsequence of target."""
+
+    index = 0
+
+    for char in target:
+        if index < len(s) and s[index] == char:
+            index += 1
+
+    return index == len(s)
+
+
+def run_tests() -> None:
+    # Basic cases.
+    assert lcs("ABC", "ABC") == (3, "ABC")
+    assert lcs("ABC", "DEF") == (0, "")
+    assert lcs("", "ABC") == (0, "")
+    assert lcs("ABC", "") == (0, "")
+
+    # Standard LCS example.
+    length, sequence = lcs("ABCBDAB", "BDCABA")
+
+    assert length == 4
+    assert len(sequence) == length
+    assert is_subsequence(sequence, "ABCBDAB")
+    assert is_subsequence(sequence, "BDCABA")
+
+    # Explicit deterministic tie-breaking example.
+    #
+    # A = "ABC"
+    # B = "BAC"
+    #
+    # Initially:
+    # dp[1][0] == dp[0][1] == 2
+    #
+    # Therefore, the algorithm must advance in A.
+    length, sequence = lcs("ABC", "BAC")
+
+    assert length == 2
+    assert sequence == "BC"
+
+    assert is_subsequence(sequence, "ABC")
+    assert is_subsequence(sequence, "BAC")
+
+    # Repeated characters.
+    length, sequence = lcs("AAAA", "AA")
+    assert length == 2
+    assert sequence == "AA"
+
+    # Another common example.
+    length, sequence = lcs("AGGTAB", "GXTXAYB")
+
+    assert length == 4
+    assert len(sequence) == length
+    assert is_subsequence(sequence, "AGGTAB")
+    assert is_subsequence(sequence, "GXTXAYB")
+
+
+if __name__ == "__main__":
+    run_tests()
+
+    # Demonstration.
+    a = "ABC"
+    b = "BAC"
+
+    length, sequence = lcs(a, b)
+
+    print("String 1:", a)
+    print("String 2:", b)
+    print("LCS length:", length)
+    print("LCS:", sequence)
+
+    # Expected:
+    # String 1: ABC
+    # String 2: BAC
+    # LCS length: 2
+    # LCS: BC
+```

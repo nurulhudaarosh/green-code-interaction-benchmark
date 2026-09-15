@@ -1,0 +1,95 @@
+import csv
+import re
+import sys
+import argparse
+
+
+def normalize_email(email: str) -> str:
+    if not email:
+        return ""
+    return email.strip().lower()
+
+
+def normalize_phone(phone: str) -> str:
+    if not phone:
+        return ""
+    return re.sub(r"\D", "", phone)
+
+
+def completeness_score(row: dict, fields: list) -> int:
+    score = 0
+    for f in fields:
+        val = row.get(f, "")
+        if val is not None and str(val).strip() != "":
+            score += 1
+    return score
+
+
+def normalize_csv(input_path: str, output_path: str):
+    with open(input_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames or []
+        rows = list(reader)
+
+    if "email" not in fieldnames:
+        raise ValueError("Input CSV must contain an 'email' column")
+
+    all_fields_for_score = fieldnames
+
+    groups = {}   # normalized_email -> list of (original_index, norm_row)
+    order = []    # first-seen order of normalized emails
+
+    for idx, row in enumerate(rows):
+        norm_row = dict(row)
+        norm_row["email"] = normalize_email(row.get("email", ""))
+        if "phone" in fieldnames:
+            norm_row["phone"] = normalize_phone(row.get("phone", ""))
+
+        key = norm_row["email"]
+        if not key:
+            # Skip records with no usable email; adjust as needed
+            continue
+
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+
+        groups[key].append((idx, norm_row))
+
+    best_records = {}
+    for key, entries in groups.items():
+        best = None
+        best_score = -1
+        best_idx = None
+        for idx, norm_row in entries:
+            score = completeness_score(norm_row, all_fields_for_score)
+            if score > best_score or (score == best_score and idx < best_idx):
+                best = norm_row
+                best_score = score
+                best_idx = idx
+        best_records[key] = best
+
+    sorted_keys = sorted(best_records.keys())
+
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for key in sorted_keys:
+            writer.writerow(best_records[key])
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Normalize customer CSV records.")
+    parser.add_argument("input_csv", help="Path to input CSV file")
+    parser.add_argument("output_csv", help="Path to output CSV file")
+    args = parser.parse_args()
+
+    try:
+        normalize_csv(args.input_csv, args.output_csv)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

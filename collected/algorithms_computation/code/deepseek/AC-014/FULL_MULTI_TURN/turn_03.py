@@ -1,0 +1,145 @@
+def partition_points(points, k, *, include_summary=False):
+    """
+    Sort 1D points, partition into exactly k contiguous non-empty clusters
+    minimizing within-cluster sum of squares (WCSS).
+
+    Returns:
+        include_summary=False (default):
+            (min_cost, boundaries)
+        include_summary=True:
+            (min_cost, boundaries, operation_summary)
+
+    boundaries: list of k start indices (0-based) of each cluster in sorted order.
+
+    Deterministic tie handling:
+        Among all optimal partitions, return the one whose boundary list is
+        lexicographically smallest. Realized by choosing the LARGEST optimal
+        split index t at every DP cell (ascending t with '<=').
+    """
+    n = len(points)
+    if k < 1 or k > n:
+        raise ValueError("k must satisfy 1 <= k <= n")
+
+    x = sorted(points)
+
+    # Prefix sums: P[i] = sum x[0..i-1], Q[i] = sum x[0..i-1]^2
+    P = [0.0] * (n + 1)
+    Q = [0.0] * (n + 1)
+    for i in range(n):
+        P[i + 1] = P[i] + x[i]
+        Q[i + 1] = Q[i] + x[i] * x[i]
+
+    # Counters for operation_summary (deterministic integers)
+    cost_evals = 0
+
+    def cost(l, r):
+        """Inclusive WCSS of x[l..r]."""
+        nonlocal cost_evals
+        cost_evals += 1
+        cnt = r - l + 1
+        s = P[r + 1] - P[l]
+        sq = Q[r + 1] - Q[l]
+        return sq - (s * s) / cnt
+
+    INF = float("inf")
+    dp = [[INF] * (n + 1) for _ in range(k + 1)]
+    split = [[-1] * (n + 1) for _ in range(k + 1)]
+    dp[0][0] = 0.0
+
+    dp_cells = 0
+    candidate_splits = 0
+    valid_splits_chosen = 0
+
+    for j in range(1, k + 1):
+        for i in range(j, n + 1):
+            dp_cells += 1
+            best = INF
+            best_t = -1
+            for t in range(j - 1, i):
+                candidate_splits += 1
+                if dp[j - 1][t] == INF:
+                    continue
+                c = dp[j - 1][t] + cost(t, i - 1)
+                if c <= best:          # '<=' => prefer larger t (lex-smallest boundaries)
+                    best = c
+                    best_t = t
+            dp[j][i] = best
+            split[j][i] = best_t
+            if best_t != -1:
+                valid_splits_chosen += 1
+
+    boundaries = []
+    i = n
+    reconstruction_steps = 0
+    for j in range(k, 0, -1):
+        t = split[j][i]
+        boundaries.append(t)
+        i = t
+        reconstruction_steps += 1
+    boundaries.reverse()
+
+    min_cost = dp[k][n]
+
+    if not include_summary:
+        return min_cost, boundaries
+
+    operation_summary = {
+        "n": n,
+        "k": k,
+        "dp_cells": dp_cells,
+        "candidate_splits_evaluated": candidate_splits,
+        "cost_evaluations": cost_evals,
+        "valid_splits_chosen": valid_splits_chosen,
+        "reconstruction_steps": reconstruction_steps,
+    }
+    return min_cost, boundaries, operation_summary
+
+
+# ---------------- deterministic self-tests ----------------
+if __name__ == "__main__":
+    # 1) Backward compatibility: default returns 2-tuple, unchanged behavior
+    res = partition_points([1, 2, 3, 10, 11, 12], 2)
+    assert isinstance(res, tuple) and len(res) == 2, res
+    c, b = res
+    assert abs(c - 2.0) < 1e-9 and b == [0, 3], (c, b)
+
+    # 2) Tie case unchanged
+    c, b = partition_points([0, 2, 4], 2)
+    assert c == 2.0 and b == [0, 1], (c, b)
+
+    # 3) k = n and k = 1 unchanged
+    c, b = partition_points([5, 1, 3, 2, 4], 5)
+    assert c == 0.0 and b == [0, 1, 2, 3, 4], (c, b)
+    c, b = partition_points([1, 2, 3], 1)
+    assert abs(c - 2.0 / 3.0) < 1e-9 and b == [0], (c, b)
+
+    # 4) New feature enabled -> 3-tuple with deterministic summary
+    c, b, s = partition_points([0, 2, 4], 2, include_summary=True)
+    assert c == 2.0 and b == [0, 1], (c, b)
+    assert isinstance(s, dict), s
+    assert s["n"] == 3 and s["k"] == 2, s
+    assert s["reconstruction_steps"] == 2, s
+    # dp_cells = sum over j=1..k of (n - j + 1)
+    expected_cells = sum(n_i for n_i in range(3 - 1 + 1, 3 - 2, -1))  # j=1: 3, j=2: 2
+    expected_cells = (3) + (2)
+    assert s["dp_cells"] == expected_cells == 5, s
+    # Determinism: repeat gives identical summary
+    c2, b2, s2 = partition_points([0, 2, 4], 2, include_summary=True)
+    assert (c, b, s) == (c2, b2, s2), (s, s2)
+
+    # 5) Larger deterministic case; summary must be internally consistent
+    pts = list(range(20))
+    c, b, s = partition_points(pts, 4, include_summary=True)
+    assert abs(c - 40.0) < 1e-9 and b == [0, 5, 10, 15], (c, b)
+    assert s["n"] == 20 and s["k"] == 4, s
+    assert s["dp_cells"] == sum(20 - j + 1 for j in range(1, 5)), s  # 19+18+17+16 = 70
+    assert s["candidate_splits_evaluated"] == sum(
+        (i - (j - 1)) for j in range(1, 5) for i in range(j, 21)
+    ), s
+    assert s["reconstruction_steps"] == 4, s
+    assert 0 < s["cost_evaluations"] <= s["candidate_splits_evaluated"], s
+    assert s["valid_splits_chosen"] == s["dp_cells"], s  # all cells reachable here
+
+    print("All deterministic self-tests passed.")
+    print("Original API  :", partition_points([0, 2, 4], 2))
+    print("With summary  :", partition_points([0, 2, 4], 2, include_summary=True))

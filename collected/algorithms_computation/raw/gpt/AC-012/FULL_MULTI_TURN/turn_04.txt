@@ -1,0 +1,340 @@
+## Restated problem
+
+Given two strings `X` and `Y`, compute their **Longest Common Subsequence (LCS)**.
+
+The solution must:
+
+* Compute the LCS length.
+* Reconstruct one actual LCS.
+* Use **quadratic dynamic programming** with a predecessor table.
+* Use deterministic tie-breaking:
+
+  * when `dp[i-1][j] == dp[i][j-1]`, prefer advancing in the **first string `X`** (`up`).
+* Return the original fields:
+
+  * `lcs_length`
+  * `lcs`
+* If the optional feature is enabled, also return:
+
+  * `operation_summary.major_operations`
+* The operation count is one major operation for every non-base DP cell, i.e. `len(X) * len(Y)`.
+
+### Difficult worst-case-like case
+
+A worst-case-like valid input for the stated **Θ(n × m)** complexity is two long strings with **no matching characters**, such as:
+
+```text
+X = "A" * n
+Y = "B" * m
+```
+
+Every DP cell must still be evaluated because no early termination is possible. For equal lengths `n = m`, this requires exactly `n²` DP-cell operations and produces an empty LCS.
+
+The implementation below explicitly tests this case while preserving the original deterministic behavior.
+
+```python
+from typing import Dict, Any
+
+
+def lcs(
+    x: str,
+    y: str,
+    include_operation_summary: bool = False
+) -> Dict[str, Any]:
+    """
+    Compute the Longest Common Subsequence of two strings.
+
+    Returns:
+        {
+            "lcs_length": int,
+            "lcs": str
+        }
+
+    If include_operation_summary=True, also returns:
+        {
+            "operation_summary": {
+                "major_operations": int
+            }
+        }
+
+    Tie-breaking rule:
+        If dp[i-1][j] == dp[i][j-1], prefer advancing
+        in the first string x (the "up" predecessor).
+    """
+
+    n = len(x)
+    m = len(y)
+
+    # dp[i][j] = LCS length of x[:i] and y[:j]
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+
+    # Predecessor choices:
+    # "diag" -> matched characters
+    # "up"   -> advance in first string x
+    # "left" -> advance in second string y
+    predecessor = [[None] * (m + 1) for _ in range(n + 1)]
+
+    # One major operation for every non-base DP cell.
+    operation_count = 0
+
+    # Fill the DP table.
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            operation_count += 1
+
+            if x[i - 1] == y[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+                predecessor[i][j] = "diag"
+
+            elif dp[i - 1][j] >= dp[i][j - 1]:
+                # IMPORTANT:
+                # >= enforces the required tie-breaking rule.
+                # Equality chooses "up", meaning advance in x.
+                dp[i][j] = dp[i - 1][j]
+                predecessor[i][j] = "up"
+
+            else:
+                dp[i][j] = dp[i][j - 1]
+                predecessor[i][j] = "left"
+
+    # Reconstruct one deterministic LCS.
+    result = []
+    i, j = n, m
+
+    while i > 0 and j > 0:
+        move = predecessor[i][j]
+
+        if move == "diag":
+            result.append(x[i - 1])
+            i -= 1
+            j -= 1
+
+        elif move == "up":
+            i -= 1
+
+        elif move == "left":
+            j -= 1
+
+    result.reverse()
+
+    output = {
+        "lcs_length": dp[n][m],
+        "lcs": "".join(result),
+    }
+
+    # Preserve original output when the optional feature is disabled.
+    if include_operation_summary:
+        output["operation_summary"] = {
+            "major_operations": operation_count
+        }
+
+    return output
+
+
+def is_subsequence(s: str, t: str) -> bool:
+    """Return True if s is a subsequence of t."""
+    i = 0
+
+    for char in t:
+        if i < len(s) and s[i] == char:
+            i += 1
+
+    return i == len(s)
+
+
+def run_tests() -> None:
+    # -----------------------------------------------------
+    # Original correctness tests
+    # -----------------------------------------------------
+
+    assert lcs("ABCBDAB", "BDCABA") == {
+        "lcs_length": 4,
+        "lcs": "BCBA",
+    }
+
+    assert lcs("AGGTAB", "GXTXAYB") == {
+        "lcs_length": 4,
+        "lcs": "GTAB",
+    }
+
+    assert lcs("ABC", "ABC") == {
+        "lcs_length": 3,
+        "lcs": "ABC",
+    }
+
+    assert lcs("ABC", "DEF") == {
+        "lcs_length": 0,
+        "lcs": "",
+    }
+
+    # Empty-string boundaries.
+    assert lcs("", "ABC") == {
+        "lcs_length": 0,
+        "lcs": "",
+    }
+
+    assert lcs("ABC", "") == {
+        "lcs_length": 0,
+        "lcs": "",
+    }
+
+    assert lcs("", "") == {
+        "lcs_length": 0,
+        "lcs": "",
+    }
+
+    # Repeated characters.
+    assert lcs("AAAA", "AA") == {
+        "lcs_length": 2,
+        "lcs": "AA",
+    }
+
+    # -----------------------------------------------------
+    # Deterministic tie-breaking tests
+    # -----------------------------------------------------
+
+    # Both "A" and "B" are valid LCSs of length 1.
+    # The tie rule prefers moving "up", producing "A".
+    assert lcs("AB", "BA") == {
+        "lcs_length": 1,
+        "lcs": "A",
+    }
+
+    # Symmetric case.
+    assert lcs("BA", "AB") == {
+        "lcs_length": 1,
+        "lcs": "B",
+    }
+
+    # -----------------------------------------------------
+    # Operation-summary tests
+    # -----------------------------------------------------
+
+    result = lcs(
+        "ABC",
+        "DEF",
+        include_operation_summary=True
+    )
+
+    assert result == {
+        "lcs_length": 0,
+        "lcs": "",
+        "operation_summary": {
+            "major_operations": 9
+        },
+    }
+
+    result = lcs(
+        "ABCD",
+        "ACBD",
+        include_operation_summary=True
+    )
+
+    assert result == {
+        "lcs_length": 3,
+        "lcs": "ABD",
+        "operation_summary": {
+            "major_operations": 16
+        },
+    }
+
+    # -----------------------------------------------------
+    # Difficult worst-case-like cases
+    # -----------------------------------------------------
+
+    # Case 1:
+    # Long strings with no common characters.
+    # Every DP cell must be computed.
+    n = 100
+    x = "A" * n
+    y = "B" * n
+
+    result = lcs(x, y, include_operation_summary=True)
+
+    assert result["lcs_length"] == 0
+    assert result["lcs"] == ""
+    assert result["operation_summary"]["major_operations"] == n * n
+
+    # Case 2:
+    # Long strings with reversed repeated structure.
+    # This creates many DP decisions while still having
+    # a predictable LCS length.
+    n = 100
+    x = "A" * n + "B" * n
+    y = "B" * n + "A" * n
+
+    result = lcs(x, y, include_operation_summary=True)
+
+    assert result["lcs_length"] == n
+    assert len(result["lcs"]) == n
+    assert is_subsequence(result["lcs"], x)
+    assert is_subsequence(result["lcs"], y)
+    assert result["operation_summary"]["major_operations"] == (
+        len(x) * len(y)
+    )
+
+    # Case 3:
+    # Unequal long dimensions. This confirms that the
+    # complexity is based on n * m, not just n^2.
+    n = 80
+    m = 120
+    x = "X" * n
+    y = "Y" * m
+
+    result = lcs(x, y, include_operation_summary=True)
+
+    assert result == {
+        "lcs_length": 0,
+        "lcs": "",
+        "operation_summary": {
+            "major_operations": n * m
+        },
+    }
+
+    # Case 4:
+    # Long identical strings. Every cell is still evaluated.
+    n = 100
+    x = "ABCD" * n
+    y = "ABCD" * n
+
+    result = lcs(x, y, include_operation_summary=True)
+
+    assert result["lcs_length"] == len(x)
+    assert result["lcs"] == x
+    assert result["operation_summary"]["major_operations"] == (
+        len(x) * len(y)
+    )
+
+    # -----------------------------------------------------
+    # General validity checks
+    # -----------------------------------------------------
+
+    cases = [
+        ("ABCBDAB", "BDCABA"),
+        ("AGGTAB", "GXTXAYB"),
+        ("AAAA", "AA"),
+        ("AB", "BA"),
+        ("BA", "AB"),
+        ("ABCD", "ACBD"),
+    ]
+
+    for x, y in cases:
+        result = lcs(x, y, include_operation_summary=True)
+
+        assert result["lcs_length"] == len(result["lcs"])
+        assert is_subsequence(result["lcs"], x)
+        assert is_subsequence(result["lcs"], y)
+
+        assert (
+            result["operation_summary"]["major_operations"]
+            == len(x) * len(y)
+        )
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()
+```
+
+The difficult cases do **not** change the algorithm or its output rules. They explicitly verify that the implementation still performs the full `O(n × m)` DP computation and maintains the required deterministic predecessor/tie behavior.

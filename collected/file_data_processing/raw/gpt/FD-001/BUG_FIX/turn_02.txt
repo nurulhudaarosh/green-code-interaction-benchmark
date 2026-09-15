@@ -1,0 +1,134 @@
+Yes — the important fix is to make the **“last occurrence wins”** rule explicit before selecting the latest timestamp per customer. The status totals should then be calculated **only from those final retained records**.
+
+```python
+import csv
+from collections import defaultdict
+from datetime import datetime
+from decimal import Decimal
+import argparse
+
+
+def process_events(input_file, output_file):
+    with open(input_file, "r", newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+
+    # 1. Remove duplicate customer/timestamp records.
+    # If the same (customer_id, timestamp) appears multiple times,
+    # the LAST occurrence in the input file is retained.
+    retained_by_key = {}
+
+    for row in rows:
+        key = (row["customer_id"], row["timestamp"])
+        retained_by_key[key] = row
+
+    # 2. From the de-duplicated records, select the
+    # chronologically latest record for each customer.
+    latest_by_customer = {}
+
+    for row in retained_by_key.values():
+        customer_id = row["customer_id"]
+
+        if customer_id not in latest_by_customer:
+            latest_by_customer[customer_id] = row
+            continue
+
+        current_timestamp = datetime.fromisoformat(row["timestamp"])
+        existing_timestamp = datetime.fromisoformat(
+            latest_by_customer[customer_id]["timestamp"]
+        )
+
+        if current_timestamp > existing_timestamp:
+            latest_by_customer[customer_id] = row
+
+    # 3. Calculate status totals ONLY from the retained
+    # latest record for each customer.
+    status_summary = defaultdict(
+        lambda: {
+            "count": 0,
+            "total_amount": Decimal("0")
+        }
+    )
+
+    for row in latest_by_customer.values():
+        status = row["status"]
+        amount = Decimal(row["amount"])
+
+        status_summary[status]["count"] += 1
+        status_summary[status]["total_amount"] += amount
+
+    # 4. Write deterministic output sorted by customer_id.
+    fieldnames = ["customer_id", "timestamp", "status", "amount"]
+
+    with open(output_file, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for customer_id in sorted(latest_by_customer):
+            writer.writerow(latest_by_customer[customer_id])
+
+    # 5. Print deterministic status summary.
+    print("status,count,total_amount")
+
+    for status in sorted(status_summary):
+        data = status_summary[status]
+
+        print(
+            f"{status},"
+            f"{data['count']},"
+            f"{data['total_amount']:.2f}"
+        )
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Process customer event CSV files offline."
+    )
+
+    parser.add_argument("input", help="Input CSV file")
+    parser.add_argument("output", help="Output CSV file")
+
+    args = parser.parse_args()
+
+    process_events(args.input, args.output)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+### Example
+
+If the input contains:
+
+```csv
+customer_id,timestamp,status,amount
+C001,2026-01-01T10:00:00,completed,100
+C001,2026-01-01T10:00:00,failed,150
+C001,2026-01-03T12:00:00,completed,200
+C002,2026-01-02T09:00:00,pending,50
+C002,2026-01-05T15:00:00,completed,75
+```
+
+For `C001 + 2026-01-01T10:00:00`, the **second row (`failed,150`) wins** because it occurs later in the input.
+
+Then the latest record for `C001` is:
+
+```text
+C001,2026-01-03T12:00:00,completed,200
+```
+
+So the status totals are calculated from only:
+
+```text
+C001 → completed → 200
+C002 → completed → 75
+```
+
+Result:
+
+```text
+status,count,total_amount
+completed,2,275.00
+```
+
+Thus, the duplicate `failed,150` record does **not** contribute to the status totals.

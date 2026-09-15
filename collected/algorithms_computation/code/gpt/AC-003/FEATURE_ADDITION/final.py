@@ -1,0 +1,140 @@
+from heapq import heappush, heappop
+
+
+def shortest_distances(n, edges, source, include_operation_summary=False):
+    """
+    Single-Source Route Analyzer.
+
+    Given a directed graph with non-negative edge weights, compute the
+    shortest distance from source to every vertex.
+
+    Original behavior:
+        Returns a list of distances.
+        Unreachable vertices have distance -1.
+
+    Optional feature:
+        If include_operation_summary=True, returns a dictionary containing:
+            - "distances": the original shortest-distance result
+            - "operation_summary": the number of edge-relaxation decisions
+              examined by Dijkstra's algorithm.
+
+    Parameters:
+        n : int
+            Number of vertices, labeled 0 through n-1.
+
+        edges : iterable of (u, v, weight)
+            Directed edges with non-negative weights.
+
+        source : int
+            Source vertex.
+
+        include_operation_summary : bool
+            Whether to include the additional operation_summary field.
+
+    Returns:
+        If include_operation_summary is False:
+            list[int | float]
+
+        If include_operation_summary is True:
+            {
+                "distances": list[int | float],
+                "operation_summary": int
+            }
+    """
+
+    # Build the adjacency list.
+    graph = [[] for _ in range(n)]
+
+    for u, v, weight in edges:
+        graph[u].append((v, weight))
+
+    # Sort adjacency lists for deterministic processing.
+    for neighbors in graph:
+        neighbors.sort(key=lambda edge: (edge[0], edge[1]))
+
+    INF = float("inf")
+
+    # Initial distances.
+    dist = [INF] * n
+    dist[source] = 0
+
+    # Binary heap stores (distance, vertex).
+    # Vertex ID provides deterministic tie handling.
+    heap = [(0, source)]
+
+    # Counts major computational decisions:
+    # every outgoing edge examined from a finalized, non-stale vertex.
+    operation_count = 0
+
+    while heap:
+        current_dist, u = heappop(heap)
+
+        # Ignore stale heap entries.
+        if current_dist != dist[u]:
+            continue
+
+        # Process every outgoing edge.
+        for v, weight in graph[u]:
+            operation_count += 1
+
+            new_dist = current_dist + weight
+
+            # Relaxation decision.
+            if new_dist < dist[v]:
+                dist[v] = new_dist
+                heappush(heap, (new_dist, v))
+
+    # Convert unreachable vertices to -1.
+    distances = [
+        -1 if distance == INF else distance
+        for distance in dist
+    ]
+
+    # Preserve the original output exactly when the feature
+    # is not requested.
+    if not include_operation_summary:
+        return distances
+
+    # New optional output.
+    return {
+        "distances": distances,
+        "operation_summary": operation_count,
+    }
+
+
+if __name__ == "__main__":
+    n = 5
+
+    edges = [
+        (0, 1, 4),
+        (0, 2, 1),
+        (2, 1, 2),
+        (1, 3, 1),
+        (2, 3, 5),
+    ]
+
+    source = 0
+
+    # Original behavior: unchanged output.
+    result = shortest_distances(
+        n,
+        edges,
+        source
+    )
+
+    print(result)
+    # [0, 3, 1, 4, -1]
+
+    # New feature explicitly requested.
+    result_with_summary = shortest_distances(
+        n,
+        edges,
+        source,
+        include_operation_summary=True
+    )
+
+    print(result_with_summary)
+    # {
+    #     "distances": [0, 3, 1, 4, -1],
+    #     "operation_summary": 5
+    # }

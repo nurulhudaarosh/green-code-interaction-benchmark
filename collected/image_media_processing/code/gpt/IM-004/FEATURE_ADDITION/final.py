@@ -1,0 +1,77 @@
+from pathlib import Path
+from PIL import Image
+import numpy as np
+
+
+def preprocess_images(input_dir, output_dir, clip_percentile=None):
+    """
+    Grayscale and min-max normalize every image in input_dir to 0-255,
+    optionally clipping outliers based on percentiles.
+
+    Args:
+        input_dir: Directory containing input images.
+        output_dir: Directory where processed PNGs are saved.
+        clip_percentile: Optional percentage to clip from both ends.
+                         Example: 1 clips the bottom 1% and top 1%.
+
+    Returns:
+        dict: {filename: {"min": original_min, "max": original_max}}
+    """
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if clip_percentile is not None:
+        if not 0 <= clip_percentile < 50:
+            raise ValueError("clip_percentile must be between 0 and 50.")
+
+    stats = {}
+
+    for file_path in input_dir.iterdir():
+        if not file_path.is_file():
+            continue
+
+        try:
+            with Image.open(file_path) as img:
+                # Convert to grayscale
+                gray = img.convert("L")
+                arr = np.array(gray, dtype=np.float32)
+
+                # Store original min/max before clipping
+                original_min = float(arr.min())
+                original_max = float(arr.max())
+
+                stats[file_path.name] = {
+                    "min": original_min,
+                    "max": original_max
+                }
+
+                # Determine normalization range
+                if clip_percentile is not None and clip_percentile > 0:
+                    lo = float(np.percentile(arr, clip_percentile))
+                    hi = float(np.percentile(arr, 100 - clip_percentile))
+
+                    # Clip outlier pixels
+                    clipped = np.clip(arr, lo, hi)
+                else:
+                    lo = original_min
+                    hi = original_max
+                    clipped = arr
+
+                # Handle uniformly-valued images / collapsed percentile range
+                if hi == lo:
+                    normalized = np.zeros_like(arr, dtype=np.uint8)
+                else:
+                    normalized = (
+                        (clipped - lo) / (hi - lo) * 255
+                    ).astype(np.uint8)
+
+                # Save as PNG
+                output_path = output_dir / f"{file_path.stem}.png"
+                Image.fromarray(normalized, mode="L").save(output_path)
+
+        except (OSError, ValueError):
+            # Skip files that are not valid/readable images
+            continue
+
+    return stats

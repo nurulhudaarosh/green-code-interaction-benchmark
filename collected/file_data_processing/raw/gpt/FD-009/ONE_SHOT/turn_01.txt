@@ -1,0 +1,94 @@
+```python
+import csv
+import math
+import sys
+from collections import defaultdict
+from datetime import datetime
+
+
+def parse_time(value):
+    return datetime.fromisoformat(value)
+
+
+def main():
+    if len(sys.argv) != 3:
+        print("Usage: python analyzer.py input.csv output.csv")
+        return
+
+    input_file = sys.argv[1]
+    output_file = sys.argv[2]
+
+    accounts = defaultdict(list)
+
+    with open(input_file, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+
+        for row in reader:
+            try:
+                account = row["account"]
+                timestamp = parse_time(row["timestamp"])
+                amount = float(row["amount"])
+                accounts[account].append((timestamp, amount))
+            except (KeyError, ValueError, TypeError):
+                continue
+
+    results = []
+
+    for account in sorted(accounts):
+        transactions = sorted(
+            accounts[account],
+            key=lambda x: (x[0], x[1])
+        )
+
+        for i, (timestamp, amount) in enumerate(transactions):
+            previous = [x[1] for x in transactions[max(0, i - 5):i]]
+
+            if len(previous) < 5:
+                mean = ""
+                stddev = ""
+                threshold = ""
+                unusual = False
+            else:
+                mean_value = sum(previous) / 5
+                variance = sum((x - mean_value) ** 2 for x in previous) / 5
+                stddev_value = math.sqrt(variance)
+                threshold_value = mean_value + 3 * stddev_value
+
+                mean = mean_value
+                stddev = stddev_value
+                threshold = threshold_value
+
+                if stddev_value == 0:
+                    unusual = amount > mean_value
+                else:
+                    unusual = amount > threshold_value
+
+            results.append([
+                account,
+                timestamp.isoformat(),
+                amount,
+                mean,
+                stddev,
+                threshold,
+                unusual
+            ])
+
+    with open(output_file, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "account",
+            "timestamp",
+            "amount",
+            "previous_5_mean",
+            "previous_5_population_stddev",
+            "threshold",
+            "unusual"
+        ])
+
+        for row in results:
+            writer.writerow(row)
+
+
+if __name__ == "__main__":
+    main()
+```

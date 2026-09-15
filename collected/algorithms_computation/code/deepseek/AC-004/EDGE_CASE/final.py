@@ -1,0 +1,226 @@
+import sys
+import bisect
+from typing import List, Tuple, Optional
+
+def weighted_interval_scheduling(jobs: List[Tuple[int, int, int]]) -> Tuple[int, List[int]]:
+    """
+    Find maximum profit subset of non-overlapping jobs with tie-breaking.
+    
+    Args:
+        jobs: List of (start, finish, profit) tuples
+        
+    Returns:
+        Tuple of (max_profit, list_of_job_indices) where list_of_job_indices
+        are the 0-based indices in the original input order, sorted ascending
+    """
+    if not jobs:
+        return (0, [])
+    
+    n = len(jobs)
+    
+    # Sort jobs by finish time, then by start time, then by original index for determinism
+    jobs_with_idx = [(start, finish, profit, idx) for idx, (start, finish, profit) in enumerate(jobs)]
+    jobs_with_idx.sort(key=lambda x: (x[1], x[0], x[3]))
+    
+    # Create arrays for sorted jobs
+    sorted_starts = [x[0] for x in jobs_with_idx]
+    sorted_finishes = [x[1] for x in jobs_with_idx]
+    sorted_profits = [x[2] for x in jobs_with_idx]
+    sorted_orig_idx = [x[3] for x in jobs_with_idx]
+    
+    # DP arrays
+    dp_profit = [0] * (n + 1)  # dp[i] = max profit using first i jobs (sorted order)
+    dp_choice = [None] * (n + 1)  # store choice for reconstruction
+    
+    # For each job in sorted order (1-indexed in DP)
+    for i in range(1, n + 1):
+        # Binary search for the last job that finishes <= start of job i-1
+        start_time = sorted_starts[i - 1]
+        p = bisect.bisect_right(sorted_finishes, start_time, 0, i - 1)
+        
+        # Option 1: exclude current job
+        exclude_profit = dp_profit[i - 1]
+        exclude_choice = dp_choice[i - 1]
+        
+        # Option 2: include current job
+        include_profit = sorted_profits[i - 1] + dp_profit[p]
+        
+        if include_profit > exclude_profit:
+            # Include current job (strictly greater profit)
+            dp_profit[i] = include_profit
+            dp_choice[i] = (i - 1, p)  # (current_job_index_in_sorted, previous_choice_state)
+        else:
+            # Exclude current job (either strictly better or equal profit)
+            # For equal profit, we keep the previous choice which has lexicographically 
+            # smaller original indices due to deterministic sorting and our reconstruction method
+            dp_profit[i] = exclude_profit
+            dp_choice[i] = dp_choice[i - 1] if exclude_choice is not None else None
+    
+    # Reconstruct the optimal set of jobs
+    selected_orig_indices = []
+    i = n
+    while i > 0:
+        choice = dp_choice[i]
+        if choice is None:
+            break
+        if isinstance(choice, tuple):
+            job_idx_in_sorted, prev_state = choice
+            selected_orig_indices.append(sorted_orig_idx[job_idx_in_sorted])
+            i = prev_state
+        else:
+            break
+    
+    # Return selected jobs in original index order (ascending)
+    selected_orig_indices.sort()
+    return (dp_profit[n], selected_orig_indices)
+
+
+def run_test_case(jobs: List[Tuple[int, int, int]], expected_profit: int, 
+                  expected_indices: Optional[List[int]] = None, 
+                  test_name: str = "") -> None:
+    """Run a single test case and verify results."""
+    profit, indices = weighted_interval_scheduling(jobs)
+    
+    print(f"\n{'='*60}")
+    print(f"Test: {test_name}")
+    print(f"Jobs: {jobs}")
+    print(f"Output: profit={profit}, indices={indices}")
+    
+    assert profit == expected_profit, f"Profit mismatch: expected {expected_profit}, got {profit}"
+    if expected_indices is not None:
+        assert indices == expected_indices, f"Indices mismatch: expected {expected_indices}, got {indices}"
+    print("✓ Test passed")
+
+
+def run_all_tests():
+    """Run comprehensive test suite including worst-case scenarios."""
+    
+    # Test 1: Basic case
+    run_test_case(
+        [(1, 3, 5), (2, 5, 6), (4, 6, 5)],
+        10, [0, 2], "Basic case"
+    )
+    
+    # Test 2: Jobs touching at endpoints (compatible)
+    run_test_case(
+        [(1, 2, 3), (2, 4, 4), (4, 6, 5)],
+        12, [0, 1, 2], "Endpoint touching (compatible)"
+    )
+    
+    # Test 3: Tie-breaking - equal profit, different selections
+    run_test_case(
+        [(1, 3, 5), (3, 5, 5), (1, 5, 10)],
+        10, [0, 1], "Tie-breaking - equal profit"
+    )
+    
+    # Test 4: Tie-breaking with original indices
+    run_test_case(
+        [(1, 4, 10), (2, 3, 6), (3, 5, 6), (1, 5, 12)],
+        12, [1, 2], "Tie-breaking with original indices"
+    )
+    
+    # Test 5: All jobs overlapping
+    run_test_case(
+        [(1, 5, 10), (2, 6, 20), (3, 7, 15)],
+        20, [1], "All overlapping"
+    )
+    
+    # Test 6: No jobs
+    run_test_case(
+        [],
+        0, [], "Empty input"
+    )
+    
+    # Test 7: Single job
+    run_test_case(
+        [(1, 2, 100)],
+        100, [0], "Single job"
+    )
+    
+    # Test 8: Worst-case - many jobs with same finish time (chain reaction)
+    # This tests the binary search and DP with many overlapping jobs
+    jobs_worst1 = [(i, i+1, 1) for i in range(1000)]
+    run_test_case(
+        jobs_worst1,
+        1000, list(range(1000)), "Worst-case: 1000 sequential jobs"
+    )
+    
+    # Test 9: Worst-case - all jobs overlap (only one can be chosen)
+    jobs_worst2 = [(0, 100, i) for i in range(1, 1001)]
+    run_test_case(
+        jobs_worst2,
+        1000, [999], "Worst-case: 1000 overlapping jobs"
+    )
+    
+    # Test 10: Worst-case - alternating patterns to stress binary search
+    jobs_worst3 = []
+    for i in range(500):
+        jobs_worst3.append((i*2, i*2+1, 100))  # short jobs
+        jobs_worst3.append((i*2, i*2+3, 150))  # longer overlapping jobs
+    run_test_case(
+        jobs_worst3,
+        50000, [i*2 for i in range(500)], "Worst-case: alternating short/long jobs"
+    )
+    
+    # Test 11: Complex tie-breaking with multiple equal options
+    run_test_case(
+        [(1, 2, 5), (2, 3, 5), (3, 4, 5), (1, 3, 7), (2, 4, 7)],
+        12, [0, 2, 4], "Complex tie-breaking"
+    )
+    
+    # Test 12: Zero profit jobs
+    run_test_case(
+        [(1, 2, 0), (2, 3, 0), (1, 3, 0)],
+        0, [], "Zero profit jobs"
+    )
+    
+    # Test 13: Negative start times
+    run_test_case(
+        [(-5, 1, 10), (0, 3, 5), (2, 5, 8)],
+        18, [0, 2], "Negative start times"
+    )
+    
+    # Test 14: Very large values (stress integer handling)
+    run_test_case(
+        [(1, 1000000, 10**9), (1000000, 2000000, 10**9)],
+        2 * 10**9, [0, 1], "Large values"
+    )
+    
+    # Test 15: Multiple jobs with same start and finish
+    run_test_case(
+        [(1, 2, 5), (1, 2, 10), (1, 2, 7)],
+        10, [1], "Same start/finish, different profits"
+    )
+    
+    print("\n" + "="*60)
+    print("All tests passed successfully!")
+
+
+def main():
+    """Main entry point for program execution."""
+    # If input is provided via stdin, process it
+    data = sys.stdin.read().strip().split()
+    if data:
+        n = int(data[0])
+        jobs = []
+        idx = 1
+        for _ in range(n):
+            start = int(data[idx])
+            finish = int(data[idx + 1])
+            profit = int(data[idx + 2])
+            jobs.append((start, finish, profit))
+            idx += 3
+        
+        max_profit, selected_indices = weighted_interval_scheduling(jobs)
+        print(max_profit)
+        if selected_indices:
+            print(' '.join(str(i) for i in selected_indices))
+        else:
+            print()  # empty line
+    else:
+        # No input provided, run tests
+        run_all_tests()
+
+
+if __name__ == "__main__":
+    main()

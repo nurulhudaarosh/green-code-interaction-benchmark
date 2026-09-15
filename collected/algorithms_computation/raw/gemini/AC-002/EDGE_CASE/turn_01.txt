@@ -1,0 +1,113 @@
+### Problem Overview & Constraints
+
+The goal is to determine a valid, deterministic build order for a set of packages based on their prerequisite dependencies, as well as the total number of dependency levels (the maximum depth of the dependency tree).
+
+* **Cycle Detection:** If a circular dependency exists anywhere in the system, no valid build order can be produced.
+* **Determinism:** When multiple packages are eligible to be built simultaneously, the package with the lexicographically smaller name must be processed first.
+* **Dependency Levels:** A package with no dependencies is at Level 1. A package depending on others is placed at `1 + max(level of all prerequisites)`.
+
+**Constraints & Inputs:**
+
+* **Packages & Dependencies:** Directed graph where nodes are package names (strings) and directed edges represent prerequisite constraints (`A -> B` means `A` must be built before `B`).
+* **Output:** A tuple containing:
+1. A list of strings representing the ordered build sequence (or empty list `[]` if a cycle exists).
+2. An integer representing the total number of levels (or `-1` if a cycle exists).
+
+
+
+---
+
+### Algorithm Description
+
+The solution uses **Kahn's Algorithm (Topological Sort)** modified with a **Min-Heap (Priority Queue)**:
+
+1. **In-Degree & Adjacency Setup:** Compute the in-degree (number of incoming prerequisite edges) and build an adjacency list (mapping each prerequisite to the packages that depend on it) for all unique packages.
+2. **Min-Heap Initialization:** Enqueue all packages with an initial in-degree of `0` into a min-heap. Track each package's depth level (initialized to `1` for packages with `in_degree == 0`).
+3. **Deterministic Processing:** Pop the lexicographically smallest available package from the heap, append it to the build order, and update the global max level count.
+4. **Relaxation & Level Propagation:** For each dependent package, decrement its in-degree. Set its depth level to `max(current_level, source_level + 1)`. When a dependent package's in-degree reaches `0`, push it onto the min-heap.
+5. **Cycle Verification:** If the length of the build order matches the total package count, return the order and the maximum level reached. Otherwise, a cycle exists, so return `([], -1)`.
+
+---
+
+### Python Implementation
+
+```python
+import heapq
+from typing import Dict, List, Set, Tuple
+
+def get_build_order(packages: Set[str], dependencies: List[Tuple[str, str]]) -> Tuple[List[str], int]:
+    """
+    Determines a deterministic build order and the total number of dependency levels.
+    
+    :param packages: Set of all package names.
+    :param dependencies: List of (prerequisite, dependent) pairs indicating prerequisite relations.
+    :return: Tuple of (build_order_list, number_of_levels). Returns ([], -1) if a cycle is present.
+    """
+    # Graph structure representations
+    adj_list: Dict[str, List[str]] = {p: [] for p in packages}
+    in_degree: Dict[str, int] = {p: 0 for p in packages}
+    level: Dict[str, int] = {p: 1 for p in packages}
+    
+    # Build graph topology
+    for prereq, dependent in dependencies:
+        if prereq in packages and dependent in packages:
+            adj_list[prereq].append(dependent)
+            in_degree[dependent] += 1
+
+    # Min-heap to maintain lexicographical order for zero in-degree nodes
+    min_heap: List[str] = [p for p in packages if in_degree[p] == 0]
+    heapq.heapify(min_heap)
+    
+    build_order: List[str] = []
+    max_levels = 0
+
+    while min_heap:
+        current = heapq.heappop(min_heap)
+        build_order.append(current)
+        
+        current_level = level[current]
+        if current_level > max_levels:
+            max_levels = current_level
+        
+        for neighbor in adj_list[current]:
+            in_degree[neighbor] -= 1
+            # Track longest prerequisite depth
+            level[neighbor] = max(level[neighbor], current_level + 1)
+            
+            if in_degree[neighbor] == 0:
+                heapq.heappush(min_heap, neighbor)
+
+    # If sorted count doesn't match total package count, a cycle exists
+    if len(build_order) != len(packages):
+        return [], -1
+        
+    return build_order, max_levels
+
+
+# ==========================================
+# Example Usage & Test Verification
+# ==========================================
+if __name__ == "__main__":
+    # Case 1: Valid DAG
+    pkgs = {"A", "B", "C", "D", "E"}
+    deps = [
+        ("A", "B"), # A -> B
+        ("A", "C"), # A -> C
+        ("B", "D"), # B -> D
+        ("C", "D"), # C -> D
+        ("E", "A"), # E -> A
+    ]
+    order, levels = get_build_order(pkgs, deps)
+    print("Valid DAG Test:")
+    print(f"  Build Order: {order}")   # Expected: ['E', 'A', 'B', 'C', 'D']
+    print(f"  Levels:      {levels}\n") # Expected: 4 (E -> A -> B/C -> D)
+
+    # Case 2: Cyclic Graph
+    cyclic_pkgs = {"A", "B", "C"}
+    cyclic_deps = [("A", "B"), ("B", "C"), ("C", "A")]
+    order, levels = get_build_order(cyclic_pkgs, cyclic_deps)
+    print("Cyclic Graph Test:")
+    print(f"  Build Order: {order}")   # Expected: []
+    print(f"  Levels:      {levels}")   # Expected: -1
+
+```

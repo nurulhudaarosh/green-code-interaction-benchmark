@@ -1,0 +1,11 @@
+{
+  "task_id": "FD-002",
+  "model": "gemini",
+  "interaction": "ONE_SHOT",
+  "turn": 1,
+  "saved_at": "2026-09-01T18:34:42.989540+00:00",
+  "response_sha256": "66b9adcd7ed717f8e436adc88a5989e709ea91e3a17f81b876e62f0bd1daf82d",
+  "code_sha256": "8d622ed080614cbeb9d79bffecb0937d8c9fefc0e59d44bac4e29091c06e2ebe",
+  "raw_file": ".collection/raw/gemini/FD-002/ONE_SHOT/turn_01.txt",
+  "code_file": ".collection/code/gemini/FD-002/ONE_SHOT/code.py"
+}

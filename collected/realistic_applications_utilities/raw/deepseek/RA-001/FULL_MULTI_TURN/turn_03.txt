@@ -1,0 +1,227 @@
+Here's the analyzer with minimum-amount filtering added:
+
+```python
+import csv
+from collections import defaultdict
+from datetime import datetime
+
+class ExpenseAnalyzer:
+    def __init__(self, min_amount=0.0):
+        self.expenses = []
+        self.errors = []
+        self.min_amount = float(min_amount)
+
+    def set_min_amount(self, value):
+        """Update the minimum-amount threshold."""
+        self.min_amount = float(value)
+
+    def _parse_expense(self, date, category, amount, description=""):
+        if date is None or str(date).strip() == "":
+            raise ValueError("missing date")
+        if category is None or str(category).strip() == "":
+            raise ValueError("missing category")
+        if amount is None or str(amount).strip() == "":
+            raise ValueError("missing amount")
+
+        try:
+            expense_date = datetime.strptime(str(date).strip(), "%Y-%m-%d")
+        except ValueError:
+            raise ValueError(f"invalid date '{date}' (expected YYYY-MM-DD)")
+
+        cleaned = str(amount).strip().replace("$", "").replace(",", "")
+        try:
+            amount_val = float(cleaned)
+        except ValueError:
+            raise ValueError(f"invalid amount '{amount}'")
+
+        if amount_val < 0:
+            raise ValueError(f"negative amount '{amount}'")
+
+        return {
+            "date": expense_date,
+            "category": str(category).strip(),
+            "amount": amount_val,
+            "description": str(description).strip() if description else "",
+        }
+
+    def add_expense(self, date, category, amount, description="", strict=True):
+        try:
+            record = self._parse_expense(date, category, amount, description)
+        except ValueError as e:
+            self.errors.append({
+                "raw": {"date": date, "category": category,
+                        "amount": amount, "description": description},
+                "reason": str(e),
+                "type": "malformed",
+            })
+            if strict:
+                raise
+            return False
+
+        if record["amount"] < self.min_amount:
+            self.errors.append({
+                "raw": record,
+                "reason": f"below minimum (${self.min_amount:,.2f})",
+                "type": "filtered",
+            })
+            return False
+
+        self.expenses.append(record)
+        return True
+
+    def load_from_csv(self, filepath, strict=False):
+        loaded = 0
+        with open(filepath, 'r', newline='', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            if reader.fieldnames is None:
+                self.errors.append({"raw": None,
+                                    "reason": "empty file / no header",
+                                    "type": "malformed"})
+                return (0, 1)
+            reader.fieldnames = [h.strip().lower() for h in reader.fieldnames]
+
+            for i, row in enumerate(reader, start=2):
+                if not row or all((v is None or str(v).strip() == "") for v in row.values()):
+                    continue
+                try:
+                    ok = self.add_expense(
+                        row.get("date"), row.get("category"),
+                        row.get("amount"), row.get("description", ""),
+                        strict=False,
+                    )
+                    if ok:
+                        loaded += 1
+                except Exception as e:
+                    self.errors.append({
+                        "raw": row,
+                        "reason": f"row {i}: unexpected error: {e}",
+                        "type": "malformed",
+                    })
+        return (loaded, len(self.errors))
+
+    def report_errors(self, show_filtered=True):
+        malformed = [e for e in self.errors if e.get("type") == "malformed"]
+        filtered = [e for e in self.errors if e.get("type") == "filtered"]
+
+        if malformed:
+            print(f"\n{len(malformed)} malformed record(s) rejected:")
+            print("-" * 60)
+            for i, err in enumerate(malformed, 1):
+                print(f"  [{i}] reason: {err['reason']}")
+                print(f"      raw:    {err['raw']}")
+
+        if filtered and show_filtered:
+            print(f"\n{len(filtered)} record(s) filtered out "
+                  f"(< ${self.min_amount:,.2f}):")
+            print("-" * 60)
+            for i, err in enumerate(filtered, 1):
+                r = err["raw"]
+                print(f"  [{i}] {r['date'].strftime('%Y-%m-%d')}  "
+                      f"{r['category']:<12} ${r['amount']:>9,.2f}  "
+                      f"{r['description']}")
+
+        if not malformed and not filtered:
+            print("No malformed or filtered records.")
+
+    # --- analytics ---
+
+    def total(self):
+        return sum(e["amount"] for e in self.expenses)
+
+    def by_category(self):
+        totals = defaultdict(float)
+        for e in self.expenses:
+            totals[e["category"]] += e["amount"]
+        return dict(sorted(totals.items(), key=lambda x: -x[1]))
+
+    def by_month(self):
+        totals = defaultdict(float)
+        for e in self.expenses:
+            totals[e["date"].strftime("%Y-%m")] += e["amount"]
+        return dict(sorted(totals.items()))
+
+    def top_expenses(self, n=5):
+        return sorted(self.expenses, key=lambda x: -x["amount"])[:n]
+
+    def summary(self):
+        if not self.expenses:
+            print("No valid expenses recorded.")
+            self.report_errors()
+            return
+
+        malformed = sum(1 for e in self.errors if e.get("type") == "malformed")
+        filtered = sum(1 for e in self.errors if e.get("type") == "filtered")
+
+        print("=" * 50)
+        print("EXPENSE ANALYZER SUMMARY")
+        print("=" * 50)
+        print(f"Minimum amount filter: ${self.min_amount:,.2f}")
+        print(f"Valid expenses:        {len(self.expenses)}")
+        if malformed:
+            print(f"Malformed rejected:    {malformed}")
+        if filtered:
+            print(f"Filtered (< min):      {filtered}")
+        print(f"Total amount:          ${self.total():,.2f}")
+        print(f"Average:               ${self.total()/len(self.expenses):,.2f}")
+
+        print("\n--- By Category ---")
+        for cat, amt in self.by_category().items():
+            pct = (amt / self.total()) * 100
+            print(f"  {cat:<15} ${amt:>10,.2f}  ({pct:5.1f}%)")
+
+        print("\n--- By Month ---")
+        for month, amt in self.by_month().items():
+            print(f"  {month}  ${amt:>10,.2f}")
+
+        print("\n--- Top 5 Expenses ---")
+        for e in self.top_expenses(5):
+            print(f"  {e['date'].strftime('%Y-%m-%d')}  "
+                  f"{e['category']:<12} ${e['amount']:>9,.2f}  {e['description']}")
+        print("=" * 50)
+        self.report_errors()
+
+
+if __name__ == "__main__":
+    # Filter out anything under $40
+    analyzer = ExpenseAnalyzer(min_amount=40.00)
+
+    records = [
+        ("2024-01-05", "Food",           "45.20",  "Groceries"),
+        ("2024-01-12", "Transport",      "30.00",  "Gas"),          # filtered
+        ("2024-01-20", "Food",           "$62.75", "Restaurant"),
+        ("2024-02-03", "Utilities",      "1,200",  "Electric bill"),
+        ("2024-02-14", "Entertainment",  "85.50",  "Concert tickets"),
+        ("2024-02-22", "Food",           "38.90",  "Groceries"),    # filtered
+        ("2024-03-01", "Transport",      "45.00",  "Train pass"),
+        ("2024-03-15", "Utilities",      "95.30",  "Internet"),
+        ("2024-03-18", "Snacks",         "5.00",   "Coffee"),       # filtered
+        ("2024-03-22", "Food",           "39.99",  "Lunch"),        # filtered
+        ("2024-13-01", "Food",           "20.00",  "Bad month"),    # malformed
+        ("2024-03-25", "Food",           "abc",    "Bad amount"),   # malformed
+    ]
+
+    for date, cat, amt, desc in records:
+        analyzer.add_expense(date, cat, amt, desc, strict=False)
+
+    analyzer.summary()
+```
+
+**What changed:**
+
+1. **Constructor takes `min_amount`** — default `0.0` (no filtering), so existing behavior is preserved. Pass e.g. `ExpenseAnalyzer(min_amount=40.0)` to enable.
+
+2. **`set_min_amount()`** — lets you change the threshold at runtime between analyses.
+
+3. **Filter applied at insertion, not at report time** — records below the threshold never enter `self.expenses`, so all downstream analytics (`total`, `by_category`, `by_month`, `top_expenses`) automatically respect the filter. No duplicate filtering logic to keep in sync.
+
+4. **Typed errors** — each rejection now carries a `"type"` field: `"malformed"` (bad data) vs `"filtered"` (valid but below min). This keeps the two concerns separate in the audit trail.
+
+5. **`report_errors(show_filtered=True)`** — prints the two categories in distinct sections. Pass `show_filtered=False` if you only care about data-quality problems and don't want the (expected) filter noise.
+
+6. **Summary reflects the filter** — shows the active threshold, and separately counts `malformed` vs `filtered` so you can tell at a glance whether records were dropped due to bad input or intentional policy.
+
+7. **Filtered records still recorded** — they're not silently discarded; they're kept in `self.errors` (recoverable via `analyzer.errors`) so you can still audit what was excluded and why.
+
+One design note worth flagging: filtering at insertion means if you *lower* the threshold later, previously filtered records are gone from `self.expenses`. If you'd rather filter only at *report* time (so the raw data is always complete), say the word and I'll flip it to a query-time filter instead.
+
+Want me to extend further? Good next steps: **date-range filtering** (combine with min-amount for a proper query API), **a `query()` method** with composable filters, **deduplication**, or **unit tests** covering the filter boundary (`$39.99` rejected, `$40.00` accepted).

@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+"""
+Interval Conflict Analyzer
+
+Problem: Given half-open meeting intervals [start, end), find:
+1. The maximum number of simultaneously active meetings
+2. The sorted list of start times at which that maximum begins
+
+Key Rules:
+- Half-open intervals: [start, end) - meetings are active at start time, inactive at end time
+- End events at the same timestamp occur before start events
+- Return exactly the times where the maximum is first achieved
+- Times are sorted in ascending order
+- Deterministic behavior: no randomness, external services, or human interaction
+
+Algorithm: Sweep-line over start/end events.
+- Start event: (time, +1)
+- End event: (time, -1)
+- Sort events by (time, -delta) so end events (-1) come before start events (+1) at same time
+- Sweep through events, tracking current active meetings
+- Record times when a new maximum is reached or when the maximum is achieved through a net increase
+
+Bug Report: Original implementation incorrectly records times when the count remains the same
+due to simultaneous starts and ends, rather than only recording times when the maximum
+is actually achieved (net increase to reach that count).
+
+Example showing the defect:
+meetings = [(1, 3), (2, 4), (3, 5)]
+- At time 1: count 1
+- At time 2: count 2 (meetings [1,3] and [2,4] active) - Maximum of 2 achieved
+- At time 3: meeting [1,3] ends (count -> 1), meeting [3,5] starts (count -> 2)
+  Since ends happen before starts, count sequence at time 3: 2 -> 1 -> 2
+  The maximum of 2 is NOT achieved at time 3 (it was already achieved at time 2)
+- Original code incorrectly records [2, 3], should only record [2]
+"""
+
+from typing import List, Tuple, Union
+
+
+def max_simultaneous_meetings(
+    meetings: List[Tuple[Union[int, float], Union[int, float]]]
+) -> Tuple[int, List[Union[int, float]]]:
+    """
+    Find maximum number of simultaneous meetings and the start times
+    when that maximum begins.
+
+    Args:
+        meetings: List of (start, end) half-open intervals.
+
+    Returns:
+        (max_count, sorted_times) where times are sorted ascending.
+        
+    Examples:
+        >>> max_simultaneous_meetings([(1, 3), (2, 4), (3, 5)])
+        (2, [2])  # Maximum of 2 achieved at time 2 only
+        
+        >>> max_simultaneous_meetings([(1, 4), (2, 5), (3, 6)])
+        (3, [3])  # Maximum of 3 achieved at time 3
+        
+        >>> max_simultaneous_meetings([])
+        (0, [])
+    """
+    if not meetings:
+        return 0, []
+
+    # Build events: (time, delta)
+    # delta = +1 for start, -1 for end
+    events = []
+    for start, end in meetings:
+        events.append((start, 1))   # start
+        events.append((end, -1))    # end
+
+    # Sort by (time, -delta) so ends (-1) come before starts (+1) at same time
+    events.sort(key=lambda x: (x[0], -x[1]))
+
+    max_count = 0
+    current = 0
+    max_start_times = []
+
+    i = 0
+    n = len(events)
+
+    while i < n:
+        time = events[i][0]
+        
+        # Store the count before processing events at this time
+        count_before = current
+        
+        # Process all events at this time
+        while i < n and events[i][0] == time:
+            current += events[i][1]  # +1 for start, -1 for end
+            i += 1
+        
+        # Check if we reached a new maximum or achieved the existing maximum
+        if current > max_count:
+            # New maximum reached - record this time
+            max_count = current
+            max_start_times = [time]
+        elif current == max_count and current > count_before:
+            # We reached the same maximum through a net increase
+            # This happens when starts at this time exceed ends
+            # Only record if this time isn't already recorded
+            if not max_start_times or max_start_times[-1] != time:
+                max_start_times.append(time)
+
+    return max_count, max_start_times
+
+
+def main():
+    """Test cases demonstrating the correction."""
+    print("=" * 70)
+    print("INTERVAL CONFLICT ANALYZER - TEST CASES")
+    print("=" * 70)
+    
+    # Test case 1: Bug demonstration - should NOT include time 3
+    meetings1 = [(1, 3), (2, 4), (3, 5)]
+    count1, times1 = max_simultaneous_meetings(meetings1)
+    print(f"\nTest 1 - Bug demonstration:")
+    print(f"  Meetings: {meetings1}")
+    print(f"  Counts: time 1:1, time 2:2 (MAX), time 3:2 (but not achieved)")
+    print(f"  Result: max={count1}, times={times1}")
+    print(f"  Expected: max=2, times=[2]")
+    print(f"  {'✅ PASS' if count1 == 2 and times1 == [2] else '❌ FAIL'}")
+    
+    # Test case 2: Basic overlapping
+    meetings2 = [(1, 4), (2, 5), (3, 6)]
+    count2, times2 = max_simultaneous_meetings(meetings2)
+    print(f"\nTest 2 - Basic overlapping:")
+    print(f"  Meetings: {meetings2}")
+    print(f"  Counts: time 1:1, time 2:2, time 3:3 (MAX)")
+    print(f"  Result: max={count2}, times={times2}")
+    print(f"  Expected: max=3, times=[3]")
+    print(f"  {'✅ PASS' if count2 == 3 and times2 == [3] else '❌ FAIL'}")
+    
+    # Test case 3: Equal starts and ends at same time
+    meetings3 = [(1, 4), (2, 5), (3, 4), (3, 5)]
+    count3, times3 = max_simultaneous_meetings(meetings3)
+    print(f"\nTest 3 - Equal starts/ends at same time:")
+    print(f"  Meetings: {meetings3}")
+    print(f"  At time 3: one ends, two start, net +1")
+    print(f"  Result: max={count3}, times={times3}")
+    print(f"  Expected: max=3, times=[3]")
+    print(f"  {'✅ PASS' if count3 == 3 and times3 == [3] else '❌ FAIL'}")
+    
+    # Test case 4: Multiple distinct maxima
+    meetings4 = [(1, 3), (2, 4), (4, 6), (5, 7)]
+    count4, times4 = max_simultaneous_meetings(meetings4)
+    print(f"\nTest 4 - Multiple distinct maxima:")
+    print(f"  Meetings: {meetings4}")
+    print(f"  Max of 2 achieved at times 2 and 4")
+    print(f"  Result: max={count4}, times={times4}")
+    print(f"  Expected: max=2, times=[2, 4]")
+    print(f"  {'✅ PASS' if count4 == 2 and times4 == [2, 4] else '❌ FAIL'}")
+    
+    # Test case 5: Empty list
+    meetings5 = []
+    count5, times5 = max_simultaneous_meetings(meetings5)
+    print(f"\nTest 5 - Empty list:")
+    print(f"  Meetings: {meetings5}")
+    print(f"  Result: max={count5}, times={times5}")
+    print(f"  Expected: max=0, times=[]")
+    print(f"  {'✅ PASS' if count5 == 0 and times5 == [] else '❌ FAIL'}")
+    
+    # Test case 6: Single meeting
+    meetings6 = [(5, 10)]
+    count6, times6 = max_simultaneous_meetings(meetings6)
+    print(f"\nTest 6 - Single meeting:")
+    print(f"  Meetings: {meetings6}")
+    print(f"  Result: max={count6}, times={times6}")
+    print(f"  Expected: max=1, times=[5]")
+    print(f"  {'✅ PASS' if count6 == 1 and times6 == [5] else '❌ FAIL'}")
+    
+    # Test case 7: Floating point times
+    meetings7 = [(1.5, 3.5), (2.0, 4.0), (3.5, 5.0)]
+    count7, times7 = max_simultaneous_meetings(meetings7)
+    print(f"\nTest 7 - Floating point times:")
+    print(f"  Meetings: {meetings7}")
+    print(f"  Max of 2 achieved at times 2.0 and 3.5")
+    print(f"  Result: max={count7}, times={times7}")
+    print(f"  Expected: max=2, times=[2.0, 3.5]")
+    print(f"  {'✅ PASS' if count7 == 2 and times7 == [2.0, 3.5] else '❌ FAIL'}")
+    
+    # Test case 8: No overlap
+    meetings8 = [(1, 2), (3, 4), (5, 6)]
+    count8, times8 = max_simultaneous_meetings(meetings8)
+    print(f"\nTest 8 - No overlap:")
+    print(f"  Meetings: {meetings8}")
+    print(f"  Max of 1 achieved at times 1, 3, 5")
+    print(f"  Result: max={count8}, times={times8}")
+    print(f"  Expected: max=1, times=[1, 3, 5]")
+    print(f"  {'✅ PASS' if count8 == 1 and times8 == [1, 3, 5] else '❌ FAIL'}")
+    
+    print("\n" + "=" * 70)
+    print("All test cases completed.")
+    print("=" * 70)
+
+
+if __name__ == "__main__":
+    main()

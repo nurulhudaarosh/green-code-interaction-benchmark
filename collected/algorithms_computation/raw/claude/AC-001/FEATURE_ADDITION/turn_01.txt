@@ -1,0 +1,124 @@
+```python
+Maximum Simultaneous Meetings (Sweep-Line)
+===========================================
+
+PROBLEM
+-------
+We are given a list of meetings, each represented as a half-open interval
+[start, end), meaning the meeting occupies time from `start` (inclusive)
+up to but not including `end`. Because intervals are half-open, a meeting
+ending at time t and another meeting starting at time t do NOT overlap
+(the first one has already vacated the slot).
+
+We must compute:
+  1. The maximum number of meetings that are simultaneously active at any
+     single point in time.
+  2. The sorted list of distinct time points at which that maximum count
+     is first reached (each time the active count transitions UP into
+     the maximum level — including cases where it dips below the maximum
+     and later climbs back up to it again).
+
+KEY CONSTRAINTS
+----------------
+- Intervals are half-open: [start, end), start < end for a valid meeting.
+- Tie-breaking rule at equal timestamps: an "end" event at time t must be
+  processed BEFORE a "start" event at time t, since the departing meeting
+  no longer occupies time t.
+- Solution must be deterministic: no randomness, no wall-clock time, no
+  network/API calls, no human interaction — pure function of the input.
+- Only the Python standard library may be used.
+
+REQUIRED OUTPUT
+----------------
+A tuple: (max_count: int, begin_times: List[float/int])
+where begin_times is sorted ascending and contains each timestamp at
+which the running active-meeting count rises to reach max_count.
+
+ALGORITHM (Sweep-Line)
+-----------------------
+1. Convert each interval [s, e) into two events: (s, +1) "start" and
+   (e, -1) "end".
+2. Sort all events by (time, type) where "end" (-1) sorts before
+   "start" (+1) at the same timestamp — this encodes the half-open
+   semantics.
+3. Group events by identical timestamp and sum their deltas, producing
+   a sequence of (time, net_delta) pairs in chronological order.
+4. Sweep once, accumulating a running `count`, to determine the global
+   maximum count reached.
+5. Sweep again, tracking the count before and after each timestamp's
+   delta is applied. Whenever the count crosses INTO the maximum
+   (i.e., previous count < max_count and new count == max_count),
+   record that timestamp as a "begin" point.
+6. Return the maximum and the sorted list of begin points (already in
+   ascending order since we process events chronologically).
+
+Time complexity: O(n log n) for sorting; O(n) for the two sweeps.
+Space complexity: O(n).
+```
+
+from typing import List, Tuple, Sequence
+
+
+def max_concurrent_meetings(
+    intervals: Sequence[Tuple[float, float]]
+) -> Tuple[int, List[float]]:
+    """
+    Compute the maximum number of simultaneously active meetings and the
+    sorted list of times at which that maximum begins.
+
+    Parameters
+    ----------
+    intervals : sequence of (start, end) pairs, half-open [start, end).
+                Intervals with start >= end are considered empty/invalid
+                and are skipped.
+
+    Returns
+    -------
+    (max_count, begin_times) :
+        max_count   -- the maximum number of overlapping meetings (int).
+        begin_times -- sorted list of timestamps where the active count
+                       rises up to max_count. Empty if there are no
+                       valid meetings (max_count == 0).
+    """
+    # Build events: end events use delta -1, start events use delta +1.
+    # We tag each event with a sort key component (0 for end, 1 for start)
+    # so that at equal timestamps, ends are processed before starts.
+    events: List[Tuple[float, int, int]] = []  # (time, type_rank, delta)
+    for s, e in intervals:
+        if s >= e:
+            continue  # skip degenerate/invalid intervals
+        events.append((s, 1, +1))   # start event: type_rank=1 (later)
+        events.append((e, 0, -1))   # end event:   type_rank=0 (earlier)
+
+    if not events:
+        return 0, []
+
+    events.sort(key=lambda ev: (ev[0], ev[1]))
+
+    # Collapse events into (time, net_delta) groups per distinct timestamp.
+    time_deltas: List[Tuple[float, int]] = []
+    idx = 0
+    n = len(events)
+    while idx < n:
+        t = events[idx][0]
+        net_delta = 0
+        while idx < n and events[idx][0] == t:
+            net_delta += events[idx][2]
+            idx += 1
+        time_deltas.append((t, net_delta))
+
+    # Pass 1: find the global maximum concurrent count.
+    count = 0
+    max_count = 0
+    for _, delta in time_deltas:
+        count += delta
+        if count > max_count:
+            max_count = count
+
+    # Pass 2: find every timestamp where the count rises INTO max_count.
+    begin_times: List[float] = []
+    count = 0
+    for t, delta in time_deltas:
+        prev_count = count
+        count += delta
+        if

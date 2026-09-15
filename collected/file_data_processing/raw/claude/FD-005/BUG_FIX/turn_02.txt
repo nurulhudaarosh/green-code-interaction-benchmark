@@ -1,0 +1,65 @@
+```python
+import csv
+import sys
+
+def sort_log(input_path, output_path):
+    with open(input_path, newline='', encoding='utf-8') as infile:
+        reader = csv.reader(infile, quotechar='"', doublequote=True, skipinitialspace=False)
+        rows = list(reader)
+
+    if not rows:
+        with open(output_path, "w", newline='', encoding='utf-8') as outfile:
+            pass
+        return
+
+    header = rows[0]
+    data_rows = rows[1:]
+
+    try:
+        ts_idx = header.index("timestamp")
+        sev_idx = header.index("severity")
+    except ValueError:
+        raise ValueError("Input CSV must contain 'timestamp' and 'severity' columns")
+
+    severity_order = {
+        "CRITICAL": 5,
+        "ERROR": 4,
+        "WARNING": 3,
+        "INFO": 2,
+        "DEBUG": 1,
+    }
+
+    # Attach original sequence number (zero-based) to each row for stable,
+    # deterministic tie-breaking that preserves original order.
+    indexed_rows = [(i, row) for i, row in enumerate(data_rows)]
+
+    def sort_key(item):
+        seq, row = item
+        timestamp = row[ts_idx] if ts_idx < len(row) else ""
+        severity = row[sev_idx].strip().upper() if sev_idx < len(row) else ""
+        severity_rank = severity_order.get(severity, 0)
+        return (timestamp, -severity_rank, seq)
+
+    indexed_rows.sort(key=sort_key)
+
+    sorted_rows = [row for _, row in indexed_rows]
+
+    with open(output_path, "w", newline='', encoding='utf-8') as outfile:
+        writer = csv.writer(
+            outfile,
+            quotechar='"',
+            quoting=csv.QUOTE_MINIMAL,
+            doublequote=True,
+            lineterminator="\n"
+        )
+        writer.writerow(header)
+        writer.writerows(sorted_rows)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: python log_sorter.py <input.csv> <output.csv>")
+        sys.exit(1)
+
+    sort_log(sys.argv[1], sys.argv[2])
+```

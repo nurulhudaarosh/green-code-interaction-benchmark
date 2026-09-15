@@ -1,0 +1,86 @@
+```python
+import re
+from collections import Counter, defaultdict
+
+class LogAnalyzer:
+    """Parse structured log lines and report top offenders with min-amount filtering."""
+
+    # Example line: "2024-01-15 10:23:45 ERROR auth-service Failed login for user=alice ip=10.0.0.5"
+    PATTERN = re.compile(
+        r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+"
+        r"(?P<level>DEBUG|INFO|WARN|ERROR|FATAL)\s+"
+        r"(?P<service>\S+)\s+"
+        r"(?P<msg>.+)$"
+    )
+
+    def __init__(self, min_amount: int = 1):
+        self.min_amount = min_amount
+        self.levels = Counter()
+        self.services = Counter()
+        self.by_service_level = defaultdict(Counter)
+        self.parsed = 0
+        self.skipped = 0
+
+    def feed(self, line: str) -> None:
+        m = self.PATTERN.match(line.strip())
+        if not m:
+            self.skipped += 1
+            return
+        level = m["level"]
+        service = m["service"]
+        self.levels[level] += 1
+        self.services[service] += 1
+        self.by_service_level[service][level] += 1
+        self.parsed += 1
+
+    def report(self) -> dict:
+        # Apply minimum-amount filter to every breakdown.
+        return {
+            "parsed": self.parsed,
+            "skipped": self.skipped,
+            "min_amount": self.min_amount,
+            "levels": {
+                k: v for k, v in self.levels.most_common()
+                if v >= self.min_amount
+            },
+            "services": {
+                k: v for k, v in self.services.most_common()
+                if v >= self.min_amount
+            },
+            "service_levels": {
+                svc: dict(cnt.most_common())
+                for svc, cnt in self.by_service_level.items()
+                if sum(cnt.values()) >= self.min_amount
+            },
+        }
+
+
+def analyze(lines, min_amount=2):
+    analyzer = LogAnalyzer(min_amount=min_amount)
+    for line in lines:
+        analyzer.feed(line)
+    return analyzer.report()
+
+
+if __name__ == "__main__":
+    sample = [
+        "2024-01-15 10:23:45 ERROR auth-service Failed login for user=alice ip=10.0.0.5",
+        "2024-01-15 10:23:46 ERROR auth-service Failed login for user=bob ip=10.0.0.6",
+        "2024-01-15 10:23:47 WARN  auth-service Slow response 1200ms",
+        "2024-01-15 10:23:48 INFO  api-gateway Request routed /v1/users",
+        "2024-01-15 10:23:49 ERROR db-service Connection timeout",
+        "2024-01-15 10:23:50 ERROR db-service Connection timeout",
+        "2024-01-15 10:23:51 ERROR db-service Connection timeout",
+        "this line is malformed and will be skipped",
+    ]
+
+    import json
+    print(json.dumps(analyze(sample, min_amount=2), indent=2))
+```
+
+**How the two pieces fit together:**
+
+1. **Analyzer** — `LogAnalyzer.feed()` regex-parses each line into `timestamp / level / service / message`, then increments three counters (`levels`, `services`, `by_service_level`). Malformed lines are counted as `skipped` rather than crashing.
+2. **Minimum-amount filtering** — applied at `report()` time so the same parsed data can be re-filtered with any threshold. Pass `min_amount` to the constructor or `analyze()`. Counters below the threshold are dropped from the output (e.g. `INFO`/`api-gateway` won't appear with `min_amount=2`).
+
+Sample output with `min_amount=2`: only `ERROR`, `auth-service`, and `db-service` survive — everything else is filtered.

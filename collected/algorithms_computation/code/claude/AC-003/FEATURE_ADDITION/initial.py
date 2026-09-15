@@ -1,0 +1,161 @@
+"""
+PROBLEM
+-------
+Given a directed graph with non-negative edge weights and a source vertex,
+compute the shortest distance from the source vertex to every other vertex
+in the graph.
+
+CONSTRAINTS
+-----------
+1. The graph is directed.
+2. Edge weights are non-negative (w >= 0). This guarantees Dijkstra's
+   algorithm produces correct shortest-path distances.
+3. Vertices are identified by integers 0..V-1 (V = number of vertices).
+4. The graph may be disconnected; vertices not reachable from the source
+   must be reported with distance -1.
+5. The algorithm must be deterministic: no randomness, no network access,
+   no external services, no human interaction — pure standard library only.
+
+REQUIRED OUTPUT
+---------------
+A list/array `dist` of length V such that:
+    dist[v] = length of the shortest path from source to v, if reachable
+    dist[v] = -1, if v is unreachable from source
+    dist[source] = 0
+
+ALGORITHM
+---------
+Dijkstra's algorithm using an adjacency list representation and a binary
+min-heap (Python's `heapq`) as the priority queue:
+
+1. Build adjacency list: adj[u] = list of (v, weight) for each directed
+   edge u -> v with the given weight.
+2. Initialize dist[] = infinity for all vertices, dist[source] = 0.
+3. Push (0, source) onto a min-heap keyed by tentative distance.
+4. Repeatedly pop the vertex u with the smallest tentative distance.
+   - Skip it if we've already found a better (stale heap entry).
+   - Otherwise, "relax" each outgoing edge (u, v, w): if
+     dist[u] + w < dist[v], update dist[v] and push (dist[v], v).
+5. Continue until the heap is empty. Every vertex's dist[] value is now
+   final (non-negative weights guarantee this greedy approach is correct).
+6. Convert any remaining "infinity" distances to -1 (unreachable) before
+   returning.
+
+Time complexity: O((V + E) log V) with a binary heap.
+"""
+
+import heapq
+from typing import List, Tuple
+
+
+def build_adjacency_list(num_vertices: int,
+                          edges: List[Tuple[int, int, int]]) -> List[List[Tuple[int, int]]]:
+    """
+    Build a directed adjacency list from a list of edges.
+
+    edges: list of (u, v, w) meaning a directed edge u -> v with weight w.
+    Returns adj where adj[u] = list of (v, w).
+    """
+    adj: List[List[Tuple[int, int]]] = [[] for _ in range(num_vertices)]
+    for u, v, w in edges:
+        if w < 0:
+            raise ValueError(f"Edge ({u}, {v}) has negative weight {w}; "
+                              "Dijkstra's algorithm requires non-negative weights.")
+        adj[u].append((v, w))
+    return adj
+
+
+def dijkstra(num_vertices: int,
+             adj: List[List[Tuple[int, int]]],
+             source: int) -> List[int]:
+    """
+    Compute shortest distances from `source` to all vertices using
+    Dijkstra's algorithm with a binary heap.
+
+    Returns a list `dist` of length num_vertices where dist[v] is the
+    shortest distance from source to v, or -1 if v is unreachable.
+    """
+    if not (0 <= source < num_vertices):
+        raise ValueError(f"source {source} is out of range [0, {num_vertices - 1}]")
+
+    INF = float('inf')
+    dist = [INF] * num_vertices
+    dist[source] = 0
+
+    # Min-heap of (distance, vertex). Deterministic because heapq breaks
+    # ties by comparing the second element (vertex index) when distances
+    # are equal, giving a fully deterministic ordering.
+    heap: List[Tuple[int, int]] = [(0, source)]
+
+    while heap:
+        d_u, u = heapq.heappop(heap)
+
+        # Stale entry: a shorter distance to u was already finalized.
+        if d_u > dist[u]:
+            continue
+
+        for v, w in adj[u]:
+            new_dist = d_u + w
+            if new_dist < dist[v]:
+                dist[v] = new_dist
+                heapq.heappush(heap, (new_dist, v))
+
+    # Replace unreachable (infinity) distances with -1.
+    return [d if d != INF else -1 for d in dist]
+
+
+def shortest_distances(num_vertices: int,
+                        edges: List[Tuple[int, int, int]],
+                        source: int) -> List[int]:
+    """
+    Convenience wrapper: builds the adjacency list and runs Dijkstra.
+
+    num_vertices: number of vertices, labeled 0..num_vertices-1
+    edges: list of (u, v, w) directed edges with non-negative weight w
+    source: the source vertex
+
+    Returns dist[] with -1 for unreachable vertices.
+    """
+    adj = build_adjacency_list(num_vertices, edges)
+    return dijkstra(num_vertices, adj, source)
+
+
+if __name__ == "__main__":
+    # --- Deterministic demonstration / self-test ---
+
+    # Example graph:
+    #   0 -> 1 (4)
+    #   0 -> 2 (1)
+    #   2 -> 1 (2)
+    #   1 -> 3 (1)
+    #   3 -> 4 (3)
+    #   5 -> 0 (10)   (vertex 5 has an outgoing edge but nothing points to it)
+    # Vertex 6 is completely isolated (unreachable from 0).
+    num_vertices = 7
+    edges = [
+        (0, 1, 4),
+        (0, 2, 1),
+        (2, 1, 2),
+        (1, 3, 1),
+        (3, 4, 3),
+        (5, 0, 10),
+    ]
+    source = 0
+
+    result = shortest_distances(num_vertices, edges, source)
+
+    print("Adjacency-based Dijkstra shortest distances from source", source)
+    for vertex, d in enumerate(result):
+        print(f"  vertex {vertex}: {d}")
+
+    # Expected:
+    # 0: 0  (source)
+    # 1: 3  (0 -> 2 -> 1, cost 1+2=3, cheaper than direct 0->1 cost 4)
+    # 2: 1  (0 -> 2)
+    # 3: 4  (0 -> 2 -> 1 -> 3, cost 1+2+1=4)
+    # 4: 7  (0 -> 2 -> 1 -> 3 -> 4, cost 4+3=7)
+    # 5: -1 (unreachable, no incoming edges to 5)
+    # 6: -1 (unreachable, isolated vertex)
+    expected = [0, 3, 1, 4, 7, -1, -1]
+    assert result == expected, f"Self-test failed: got {result}, expected {expected}"
+    print("\nSelf-test passed.")

@@ -1,0 +1,119 @@
+I’ll break down the problem and then implement the solution as requested.
+
+---
+
+**Problem Understanding:**  
+We are given an integer sequence.  
+We must find a **strictly increasing** subsequence (not necessarily contiguous) of **maximum length**.  
+Among all such subsequences of maximum length, we return the one whose **original index sequence** is **lexicographically smallest**.
+
+**Key Constraints:**  
+- The sequence length can be up to moderate size (say \( n \le 1000 \) or so, since we'll use \( O(n^2) \) DP).
+- Indices are 1-based in output.
+
+**Required Output:**  
+- The length of the LIS.
+- The actual indices (1-based) of the chosen subsequence.
+
+---
+
+**Algorithm (Quadratic DP with tie-breaking):**
+
+1. Let `dp[i]` = length of the longest strictly increasing subsequence ending at index `i`.
+2. Let `pred[i]` = index of the previous element in the optimal subsequence ending at `i` (or `-1` if none).
+3. To ensure **lexicographically smallest index sequence** among all optimal solutions, we must be careful when `dp[i]` can be updated from multiple predecessors with the same length.
+   - When comparing two candidate predecessors `p` and `q` that give the same `dp[i]`, we choose the one that leads to a lexicographically smaller index sequence.
+   - Since we are building from left to right, we can store the full index sequence for each position (or just the predecessor chain) and compare.
+4. Simpler approach:
+   - For each `i`, we check all `j < i` where `a[j] < a[i]`.
+   - If `dp[j] + 1 > dp[i]`, update `dp[i]` and set `pred[i] = j`.
+   - If `dp[j] + 1 == dp[i]`, compare the index sequence ending at `j` with the current best for `i`; keep the lexicographically smaller one.
+5. After filling, find the index `best_end` with maximum `dp`; if tie, choose the one with lexicographically smallest index sequence (by comparing sequences).
+6. Reconstruct by following `pred` backward, then reverse to get the correct order.
+
+---
+
+**Implementation in Python (deterministic):**
+
+```python
+def solve():
+    import sys
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    n = int(data[0])
+    a = list(map(int, data[1:1+n]))
+    
+    # dp[i] = length of LIS ending at i
+    dp = [1] * n
+    # pred[i] = previous index in the optimal subsequence, -1 if none
+    pred = [-1] * n
+    # We'll store the index sequence for each i to compare lexicographically
+    # To save memory, we can store the sequence as tuple of indices (0-based)
+    seq = [None] * n
+    for i in range(n):
+        seq[i] = (i,)
+    
+    for i in range(n):
+        best_len = 1
+        best_pred = -1
+        best_seq = (i,)
+        for j in range(i):
+            if a[j] < a[i]:
+                # candidate length
+                cand_len = dp[j] + 1
+                # candidate sequence
+                cand_seq = seq[j] + (i,)
+                if cand_len > best_len:
+                    best_len = cand_len
+                    best_pred = j
+                    best_seq = cand_seq
+                elif cand_len == best_len:
+                    # lexicographically smaller sequence?
+                    if cand_seq < best_seq:
+                        best_len = cand_len
+                        best_pred = j
+                        best_seq = cand_seq
+        dp[i] = best_len
+        pred[i] = best_pred
+        seq[i] = best_seq
+    
+    # Find the best end: max length, tie break by lexicographically smallest sequence
+    max_len = -1
+    best_end = -1
+    best_seq = None
+    for i in range(n):
+        if dp[i] > max_len:
+            max_len = dp[i]
+            best_end = i
+            best_seq = seq[i]
+        elif dp[i] == max_len:
+            if seq[i] < best_seq:
+                best_end = i
+                best_seq = seq[i]
+    
+    # Reconstruct indices (convert to 1-based for output)
+    result_indices = [idx + 1 for idx in best_seq]
+    
+    # Output: first line length, second line indices separated by space
+    print(max_len)
+    print(' '.join(map(str, result_indices)))
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+**Example:**  
+Input:
+```
+7
+3 1 2 1 3 4 2
+```
+Output:
+```
+4
+2 3 5 6
+```
+Explanation: LIS length 4, subsequence 1 2 3 4 at indices 2,3,5,6 (lexicographically smallest index sequence among all LIS of length 4).

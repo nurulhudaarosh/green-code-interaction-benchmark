@@ -1,0 +1,100 @@
+import csv
+from collections import defaultdict
+from datetime import datetime
+from decimal import Decimal
+
+
+def process_customer_events(input_file, output_file):
+    rows = []
+
+    with open(input_file, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+
+        for index, row in enumerate(reader):
+            row["_input_order"] = index
+            rows.append(row)
+
+    # Remove duplicate customer_id + timestamp records.
+    # Keep the LAST occurrence from the input file.
+    retained_by_key = {}
+
+    for row in rows:
+        key = (row["customer_id"], row["timestamp"])
+        retained_by_key[key] = row
+
+    deduplicated = list(retained_by_key.values())
+
+    # Select the chronologically latest record for each customer.
+    latest_by_customer = {}
+
+    for row in deduplicated:
+        customer_id = row["customer_id"]
+
+        if customer_id not in latest_by_customer:
+            latest_by_customer[customer_id] = row
+            continue
+
+        current = latest_by_customer[customer_id]
+
+        current_time = datetime.fromisoformat(current["timestamp"])
+        new_time = datetime.fromisoformat(row["timestamp"])
+
+        if new_time > current_time:
+            latest_by_customer[customer_id] = row
+        elif new_time == current_time:
+            if row["_input_order"] > current["_input_order"]:
+                latest_by_customer[customer_id] = row
+
+    latest_records = list(latest_by_customer.values())
+
+    # Customer-level output remains unchanged.
+    latest_records.sort(key=lambda row: row["customer_id"])
+
+    fieldnames = ["customer_id", "timestamp", "status", "amount"]
+
+    with open(output_file, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for row in latest_records:
+            writer.writerow({
+                "customer_id": row["customer_id"],
+                "timestamp": row["timestamp"],
+                "status": row["status"],
+                "amount": row["amount"]
+            })
+
+    # Status summary based ONLY on the final retained record
+    # for each customer.
+    status_summary = defaultdict(
+        lambda: {
+            "count": 0,
+            "total_amount": Decimal("0")
+        }
+    )
+
+    for row in latest_records:
+        status = row["status"]
+        amount = Decimal(row["amount"])
+
+        status_summary[status]["count"] += 1
+        status_summary[status]["total_amount"] += amount
+
+    # Deterministic status summary
+    print("\nStatus Summary")
+    print("-" * 45)
+    print(f"{'Status':<15}{'Count':>10}{'Total Amount':>20}")
+    print("-" * 45)
+
+    for status in sorted(status_summary):
+        count = status_summary[status]["count"]
+        total = status_summary[status]["total_amount"]
+
+        print(f"{status:<15}{count:>10}{total:>20}")
+
+
+if __name__ == "__main__":
+    process_customer_events(
+        input_file="customer_events.csv",
+        output_file="customer_events_processed.csv"
+    )

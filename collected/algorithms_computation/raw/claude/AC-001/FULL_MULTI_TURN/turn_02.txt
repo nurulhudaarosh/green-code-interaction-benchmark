@@ -1,0 +1,124 @@
+```pyhton
+Interval Conflict Analyzer
+---------------------------
+Sweep-line solution: maximum simultaneous meetings and the sorted
+start-times at which that maximum is reached, for half-open intervals [start, end).
+
+Rule enforced: at any timestamp, END events are applied before START events,
+since [start, end) means a meeting ending at t does not overlap one
+starting at t. This is enforced structurally (separate end/start delta maps
+processed in a fixed end-then-start order per timestamp), not by relying on
+sort stability or insertion order — which was the source of the prior defect.
+
+Deterministic, standard-library only. No network, randomness, or I/O input.
+"""
+
+from collections import defaultdict
+from typing import List, Tuple, Sequence
+
+
+def max_concurrent_meetings(
+    intervals: Sequence[Tuple[float, float]]
+) -> Tuple[int, List[float]]:
+    """
+    Args:
+        intervals: sequence of (start, end) pairs, half-open [start, end).
+                   start/end may be int or float. Intervals with
+                   start >= end are ignored (zero or negative duration).
+
+    Returns:
+        (max_count, start_times)
+        max_count   : maximum number of meetings active at once (0 if no
+                      valid intervals).
+        start_times : sorted list of distinct meeting-start timestamps at
+                      which the active count equals max_count immediately
+                      after that timestamp's events are processed
+                      (end events applied before start events at ties).
+    ```
+
+    delta_end = defaultdict(int)
+    delta_start = defaultdict(int)
+
+    for start, end in intervals:
+        if start >= end:
+            continue  # not a real interval, contributes no overlap
+        delta_start[start] += 1
+        delta_end[end] += 1
+
+    if not delta_start:
+        return 0, []
+
+    all_times = sorted(set(delta_start) | set(delta_end))
+
+    count = 0
+    max_count = 0
+    count_after_time = {}  # timestamp -> count right after processing it
+
+    for t in all_times:
+        # Structural tie-break: ends are always subtracted before starts
+        # are added, at every timestamp, unconditionally.
+        count -= delta_end.get(t, 0)
+        count += delta_start.get(t, 0)
+        count_after_time[t] = count
+        if count > max_count:
+            max_count = count
+
+    start_times = sorted(
+        t for t in delta_start
+        if count_after_time[t] == max_count
+    )
+
+    return max_count, start_times
+
+
+def _self_test() -> None:
+    """Deterministic regression tests, including the defect case above."""
+
+    # Regression test for the reported defect: touching intervals must
+    # NEVER be counted as overlapping.
+    meetings = [(1, 3), (3, 5)]
+    result = max_concurrent_meetings(meetings)
+    assert result == (1, [1, 3]), f"tie-break regression failed: {result}"
+
+    # Extended touching-interval chain
+    meetings = [(1, 3), (3, 5), (5, 7)]
+    result = max_concurrent_meetings(meetings)
+    assert result == (1, [1, 3, 5]), result
+
+    # Classic overlap case
+    meetings = [(1, 5), (2, 6), (5, 8), (4, 7)]
+    result = max_concurrent_meetings(meetings)
+    assert result == (3, [4]), result
+
+    # Multiple timestamps achieving the same maximum
+    meetings = [(0, 10), (0, 10), (5, 15), (20, 25), (20, 25)]
+    result = max_concurrent_meetings(meetings)
+    assert result == (2, [0, 20]), result
+
+    # A start and an end coinciding exactly at the peak timestamp
+    # (must not double count the ending meeting toward the max)
+    meetings = [(1, 10), (2, 5), (5, 8)]
+    # At t=5: (2,5) ends, (5,8) starts -> end applied first, so count
+    # goes 2 -> 1 -> 2, never reaching 3 at t=5.
+    result = max_concurrent_meetings(meetings)
+    assert result == (2, [1, 2]), result
+
+    # Empty input
+    assert max_concurrent_meetings([]) == (0, [])
+
+    # Invalid interval ignored
+    meetings = [(3, 3), (1, 2)]
+    result = max_concurrent_meetings(meetings)
+    assert result == (1, [1]), result
+
+    print("All self-tests passed.")
+
+
+if __name__ == "__main__":
+    _self_test()
+
+    example = [(1, 3), (3, 5)]
+    max_count, start_times = max_concurrent_meetings(example)
+    print(f"Meetings: {example}")
+    print(f"Max concurrent meetings: {max_count}")   # correctly 1, not 2
+    print(f"Start times achieving max: {start_times}")

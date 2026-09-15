@@ -1,0 +1,313 @@
+```python
+# expense_analyzer.py
+
+from datetime import date
+from numbers import Real
+from typing import Any, Dict, Iterable, List, Optional
+
+
+class ExpenseAnalyzer:
+    REQUIRED_FIELDS = ("date", "category", "amount")
+
+    def __init__(self, records: Optional[Iterable[Dict[str, Any]]] = None):
+        self.expenses: List[Dict[str, Any]] = []
+        self.rejected_count = 0
+
+        if records is not None:
+            self.load(records)
+
+    def load(self, records: Iterable[Dict[str, Any]]) -> None:
+        """Load, normalize, and validate expense records."""
+        self.expenses.clear()
+        self.rejected_count = 0
+
+        for record in records:
+            normalized = self._normalize_record(record)
+
+            if normalized is None:
+                self.rejected_count += 1
+            else:
+                self.expenses.append(normalized)
+
+    @classmethod
+    def _normalize_record(
+        cls,
+        record: Any,
+    ) -> Optional[Dict[str, Any]]:
+        if not isinstance(record, dict):
+            return None
+
+        if any(field not in record for field in cls.REQUIRED_FIELDS):
+            return None
+
+        parsed_date = cls._parse_date(record["date"])
+        if parsed_date is None:
+            return None
+
+        category = record["category"]
+
+        if not isinstance(category, str):
+            return None
+
+        category = category.strip()
+
+        if not category:
+            return None
+
+        amount = cls._parse_amount(record["amount"])
+
+        if amount is None:
+            return None
+
+        description = record.get("description", "")
+
+        if description is None:
+            description = ""
+        elif not isinstance(description, str):
+            description = str(description)
+
+        return {
+            "date": parsed_date.isoformat(),
+            "category": category,
+            "amount": amount,
+            "description": description.strip(),
+        }
+
+    @staticmethod
+    def _parse_date(value: Any) -> Optional[date]:
+        if not isinstance(value, str):
+            return None
+
+        value = value.strip()
+
+        try:
+            parsed = date.fromisoformat(value)
+        except ValueError:
+            return None
+
+        if parsed.isoformat() != value:
+            return None
+
+        return parsed
+
+    @staticmethod
+    def _parse_amount(value: Any) -> Optional[float]:
+        if isinstance(value, bool):
+            return None
+
+        if isinstance(value, Real):
+            amount = float(value)
+        elif isinstance(value, str):
+            value = value.strip()
+
+            if not value:
+                return None
+
+            try:
+                amount = float(value)
+            except ValueError:
+                return None
+        else:
+            return None
+
+        if amount != amount:
+            return None
+
+        if amount in (float("inf"), float("-inf")):
+            return None
+
+        if amount <= 0:
+            return None
+
+        return amount
+
+    def category_totals(self) -> Dict[str, float]:
+        """Return total spending grouped by category."""
+        totals: Dict[str, float] = {}
+
+        for expense in self.expenses:
+            category = expense["category"]
+            totals[category] = (
+                totals.get(category, 0.0)
+                + expense["amount"]
+            )
+
+        return totals
+
+    def total(self) -> float:
+        """Return total spending across all valid expenses."""
+        return sum(
+            expense["amount"]
+            for expense in self.expenses
+        )
+
+    def filter(
+        self,
+        category: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Filter expenses by category and/or inclusive date range.
+        """
+        normalized_category = None
+
+        if category is not None:
+            if not isinstance(category, str):
+                return []
+
+            normalized_category = category.strip()
+
+        start = (
+            self._parse_date(start_date)
+            if start_date is not None
+            else None
+        )
+
+        end = (
+            self._parse_date(end_date)
+            if end_date is not None
+            else None
+        )
+
+        if start_date is not None and start is None:
+            return []
+
+        if end_date is not None and end is None:
+            return []
+
+        if start is not None and end is not None and start > end:
+            return []
+
+        results: List[Dict[str, Any]] = []
+
+        for expense in self.expenses:
+            expense_date = date.fromisoformat(expense["date"])
+
+            if (
+                normalized_category is not None
+                and expense["category"] != normalized_category
+            ):
+                continue
+
+            if start is not None and expense_date < start:
+                continue
+
+            if end is not None and expense_date > end:
+                continue
+
+            results.append(dict(expense))
+
+        return results
+
+    def analyze(
+        self,
+        category: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Return a complete expense analysis."""
+        filtered = self.filter(
+            category=category,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        return {
+            "total": self.total(),
+            "category_totals": self.category_totals(),
+            "filtered_count": len(filtered),
+            "rejected_count": self.rejected_count,
+        }
+
+
+def analyze_expenses(
+    records: Iterable[Dict[str, Any]],
+    category: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Convenience function for one-shot analysis."""
+    analyzer = ExpenseAnalyzer(records)
+
+    return analyzer.analyze(
+        category=category,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+
+if __name__ == "__main__":
+    records = [
+        {
+            "date": "2026-09-01",
+            "category": "Food",
+            "amount": "12.50",
+            "description": "Lunch",
+        },
+        {
+            "date": "2026-09-02",
+            "category": "Transport",
+            "amount": 5,
+            "description": "Bus",
+        },
+        {
+            "date": "2026-09-03",
+            "category": "Food",
+            "amount": 8.75,
+            "description": "Dinner",
+        },
+        {
+            "date": "2026-09-04",
+            "category": "Bills",
+            "amount": "25.00",
+            "description": "Internet",
+        },
+        {
+            "date": "2026-09-05",
+            "category": "Food",
+            "amount": "-10",
+            "description": "Invalid expense",
+        },
+        {
+            "date": "2026-99-99",
+            "category": "Food",
+            "amount": "10",
+        },
+        {
+            "date": "2026-09-06",
+            "amount": "15",
+        },
+    ]
+
+    analyzer = ExpenseAnalyzer(records)
+
+    print("=== Complete Analysis ===")
+    print(analyzer.analyze())
+
+    print("\n=== Category Totals ===")
+    for category, amount in analyzer.category_totals().items():
+        print(f"{category}: {amount:.2f}")
+
+    print("\n=== Food Expenses ===")
+    for expense in analyzer.filter(category="Food"):
+        print(expense)
+
+    print("\n=== Date Range ===")
+    for expense in analyzer.filter(
+        start_date="2026-09-02",
+        end_date="2026-09-04",
+    ):
+        print(expense)
+
+    print("\n=== Food + Date Range ===")
+    for expense in analyzer.filter(
+        category="Food",
+        start_date="2026-09-01",
+        end_date="2026-09-03",
+    ):
+        print(expense)
+
+    print(f"\nTotal spending: {analyzer.total():.2f}")
+    print(f"Rejected records: {analyzer.rejected_count}")
+```

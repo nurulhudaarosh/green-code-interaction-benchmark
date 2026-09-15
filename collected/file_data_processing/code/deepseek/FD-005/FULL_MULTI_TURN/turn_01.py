@@ -1,0 +1,76 @@
+import csv
+import sys
+from datetime import datetime
+
+SEVERITY_ORDER = {
+    "CRITICAL": 5,
+    "FATAL": 5,
+    "ERROR": 4,
+    "WARN": 3,
+    "WARNING": 3,
+    "INFO": 2,
+    "DEBUG": 1,
+    "TRACE": 0,
+}
+
+def parse_timestamp(value):
+    value = value.strip()
+    formats = (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S.%f",
+        "%Y-%m-%dT%H:%M:%S.%f",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y/%m/%dT%H:%M:%S",
+    )
+    for fmt in formats:
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            pass
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.min
+
+def severity_rank(value):
+    return SEVERITY_ORDER.get(value.strip().upper(), -1)
+
+def sort_logs(input_path, output_path, timestamp_col="timestamp", severity_col="severity"):
+    with open(input_path, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames
+        if not fieldnames:
+            raise ValueError("Input CSV has no header")
+
+        if timestamp_col not in fieldnames:
+            raise ValueError(f"Missing timestamp column: {timestamp_col}")
+        if severity_col not in fieldnames:
+            raise ValueError(f"Missing severity column: {severity_col}")
+
+        rows = []
+        for seq, row in enumerate(reader):
+            rows.append((seq, row))
+
+    rows.sort(
+        key=lambda item: (
+            parse_timestamp(item[1].get(timestamp_col, "")),
+            -severity_rank(item[1].get(severity_col, "")),
+            item[0],
+        )
+    )
+
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, quoting=csv.QUOTE_MINIMAL)
+        writer.writeheader()
+        for _, row in rows:
+            writer.writerow(row)
+
+def main():
+    if len(sys.argv) != 3:
+        print("Usage: python log_sorter.py <input.csv> <output.csv>", file=sys.stderr)
+        sys.exit(1)
+    sort_logs(sys.argv[1], sys.argv[2])
+
+if __name__ == "__main__":
+    main()

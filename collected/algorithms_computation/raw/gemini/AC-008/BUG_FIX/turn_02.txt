@@ -1,0 +1,138 @@
+### Restatement of Problem & Expected Behavior
+
+The **Mutable Range Sum Engine** maintains an array of integers under dynamic point updates and inclusive range-sum queries:
+
+1. **Point Replacement (`update`):** Replaces the value at a specified index with a new integer value.
+2. **Range Sum Query (`query`):** Returns the sum of elements within an inclusive range $[L, R]$.
+
+**Expected Behavior:**
+
+* The algorithm must execute both updates and queries in $O(\log N)$ time using a **Fenwick Tree (Binary Indexed Tree)** for prefix sums and updates.
+* Sum queries must accurately reflect all preceding point replacements.
+* Operations must handle inputs safely, including 0-based to 1-based indexing conversions, boundaries, and validation.
+
+---
+
+### Analysis of the Defect
+
+In the prior implementation, the defect stem from two main issues:
+
+1. **Out-of-Bounds & Out-of-Order Query Bounds ($L > R$ or invalid indices):** While `range_query` handled `left > right` by returning `0`, it did not enforce proper boundary conditions when `left` or `right` fall outside the valid index space $[0, N-1]$.
+2. **Batch Linear Construction:** The initial Fenwick tree construction ran in $O(N \log N)$ by calling `add()` $N$ times instead of the optimal $O(N)$ linear build, and did not defensively enforce valid array access during initialization.
+
+#### Small Counterexample Demonstrating the Defect
+
+Consider an update/query sequence with boundary conditions and negative ranges:
+
+
+
+Without strict normalization and validation:
+
+* Indexing `-1` converted directly with `left + 1` evaluates to index `0`, leading to incorrect prefix subtraction or querying indices outside $[1, N]$.
+
+---
+
+### Corrected Implementation
+
+The implementation below fixes boundary handling, enforces strict deterministic range normalization, optimizes initial tree construction to $O(N)$, and ensures all operations comply with $O(\log N)$ time limits.
+
+```python
+class FenwickTree:
+    """A 1-indexed Fenwick Tree (Binary Indexed Tree) for prefix sums."""
+    def __init__(self, size: int):
+        self.n = size
+        self.tree = [0] * (self.n + 1)
+
+    @classmethod
+    def build_from_array(cls, arr: list[int]) -> "FenwickTree":
+        """Constructs a Fenwick Tree from an initial array in O(N) time."""
+        n = len(arr)
+        bit = cls(n)
+        for i in range(1, n + 1):
+            bit.tree[i] += arr[i - 1]
+            parent = i + (i & -i)
+            if parent <= n:
+                bit.tree[parent] += bit.tree[i]
+        return bit
+
+    def add(self, index: int, delta: int) -> None:
+        """Adds delta to the element at 1-based index in O(log N)."""
+        while index <= self.n:
+            self.tree[index] += delta
+            index += index & -index
+
+    def query(self, index: int) -> int:
+        """Returns cumulative sum from index 1 to index (1-based) in O(log N)."""
+        index = min(index, self.n)  # Cap at max size
+        total = 0
+        while index > 0:
+            total += self.tree[index]
+            index -= index & -index
+        return total
+
+    def range_query(self, left: int, right: int) -> int:
+        """
+        Calculates inclusive range sum [left, right] (1-based indices).
+        Returns 0 deterministically if the range is invalid or left > right.
+        """
+        if left > right or right < 1 or left > self.n:
+            return 0
+        
+        # Clamp bounds to valid [1, N] window
+        left = max(1, left)
+        right = min(self.n, right)
+        
+        return self.query(right) - self.query(left - 1)
+
+
+def process_operations(arr: list[int], operations: list[tuple]) -> list[int]:
+    """
+    Processes dynamic point updates and range sum queries.
+    
+    Operations format:
+      - ('update', index, val): Point replacement arr[index] = val
+      - ('query', left, right): Inclusive range sum from left to right
+    """
+    n = len(arr)
+    if n == 0:
+        return [0 if op[0] == 'query' else None for op in operations if op[0] == 'query']
+
+    # Initialize BIT in linear time O(N)
+    bit = FenwickTree.build_from_array(arr)
+    current_arr = list(arr)
+    results = []
+
+    for op in operations:
+        op_type = op[0]
+        
+        if op_type == 'update':
+            idx, new_val = op[1], op[2]
+            if 0 <= idx < n:
+                delta = new_val - current_arr[idx]
+                current_arr[idx] = new_val
+                bit.add(idx + 1, delta)  # Convert 0-based to 1-based index
+                
+        elif op_type == 'query':
+            left, right = op[1], op[2]
+            # Convert 0-based input indices to 1-based for internal Fenwick tree
+            res = bit.range_query(left + 1, right + 1)
+            results.append(res)
+
+    return results
+
+
+# Verification
+if __name__ == "__main__":
+    initial_array = [1, 3, 5, 7, 9, 11]
+    queries = [
+        ('query', 1, 3),    # 3 + 5 + 7 = 15
+        ('update', 1, 10),  # arr becomes [1, 10, 5, 7, 9, 11]
+        ('query', 1, 3),    # 10 + 5 + 7 = 22
+        ('query', 3, 1),    # Invalid range (left > right) -> 0
+        ('query', -2, 2),   # Out-of-bounds left clamped -> arr[0..2] = 1 + 10 + 5 = 16
+    ]
+
+    output = process_operations(initial_array, queries)
+    print("Execution Output:", output)  # [15, 22, 0, 16]
+
+```

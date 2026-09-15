@@ -1,0 +1,211 @@
+"""
+Weighted Job Scheduler
+======================
+
+Problem:
+Given a collection of jobs, where each job has:
+    - start time
+    - finish time
+    - profit
+
+select a subset of non-overlapping jobs with maximum total profit.
+
+Compatibility:
+Two jobs are compatible when the earlier job's finish time is less than
+or equal to the later job's start time. Therefore, jobs touching at
+endpoints are compatible.
+
+Tie-breaking:
+If multiple schedules have the same maximum profit, choose the schedule
+whose sequence of original job indices is lexicographically smallest.
+
+Required output:
+A dictionary containing:
+    {
+        "max_profit": <maximum achievable profit>,
+        "selected_indices": <original indices of selected jobs>
+    }
+
+Algorithm:
+1. Sort jobs by finish time.
+2. For each job, use binary search to find the latest compatible
+   predecessor whose finish time is <= the current job's start time.
+3. Use dynamic programming to compare:
+       - the best schedule excluding the current job
+       - the best schedule including the current job
+4. Apply deterministic lexicographic tie-breaking on the original-index
+   sequence.
+
+Constraints:
+- Uses only Python's standard library.
+- No network, APIs, external services, randomness, or human interaction.
+- Job indices are assigned according to their original input order.
+- Start/finish times and profits must be numeric.
+- A job must satisfy start <= finish.
+- Empty input is valid and produces zero profit and an empty schedule.
+"""
+
+from bisect import bisect_right
+from typing import Iterable, List, Sequence, Tuple, Dict, Any
+
+
+Job = Tuple[float, float, float]
+
+
+def weighted_job_scheduler(jobs: Sequence[Job]) -> Dict[str, Any]:
+    """
+    Compute an optimal weighted job schedule.
+
+    Args:
+        jobs:
+            Sequence of (start, finish, profit).
+
+    Returns:
+        {
+            "max_profit": maximum total profit,
+            "selected_indices": lexicographically smallest sequence of
+                                original indices among optimal schedules
+        }
+
+    Raises:
+        ValueError:
+            If a job does not contain exactly three values or if
+            start > finish.
+        TypeError:
+            If job values cannot be compared/arithmetic-computed as
+            required.
+    """
+
+    # Validate and attach original indices.
+    indexed_jobs: List[Tuple[float, float, float, int]] = []
+
+    for original_index, job in enumerate(jobs):
+        if len(job) != 3:
+            raise ValueError(
+                f"Job at index {original_index} must contain "
+                "(start, finish, profit)."
+            )
+
+        start, finish, profit = job
+
+        if start > finish:
+            raise ValueError(
+                f"Job at index {original_index} has start > finish."
+            )
+
+        indexed_jobs.append(
+            (start, finish, profit, original_index)
+        )
+
+    if not indexed_jobs:
+        return {
+            "max_profit": 0,
+            "selected_indices": []
+        }
+
+    # Sort primarily by finish time.
+    # Original index is used as a deterministic secondary key.
+    indexed_jobs.sort(key=lambda job: (job[1], job[3]))
+
+    n = len(indexed_jobs)
+
+    # Finish times are sorted, making predecessor lookup possible
+    # with binary search.
+    finish_times = [job[1] for job in indexed_jobs]
+
+    # predecessor[i] = index of the latest job before i whose finish
+    # time is <= job i's start time.
+    #
+    # bisect_right gives the insertion point after all finish times
+    # <= start, which is exactly what is needed because endpoint
+    # touching is allowed.
+    predecessor = [-1] * n
+
+    for i, (start, _, _, _) in enumerate(indexed_jobs):
+        position = bisect_right(finish_times, start, 0, i)
+        predecessor[i] = position - 1
+
+    # dp[i] stores the optimal result using jobs [0, i).
+    #
+    # Each state is:
+    #     (profit, selected_original_indices)
+    #
+    # Keeping the index sequence explicitly makes deterministic
+    # tie-breaking straightforward.
+    dp: List[Tuple[float, Tuple[int, ...]]] = [
+        (0, ())
+    ]
+
+    def better(
+        first: Tuple[float, Tuple[int, ...]],
+        second: Tuple[float, Tuple[int, ...]]
+    ) -> Tuple[float, Tuple[int, ...]]:
+        """
+        Return the better schedule.
+
+        Higher profit wins.
+        If profits are equal, lexicographically smaller original-index
+        sequence wins.
+        """
+        first_profit, first_indices = first
+        second_profit, second_indices = second
+
+        if first_profit > second_profit:
+            return first
+
+        if second_profit > first_profit:
+            return second
+
+        return (
+            first
+            if first_indices < second_indices
+            else second
+        )
+
+    for i in range(n):
+        start, finish, profit, original_index = indexed_jobs[i]
+
+        # Option 1: skip the current job.
+        exclude_current = dp[i]
+
+        # Option 2: include the current job.
+        pred = predecessor[i]
+        previous_profit, previous_indices = dp[pred + 1]
+
+        include_current = (
+            previous_profit + profit,
+            previous_indices + (original_index,)
+        )
+
+        dp.append(
+            better(exclude_current, include_current)
+        )
+
+    max_profit, selected_indices = dp[n]
+
+    return {
+        "max_profit": max_profit,
+        "selected_indices": list(selected_indices)
+    }
+
+
+def main() -> None:
+    """
+    Example usage.
+    """
+
+    jobs = [
+        (1, 3, 50),
+        (2, 4, 60),
+        (3, 5, 40),
+        (5, 7, 70),
+        (6, 8, 30),
+    ]
+
+    result = weighted_job_scheduler(jobs)
+
+    print(result)
+
+
+if __name__ == "__main__":
+    main()

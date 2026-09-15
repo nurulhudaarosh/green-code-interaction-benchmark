@@ -1,0 +1,81 @@
+from collections import defaultdict
+import math
+
+def analyze_transactions(transactions):
+    """
+    Analyzes a list of transaction dictionaries and flags unusually high values.
+    
+    Expected format for transactions:
+    [
+        {'account_id': 'ACC1', 'timestamp': '2026-01-01T10:00:00', 'amount': 100.0},
+        ...
+    ]
+    
+    Sorting key priority:
+    1. timestamp
+    2. transaction original index (to preserve stable deterministic order)
+    """
+    # Group transactions by account while keeping track of original order
+    accounts = defaultdict(list)
+    for index, tx in enumerate(transactions):
+        accounts[tx['account_id']].append({
+            'index': index,
+            'timestamp': tx['timestamp'],
+            'amount': float(tx['amount']),
+            'original_tx': tx
+        })
+
+    analyzed_transactions = []
+
+    # Sort account keys to maintain deterministic output across accounts
+    for account_id in sorted(accounts.keys()):
+        acc_txs = accounts[account_id]
+        
+        # Sort transactions per account by timestamp, then by original index
+        acc_txs.sort(key=lambda x: (x['timestamp'], x['index']))
+
+        history = []
+
+        for item in acc_txs:
+            current_amount = item['amount']
+            is_anomaly = False
+            rolling_mean = None
+            rolling_std_pop = None
+
+            # Calculate statistics if we have preceding amounts in history
+            if history:
+                window = history[-5:]  # Five immediately preceding amounts
+                n = len(window)
+                rolling_mean = sum(window) / n
+                
+                # Population standard deviation (divide by N)
+                variance = sum((x - rolling_mean) ** 2 for x in window) / n
+                rolling_std_pop = math.sqrt(variance)
+
+                # Anomaly Detection Rules:
+                # 1. Zero-deviation rule: If std dev is 0, any amount greater than the mean is flagged.
+                # 2. Mean + 3 * population standard deviation threshold.
+                if rolling_std_pop == 0:
+                    if current_amount > rolling_mean:
+                        is_anomaly = True
+                else:
+                    threshold = rolling_mean + 3 * rolling_std_pop
+                    if current_amount > threshold:
+                        is_anomaly = True
+
+            # Record analysis result
+            result = dict(item['original_tx'])
+            result.update({
+                'rolling_mean': round(rolling_mean, 4) if rolling_mean is not None else None,
+                'rolling_std': round(rolling_std_pop, 4) if rolling_std_pop is not None else None,
+                'is_anomaly': is_anomaly
+            })
+            analyzed_transactions.append(result)
+
+            # Update history with the current amount
+            history.append(current_amount)
+
+    # Sort final output by original input order to keep deterministic output matching input sequence
+    analyzed_transactions.sort(key=lambda x: transactions.index(next(t for t in transactions if t == {k: x[k] for k in x if k not in ['rolling_mean', 'rolling_std', 'is_anomaly']})))
+
+    return analyzed_transactions

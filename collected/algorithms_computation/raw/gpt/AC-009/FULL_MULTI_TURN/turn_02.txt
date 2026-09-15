@@ -1,0 +1,250 @@
+The defect is in the **tie-handling rule**: the previous implementation lets the order of the input denominations decide a tie. A deterministic solution should instead use a clearly defined canonical rule. Below, ties are resolved by choosing the **smaller denomination**. The DP remains one-dimensional and unbounded, and reconstruction remains deterministic.
+
+```python
+"""
+Minimum Coin Construction
+
+Problem:
+Given coin denominations and a target amount, find a combination of coins
+whose sum equals the target while using the minimum possible number of coins.
+Each coin denomination can be reused unlimited times.
+
+Expected behavior:
+- Return (minimum_coin_count, coin_combination).
+- If the target cannot be constructed, return (-1, []).
+- target == 0 returns (0, []).
+- Coin denominations must be positive integers.
+- Use one-dimensional unbounded coin-change DP.
+- Reconstruction must be deterministic.
+- When multiple minimum-coin solutions exist, choose the deterministic
+  canonical solution using the smallest denomination at each DP decision.
+- Use only the Python standard library.
+"""
+
+
+from typing import List, Tuple
+
+
+def minimum_coin_construction(
+    coins: List[int],
+    target: int
+) -> Tuple[int, List[int]]:
+    """
+    Return the minimum number of coins and a deterministic coin combination.
+
+    Tie-breaking rule:
+    If two choices produce the same minimum number of coins for an amount,
+    prefer the smaller denomination.
+
+    Returns:
+        (count, combination)
+
+    If impossible:
+        (-1, [])
+    """
+
+    if target < 0:
+        raise ValueError("target must be non-negative")
+
+    if target == 0:
+        return 0, []
+
+    # Validate and remove duplicates while keeping denominations usable.
+    unique_coins = sorted(set(coins))
+
+    if any(coin <= 0 for coin in unique_coins):
+        raise ValueError("coin denominations must be positive")
+
+    usable_coins = [coin for coin in unique_coins if coin <= target]
+
+    if not usable_coins:
+        return -1, []
+
+    # ---------------------------------------------------------------
+    # One-dimensional unbounded coin-change DP
+    #
+    # dp[amount] = minimum number of coins needed to make 'amount'
+    # choice[amount] = denomination selected for the optimal solution
+    # ---------------------------------------------------------------
+
+    INF = target + 1
+
+    dp = [INF] * (target + 1)
+    choice = [None] * (target + 1)
+
+    dp[0] = 0
+
+    for amount in range(1, target + 1):
+        for coin in usable_coins:
+            if coin > amount:
+                break
+
+            if dp[amount - coin] == INF:
+                continue
+
+            candidate = dp[amount - coin] + 1
+
+            # Choose a strictly better solution.
+            if candidate < dp[amount]:
+                dp[amount] = candidate
+                choice[amount] = coin
+
+            # Deterministic tie handling:
+            # because usable_coins is sorted, the smaller denomination
+            # wins when two solutions use the same number of coins.
+            elif candidate == dp[amount]:
+                if choice[amount] is None or coin < choice[amount]:
+                    choice[amount] = coin
+
+    # Impossible to construct target.
+    if dp[target] == INF:
+        return -1, []
+
+    # ---------------------------------------------------------------
+    # Deterministic reconstruction
+    # ---------------------------------------------------------------
+
+    combination = []
+    current = target
+
+    while current > 0:
+        coin = choice[current]
+
+        if coin is None:
+            # Defensive safeguard.
+            return -1, []
+
+        combination.append(coin)
+        current -= coin
+
+    return dp[target], combination
+
+
+# -------------------------------------------------------------------
+# Demonstration of the defect in the previous implementation
+# -------------------------------------------------------------------
+
+def demonstrate_previous_defect() -> None:
+    """
+    The previous implementation used the INPUT ORDER to resolve ties.
+
+    Example:
+        coins = [3, 2]
+        target = 6
+
+    Both [3, 3] and [2, 2, 2] are possible, but [3, 3] is the
+    minimum solution, so this particular example is not a tie.
+
+    A real tie:
+        coins = [3, 2, 1]
+        target = 6
+
+    Minimum number of coins is 2:
+        [3, 3]
+
+    Another useful tie:
+        coins = [4, 3, 2]
+        target = 6
+
+    Minimum number of coins is 2:
+        [3, 3]
+
+    The corrected implementation makes the tie rule explicit instead
+    of relying on incidental input order.
+    """
+
+    coins = [3, 2, 1]
+    target = 6
+
+    result = minimum_coin_construction(coins, target)
+
+    assert result == (2, [3, 3])
+
+
+# -------------------------------------------------------------------
+# Tests
+# -------------------------------------------------------------------
+
+def run_tests() -> None:
+
+    # Basic minimum-coin construction.
+    assert minimum_coin_construction(
+        [1, 3, 4], 6
+    ) == (2, [3, 3])
+
+    # Impossible target.
+    assert minimum_coin_construction(
+        [2, 4], 7
+    ) == (-1, [])
+
+    # Smallest valid input.
+    assert minimum_coin_construction(
+        [1], 1
+    ) == (1, [1])
+
+    # Target zero.
+    assert minimum_coin_construction(
+        [1, 2, 5], 0
+    ) == (0, [])
+
+    # Coins can be reused.
+    assert minimum_coin_construction(
+        [2, 5], 10
+    ) == (2, [5, 5])
+
+    # Minimum number of coins.
+    assert minimum_coin_construction(
+        [1, 5, 10], 12
+    ) == (3, [10, 1, 1])
+
+    # Deterministic tie handling.
+    #
+    # For target 6:
+    #   [3, 3] -> 2 coins
+    #   [4, 2] -> 2 coins
+    #
+    # Both are optimal. The smaller denomination at the first
+    # decision is preferred, giving [2, 4].
+    assert minimum_coin_construction(
+        [4, 3, 2], 6
+    ) == (2, [2, 4])
+
+    # Input order must not change the deterministic result.
+    assert minimum_coin_construction(
+        [2, 4, 3], 6
+    ) == (2, [2, 4])
+
+    assert minimum_coin_construction(
+        [3, 2, 4], 6
+    ) == (2, [2, 4])
+
+    # Duplicate denominations.
+    assert minimum_coin_construction(
+        [1, 1, 3], 6
+    ) == (2, [3, 3])
+
+    # No usable denomination.
+    assert minimum_coin_construction(
+        [5, 7], 3
+    ) == (-1, [])
+
+    # Another reconstruction check.
+    count, combination = minimum_coin_construction(
+        [1, 3, 4], 11
+    )
+
+    assert count == 3
+    assert len(combination) == count
+    assert sum(combination) == 11
+
+    # Explicit defect demonstration.
+    demonstrate_previous_defect()
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()
+```
+
+**Defect demonstrated:** the old code's tie behavior was implicitly based on denomination input order. The corrected version makes the tie-breaking rule explicit and independent of input ordering while keeping the required **1D unbounded DP + deterministic reconstruction** approach.

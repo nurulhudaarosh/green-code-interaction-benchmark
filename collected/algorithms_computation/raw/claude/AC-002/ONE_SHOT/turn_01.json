@@ -1,0 +1,11 @@
+{
+  "task_id": "AC-002",
+  "model": "claude",
+  "interaction": "ONE_SHOT",
+  "turn": 1,
+  "saved_at": "2026-09-02T15:20:43.225136+00:00",
+  "response_sha256": "23c72c2c9569c26c784043f15848b28989b4bb01512cb7fa9791e6d113985079",
+  "code_sha256": "54925ff160fd260ed8703c7509d856cea4ab3ceddce66274970046b414c3bd96",
+  "raw_file": ".collection/raw/claude/AC-002/ONE_SHOT/turn_01.txt",
+  "code_file": ".collection/code/claude/AC-002/ONE_SHOT/code.py"
+}

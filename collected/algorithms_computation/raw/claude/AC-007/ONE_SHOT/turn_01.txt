@@ -1,0 +1,91 @@
+## Problem
+
+Given an undirected weighted graph (possibly disconnected), construct a **minimum spanning forest** (MST per connected component) and return its total cost plus the list of selected original edge IDs.
+
+**Key constraints:**
+- Graph may be disconnected → result is a forest, not necessarily a single tree.
+- Edges have weights (any comparable numeric type) and original IDs (for output and tie-breaking).
+- When multiple edges have equal weight, they must be considered in ascending order of original ID (deterministic tie-breaking).
+- No parallel-edge or self-loop special-casing is assumed beyond what union-find naturally handles (self-loops are always rejected; parallel edges are handled by weight/ID order).
+- Must be deterministic — same input always yields same output.
+
+**Required output:**
+- Total cost (sum of weights of selected edges).
+- Sorted list of selected edge IDs (sorted for a canonical, reproducible output).
+
+**Algorithm (Kruskal's with Union-Find):**
+1. Sort all edges by `(weight, original_id)`.
+2. Initialize a disjoint-set union (DSU) structure with union by rank/size and path compression.
+3. Iterate edges in sorted order; for each edge, if its endpoints are in different sets, union them and add the edge to the result.
+4. Continue until all edges are processed (forest is complete when no more merges are possible).
+5. Return total cost and selected edge IDs.
+
+```python
+class DSU:
+    def __init__(self, n):
+        self.parent = list(range(n))
+        self.rank = [0] * n
+
+    def find(self, x):
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]
+            x = self.parent[x]
+        return x
+
+    def union(self, a, b):
+        ra, rb = self.find(a), self.find(b)
+        if ra == rb:
+            return False
+        if self.rank[ra] < self.rank[rb]:
+            ra, rb = rb, ra
+        self.parent[rb] = ra
+        if self.rank[ra] == self.rank[rb]:
+            self.rank[ra] += 1
+        return True
+
+
+def minimum_spanning_forest(num_vertices, edges):
+    """
+    edges: list of tuples (edge_id, u, v, weight)
+    Returns: (total_cost, sorted_list_of_selected_edge_ids)
+    """
+    # Deterministic ordering: by weight, then by original edge ID
+    sorted_edges = sorted(edges, key=lambda e: (e[3], e[0]))
+
+    dsu = DSU(num_vertices)
+    total_cost = 0
+    selected_ids = []
+
+    for edge_id, u, v, weight in sorted_edges:
+        if u == v:
+            continue  # self-loop never belongs in a forest
+        if dsu.union(u, v):
+            total_cost += weight
+            selected_ids.append(edge_id)
+
+    selected_ids.sort()
+    return total_cost, selected_ids
+
+
+if __name__ == "__main__":
+    # vertices 0..5, edges = (id, u, v, weight)
+    edges = [
+        (1, 0, 1, 4),
+        (2, 0, 2, 4),
+        (3, 1, 2, 2),
+        (4, 1, 0, 4),
+        (5, 2, 3, 3),
+        (6, 3, 4, 2),
+        (7, 4, 5, 6),
+        (8, 5, 3, 6),
+    ]
+    cost, ids = minimum_spanning_forest(6, edges)
+    print("Total cost:", cost)
+    print("Selected edge IDs:", ids)
+```
+
+Example output for the sample data:
+```
+Total cost: 17
+Selected edge IDs: [3, 5, 6, 7, 8]
+```

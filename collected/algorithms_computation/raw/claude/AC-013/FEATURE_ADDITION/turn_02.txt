@@ -1,0 +1,319 @@
+## Original Problem (restated)
+
+Preprocess an integer matrix and answer inclusive rectangle queries for **sum**, **min**, and **max**.
+
+**Constraints:**
+- Matrix is rectangular (all rows equal length), non-empty, integer-valued.
+- Each query gives `(op, row1, col1, row2, col2)` with `0 ≤ row1 ≤ row2 < R` and `0 ≤ col1 ≤ col2 < C`.
+- `op` is one of `"sum"`, `"min"`, `"max"`.
+- Deterministic: same inputs always produce same outputs; no randomness, network, or I/O side-effects beyond returning results.
+
+**Required output (unchanged):** for each query, a single numeric value — the sum, minimum, or maximum over the rectangle — in the same order as the input queries.
+
+**Algorithm (unchanged):** a 2D prefix-sum table is built once for O(1) sum queries; min/max queries directly scan the rectangle with no auxiliary structure.
+
+## New Feature
+
+When requested, each query result also includes an `operation_summary` field: a count of the major computational "decisions/operations" the algorithm performed to answer that query —
+
+- **sum**: fixed at `4` (the four prefix-sum table lookups combined via inclusion–exclusion).
+- **min/max**: the number of comparisons performed while scanning the rectangle — `max(0, area - 1)`, where `area = (row2-row1+1) * (col2-col1+1)`.
+
+This field is additive only. When the feature is disabled/not requested, output is identical to before (plain numeric results, no wrapping, no extra field).
+
+```python
+"""
+Matrix Range Query Processor (with optional operation_summary)
+================================================================
+
+Preprocesses an integer matrix and answers inclusive rectangle queries for:
+  - sum  : total of all values in the rectangle
+  - min  : minimum value in the rectangle
+  - max  : maximum value in the rectangle
+
+Design (mixed workload):
+  - SUM queries use a 2D prefix-sum table built once in O(R*C), giving O(1)
+    per query via inclusion-exclusion (a fixed 4-operation combination).
+  - MIN / MAX queries have no auxiliary structure; each query directly scans
+    the requested rectangle in O(area) time, performing (area - 1) comparisons.
+
+Optional feature: when requested, each query result is returned as a dict
+with an added 'operation_summary' field reporting the number of major
+computational operations/decisions made to answer that query. When not
+requested, behavior and output are identical to the original (a bare
+numeric value per query) — nothing about the original contract changes.
+
+Deterministic, standard-library only. No network, no randomness, no I/O
+beyond the demonstration's own print statements.
+"""
+
+from typing import List, Tuple, Union, Dict, Any
+
+Number = Union[int, float]
+
+
+class MatrixRangeQuery:
+    """Preprocesses a matrix and answers inclusive rectangle sum/min/max queries."""
+
+    def __init__(self, matrix: List[List[Number]]):
+        if not matrix or not matrix[0]:
+            raise ValueError("Matrix must be non-empty.")
+
+        row_len = len(matrix[0])
+        for row in matrix:
+            if len(row) != row_len:
+                raise ValueError("All rows must have the same length.")
+
+        self.matrix = matrix
+        self.rows = len(matrix)
+        self.cols = row_len
+        self.prefix_sum = self._build_prefix_sum(matrix)
+
+    # ---------- Preprocessing ----------
+
+    def _build_prefix_sum(self, matrix: List[List[Number]]) -> List[List[Number]]:
+        """
+        Build a (rows+1) x (cols+1) prefix-sum table P where
+        P[i][j] = sum of all matrix[a][b] with a < i and b < j.
+        O(rows * cols) time and space.
+        """
+        rows, cols = self.rows, self.cols
+        prefix = [[0] * (cols + 1) for _ in range(rows + 1)]
+
+        for i in range(1, rows + 1):
+            row_running_sum = 0
+            for j in range(1, cols + 1):
+                row_running_sum += matrix[i - 1][j - 1]
+                prefix[i][j] = prefix[i - 1][j] + row_running_sum
+
+        return prefix
+
+    # ---------- Validation ----------
+
+    def _validate_rectangle(self, row1: int, col1: int, row2: int, col2: int) -> None:
+        if not (0 <= row1 <= row2 < self.rows):
+            raise ValueError(
+                f"Invalid row range: row1={row1}, row2={row2}, rows={self.rows}"
+            )
+        if not (0 <= col1 <= col2 < self.cols):
+            raise ValueError(
+                f"Invalid col range: col1={col1}, col2={col2}, cols={self.cols}"
+            )
+
+    # ---------- Query: sum (O(1), uses prefix-sum table) ----------
+
+    def query_sum(self, row1: int, col1: int, row2: int, col2: int) -> Number:
+        """Inclusive rectangle sum via inclusion-exclusion on the prefix-sum table."""
+        self._validate_rectangle(row1, col1, row2, col2)
+        p = self.prefix_sum
+        total = (
+            p[row2 + 1][col2 + 1]
+            - p[row1][col2 + 1]
+            - p[row2 + 1][col1]
+            + p[row1][col1]
+        )
+        return total
+
+    # ---------- Query: min / max (O(area), direct scan) ----------
+
+    def query_min(self, row1: int, col1: int, row2: int, col2: int) -> Number:
+        """Inclusive rectangle minimum via direct scan (no precomputed structure)."""
+        self._validate_rectangle(row1, col1, row2, col2)
+        m = self.matrix
+        best = m[row1][col1]
+        for i in range(row1, row2 + 1):
+            row = m[i]
+            for j in range(col1, col2 + 1):
+                v = row[j]
+                if v < best:
+                    best = v
+        return best
+
+    def query_max(self, row1: int, col1: int, row2: int, col2: int) -> Number:
+        """Inclusive rectangle maximum via direct scan (no precomputed structure)."""
+        self._validate_rectangle(row1, col1, row2, col2)
+        m = self.matrix
+        best = m[row1][col1]
+        for i in range(row1, row2 + 1):
+            row = m[i]
+            for j in range(col1, col2 + 1):
+                v = row[j]
+                if v > best:
+                    best = v
+        return best
+
+    # ---------- Operation counting (for operation_summary) ----------
+
+    def _count_operations(self, op: str, row1: int, col1: int, row2: int, col2: int) -> int:
+        """
+        Deterministically count the major computational decisions/operations
+        the algorithm performs to answer this specific query.
+
+        sum: 4 fixed lookups combined via inclusion-exclusion -> always 4.
+        min/max: one comparison per cell after the first -> area - 1.
+        """
+        if op == "sum":
+            return 4
+        area = (row2 - row1 + 1) * (col2 - col1 + 1)
+        return max(0, area - 1)
+
+    # ---------- Unified dispatch ----------
+
+    def query(
+        self,
+        op: str,
+        row1: int,
+        col1: int,
+        row2: int,
+        col2: int,
+        include_summary: bool = False,
+    ) -> Union[Number, Dict[str, Any]]:
+        """
+        Dispatch a query by operation name: 'sum', 'min', or 'max'.
+
+        include_summary=False (default): returns the bare numeric result,
+            exactly as in the original implementation. No behavior change.
+        include_summary=True: returns a dict:
+            {"result": <value>, "operation_summary": {"operation_count": <int>}}
+
+        Raises ValueError for unsupported operations or out-of-bounds rectangles.
+        """
+        op_normalized = op.lower()
+        if op_normalized == "sum":
+            result = self.query_sum(row1, col1, row2, col2)
+        elif op_normalized == "min":
+            result = self.query_min(row1, col1, row2, col2)
+        elif op_normalized == "max":
+            result = self.query_max(row1, col1, row2, col2)
+        else:
+            raise ValueError(f"Unsupported operation: {op!r} (expected 'sum', 'min', or 'max')")
+
+        if not include_summary:
+            return result
+
+        op_count = self._count_operations(op_normalized, row1, col1, row2, col2)
+        return {
+            "result": result,
+            "operation_summary": {"operation_count": op_count},
+        }
+
+
+def run_queries(
+    matrix: List[List[Number]],
+    queries: List[Tuple[str, int, int, int, int]],
+    include_summary: bool = False,
+) -> List[Union[Number, Dict[str, Any]]]:
+    """
+    Convenience batch runner.
+    queries: list of (op, row1, col1, row2, col2) tuples.
+    Returns results in the same order as the input queries.
+    include_summary=False preserves the original output contract exactly.
+    """
+    solver = MatrixRangeQuery(matrix)
+    return [
+        solver.query(op, r1, c1, r2, c2, include_summary=include_summary)
+        for (op, r1, c1, r2, c2) in queries
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Brute-force reference (used only for self-check / correctness verification)
+# ---------------------------------------------------------------------------
+
+def _brute_force(matrix, op, row1, col1, row2, col2):
+    values = [matrix[i][j] for i in range(row1, row2 + 1) for j in range(col1, col2 + 1)]
+    if op == "sum":
+        return sum(values)
+    elif op == "min":
+        return min(values)
+    elif op == "max":
+        return max(values)
+    raise ValueError(op)
+
+
+def _self_check():
+    """Deterministic correctness check against brute force, covering both modes."""
+    matrix = [
+        [3, -1, 4, 1, 5],
+        [9, 2, 6, -5, 3],
+        [5, 8, 9, 7, -9],
+        [3, 2, 3, 8, 4],
+    ]
+    solver = MatrixRangeQuery(matrix)
+
+    rows, cols = len(matrix), len(matrix[0])
+    all_ok = True
+    for row1 in range(rows):
+        for row2 in range(row1, rows):
+            for col1 in range(cols):
+                for col2 in range(col1, cols):
+                    for op in ("sum", "min", "max"):
+                        expected = _brute_force(matrix, op, row1, col1, row2, col2)
+
+                        # Original contract: bare value, unchanged.
+                        plain = solver.query(op, row1, col1, row2, col2)
+                        if plain != expected:
+                            all_ok = False
+                            print(f"MISMATCH(plain) op={op} rect=({row1},{col1},{row2},{col2}) "
+                                  f"expected={expected} actual={plain}")
+
+                        # New contract: dict with result + operation_summary.
+                        detailed = solver.query(op, row1, col1, row2, col2, include_summary=True)
+                        if detailed["result"] != expected:
+                            all_ok = False
+                            print(f"MISMATCH(result) op={op} rect=({row1},{col1},{row2},{col2}) "
+                                  f"expected={expected} actual={detailed['result']}")
+
+                        area = (row2 - row1 + 1) * (col2 - col1 + 1)
+                        expected_ops = 4 if op == "sum" else max(0, area - 1)
+                        actual_ops = detailed["operation_summary"]["operation_count"]
+                        if actual_ops != expected_ops:
+                            all_ok = False
+                            print(f"MISMATCH(ops) op={op} rect=({row1},{col1},{row2},{col2}) "
+                                  f"expected_ops={expected_ops} actual_ops={actual_ops}")
+
+    print("Self-check:", "ALL PASSED" if all_ok else "FAILURES FOUND")
+
+
+def _demo():
+    matrix = [
+        [3, -1, 4, 1, 5],
+        [9, 2, 6, -5, 3],
+        [5, 8, 9, 7, -9],
+        [3, 2, 3, 8, 4],
+    ]
+
+    print("Matrix:")
+    for row in matrix:
+        print(" ", row)
+    print()
+
+    queries = [
+        ("sum", 0, 0, 3, 4),
+        ("sum", 1, 1, 2, 3),
+        ("min", 1, 1, 2, 3),
+        ("max", 1, 1, 2, 3),
+        ("min", 0, 0, 0, 0),
+        ("max", 2, 2, 2, 2),
+        ("sum", 0, 4, 3, 4),
+        ("min", 2, 0, 3, 4),
+    ]
+
+    print("-- Original behavior (include_summary=False, default) --")
+    plain_results = run_queries(matrix, queries)
+    for (op, r1, c1, r2, c2), result in zip(queries, plain_results):
+        print(f"query({op!r}, rows[{r1}:{r2}], cols[{c1}:{c2}]) -> {result}")
+
+    print()
+    print("-- New feature (include_summary=True) --")
+    detailed_results = run_queries(matrix, queries, include_summary=True)
+    for (op, r1, c1, r2, c2), result in zip(queries, detailed_results):
+        print(f"query({op!r}, rows[{r1}:{r2}], cols[{c1}:{c2}]) -> {result}")
+
+    print()
+    _self_check()
+
+
+if __name__ == "__main__":
+    _demo()
+```
