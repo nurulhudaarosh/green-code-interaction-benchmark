@@ -31,6 +31,13 @@ and were measured for energy, runtime and peak memory.
 4. Energy is almost perfectly explained by runtime
    (Spearman ρ = 0.924, p ≈ 8e−259) — in this benchmark, "more energy" means
    "more work per unit time for longer".
+5. Converted to **operational carbon**, median full multi-turn programs emit
+   **134.4 µg CO₂eq/run vs 85.7 µg for one-shot** (+4.9% median, +237.7%
+   mean; global-average grid 480 gCO₂eq/kWh). All 617 measured runs together
+   total only **≈ 0.11 g CO₂eq** — the per-run footprint is tiny, but the
+   interaction-trajectory effect is systematic and scales linearly: at one
+   billion executions the multi-turn penalty alone adds **≈ 160 kg CO₂eq**
+   (§4.8).
 
 ---
 
@@ -210,6 +217,112 @@ Failure rate of final programs by condition:
 More turns → more chances to break the program: full multi-turn final
 programs fail to run ~5× more often than one-shot programs.
 
+### 4.7 Carbon footprint of program execution (energy → CO₂eq)
+
+Measured package energy is converted to **operational CO₂eq** with a grid
+carbon-intensity factor:
+
+```
+CO₂eq (g) = (energy_J / 3.6e6) × grid_intensity_gCO₂eq/kWh
+```
+
+Using the **global average grid intensity of 480 gCO₂eq/kWh** (IEA, 2023) for
+the 617 successfully measured executions:
+
+| Condition | n | Median energy (J) | Median CO₂eq (µg) | Total CO₂eq (mg) |
+|---|---|---|---|---|
+| C0 ONE_SHOT | 149 | 0.643 | 85.7 | 20.39 |
+| C1 BUG_FIX | 126 | 0.661 | 88.1 | 17.89 |
+| C2 FEATURE_ADDITION | 122 | 0.642 | 85.6 | 18.45 |
+| C3 EDGE_CASE | 117 | 0.741 | 98.8 | 24.27 |
+| C4 FULL_MULTI_TURN | 103 | 1.008 | **134.4** | **30.56** |
+| **All measured runs** | **617** | — | — | **111.55** (0.112 g) |
+
+The full benchmark — 617 program executions — emitted only **≈ 0.11 g CO₂eq**,
+confirming that a single run is negligible. The effect of interaction
+trajectory, however, is systematic: the **paired median cost of full
+multi-turn is +4.9% (+3.7 µg CO₂eq/run)** and the **paired mean is +237.7%
+(+144.5 µg CO₂eq/run)**, mirroring the energy result exactly (CO₂eq is linear
+in energy). Projected to scale, the mean multi-turn program emits
+**≈ 297 g CO₂eq per million executions**, versus ≈ 137 g for the mean
+one-shot program — a difference of **≈ 160 g CO₂eq per million runs**.
+
+Because grid intensity varies by region, the estimate is reported across
+scenarios (medians shown for one-shot vs. full multi-turn):
+
+| Grid scenario | Intensity (gCO₂eq/kWh) | Total (mg) | C0 median (µg) | C4 median (µg) |
+|---|---|---|---|---|
+| Global average (IEA 2023) | 480 | 111.55 | 85.7 | 134.4 |
+| US average (EPA eGRID) | 369 | 85.76 | 65.9 | 103.3 |
+| EU average (EEA) | 251 | 58.33 | 44.8 | 70.3 |
+| Low-carbon (France) | 56 | 13.01 | 10.0 | 15.7 |
+
+![Carbon by condition](plots/carbon_by_condition.png)
+
+**Scope of the estimate.** This is *operational* carbon from **CPU package
+energy only**; it excludes DRAM/GPU and platform idle power, so it is a lower
+bound on runtime emissions. It also excludes **embodied** carbon and, crucially,
+the energy of **LLM inference during code generation** (chat-UI turns), which
+dominates total human–AI coding cost. The finding here is therefore about the
+*runtime footprint of the final program*, not the end-to-end footprint of the
+interaction.
+
+### 4.8 Environmental effect at scale (why the multiplier matters)
+
+A single run is negligible — the median one-shot program emits **≈ 86 µg
+CO₂eq** and the median full multi-turn program **≈ 134 µg CO₂eq**, roughly a
+forty-thousandth of a smartphone charge (≈ 3.8 g CO₂eq). The environmental question is therefore never
+one program: it is the **aggregate footprint of running AI-generated software
+in production**, where per-run differences are multiplied by billions of
+executions and by how often the multi-turn penalty pattern is reproduced.
+
+Extrapolating the per-run **means** (one-shot 136.9 µg, full multi-turn
+296.7 µg CO₂eq; global-average grid):
+
+| Executions | One-shot mean | Full multi-turn mean | Extra from multi-turn |
+|---|---|---|---|
+| 1 million | 0.14 kg CO₂eq | 0.30 kg CO₂eq | **0.16 kg CO₂eq** |
+| 1 billion | 137 kg CO₂eq | 297 kg CO₂eq | **160 kg CO₂eq** |
+| 1 trillion | 137 t CO₂eq | 297 t CO₂eq | **160 t CO₂eq** |
+
+The multi-turn penalty *alone* at one billion executions (≈ 160 kg CO₂eq) is
+equivalent to roughly **940 km of average car driving** or the CO₂ sequestered
+by **≈ 8 tree-years**. Scaling the whole benchmark mix to one billion
+executions gives ≈ 181 kg CO₂eq.
+
+Four effects make the real-world environmental impact **larger** than the raw
+ΔE suggests:
+
+1. **Participation multiplier.** With tens of millions of developers, even a
+   sub-microgram per-run penalty becomes tonnes per year; the benchmark's
+   +238% mean is a *ratio*, and ratios survive aggregation.
+2. **Rework waste.** Multi-turn programs fail ~5× more often (22.6% vs 4.5%).
+   Each failed run still burns CPU, and the retry/regeneration/debug cycle adds
+   energy and emissions that our successful-run measurement deliberately
+   excludes — so the true multi-turn penalty is under-counted.
+3. **Heavy-tail complexity blow-ups.** A single pathological program can emit
+   **≈ 9 mg CO₂eq per run** (67.9 J, an O(n²) replacement of an O(n log n)
+   algorithm). If such patterns recur across a fleet, the tail — not the median
+   — drives total emissions.
+4. **Rebound (Jevons) effect.** Cheaper, faster code generation tends to
+   *increase* the total volume of software and compute rather than reduce it,
+   so efficiency gains can be outweighed by new demand.
+
+**Countervailing effect.** Interaction is not inherently bad for the
+environment: in `realistic_applications_utilities`, multi-turn programs were
+on average 53% *more* efficient than one-shot, showing that iterative refinement
+can also discover better algorithms. The sign of the net environmental effect
+thus depends on *how* the trajectory is used, not on whether AI is used.
+
+**Bottom line.** The dominant environmental lever is aggregate **volume**
+(inference turns × program executions), not any single run. This benchmark
+shows the choice of interaction trajectory is itself a lever: full multi-turn
+systematically raises both runtime/carbon (mean +238%, median +4.9%) and
+failure rate (~5×), so preferring shorter trajectories where they suffice is a
+low-cost way to avoid emissions at scale. The estimates above are illustrative
+lower bounds — they exclude LLM-inference energy, embodied carbon, and
+DRAM/GPU power.
+
 ## 5. Findings
 
 1. **Interaction trajectory matters for energy, but through the tail, not the
@@ -335,6 +448,9 @@ python3 scripts/measure_energy.py          # -> results/energy_runs.jsonl
 # 4. aggregate + statistics (medians, paired deltas, Wilcoxon)
 python3 analysis/energy_report.py          # -> results/final/energy_report.{json,csv}
 
+# 4b. energy -> operational CO2eq (grid intensity in config/hardware.json)
+python3 analysis/carbon_report.py          # -> results/final/carbon_report.{json,csv}
+
 # 5. classify the units that still fail
 python3 scripts/energy_failures.py         # -> results/final/energy_failures.csv
 
@@ -357,7 +473,10 @@ The trajectory of AI-assisted coding measurably changes the energy of the
 final program — full multi-turn conversations produce final programs that are
 significantly more energy-hungry (p = 0.020) and ~5× more likely to be
 broken, with the penalty concentrated in algorithmic tasks and driven by
-occasional complexity blow-ups rather than uniform degradation.
+occasional complexity blow-ups rather than uniform degradation. Translated to
+carbon, the choice of trajectory is an environmental lever at scale: the
+multi-turn penalty alone adds **≈ 160 kg CO₂eq per billion executions**, and
+because it also multiplies failure and rework, that figure is a lower bound.
 
 Future work: (a) scale to the full 2 400-program matrix with all 20 tasks per
 category; (b) RAPL core/DRAM domains with frequency pinning; (c) correctness-
@@ -368,5 +487,6 @@ through API-based generation.
 ---
 
 *Data: `results/energy_runs.jsonl` (696 units, 617 measured) ·
-`results/final/energy_report.{json,csv}` · failure analysis:
+`results/final/energy_report.{json,csv}` · carbon:
+`results/final/carbon_report.{json,csv}` · failure analysis:
 `results/final/energy_failures.csv` · plots: `results/final/plots/`.*

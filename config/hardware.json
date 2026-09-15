@@ -7,5 +7,15 @@
   ],
   "requires_linux": true,
   "measurement_environment": "controlled_local_machine",
+  "grid_carbon_intensity": {
+    "primary": "global_average",
+    "sources_gco2eq_per_kwh": {
+      "global_average": 480,
+      "us_average": 369,
+      "eu_average": 251,
+      "low_carbon_france": 56
+    },
+    "notes": "Operational carbon intensity of grid electricity (gCO2eq/kWh). global_average after IEA (2023); us_average after US EPA eGRID; eu_average after EEA; low_carbon_france after RTE/EEA. Used to convert measured CPU package energy to CO2eq; DRAM/GPU and embodied carbon are excluded."
+  },
   "notes": "Final energy measurement must run on a controlled Linux machine with Intel RAPL. Colab/shared environments are only for dataset validation and development."
 }

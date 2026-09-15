@@ -1,0 +1,128 @@
+{
+  "primary_intensity_source": "global_average",
+  "intensity_gco2eq_per_kwh": 480,
+  "n_units": 617,
+  "total": {
+    "energy_j": 836.654,
+    "energy_kwh": 0.000232404,
+    "co2_g": 0.111554,
+    "co2_mg": 111.5538
+  },
+  "by_condition": {
+    "ONE_SHOT": {
+      "n": 149,
+      "mean_energy_j": 1.0265,
+      "median_energy_j": 0.643,
+      "mean_co2_ug": 136.872,
+      "median_co2_ug": 85.733,
+      "total_co2_ug": 20393.96,
+      "total_co2_mg": 20.39396
+    },
+    "BUG_FIX": {
+      "n": 126,
+      "mean_energy_j": 1.0647,
+      "median_energy_j": 0.6605,
+      "mean_co2_ug": 141.961,
+      "median_co2_ug": 88.067,
+      "total_co2_ug": 17887.107,
+      "total_co2_mg": 17.887107
+    },
+    "FEATURE_ADDITION": {
+      "n": 122,
+      "mean_energy_j": 1.134,
+      "median_energy_j": 0.6423,
+      "mean_co2_ug": 151.2,
+      "median_co2_ug": 85.647,
+      "total_co2_ug": 18446.4,
+      "total_co2_mg": 18.4464
+    },
+    "EDGE_CASE": {
+      "n": 117,
+      "mean_energy_j": 1.5555,
+      "median_energy_j": 0.741,
+      "mean_co2_ug": 207.404,
+      "median_co2_ug": 98.8,
+      "total_co2_ug": 24266.28,
+      "total_co2_mg": 24.26628
+    },
+    "FULL_MULTI_TURN": {
+      "n": 103,
+      "mean_energy_j": 2.2252,
+      "median_energy_j": 1.0077,
+      "mean_co2_ug": 296.7,
+      "median_co2_ug": 134.36,
+      "total_co2_ug": 30560.08,
+      "total_co2_mg": 30.56008
+    }
+  },
+  "delta_vs_oneshot": {
+    "BUG_FIX": {
+      "n_paired": 123,
+      "mean_pct": 19.24,
+      "median_pct": 1.39,
+      "mean_abs_ug_per_run": 7.799,
+      "median_abs_ug_per_run": 1.36,
+      "median_oneshot_co2_ug": 84.787,
+      "median_condition_co2_ug": 87.387
+    },
+    "FEATURE_ADDITION": {
+      "n_paired": 117,
+      "mean_pct": 83.17,
+      "median_pct": 2.27,
+      "mean_abs_ug_per_run": 15.346,
+      "median_abs_ug_per_run": 2.08,
+      "median_oneshot_co2_ug": 85.733,
+      "median_condition_co2_ug": 85.653
+    },
+    "EDGE_CASE": {
+      "n_paired": 113,
+      "mean_pct": 160.02,
+      "median_pct": 3.04,
+      "mean_abs_ug_per_run": 58.494,
+      "median_abs_ug_per_run": 2.773,
+      "median_oneshot_co2_ug": 91.173,
+      "median_condition_co2_ug": 98.8
+    },
+    "FULL_MULTI_TURN": {
+      "n_paired": 99,
+      "mean_pct": 237.72,
+      "median_pct": 4.94,
+      "mean_abs_ug_per_run": 144.478,
+      "median_abs_ug_per_run": 3.693,
+      "median_oneshot_co2_ug": 108.373,
+      "median_condition_co2_ug": 134.36
+    }
+  },
+  "scaling": {
+    "median_oneshot_co2_ug_per_run": 85.733,
+    "median_multi_turn_co2_ug_per_run": 134.36,
+    "extra_co2_ug_per_multi_turn_run": 48.627,
+    "projected_1e6_runs_g": 296.7
+  },
+  "sensitivity_by_intensity": {
+    "global_average": {
+      "intensity_gco2eq_per_kwh": 480,
+      "total_co2_mg": 111.553827,
+      "median_oneshot_co2_ug": 85.733,
+      "median_multi_turn_co2_ug": 134.36
+    },
+    "us_average": {
+      "intensity_gco2eq_per_kwh": 369,
+      "total_co2_mg": 85.757004,
+      "median_oneshot_co2_ug": 65.907,
+      "median_multi_turn_co2_ug": 103.289
+    },
+    "eu_average": {
+      "intensity_gco2eq_per_kwh": 251,
+      "total_co2_mg": 58.333355,
+      "median_oneshot_co2_ug": 44.831,
+      "median_multi_turn_co2_ug": 70.259
+    },
+    "low_carbon_france": {
+      "intensity_gco2eq_per_kwh": 56,
+      "total_co2_mg": 13.014613,
+      "median_oneshot_co2_ug": 10.002,
+      "median_multi_turn_co2_ug": 15.675
+    }
+  }
+}

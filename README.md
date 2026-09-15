@@ -52,7 +52,9 @@ prompts, fresh conversation per condition, no manual repair of code).
 
 Energy metric: joules per successful program execution, with
 ΔE = (E_MT − E_ST)/E_ST × 100; secondary metrics: runtime, peak memory,
-CPU utilization, energy per unit runtime.
+CPU utilization, energy per unit runtime. Energy is additionally converted
+to operational CO2eq using a configurable grid carbon intensity
+(`config/hardware.json` → `grid_carbon_intensity`).
 
 ## Repository Layout
 
@@ -185,6 +187,7 @@ python3 runner/measure_unit.py --unit-file q.json   # measure one unit by hand
 # 5. Analysis (also run automatically at the end of every pipeline pass)
 python3 analysis/aggregate.py                  # -> results/processed/metrics.csv
 python3 analysis/energy_analysis.py            # -> delta_energy.csv, energy_summary.json
+python3 analysis/carbon_report.py              # -> carbon_report.{json,csv} (energy -> CO2eq)
 python3 analysis/interaction_analysis.py       # -> interaction_breakdown.csv
 python3 analysis/rq_statistics.py              # -> statistical_tests.json (Wilcoxon, Kruskal)
 python3 analysis/plots.py                      # -> results/final/plots/*.png

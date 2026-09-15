@@ -138,6 +138,7 @@ def pipeline(args):
 
     step("5/5 ANALYZE", [PY, "analysis/aggregate.py"], allow_fail=True)
     step("5/5 ANALYZE", [PY, "analysis/energy_analysis.py"], allow_fail=True)
+    step("5/5 ANALYZE", [PY, "analysis/carbon_report.py"], allow_fail=True)
     step("5/5 ANALYZE", [PY, "analysis/interaction_analysis.py"], allow_fail=True)
     step("5/5 ANALYZE", [PY, "analysis/rq_statistics.py"], allow_fail=True)
     step("5/5 ANALYZE", [PY, "analysis/plots.py"], allow_fail=True)

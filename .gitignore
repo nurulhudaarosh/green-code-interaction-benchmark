@@ -40,6 +40,8 @@ results/.file_ledger.lock
 !results/final/presentation.md
 !results/final/energy_report.csv
 !results/final/energy_report.json
+!results/final/carbon_report.csv
+!results/final/carbon_report.json
 !results/final/energy_failures.csv
 !results/final/plots/
 !results/final/plots/**
