@@ -81,3 +81,10 @@
   analysis/fix_delta_plots.py recomputes 990 paired deltas from the joined
   corpus and regenerates both by-model bars and the boxplot; synced to
   docx/latex images, docx/pdf rebuilt. Pushed as 9fb4e0c.
+- Real auto-indexes: literal Figure 1-12/Table 1-21 numbering (headless LO
+  renders every SEQ as 1) + static Contents/LoF/LoT with PDF-derived page
+  numbers (scripts/finalize_docx.py, monotone LoT, 0 placeholders).
+- Presentation/proposal mined into journal + docx: provenance + pilot,
+  i5-8250U host, adaptive invocation/aliasing/rescue, Dream paper +
+  EffiBench (+2 refs), carbon scope + current-data scale numbers, author
+  contributions. LaTeX float pile-up fixed (placeins/htbp). Pushed 9d56d85.
