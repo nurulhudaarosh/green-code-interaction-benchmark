@@ -106,3 +106,5 @@
   mislam223301@bscse.uiu.ac.bd) in conference/journal/docx. Pushed 830287e.
 - DOCX cover now shows a 3x3 author grid (name + Dept. of CSE + United
   International University + email), matching the LaTeX block. Pushed 1da4c32.
+- Journal author block upgraded to the same 3x3 grid (name + Dept. of CSE
+  + UIU + email); IDs stay in the thanks footnote. Pushed 444ad50.
