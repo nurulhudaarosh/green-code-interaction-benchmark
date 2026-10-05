@@ -2,8 +2,7 @@
 % Format: IEEE Transactions (journal mode, two-column).
 %
 % OVERLEAF: upload paper_journal.tex + the whole images/ folder as-is
-% (images/fig01..fig12). Compiler: pdfLaTeX. Index builds automatically
-% via makeindex (\index entries + \printindex at the end).
+% (images/fig01..fig15). Compiler: pdfLaTeX. No index is generated.
 % TODO before submission: affiliation line, corresponding-author email,
 % manuscript ID, funding acknowledgment, anonymisation if double-blind.
 \documentclass[journal]{IEEEtran}
@@ -13,10 +12,8 @@
 \usepackage{booktabs}
 \usepackage{xcolor}
 \usepackage{url}
-\usepackage{makeidx}
 \usepackage[hidelinks]{hyperref}
 \usepackage[section]{placeins} % keep floats inside their section (no pile-up after References)
-\makeindex
 \graphicspath{{images/}}
 
 \begin{document}
@@ -328,7 +325,7 @@ for a restyle prompt.}
 \label{fig:pipeline}
 \end{figure}
 
-\subsection{Task taxonomy}\index{task taxonomy}
+\subsection{Task taxonomy}
 Five categories span algorithmic, data, media, application, and text
 workloads, each contributing up to 25 tasks (Table~\ref{tab:coverage}).
 Difficulty mix varies by design: algorithms tasks are almost entirely medium
@@ -371,7 +368,7 @@ Total & 1418 & 1418 & 1307 (92.2\%) \\
 \end{tabular}
 \end{table}
 
-\subsection{Interaction protocol}\index{interaction trajectory}
+\subsection{Interaction protocol}
 All conditions terminate at an equivalent specification
 (Table~\ref{tab:conds}). C0 delivers the full specification at once. C1--C3
 deliver an initial task followed by exactly one follow-up turn (a bug
@@ -407,7 +404,7 @@ C4 & Full multi-turn & Initial $\rightarrow$ fix $\rightarrow$ feature $\rightar
 \end{tabular}
 \end{table}
 
-\subsection{Models and generation}\index{models}
+\subsection{Models and generation}
 Four assistant models---GPT, Claude, Gemini, DeepSeek---generated code across
 all conditions (Table~\ref{tab:models}). Collection is content-addressed
 (archives $\rightarrow$ ingest), so reruns are idempotent and every final
@@ -457,7 +454,7 @@ the sandbox (\texttt{MISSING\_DEP}, 5)---leaving 111 genuine model failures
 (\texttt{WRONG\_OUTPUT}, 78; \texttt{RUNTIME\_BUG}, 33) for analysis
 (Section~\ref{sec:results-fail}).
 
-\subsection{Energy measurement with Intel RAPL}\index{RAPL}\index{energy measurement}
+\subsection{Energy measurement with Intel RAPL}
 Package energy is read from
 \texttt{/sys/class/powercap/intel-rapl:0/energy\_uj} on a controlled,
 dedicated Linux host (Intel Core i5-8250U, 8 threads; CPython 3.13; no
@@ -489,7 +486,7 @@ Runtime is the median of the $K$ timed runs; peak memory is captured with
 corpus additionally tracks energy-per-SLOC and energy-per-kB-input
 normalisations for cross-task comparison.
 
-\subsection{Static code metrics}\index{static metrics}
+\subsection{Static code metrics}
 Every final program is parsed to an AST (all 1418 in-scope programs succeed;
 the 14 prose or truncated files recorded as \texttt{NOT\_PYTHON} are
 collection artifacts excluded from the corpus). For each parseable program we compute total lines, SLOC,
@@ -498,7 +495,7 @@ nesting depth, branch counts, recursion, sort usage, comprehensions, import
 counts, non-stdlib imports, and McCabe-style cyclomatic
 complexity~\cite{mccabe1976} (glossary in Appendix~A).
 
-\subsection{Static time-complexity estimation}\index{static Big-O estimator}
+\subsection{Static time-complexity estimation}
 Because exact inference is undecidable, we use an explicit, reproducible
 heuristic over AST patterns: recursion combined with a loop $\rightarrow$
 $O(2^n)$ (search/backtracking); recursion alone $\rightarrow$
@@ -510,7 +507,7 @@ validated twice: against dataset-declared targets (71.4\% compliant,
 $n{=}427$) and against measured scaling slopes
 (Section~\ref{sec:results-complex}).
 
-\subsection{Empirical scaling probe}\index{empirical scaling probe}
+\subsection{Empirical scaling probe}
 Each program and its reference executes through the task harness at three
 input scales (algorithms category: small 300 / medium 4000 / large 15000
 elements, tiled). Per scale we take the median of up to three timed runs
@@ -522,7 +519,7 @@ reliable with large-scale runtime $\geq$ 5\,ms, filtering
 overhead-dominated fits) plus 14 reference-task slopes---statistically
 sufficient for validation, while static metrics cover all 1418 programs.
 
-\subsection{Carbon-equivalent model}\index{carbon-equivalent emissions}
+\subsection{Carbon-equivalent model}
 Operational CO$_{2}$eq is energy $\times$ grid carbon intensity, with
 default 480\,gCO$_{2}$eq/kWh (global average) and sensitivity over US
 average (369), EU average (251), and low-carbon (56, e.g.\ France) grids.
@@ -530,7 +527,7 @@ Section~\ref{sec:results-carbon} reports totals and per-condition medians;
 Section~\ref{sec:discuss-carbon} projects illustrative fleet-scale
 implications, clearly separated from measured results.
 
-\subsection{Statistical analysis}\index{statistical analysis}
+\subsection{Statistical analysis}
 Paired within-(task, model) comparisons use the Wilcoxon signed-rank
 test~\cite{wilcoxon1945}; multi-group comparisons use
 Kruskal--Wallis~\cite{kruskal1952}. Effect sizes are mean/median percentage
@@ -613,7 +610,7 @@ the largest single increase.}
 \label{fig:med}
 \end{figure}
 
-\subsection{Paired analysis: \texorpdfstring{$\Delta E$}{dE} versus one-shot (RQ1, RQ3)}\index{paired analysis}
+\subsection{Paired analysis: \texorpdfstring{$\Delta E$}{dE} versus one-shot (RQ1, RQ3)}
 Within-(task, model) pairing (Table~\ref{tab:paired},
 Figs.~\ref{fig:delta}--\ref{fig:scatter}) shows only the full multi-turn
 trajectory reaching significance ($p{=}0.006$): the cumulative trajectory,
@@ -984,7 +981,7 @@ are intensity-invariant; geography scales totals $\approx$9$\times$.}
 \label{fig:carbon}
 \end{figure}
 
-\subsection{Failure taxonomy and coverage bias}\label{sec:results-fail}\index{failure taxonomy}
+\subsection{Failure taxonomy and coverage bias}\label{sec:results-fail}
 111 units carry genuine model-output failures, led by
 \texttt{WRONG\_OUTPUT} (78)---embedded self-test failures (logic bugs in
 generated code)---then runtime bugs (33). A further 65 unmeasured units are
@@ -1035,7 +1032,7 @@ leverage point for intervention is therefore algorithmic-scaling behaviour,
 not line counts---a conclusion that favours dynamic profiling and scaling
 tests over SLOC budgets.
 
-\subsection{Carbon and environmental implications (RQ6)}\label{sec:discuss-carbon}\index{carbon effect}
+\subsection{Carbon and environmental implications (RQ6)}\label{sec:discuss-carbon}
 Measured unit economics first: at the global-average grid, the median
 multi-turn run carries +26.1\,$\upmu$gCO$_{2}$eq over one-shot and the mean
 +106\,$\upmu$g. These are negligible per run by construction---a single
@@ -1113,7 +1110,7 @@ operational overhead against avoided developer and deployment costs;
 measurement), and model families; (5)~full-category empirical scaling sweeps
 with finer input-size grids.
 
-\section{Threats to Validity}\label{sec:threats}\index{threats to validity}
+\section{Threats to Validity}\label{sec:threats}
 \emph{Construct validity.} RAPL package energy includes off-target
 components; identical workloads, warm-up, repetition, and paired
 within-(task, model) differencing mitigate but do not eliminate noise. The
@@ -1278,6 +1275,5 @@ declared target).
 \texttt{analysis/energy\_plots.py}, \texttt{scripts/make\_paper\_pro.py}.
 Full commands with flags are listed in the repository appendix.
 
-\printindex
 
 \end{document}

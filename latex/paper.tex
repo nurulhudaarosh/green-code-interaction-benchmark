@@ -4,9 +4,8 @@
 %   1. Create a blank project, upload this file as main.tex (or paper.tex).
 %   2. Upload the whole images/ folder (fig01..fig12, same names) next to it.
 %      Figure paths below are images/figXX_*.png — do NOT rename, just upload.
-%   3. Compiler: pdfLaTeX. Overleaf runs makeindex automatically, so the
-%      printed Index at the end builds itself from the \index{...} entries.
-%   4. Fill in \author block and \IEEEoverridecommandlockouts if needed.
+%   3. Compiler: pdfLaTeX (default). No index is generated.
+%   4. Author block is filled in below.
 %
 % FIGURE <-> FILE MAP (all used figures; just upload images/ as-is):
 %   Fig.1 energy distribution ... images/fig01_energy_box.png
@@ -28,10 +27,8 @@
 \usepackage{booktabs}
 \usepackage{xcolor}
 \usepackage{url}
-\usepackage{makeidx}
 \usepackage[hidelinks]{hyperref}
 \usepackage[section]{placeins} % keep floats inside their section (no pile-up after References)
-\makeindex
 \graphicspath{{images/}}
 
 \begin{document}
@@ -122,7 +119,7 @@ scaling, carbon-aware computing.
 
 \section{Introduction}
 Software energy consumption is a first-order concern for datacentres, edge
-devices, and AI-assisted development workflows\index{interaction trajectory}.
+devices, and AI-assisted development workflows.
 As coding assistants move from autocomplete to conversational, multi-turn
 collaboration, generated software increasingly reflects an entire trajectory
 of prompts, bug reports, feature requests, and edge-case refinements. Prior
@@ -134,28 +131,28 @@ It is unknown whether realistic multi-turn AI-assisted coding yields final
 programs with systematically different energy cost than single-shot
 generation of the same specification, and whether any difference is explained
 by size, structural complexity, or algorithmic time
-complexity\index{time complexity}. Without a controlled benchmark that holds
+complexity. Without a controlled benchmark that holds
 the final specification constant, practitioners cannot reason about the
 operational-energy consequences of iterating with an assistant.
 
 We ask: (RQ1) does multi-turn coding change final-program energy; (RQ2) does
-the effect vary across models\index{models}; (RQ3) how do individual steps
+the effect vary across models; (RQ3) how do individual steps
 (bug-fix, feature, edge-case) contribute; (RQ4) how do energy, runtime,
 memory, power, and correctness relate; (RQ5) what code characteristics and
 complexity classes explain the differences?
 
 Our contributions: (i) a reproducible benchmark measuring RAPL package
-energy\index{package energy} of 1418 final programs across five equivalent
+energy of 1418 final programs across five equivalent
 interaction conditions; (ii) a dual time-complexity methodology (static AST
 estimator plus empirical scaling probe); (iii) a per-program metrics corpus
-(energy, runtime, memory, power, SLOC\index{SLOC}, cyclomatic
-complexity\index{cyclomatic complexity}, Big-O class, empirical slope);
+(energy, runtime, memory, power, SLOC, cyclomatic
+complexity, Big-O class, empirical slope);
 (iv) statistical trajectory-effect analysis with mediation; (v) a
-carbon-equivalent translation\index{carbon-equivalent emissions} with
+carbon-equivalent translation with
 grid-intensity sensitivity and a failure-taxonomy audit.
 
 \section{Background and Related Work}
-\emph{Energy efficiency of software.}\index{energy measurement}
+\emph{Energy efficiency of software.}
 Green software engineering studies operational energy across languages,
 algorithms, and hardware. Intel RAPL counters are the standard fine-grained
 instrument in controlled settings~\cite{rotem2012, hahnell2012, hackenberg2013}.
@@ -163,19 +160,19 @@ Language- and algorithm-level studies~\cite{pereira2017, georgiou2022,
 pinto2014} show implementation choice can dominate energy, motivating
 measurement of generated code itself.
 
-\emph{LLMs for code generation.}\index{code generation}
+\emph{LLMs for code generation.}
 HumanEval~\cite{chen2021}, MBPP~\cite{austin2021}, and multi-turn synthesis
 work such as CodeGen~\cite{nijkamp2023} evaluate functional correctness.
 Green-AI literature~\cite{schwartz2020, patterson2021, strubell2019} focuses
 on training cost, leaving the operational cost of generated artifacts open.
 
-\emph{Multi-turn interaction.}\index{multi-turn interaction}
+\emph{Multi-turn interaction.}
 Conversational repair and agentic benchmarks (e.g.\ SWE-bench~\cite{jimenez2024})
 study multi-step success rates but seldom hold the final specification
 constant across trajectories---the condition required to isolate the
 trajectory effect itself, which our five conditions satisfy by construction.
 
-\emph{Static metrics and complexity.}\index{static Big-O estimator}
+\emph{Static metrics and complexity.}
 McCabe complexity~\cite{mccabe1976}, SLOC, and asymptotic analysis remain the
 standard proxies for maintainability and performance. Exact static Big-O
 inference is undecidable, so we combine AST-pattern heuristics with empirical
@@ -185,7 +182,7 @@ To our knowledge, no prior benchmark jointly measures RAPL energy of
 LLM-generated finals, holds requirements constant across trajectories, and
 connects energy to both static and empirical complexity metrics.
 
-\section{Benchmark Design and Methodology}\index{methodology}
+\section{Benchmark Design and Methodology}
 \subsection{Overview and Task Taxonomy}
 The benchmark fixes the final specification of every task and varies only
 the trajectory that produced the code. Each final program runs on an
@@ -258,7 +255,7 @@ DeepSeek & 369 & 332 \\
 Each task ships a harness invoking candidate and reference solutions through
 the same API on a deterministic workload; correctness is recorded separately
 from energy. Package energy comes from
-\texttt{/sys/class/powercap/intel-rapl:0/energy\_uj}\index{RAPL} on a
+\texttt{/sys/class/powercap/intel-rapl:0/energy\_uj} on a
 controlled Linux/Python 3.13 host (8 CPUs): one warm-up run plus $K{=}5$
 timed runs per unit, joules per run as counter delta over $K$ (30\,s cap per
 run). Runtime is the median of the $K$ runs, peak memory via
@@ -267,16 +264,15 @@ resumable by code hash.
 
 \subsection{Static Metrics and Complexity Estimation}
 For each program we parse the AST (1418/1418 parse) and compute
-SLOC\index{SLOC}, functions, classes, loops, maximum nesting depth, branches,
+SLOC, functions, classes, loops, maximum nesting depth, branches,
 recursion, sort usage, comprehensions, imports, and McCabe-style cyclomatic
-complexity\index{cyclomatic complexity}. The static Big-O\index{static Big-O
-estimator} heuristic: recursion with a loop $\rightarrow$ $O(2^n)$;
+complexity. The static Big-O heuristic: recursion with a loop $\rightarrow$ $O(2^n)$;
 recursion alone $\rightarrow$ $O(\text{recursive})$; nesting depth 1/2/3
 $\rightarrow$ $O(n)$/$O(n^2)$/$O(n^3)$ (depth $\geq$4 $\rightarrow$ $O(n^4)$),
 promoted with a sort to $O(n\log n)$/$O(n^2\log n)$; no loops $\rightarrow$
 $O(1)$. Compliance against dataset-declared targets is 71.4\% ($n{=}427$).
 
-The empirical scaling probe\index{empirical scaling probe} runs each program
+The empirical scaling probe runs each program
 and its reference at three input scales and fits
 $\log(\text{runtime}) = b\cdot\log(\text{bytes}) + a$; exponent $b$ is the
 growth estimate ($\approx$0 constant, $\approx$1 linear, $\approx$2
@@ -286,7 +282,7 @@ quadratic). The probe covered 190 algorithms-category programs (155 slopes,
 \subsection{Carbon and Statistics}
 Energy converts to operational CO$_{2}$eq at configurable grid intensity
 (default 480\,g/kWh) with sensitivity analysis. Paired within-(task, model)
-comparisons use the Wilcoxon signed-rank test\index{Wilcoxon signed-rank};
+comparisons use the Wilcoxon signed-rank test;
 multi-group comparisons use Kruskal--Wallis. Reproduction: ingest
 $\rightarrow$ inputs $\rightarrow$ measure $\rightarrow$ code metrics
 $\rightarrow$ scaling probe $\rightarrow$ reports $\rightarrow$ this paper.
@@ -330,7 +326,7 @@ largest single increase.}
 \label{fig:med}
 \end{figure}
 
-\subsection{Paired Analysis (RQ1, RQ3)}\index{paired analysis}
+\subsection{Paired Analysis (RQ1, RQ3)}
 Only the full multi-turn trajectory reaches significance
 (Table~\ref{tab:paired}, Figs.~\ref{fig:delta}--\ref{fig:scatter}): the
 cumulative trajectory, not any single step, drives the increase. Bug-fix and
@@ -561,7 +557,7 @@ Low-carbon & 56 & 9.5 & 12.5 & 28.8 \\
 \label{fig:carbon}
 \end{figure}
 
-\subsection{Failure Taxonomy and Coverage Bias}\index{failure taxonomy}
+\subsection{Failure Taxonomy and Coverage Bias}
 111 units carry genuine model-output failures, led by WRONG\_OUTPUT (78)---embedded self-test
 failures (logic bugs in generated code)---then runtime bugs (33), concentrated
 in algorithms (82). A further 65 unmeasured units are collection artifacts
@@ -597,7 +593,7 @@ and close long sessions with a complexity review. Tool builders should
 surface per-turn complexity and energy deltas in the IDE---e.g.\ flagging a
 turn that moves the estimate from $O(n\log n)$ to $O(n^2)$.
 
-\section{Threats to Validity}\index{threats to validity}
+\section{Threats to Validity}
 \emph{Construct:} RAPL includes off-target components; identical workloads
 and per-run baselines mitigate noise, and the estimator is cross-checked both
 ways. \emph{Internal:} deterministic shared workloads and paired tests
@@ -672,6 +668,5 @@ language model meets programming,'' arXiv:2401.14196, 2024.
 \bibitem{gpt4o2024} OpenAI, ``GPT-4o system card,'' 2024.
 \end{thebibliography}
 
-\printindex
 
 \end{document}
