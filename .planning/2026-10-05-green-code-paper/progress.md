@@ -76,3 +76,8 @@
   tables, power/memory table, RQ6 fleet-scale carbon projections), 43 refs,
   14 index entries; verified (12/12 figs, 41/41 refs, braces OK). 6 authors
   with IDs added to journal + conference + docx cover. Pushed as 28a3e5b.
+- Fixed broken fig05 (single-bar delta_energy_by_model.png): root cause was
+  stale 1-row results/processed/delta_energy.csv; new
+  analysis/fix_delta_plots.py recomputes 990 paired deltas from the joined
+  corpus and regenerates both by-model bars and the boxplot; synced to
+  docx/latex images, docx/pdf rebuilt. Pushed as 9fb4e0c.
