@@ -88,3 +88,5 @@
   i5-8250U host, adaptive invocation/aliasing/rescue, Dream paper +
   EffiBench (+2 refs), carbon scope + current-data scale numbers, author
   contributions. LaTeX float pile-up fixed (placeins/htbp). Pushed 9d56d85.
+- Removed per-member task mapping from journal + docx (generic equal
+  contributions only). Pushed 70eac3d.
