@@ -102,3 +102,5 @@
   Milu, Ar-Rafi Hossain Isty (ID 0112230793 derived from email pattern —
   UNCONFIRMED), Atkia Fayrose Prity, Tanjila Tafrim Priyonta, Sumiya Akter
   Subarna; Sizan removed. Pushed b57ac79.
+- Swapped Isty slot to MD. Minhazul Islam (0112230301,
+  mislam223301@bscse.uiu.ac.bd) in conference/journal/docx. Pushed 830287e.
