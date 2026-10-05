@@ -246,7 +246,7 @@ def cover(doc, d):
             ["Conditions", "C0 One-Shot · C1 Bug-Fix · C2 Feature-Addition · C3 Edge-Case · C4 Full Multi-Turn"],
             ["Models", "GPT · Claude · Gemini · DeepSeek  (4 models × 5 categories × up to 25 tasks)"],
             ["Artifact", "green-code-interaction-benchmark  •  results/final/  •  docx/  •  analysis/"],
-            ["Authors", "MD. Nurul Huda (0112230303) · MD. Khaled Hasan Milu (0112230104) · Ar-Rafi Hossain Isty (0112230793) · Atkia Fayrose Prity (0112230101) · Tanjila Tafrim Priyonta (0112230111) · Sumiya Akter Subarna (0112231053) — Dept. of CSE, United International University"],
+            ["Authors", "MD. Nurul Huda (0112230303) · MD. Khaled Hasan Milu (0112230104) · MD. Minhazul Islam (0112230301) · Atkia Fayrose Prity (0112230101) · Tanjila Tafrim Priyonta (0112230111) · Sumiya Akter Subarna (0112231053) — Dept. of CSE, United International University"],
             ["Licence", "Code: project licence  •  Paper: CC-BY 4.0 on publication"]]
     mt = doc.add_table(rows=0, cols=2); mt.style = "Table Grid"; mt.alignment = WD_TABLE_ALIGNMENT.CENTER
     for k, v in rows:
