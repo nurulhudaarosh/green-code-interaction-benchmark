@@ -1,47 +1,79 @@
-# Figure-generation prompts (methodology / system-design figures)
+# AI figure-generation prompts (methodology diagrams fig13–fig15)
 
-> The paper currently embeds matplotlib-drawn versions
-> (`analysis/make_method_diagrams.py` → `fig13/fig14/fig15`).
-> Use the prompts below with any diagram-capable image model to produce
-> polished replacements. Keep the **same filenames and meaning** — only
-> restyle. IEEE two-column: target width ≈ 3.4 in (single column),
-> sans-serif labels, print-friendly palette (no photo backgrounds).
+Generate each image with any image model (Midjourney / DALL·E / Stable
+Diffusion / Gemini / Firefly), then save as PNG and overwrite the files below
+**keeping the exact filenames** — the papers pick them up automatically:
 
-## Fig. 13 — End-to-end research pipeline (`fig13_method_pipeline.png`)
+| Figure | Overwrite these two files |
+|---|---|
+| fig13 pipeline | `latex/images/fig13_method_pipeline.png` + `docx/images/fig13_method_pipeline.png` |
+| fig14 protocol | `latex/images/fig14_interaction_protocol.png` + `docx/images/fig14_interaction_protocol.png` |
+| fig15 measurement | `latex/images/fig15_measurement_setup.png` + `docx/images/fig15_measurement_setup.png` |
 
-```
-Flat vector-style horizontal flowchart, 5 rounded boxes with arrows, white
-background, IEEE paper figure aesthetic, navy/blue-gray palette:
-Box 1 "Task design — 150 candidates, 5 categories";
-Box 2 "Multi-turn interaction — 4 LLMs × C0–C4";
-Box 3 (highlighted amber) "Corpus cleaning — 1418 in scope, 67 artifacts out";
-Box 4 "RAPL measurement — K=5 + warm-up, 1307 programs";
-Box 5 (green) "Analysis + paper".
-Clean sans-serif text, no shadows, no logos.
-```
+Global style for all three (paste into every prompt):
+> Flat vector infographic, clean white background, IEEE paper figure
+> aesthetic, navy blue (#1F4E79) + slate gray + one amber/green accent,
+> sans-serif typography (Arial/Helvetica-like), sharp edges, no shadows,
+> no gradients, no photo elements, no logos, no watermarks.
+> All text must be spelled EXACTLY as given below — no lorem ipsum,
+> no invented words. Landscape orientation, ≥2000 px wide, PNG.
 
-## Fig. 14 — Per-unit interaction protocol (`fig14_interaction_protocol.png`)
+---
 
-```
-Vertical swimlane diagram with 3 columns (Prompt turn → LLM turn(s) →
-final.py snapshot) and 5 rows:
-C0 ONE_SHOT (single prompt → LLM turn → code.py);
-C1 BUG_FIX (buggy code + fix request);
-C2 FEATURE_ADDITION (working code + feature);
-C3 EDGE_CASE (working code + edge cases);
-C4 FULL MULTI-TURN (bug → fix → feature → edge).
-Note under title: "fresh conversation per cell".
-Flat vector style, white background, navy accents, sans-serif.
-```
+## Prompt 1 — fig13_method_pipeline.png (end-to-end research pipeline)
 
-## Fig. 15 — Isolated measurement setup (`fig15_measurement_setup.png`)
+> Flat vector horizontal flowchart, 5 rounded-rectangle boxes connected by
+> rightward arrows, white background, IEEE paper figure aesthetic, navy
+> (#1F4E79) borders with light-blue fill, one amber-highlighted box,
+> one green final box, sans-serif text, no shadows, no logos.
+> Exact box texts, in order:
+> 1. "Task design / 150 candidates / 5 categories"
+> 2. "Multi-turn interaction / 4 LLMs x C0-C4"
+> 3. (amber) "Corpus cleaning / 1418 in scope / 67 artifacts out"
+> 4. "RAPL measurement / K=5 + warm-up / 1307 programs"
+> 5. (green) "Analysis + paper"
+> Title above: "End-to-end research pipeline".
+> Landscape, 2048x1024, PNG. Spell every word exactly as written.
 
-```
-Small system-block diagram, flat vector style, white background:
-left box "final.py + task fixture (small/med/large inputs)" arrow to center
-box "harness runner — warm-up + K=5 reps, 30 s cap, median";
-center splits to two green boxes "Intel RAPL package energy_uj (delta per
-rep)" and "/usr/bin/time -f %M peak RSS"; both arrow to right box
-"energy / runtime / memory".
-Monospace font for paths/commands, navy/green palette, no hardware photos.
-```
+## Prompt 2 — fig14_interaction_protocol.png (per-unit interaction protocol)
+
+> Flat vector swimlane diagram, white background, IEEE paper figure
+> aesthetic, navy (#1F4E79) accents, sans-serif text, no shadows, no logos.
+> Three columns left to right: "Prompt turn", "LLM turn(s)",
+> "final.py snapshot". Five rows top to bottom with exact row labels:
+> Row 1: "C0 ONE-SHOT — single prompt"
+> Row 2: "C1 BUG-FIX — buggy code + fix request"
+> Row 3: "C2 FEATURE-ADDITION — working code + feature"
+> Row 4: "C3 EDGE-CASE — working code + edge cases"
+> Row 5: "C4 FULL MULTI-TURN — bug, fix, feature, edge"
+> Small note under the title: "fresh conversation per cell".
+> Title above: "Per-unit interaction protocol".
+> Landscape, 2048x1400, PNG. Spell every word exactly as written.
+
+## Prompt 3 — fig15_measurement_setup.png (isolated measurement setup)
+
+> Flat vector system block diagram, white background, IEEE paper figure
+> aesthetic, navy (#1F4E79) and green accents, monospace font for
+> paths/commands, sans-serif otherwise, no shadows, no hardware photos,
+> no logos. Layout left to right with arrows:
+> Left box: "final.py + task fixture (small / medium / large inputs)"
+> arrow to center box:
+> Center box: "harness runner — warm-up + K=5 reps, 30 s cap, median"
+> splitting with arrows to two green boxes stacked vertically:
+> Green box A: "Intel RAPL package — energy_uj delta per rep"
+> Green box B: "/usr/bin/time -f %M peak RSS"
+> both arrow to right box: "energy / runtime / memory".
+> Title above: "Isolated energy-measurement setup".
+> Landscape, 2048x1024, PNG. Spell every word exactly as written,
+> keep "%M" exactly.
+
+---
+
+## Tips
+
+- If the model garbles text, regenerate with "large clear text, generous
+  letter spacing" appended, or build the layout in PowerPoint/Canva using
+  the exact texts above and export PNG.
+- Keep the same filenames — `make_paper_pro.py`, both `.tex` files, and
+  the List of Figures all reference them already; just rebuild the DOCX
+  (`python3 scripts/make_paper_pro.py`) after replacing.
