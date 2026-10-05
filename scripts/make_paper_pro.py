@@ -240,6 +240,23 @@ def cover(doc, d):
     para(doc, "A benchmark study of one-shot versus multi-turn AI-assisted programming — "
               "1418 final programs in scope, RAPL energy measurement, static + empirical complexity analysis",
          italic=True, size=11, align="center")
+    # author grid (3+3, name / dept / university / email)
+    authors = [("MD. Nurul Huda", "mhuda223303@bscse.uiu.ac.bd"),
+               ("MD. Khaled Hasan Milu", "mmilu223104@bscse.uiu.ac.bd"),
+               ("MD. Minhazul Islam", "mislam223301@bscse.uiu.ac.bd"),
+               ("Atkia Fayrose Prity", "aprity223101@bscse.uiu.ac.bd"),
+               ("Tanjila Tafrim Priyonta", "tpriyonta223111@bscse.uiu.ac.bd"),
+               ("Sumiya Akter Subarna", "ssubarna2231053@bscse.uiu.ac.bd")]
+    at = doc.add_table(rows=2, cols=3); at.alignment = WD_TABLE_ALIGNMENT.CENTER
+    for i, (name, email) in enumerate(authors):
+        cell = at.cell(i // 3, i % 3)
+        cell.text = ""
+        p = cell.paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r = p.add_run(name); r.bold = True; r.font.size = Pt(10)
+        for line in ["Dept. of CSE", "United International University", email]:
+            p = cell.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            r = p.add_run(line); r.font.size = Pt(8.5)
+    doc.add_paragraph()
     # metadata box
     rows = [["Version", "1.0  •  " + date.today().isoformat()],
             ["Programs", f"{cov['_t']['finals']} finals  •  {cov['_t']['parse']} parseable  •  {cov['_t']['measured']} measured ({100*cov['_t']['measured']/cov['_t']['finals']:.1f}%)"],
