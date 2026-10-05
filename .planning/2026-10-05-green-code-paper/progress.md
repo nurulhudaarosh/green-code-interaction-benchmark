@@ -104,3 +104,5 @@
   Subarna; Sizan removed. Pushed b57ac79.
 - Swapped Isty slot to MD. Minhazul Islam (0112230301,
   mislam223301@bscse.uiu.ac.bd) in conference/journal/docx. Pushed 830287e.
+- DOCX cover now shows a 3x3 author grid (name + Dept. of CSE + United
+  International University + email), matching the LaTeX block. Pushed 1da4c32.
