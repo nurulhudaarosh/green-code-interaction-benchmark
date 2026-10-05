@@ -97,3 +97,8 @@
   energy fills; all plots/JSONs/papers regenerated; failure gradient now
   3.4%->15.8%. Added matplotlib method diagrams fig13-15 to docx+journal
   + docs/image_prompts.md restyle prompts. Pushed c5553d4.
+- New author block everywhere (conference 3+3 tabular with UIU
+  affiliations + emails; journal + docx cover): Nurul Huda, Khaled Hasan
+  Milu, Ar-Rafi Hossain Isty (ID 0112230793 derived from email pattern —
+  UNCONFIRMED), Atkia Fayrose Prity, Tanjila Tafrim Priyonta, Sumiya Akter
+  Subarna; Sizan removed. Pushed b57ac79.
