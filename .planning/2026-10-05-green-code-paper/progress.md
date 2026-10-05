@@ -90,3 +90,10 @@
   contributions. LaTeX float pile-up fixed (placeins/htbp). Pushed 9d56d85.
 - Removed per-member task mapping from journal + docx (generic equal
   contributions only). Pushed 70eac3d.
+- Clean-corpus revision: dropped search_retrieval (2 units), excluded 65
+  collection artifacts (NOT_PYTHON/CLI_ARGS/OTHER/SILENT_RC1/MISSING_FILE/
+  MISSING_DEP) from all counts; 1418 in scope (1307 measured 92.2% + 111
+  genuine WRONG_OUTPUT/RUNTIME_BUG failures); ledger-sync fixed 23 stale
+  energy fills; all plots/JSONs/papers regenerated; failure gradient now
+  3.4%->15.8%. Added matplotlib method diagrams fig13-15 to docx+journal
+  + docs/image_prompts.md restyle prompts. Pushed c5553d4.
