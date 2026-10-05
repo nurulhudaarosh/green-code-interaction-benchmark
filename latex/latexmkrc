@@ -1,0 +1,5 @@
+# Build both papers with pdfLaTeX + makeindex (for the \printindex pages).
+# Overleaf picks this up automatically; local build: `latexmk` in latex/.
+$pdflatex = 'pdflatex -interaction=nonstopmode -synctex=1 %O %S';
+$makeindex = 'makeindex %O -o %D %S';
+$pdf_mode = 1;
