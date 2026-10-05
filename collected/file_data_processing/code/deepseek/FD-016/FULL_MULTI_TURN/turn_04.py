@@ -1,0 +1,135 @@
+"""
+Transaction aggregation utility.
+
+Deterministic handling of:
+  * Customers with no transactions  -> emitted with count 0 and amount 0.0
+  * Transactions with unknown IDs   -> ignored entirely (no output row created)
+  * Transactions for unknown customers -> ignored entirely
+
+Aggregates transactions by customer, joins the aggregated results to the
+customer master (so zero-transaction customers are included), and sorts the
+final output by customer ID.
+
+All behavior is deterministic: iteration order of inputs never affects the
+final result, and unknown IDs (whether transaction IDs or customer IDs) can
+never introduce new output rows.
+"""
+
+from collections import defaultdict
+
+
+def aggregate_transactions(customers, known_transaction_ids, transactions):
+    """
+    Parameters
+    ----------
+    customers : list of dict
+        Customer master records, each with at least a 'customer_id' key.
+        Example: [{"customer_id": "C001", "name": "Alice"}, ...]
+
+    known_transaction_ids : iterable
+        The set of transaction IDs that are considered valid. Any transaction
+        whose ID is not in this collection is ignored.
+
+    transactions : list of dict
+        Transaction records, each with at least 'transaction_id',
+        'customer_id', and 'amount' keys.
+        Example: [{"transaction_id": "T1", "customer_id": "C001", "amount": 50.0}, ...]
+
+    Returns
+    -------
+    list of dict
+        One record per customer in the master, sorted by customer_id, containing:
+        customer_id, name (if present), transaction_count, total_amount,
+        and transactions (list of valid transactions for that customer).
+
+        * Customers with no valid transactions -> transaction_count == 0,
+          total_amount == 0.0, transactions == [].
+        * Unknown transaction IDs and unknown customer IDs never produce rows.
+    """
+    # 1. Resolve the set of valid transaction IDs deterministically.
+    valid_transaction_ids = set(known_transaction_ids)
+
+    # 2. Resolve the set of valid customer IDs from the master.
+    #    This is the single source of truth for which customers may appear
+    #    in the output. Unknown customers referenced by transactions are
+    #    dropped because they are not in this set.
+    valid_customer_ids = {
+        cust.get("customer_id")
+        for cust in customers
+        if cust.get("customer_id") is not None
+    }
+
+    # 3. Pre-seed every master customer so that customers with no valid
+    #    transactions are explicitly represented with 0 / 0.0.
+    totals = {cust_id: 0.0 for cust_id in valid_customer_ids}
+    counts = {cust_id: 0 for cust_id in valid_customer_ids}
+    per_customer_transactions = defaultdict(list)
+
+    # 4. Walk the transaction stream once. Every filter is a pure predicate
+    #    on the transaction itself, so the result does not depend on the
+    #    order in which transactions are supplied.
+    for txn in transactions:
+        txn_id = txn.get("transaction_id")
+        cust_id = txn.get("customer_id")
+
+        # 4a. Ignore unknown transaction IDs.
+        if txn_id not in valid_transaction_ids:
+            continue
+
+        # 4b. Ignore transactions whose customer is not in the master.
+        #     This covers both missing (None) and unknown customer IDs.
+        if cust_id not in valid_customer_ids:
+            continue
+
+        # 4c. Accumulate. Normalize missing/None amounts to 0 so a bad
+        #     amount cannot corrupt the running total.
+        amount = txn.get("amount")
+        amount = 0 if amount is None else amount
+
+        totals[cust_id] += amount
+        counts[cust_id] += 1
+        per_customer_transactions[cust_id].append(txn)
+
+    # 5. Join back to the customer master. Only master customers are emitted,
+    #    which is what prevents unknown IDs from ever creating output rows.
+    results = []
+    for cust in customers:
+        cust_id = cust.get("customer_id")
+
+        record = dict(cust)  # preserve all master fields
+        record["transaction_count"] = counts.get(cust_id, 0)
+        record["total_amount"] = round(totals.get(cust_id, 0.0), 2)
+        record["transactions"] = per_customer_transactions.get(cust_id, [])
+        results.append(record)
+
+    # 6. Sort by customer_id. Treat None as an empty string so mixed data
+    #    still sorts deterministically instead of raising TypeError.
+    results.sort(key=lambda r: (r.get("customer_id") is None, r.get("customer_id") or ""))
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Example usage / self-test
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    customers = [
+        {"customer_id": "C003", "name": "Charlie"},
+        {"customer_id": "C001", "name": "Alice"},
+        {"customer_id": "C002", "name": "Bob"},
+        {"customer_id": "C004", "name": "Dana"},  # no transactions
+    ]
+
+    known_transaction_ids = ["T1", "T2", "T3", "T4"]
+
+    transactions = [
+        {"transaction_id": "T1",   "customer_id": "C001", "amount": 100.0},
+        {"transaction_id": "T2",   "customer_id": "C001", "amount": 50.5},
+        {"transaction_id": "T3",   "customer_id": "C002", "amount": 25.0},
+        {"transaction_id": "T99",  "customer_id": "C003", "amount": 999.0},  # unknown txn ID -> ignored
+        {"transaction_id": "T100", "customer_id": "C999", "amount": 777.0},  # unknown txn ID + unknown customer -> ignored
+        {"transaction_id": "T4",   "customer_id": "C003", "amount": 10.0},
+        {"transaction_id": "T4",   "customer_id": "C999", "amount": 5.0},    # valid txn ID but unknown customer -> ignored
+    ]
+
+    for row in aggregate_transactions(customers, known_transaction_ids, transactions):
+        print(row)

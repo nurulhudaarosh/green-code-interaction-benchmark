@@ -1,0 +1,80 @@
+```python
+from datetime import datetime
+from pathlib import Path
+
+
+def organize_documents(documents):
+    organized = {}
+
+    for document in documents:
+        if not isinstance(document, dict):
+            continue
+
+        name = document.get("name")
+        size = document.get("size")
+        modified = document.get("modified")
+
+        # Validate filename
+        if not isinstance(name, str) or not name.strip():
+            continue
+        name = name.strip()
+
+        # Validate size
+        if isinstance(size, bool):
+            continue
+        try:
+            size = int(size)
+        except (TypeError, ValueError):
+            continue
+
+        if size < 0:
+            continue
+
+        # Validate modification date strictly as YYYY-MM-DD
+        if not isinstance(modified, str) or not modified.strip():
+            continue
+
+        modified = modified.strip()
+        try:
+            modified_date = datetime.strptime(modified, "%Y-%m-%d")
+        except ValueError:
+            continue
+
+        # Ensure the date is exactly represented in YYYY-MM-DD format
+        if modified_date.strftime("%Y-%m-%d") != modified:
+            continue
+
+        # Determine extension
+        extension = Path(name).suffix.lower()
+        extension = extension[1:] if extension else "no_extension"
+
+        organized.setdefault(extension, []).append({
+            "name": name,
+            "size": size,
+            "modified": modified
+        })
+
+    # Keep output deterministic
+    for extension in organized:
+        organized[extension].sort(key=lambda item: item["name"].lower())
+
+    return organized
+
+
+if __name__ == "__main__":
+    documents = [
+        {"name": "report.pdf", "size": 1500, "modified": "2026-10-01"},
+        {"name": "notes.txt", "size": "800", "modified": "2026-09-28"},
+        {"name": "photo.jpg", "size": 2400, "modified": "2026-09-30"},
+        {"name": "invalid.pdf", "size": -10, "modified": "2026-10-01"},
+        {"name": "bad.txt", "size": 500, "modified": "2026-02-30"},
+        {"name": "", "size": 100, "modified": "2026-10-01"},
+    ]
+
+    result = organize_documents(documents)
+
+    for extension, files in result.items():
+        print(f"{extension}:")
+        for file in files:
+            print(f"  {file}")
+```

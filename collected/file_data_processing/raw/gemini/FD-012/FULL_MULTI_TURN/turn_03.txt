@@ -1,0 +1,76 @@
+Here is the updated Python script with the sorting criteria reordered to prioritize **document frequency descending**, then **total frequency descending**, and finally **lexicographically (alphabetical ascending)**:
+
+```python
+from collections import Counter
+from pathlib import Path
+import re
+
+
+def analyze_text_files(root_directory: str | Path) -> list[tuple[str, int, int]]:
+    """Recursively scans a directory for .txt files, counts word frequencies,
+
+    and outputs deterministically sorted results.
+
+    Returns:
+        List of tuples: (word, total_count, document_frequency)
+    """
+    root_path = Path(root_directory)
+    if not root_path.exists() or not root_path.is_dir():
+        raise ValueError(
+            f"The provided path '{root_directory}' is not a valid directory."
+        )
+
+    # Word extraction regex: captures alphabetic word sequences
+    word_pattern = re.compile(r"[a-zA-Z]+")
+
+    total_counts = Counter()
+    doc_frequencies = Counter()
+
+    # Recursively iterate through all .txt files
+    for file_path in root_path.rglob("*.txt"):
+        if not file_path.is_file():
+            continue
+
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+        except OSError:
+            continue
+
+        # Extract alphabetic words and case-fold
+        words = word_pattern.findall(content.lower())
+
+        if words:
+            total_counts.update(words)
+            # Unique words per file for Document Frequency
+            doc_frequencies.update(set(words))
+
+    # Deterministic ranking:
+    # 1. Document frequency (descending: -item[2])
+    # 2. Total count (descending: -item[1])
+    # 3. Alphabetical tie-breaker (ascending: item[0])
+    results = [
+        (word, count, doc_frequencies[word])
+        for word, count in total_counts.items()
+    ]
+    results.sort(key=lambda item: (-item[2], -item[1], item[0]))
+
+    return results
+
+
+if __name__ == "__main__":
+    import sys
+
+    # Set directory path (defaults to current working directory)
+    target_dir = sys.argv[1] if len(sys.argv) > 1 else "."
+
+    analysis = analyze_text_files(target_dir)
+
+    print(
+        f"{'WORD':<20} | {'DOCUMENT FREQUENCY':<18} | {'TOTAL OCCURRENCES':<18}"
+    )
+    print("-" * 62)
+    for word, count, doc_freq in analysis[:20]:  # Displays top 20 words
+        print(f"{word:<20} | {doc_freq:<18} | {count:<18}")
+
+```

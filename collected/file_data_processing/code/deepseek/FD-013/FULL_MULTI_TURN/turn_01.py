@@ -1,0 +1,118 @@
+import csv
+import sys
+from statistics import median
+
+
+def parse_number(value):
+    """Try to parse a value as a float. Return None if not possible."""
+    if value is None:
+        return None
+    value = value.strip()
+    if value == "":
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
+def compute_stats(values):
+    """Compute stats for a list of numeric values."""
+    n = len(values)
+    if n == 0:
+        return {
+            "count": 0,
+            "min": None,
+            "max": None,
+            "mean": None,
+            "median": None,
+        }
+    return {
+        "count": n,
+        "min": min(values),
+        "max": max(values),
+        "mean": sum(values) / n,
+        "median": median(values),
+    }
+
+
+def format_number(x):
+    if x is None:
+        return "N/A"
+    # Pretty print: drop trailing .0 for integers
+    if isinstance(x, float) and x.is_integer():
+        return str(int(x))
+    return f"{x:g}"
+
+
+def csv_statistics(path, has_header=True):
+    with open(path, "r", newline="", encoding="utf-8-sig") as f:
+        reader = csv.reader(f)
+        rows = list(reader)
+
+    if not rows:
+        print("Empty CSV file.")
+        return
+
+    if has_header:
+        header = rows[0]
+        data_rows = rows[1:]
+    else:
+        # Generate column names based on first row's width
+        width = len(rows[0]) if rows else 0
+        header = [f"col_{i+1}" for i in range(width)]
+        data_rows = rows
+
+    num_cols = len(header)
+
+    # Collect per-column values
+    columns = [[] for _ in range(num_cols)]
+    for row in data_rows:
+        for i in range(num_cols):
+            if i < len(row):
+                v = parse_number(row[i])
+                if v is not None:
+                    columns[i].append(v)
+
+    # Compute stats per column, preserving input-column order
+    results = [compute_stats(col) for col in columns]
+
+    # Report
+    name_width = max([len(h) for h in header] + [len("column")])
+    count_width = max(
+        [len(str(r["count"])) for r in results] + [len("count")]
+    )
+    header_line = (
+        f"{'column':<{name_width}}  "
+        f"{'count':>{count_width}}  "
+        f"{'min':>12}  "
+        f"{'max':>12}  "
+        f"{'mean':>12}  "
+        f"{'median':>12}"
+    )
+    print(header_line)
+    print("-" * len(header_line))
+    for name, stats in zip(header, results):
+        print(
+            f"{name:<{name_width}}  "
+            f"{stats['count']:>{count_width}}  "
+            f"{format_number(stats['min']):>12}  "
+            f"{format_number(stats['max']):>12}  "
+            f"{format_number(stats['mean']):>12}  "
+            f"{format_number(stats['median']):>12}"
+        )
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python csv_stats.py <file.csv> [--no-header]")
+        sys.exit(1)
+
+    path = sys.argv[1]
+    has_header = "--no-header" not in sys.argv[2:]
+
+    csv_statistics(path, has_header=has_header)
+
+
+if __name__ == "__main__":
+    main()

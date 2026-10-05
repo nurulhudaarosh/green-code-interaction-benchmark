@@ -1,0 +1,81 @@
+This problem is a variant of the **Interval Partitioning** (or **Meeting Rooms II with Room Tracking**) problem.
+
+### Problem Understanding
+
+We are given a collection of intervals representing start and end times. The goal is to allocate each interval to a room such that no two overlapping intervals share the same room. A room becomes available as soon as an interval ends, meaning if an interval ends at $T_{end}$ and the next interval starts at $T_{start}$ where $T_{start} \ge T_{end}$, the same room can be reused. We must minimize the total number of rooms allocated and return the assigned room ID for each original interval in its original input order.
+
+### Key Constraints & Required Output
+
+* **Input**: A list of intervals where each interval is represented as `[start, end]`.
+* **Overlap Condition**: Two intervals $[s_1, e_1]$ and $[s_2, e_2]$ overlap if $\max(s_1, s_2) < \min(e_1, e_2)$.
+* **Reuse Condition**: An existing room can be reused by interval $j$ if its current ending time $e_i \le s_j$.
+* **Required Output**: An array/list of integers of the same length as the input, where the $i$-th element is the assigned room ID (e.g., 0-indexed) for the $i$-th original interval, while minimizing the total number of unique room IDs used.
+
+### Algorithm Description
+
+1. **Track Original Indices**: Associate each input interval with its original index so we can output the assigned room IDs in the correct order.
+2. **Sort**: Sort the indexed intervals primarily by start time $s_i$.
+3. **Min-Heap**: Maintain a min-heap to keep track of active rooms. Each entry in the min-heap is a tuple `(end_time, room_id)` representing the time a room becomes available and its ID.
+4. **Greedy Allocation**:
+* Iterate through the sorted intervals.
+* If the earliest finishing room (top of the min-heap) has `end_time <= current_start_time`, pop that room and reuse its `room_id`.
+* Otherwise, allocate a brand new room ID (`next_room_id`).
+* Push `(current_end_time, assigned_room_id)` back onto the min-heap.
+* Record `assigned_room_id` at the interval's original index in the result array.
+
+
+
+---
+
+### Python Implementation
+
+```python
+import heapq
+
+def min_meeting_rooms(intervals: list[list[int]]) -> list[int]:
+    """
+    Assigns each interval to a room minimizing total rooms used.
+    Returns a list of room IDs corresponding to the original interval order.
+    """
+    if not intervals:
+        return []
+
+    # Store original indices to maintain output order
+    # indexed_intervals format: (start, end, original_index)
+    indexed_intervals = [(start, end, i) for i, (start, end) in enumerate(intervals)]
+    indexed_intervals.sort(key=lambda x: x[0])
+
+    # Min-heap stores tuples: (end_time, room_id)
+    heap = []
+    
+    # Result array initialized to store room IDs corresponding to input indices
+    room_assignments = [0] * len(intervals)
+    next_room_id = 0
+
+    for start, end, orig_idx in indexed_intervals:
+        # If a room is free by the current interval's start time, reuse it
+        if heap and heap[0][0] <= start:
+            _, room_id = heapq.heappop(heap)
+        else:
+            # Otherwise, allocate a new room
+            room_id = next_room_id
+            next_room_id += 1
+
+        # Push the updated availability time and room ID back into the heap
+        heapq.heappush(heap, (end, room_id))
+        
+        # Record assignment for the original interval
+        room_assignments[orig_idx] = room_id
+
+    return room_assignments
+
+
+# Example Usage
+if __name__ == "__main__":
+    intervals = [[0, 30], [5, 10], [15, 20], [30, 40]]
+    assignments = min_meeting_rooms(intervals)
+    print("Intervals:  ", intervals)
+    print("Assignments:", assignments)
+    print("Total Rooms:", len(set(assignments)))
+
+```

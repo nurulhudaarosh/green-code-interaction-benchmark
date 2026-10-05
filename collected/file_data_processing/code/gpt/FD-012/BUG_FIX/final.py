@@ -1,0 +1,64 @@
+import os
+import re
+import csv
+import sys
+from collections import Counter, defaultdict
+
+
+def analyze_text_files(root_dir):
+    total_counts = Counter()
+    document_frequency = defaultdict(int)
+
+    for current_root, dirs, files in os.walk(root_dir):
+        dirs.sort()
+
+        for filename in sorted(files):
+            if not filename.lower().endswith(".txt"):
+                continue
+
+            path = os.path.join(current_root, filename)
+
+            try:
+                with open(path, "r", encoding="utf-8") as file:
+                    text = file.read()
+            except (OSError, UnicodeError):
+                continue
+
+            words = re.findall(r"[^\W\d_]+", text.casefold())
+
+            if not words:
+                continue
+
+            total_counts.update(words)
+
+            for word in set(words):
+                document_frequency[word] += 1
+
+    results = [
+        (word, total_counts[word], document_frequency[word])
+        for word in total_counts
+    ]
+
+    results.sort(key=lambda row: (-row[1], -row[2], row[0]))
+
+    return results
+
+
+def main():
+    if len(sys.argv) != 3:
+        print("Usage: python analyzer.py <input_directory> <output_csv>")
+        return
+
+    input_directory = sys.argv[1]
+    output_csv = sys.argv[2]
+
+    results = analyze_text_files(input_directory)
+
+    with open(output_csv, "w", newline="", encoding="utf-8") as file:
+        writer = csv.writer(file)
+        writer.writerow(["word", "total_occurrences", "document_frequency"])
+        writer.writerows(results)
+
+
+if __name__ == "__main__":
+    main()

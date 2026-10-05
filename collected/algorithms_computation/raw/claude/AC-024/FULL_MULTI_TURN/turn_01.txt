@@ -1,0 +1,100 @@
+## Problem
+
+Given a list of intervals `[start, end)`, assign each one a room so that no two overlapping intervals share a room. A room is reusable when its last interval's `end <= ` the next interval's `start` (half-open intervals, so touching endpoints do not conflict). Use the minimum possible number of rooms, and return a room ID for every interval **in the original input order**.
+
+## Key constraints and required output
+
+- **Input:** a list of `(start, end)` pairs, with `start < end` (zero-length or inverted intervals are rejected).
+- **Conflict rule:** two intervals conflict only if they overlap strictly; `end == start` is allowed to share a room.
+- **Output:** a list `rooms` where `rooms[i]` is the room ID (0-based) for `intervals[i]`, plus the total room count.
+- **Optimality:** the number of rooms equals the maximum number of simultaneously active intervals.
+- **Determinism:** ties are broken by the lowest room ID, and the sort is stable on original index, so the same input always gives the same output.
+
+## Algorithm
+
+1. Sort interval indices by `(start, end, index)`.
+2. Keep a min-heap of `(end_time, room_id)` for rooms currently occupied.
+3. Keep a second min-heap of free room IDs, so that the smallest free ID is reused first (deterministic).
+4. For each interval in sorted order:
+   - Pop every occupied room whose `end <= start` and move its ID to the free heap.
+   - If a free room exists, take the smallest ID; otherwise open a new room.
+   - Push `(end, room_id)` onto the occupied heap and record the assignment at the original index.
+5. The number of rooms opened is the answer.
+
+Complexity: `O(n log n)` time, `O(n)` space.
+
+## Implementation
+
+```python
+import heapq
+from typing import List, Tuple
+
+
+def assign_rooms(intervals: List[Tuple[int, int]]) -> Tuple[int, List[int]]:
+    """Return (number_of_rooms, room_id_for_each_interval_in_input_order)."""
+    for s, e in intervals:
+        if not s < e:
+            raise ValueError(f"Invalid interval ({s}, {e}): start must be < end")
+
+    n = len(intervals)
+    result = [0] * n
+    order = sorted(range(n), key=lambda i: (intervals[i][0], intervals[i][1], i))
+
+    busy: List[Tuple[int, int]] = []   # min-heap of (end_time, room_id)
+    free: List[int] = []               # min-heap of reusable room IDs
+    room_count = 0
+
+    for i in order:
+        start, end = intervals[i]
+
+        # Release all rooms whose interval ended at or before this start.
+        while busy and busy[0][0] <= start:
+            _, rid = heapq.heappop(busy)
+            heapq.heappush(free, rid)
+
+        if free:
+            rid = heapq.heappop(free)      # lowest available ID
+        else:
+            rid = room_count               # open a new room
+            room_count += 1
+
+        result[i] = rid
+        heapq.heappush(busy, (end, rid))
+
+    return room_count, result
+
+
+if __name__ == "__main__":
+    tests = [
+        [],
+        [(1, 2)],
+        [(0, 30), (5, 10), (15, 20)],
+        [(1, 3), (3, 5), (5, 7)],              # touching endpoints share a room
+        [(1, 4), (2, 5), (3, 6), (4, 7)],
+        [(7, 10), (2, 4)],
+    ]
+    for t in tests:
+        count, rooms = assign_rooms(t)
+        print(t, "->", count, rooms)
+
+        # Verification: no two intervals in the same room overlap.
+        by_room = {}
+        for (s, e), r in zip(t, rooms):
+            by_room.setdefault(r, []).append((s, e))
+        for lst in by_room.values():
+            lst.sort()
+            assert all(lst[k][1] <= lst[k + 1][0] for k in range(len(lst) - 1))
+```
+
+## Example output
+
+```
+[] -> 0 []
+[(1, 2)] -> 1 [0]
+[(0, 30), (5, 10), (15, 20)] -> 2 [0, 1, 1]
+[(1, 3), (3, 5), (5, 7)] -> 1 [0, 0, 0]
+[(1, 4), (2, 5), (3, 6), (4, 7)] -> 3 [0, 1, 2, 0]
+[(7, 10), (2, 4)] -> 1 [0, 0]
+```
+
+The result is optimal because a new room is opened only when every existing room is busy at the current start time, meaning that many intervals are truly active at once.

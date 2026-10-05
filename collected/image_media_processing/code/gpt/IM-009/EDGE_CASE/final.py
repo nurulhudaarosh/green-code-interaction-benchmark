@@ -1,0 +1,61 @@
+import os
+from PIL import Image
+import numpy as np
+
+
+def compute_statistics(input_dir):
+    """
+    Compute per-image 256-bin grayscale histogram, mean,
+    and population standard deviation.
+
+    Returns:
+        dict: {
+            filename: {
+                "histogram": [256 bin counts],
+                "mean": float,
+                "std": float
+            }
+        }
+    """
+    results = {}
+
+    for filename in sorted(os.listdir(input_dir)):
+        filepath = os.path.join(input_dir, filename)
+
+        # Skip directories and non-file entries
+        if not os.path.isfile(filepath):
+            continue
+
+        try:
+            with Image.open(filepath) as img:
+                # Convert to grayscale
+                gray = np.asarray(img.convert("L"), dtype=np.uint8)
+
+                # Flatten pixel values
+                pixels = gray.ravel()
+
+                # 256-bin histogram: bins 0 through 255
+                histogram = np.bincount(
+                    pixels,
+                    minlength=256
+                ).tolist()
+
+                # Handle the 1x1 / single-pixel case explicitly
+                if pixels.size == 1:
+                    mean = float(pixels[0])
+                    std = 0.0
+                else:
+                    mean = float(np.mean(pixels))
+                    std = float(np.std(pixels, ddof=0))
+
+                results[filename] = {
+                    "histogram": histogram,
+                    "mean": mean,
+                    "std": std
+                }
+
+        except (OSError, ValueError):
+            # Skip files that cannot be read as images
+            continue
+
+    return results

@@ -1,0 +1,284 @@
+"""
+Minimum-Cardinality Subset Sum
+==============================
+
+Problem Restatement
+-------------------
+Given a list of positive integers and a target sum, determine whether a
+subset of the values sums exactly to the target.
+
+If at least one valid subset exists:
+1. Choose the subset with the fewest elements.
+2. If multiple minimum-cardinality subsets exist, choose the
+   lexicographically smallest list of original indices.
+
+Each input element can be used at most once.
+
+Expected Behavior
+-----------------
+Return exactly:
+
+{
+    "possible": True/False,
+    "count": minimum number of selected elements, or -1 if impossible,
+    "indices": lexicographically smallest index list among all
+                minimum-cardinality solutions, or [] if impossible
+}
+
+The result must be deterministic.
+
+Required Algorithm
+------------------
+Use 0/1 subset-sum dynamic programming.
+
+For every reachable sum, store:
+- the minimum cardinality needed to reach that sum
+- the corresponding reconstruction sequence of original indices
+
+Process values in input order and update sums in descending order so that
+each value is used at most once.
+
+Bug Report
+----------
+A common incorrect implementation only replaces a DP state when the new
+candidate uses fewer elements:
+
+    if candidate_count < existing_count:
+        dp[s] = candidate
+
+This fails to enforce deterministic tie handling.
+
+Small valid example:
+
+    values = [2, 3, 3]
+    target = 5
+
+There are two minimum-cardinality solutions:
+
+    indices [0, 1] -> 2 + 3 = 5
+    indices [0, 2] -> 2 + 3 = 5
+
+Both contain 2 elements. Therefore the required answer is:
+
+    {
+        "possible": True,
+        "count": 2,
+        "indices": [0, 1]
+    }
+
+If the implementation keeps whichever equal-cardinality candidate happens
+to be encountered first, it can incorrectly return [0, 2]. The bug is that
+equal-cardinality candidates are not compared lexicographically.
+
+Correction
+----------
+When candidate and existing solutions have the same cardinality, explicitly
+compare their index lists and retain the lexicographically smaller one.
+
+This changes only the faulty tie-handling behavior; all other requirements
+remain unchanged.
+"""
+
+from typing import Any, Dict, List, Optional, Tuple
+
+
+def subset_sum_min_cardinality(
+    values: List[int],
+    target: int
+) -> Dict[str, Any]:
+    """
+    Solve Minimum-Cardinality Subset Sum.
+
+    Tie-breaking:
+    1. Minimum number of elements.
+    2. Lexicographically smallest original-index list.
+
+    Returns exactly:
+        {
+            "possible": bool,
+            "count": int,
+            "indices": List[int]
+        }
+    """
+
+    if target < 0:
+        return {
+            "possible": False,
+            "count": -1,
+            "indices": []
+        }
+
+    # dp[sum] = (cardinality, reconstruction_index_list)
+    # None means the sum is not currently reachable.
+    dp: List[Optional[Tuple[int, List[int]]]] = [None] * (target + 1)
+    dp[0] = (0, [])
+
+    for index, value in enumerate(values):
+        if value <= 0:
+            raise ValueError("All input integers must be positive.")
+
+        # Descending sums enforce 0/1 usage:
+        # the current value cannot be reused during the same iteration.
+        for current_sum in range(target, value - 1, -1):
+            previous = dp[current_sum - value]
+
+            if previous is None:
+                continue
+
+            previous_count, previous_indices = previous
+
+            candidate_count = previous_count + 1
+            candidate_indices = previous_indices + [index]
+
+            existing = dp[current_sum]
+
+            if existing is None:
+                dp[current_sum] = (
+                    candidate_count,
+                    candidate_indices
+                )
+                continue
+
+            existing_count, existing_indices = existing
+
+            # Primary rule: minimum cardinality.
+            if candidate_count < existing_count:
+                dp[current_sum] = (
+                    candidate_count,
+                    candidate_indices
+                )
+
+            # Correct deterministic tie handling:
+            # among equal-cardinality solutions, retain the
+            # lexicographically smallest index list.
+            elif (
+                candidate_count == existing_count
+                and candidate_indices < existing_indices
+            ):
+                dp[current_sum] = (
+                    candidate_count,
+                    candidate_indices
+                )
+
+    result = dp[target]
+
+    if result is None:
+        return {
+            "possible": False,
+            "count": -1,
+            "indices": []
+        }
+
+    count, indices = result
+
+    return {
+        "possible": True,
+        "count": count,
+        "indices": indices
+    }
+
+
+# ----------------------------------------------------------------------
+# Demonstration of the reported defect
+# ----------------------------------------------------------------------
+
+def demonstrate_bug() -> None:
+    """
+    Show the small valid case that exposes the missing tie comparison.
+    """
+
+    values = [2, 3, 3]
+    target = 5
+
+    # Both [0, 1] and [0, 2] have minimum cardinality 2.
+    # [0, 1] is lexicographically smaller.
+    expected = {
+        "possible": True,
+        "count": 2,
+        "indices": [0, 1]
+    }
+
+    actual = subset_sum_min_cardinality(values, target)
+
+    assert actual == expected
+
+    print("Bug demonstration:")
+    print("values =", values)
+    print("target =", target)
+    print("valid minimum-cardinality index lists = [0, 1] and [0, 2]")
+    print("required deterministic result =", expected)
+    print("corrected implementation result =", actual)
+
+
+# ----------------------------------------------------------------------
+# Tests
+# ----------------------------------------------------------------------
+
+def run_tests() -> None:
+    # Reported bug case: equal cardinality requires lexicographic tie-breaking.
+    assert subset_sum_min_cardinality([2, 3, 3], 5) == {
+        "possible": True,
+        "count": 2,
+        "indices": [0, 1]
+    }
+
+    # Prefer fewer elements over a lexicographically smaller
+    # but larger-cardinality solution.
+    assert subset_sum_min_cardinality([2, 3, 5], 5) == {
+        "possible": True,
+        "count": 1,
+        "indices": [2]
+    }
+
+    # Multiple repeated values: deterministic lexicographic choice.
+    assert subset_sum_min_cardinality([4, 4, 4, 4], 8) == {
+        "possible": True,
+        "count": 2,
+        "indices": [0, 1]
+    }
+
+    # No valid subset.
+    assert subset_sum_min_cardinality([2, 4, 8], 7) == {
+        "possible": False,
+        "count": -1,
+        "indices": []
+    }
+
+    # Empty subset is the unique minimum-cardinality solution for target 0.
+    assert subset_sum_min_cardinality([5, 7, 9], 0) == {
+        "possible": True,
+        "count": 0,
+        "indices": []
+    }
+
+    # Single-element solution.
+    assert subset_sum_min_cardinality([11, 4, 7], 7) == {
+        "possible": True,
+        "count": 1,
+        "indices": [2]
+    }
+
+    # Equal-cardinality tie where the first selected index differs.
+    # [0, 2] -> 1 + 5 = 6
+    # [1, 3] -> 2 + 4 = 6
+    # [0, 2] is lexicographically smaller.
+    assert subset_sum_min_cardinality([1, 2, 5, 4], 6) == {
+        "possible": True,
+        "count": 2,
+        "indices": [0, 2]
+    }
+
+    # A larger-cardinality solution must never beat a smaller one,
+    # regardless of its index sequence.
+    assert subset_sum_min_cardinality([1, 2, 3, 6], 6) == {
+        "possible": True,
+        "count": 1,
+        "indices": [3]
+    }
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    demonstrate_bug()
+    run_tests()

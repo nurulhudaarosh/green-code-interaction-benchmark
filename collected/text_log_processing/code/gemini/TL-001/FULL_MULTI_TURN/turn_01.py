@@ -1,0 +1,73 @@
+from collections import Counter
+from pathlib import Path
+import re
+
+
+def normalize_message(msg: str) -> str:
+    """Replaces dynamic fragments (IDs, IPs, timestamps, numbers)
+
+    with standard placeholders.
+    """
+    # Hex addresses / memory pointers (e.g., 0x7fff5fbff820)
+    msg = re.sub(r"\b0x[0-9a-fA-F]+\b", "<HEX>", msg)
+
+    # UUIDs / GUIDs
+    msg = re.sub(
+        r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b",
+        "<UUID>",
+        msg,
+    )
+
+    # IPv4 addresses
+    msg = re.sub(r"\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b", "<IP>", msg)
+
+    # ISO timestamps / dates
+    msg = re.sub(
+        r"\b\d{4}[-/]\d{2}[-/]\d{2}(?:[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?)?\b",
+        "<TIMESTAMP>",
+        msg,
+    )
+
+    # Standalone numbers (user IDs, ports, elapsed ms, etc.)
+    msg = re.sub(r"\b\d+\b", "<NUM>", msg)
+
+    # Collapse repeated whitespace
+    msg = re.sub(r"\s+", " ", msg).strip()
+
+    return msg
+
+
+def analyze_error_log(path: str | Path) -> Counter:
+    """Reads a server log file line-by-line and counts ERROR-level entries
+
+    grouped by normalized error message.
+
+    Parameters:
+        path: Path to the log file.
+
+    Returns:
+        Counter: Mapping of normalized error message to occurrence count.
+    """
+    counts = Counter()
+
+    # Matches standard log formats like:
+    # 2026-10-04 12:00:00 [ERROR] Connection timeout to 192.168.1.10
+    # [2026-10-04] ERROR: User 4581 not found
+    log_pattern = re.compile(
+        r"(?:\[.*?\]\s*|\S+\s+)*\b(?:ERROR|CRITICAL)\b[:\s\-\]]+(?P<message>.+)$",
+        re.IGNORECASE,
+    )
+
+    with open(path, "r", encoding="utf-8", errors="replace") as log_file:
+        for line in log_file:
+            line = line.strip()
+            if not line:
+                continue
+
+            match = log_pattern.search(line)
+            if match:
+                raw_message = match.group("message")
+                normalized = normalize_message(raw_message)
+                counts[normalized] += 1
+
+    return counts

@@ -1,0 +1,153 @@
+```python
+import json
+import sys
+from typing import Any, Dict, List, TextIO, Union
+
+
+def filter_and_sort_jsonl(
+    input_file: Union[str, TextIO],
+    output_file: Union[str, TextIO],
+    min_score: float = 0.0,
+) -> Dict[str, int]:
+    """Filters, validates, sorts, and writes records from a JSONL file.
+
+    Malformed (invalid JSON, non-object) and incomplete (missing required fields
+    or invalid data types) records are safely skipped and tallied in the stats.
+
+    Validation rules:
+      - Each line must be valid JSON.
+      - Each line must be a JSON object (dict).
+      - Must contain 'id', 'category', 'status', and 'score'.
+      - 'score' must be a numeric value (int or float) >= min_score.
+      - 'status' must equal 'active'.
+
+    Sorting hierarchy:
+      1. Category (Alphabetical, ascending)
+      2. Score (Descending)
+      3. ID (Ascending)
+    """
+    valid_records: List[Dict[str, Any]] = []
+    counts = {
+        "total": 0,
+        "kept": 0,
+        "skipped_malformed": 0,
+        "skipped_incomplete": 0,
+        "skipped_inactive": 0,
+        "skipped_low_score": 0,
+        "skipped_total": 0,
+    }
+
+    # Open input stream/file
+    close_in = False
+    if isinstance(input_file, str):
+        in_stream = open(input_file, "r", encoding="utf-8")
+        close_in = True
+    else:
+        in_stream = input_file
+
+    try:
+        for line in in_stream:
+            line = line.strip()
+            if not line:
+                continue
+
+            counts["total"] += 1
+
+            # 1. Check for malformed JSON
+            try:
+                record = json.loads(line)
+            except (json.JSONDecodeError, TypeError):
+                counts["skipped_malformed"] += 1
+                continue
+
+            if not isinstance(record, dict):
+                counts["skipped_malformed"] += 1
+                continue
+
+            # 2. Check for incomplete or wrongly-typed required fields
+            required_fields = {"id", "category", "status", "score"}
+            if not required_fields.issubset(record.keys()):
+                counts["skipped_incomplete"] += 1
+                continue
+
+            # Verify None/null values or incorrect types in key fields
+            if (
+                record["id"] is None
+                or record["category"] is None
+                or not isinstance(record["score"], (int, float))
+                or isinstance(record["score"], bool)  # bool is a subclass of int in Python
+            ):
+                counts["skipped_incomplete"] += 1
+                continue
+
+            # 3. Check active status
+            if str(record["status"]).lower() != "active":
+                counts["skipped_inactive"] += 1
+                continue
+
+            # 4. Check score threshold
+            if record["score"] < min_score:
+                counts["skipped_low_score"] += 1
+                continue
+
+            valid_records.append(record)
+            counts["kept"] += 1
+
+    finally:
+        if close_in:
+            in_stream.close()
+
+    # Calculate aggregate skipped count
+    counts["skipped_total"] = counts["total"] - counts["kept"]
+
+    # Sort hierarchy: Category ASC, Score DESC (-x), ID ASC
+    valid_records.sort(
+        key=lambda x: (
+            str(x["category"]),
+            -float(x["score"]),
+            str(x["id"]),
+        )
+    )
+
+    # Write output
+    close_out = False
+    if isinstance(output_file, str):
+        out_stream = open(output_file, "w", encoding="utf-8")
+        close_out = True
+    else:
+        out_stream = output_file
+
+    try:
+        for record in valid_records:
+            out_stream.write(json.dumps(record) + "\n")
+    finally:
+        if close_out:
+            out_stream.close()
+
+    return counts
+
+
+if __name__ == "__main__":
+    import io
+
+    sample_jsonl = """{"id": 101, "category": "tech", "status": "active", "score": 88.5}
+{"id": 102, "category": "tech", "status": "inactive", "score": 95.0}
+{"id": 103, "category": "health"}
+{"id": 104, "category": "tech", "status": "active", "score": "invalid_score"}
+{"id": 105, "category": "health", "status": "active", "score": 92.0}
+{"malformed_json": true,
+{"id": 106, "category": "tech", "status": "active", "score": 45.0}
+{"id": 107, "category": "health", "status": "active", "score": 78.0}"""
+
+    input_data = io.StringIO(sample_jsonl)
+    output_data = io.StringIO()
+
+    stats = filter_and_sort_jsonl(input_data, output_data, min_score=70.0)
+
+    print("--- Filtered JSONL Output ---")
+    print(output_data.getvalue())
+
+    print("--- Execution Summary ---")
+    print(json.dumps(stats, indent=2))
+
+```

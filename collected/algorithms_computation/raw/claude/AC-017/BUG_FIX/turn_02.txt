@@ -1,0 +1,104 @@
+## Restated problem
+
+**Prime Range Analyzer:** given integers `L ≤ R`, find all primes in `[L, R]` and return the **largest gap between consecutive primes**.
+
+- Base primes go up to `isqrt(R)`, then a segmented sieve runs over `[L, R]`.
+- Values below 2 are never prime.
+- **Required result:** the gap itself, a single integer. It is `0` when the range has fewer than two primes.
+- **Tie handling:** several pairs can share the maximum gap, but the gap value is the same for all of them. If a pair is reported, it must deterministically be the first (smallest) one.
+
+## The defect
+
+My previous `largest_prime_gap` returned a tuple `(gap, pair)`, with `(0, None)` as the empty case. That is not the required result. The spec asks for the gap, and I added a pair to the return value and invented a `None` sentinel for the empty case. Any caller comparing the result to an integer breaks, and the tie rule was buried inside a return value the spec never asked for.
+
+Traced by hand (not executed):
+
+
+The sieve and the gap-scanning logic were correct. The defect is in the return contract.
+
+## Fix
+
+The sieve code is unchanged. `largest_prime_gap` now returns a plain `int`. The first-tie pair moves into a separate, optional helper so that behavior stays deterministic and available, and `list_primes` covers the "list all primes" part.
+
+```python
+from math import isqrt
+
+
+def _base_primes(n):
+    """All primes <= n via a simple sieve."""
+    if n < 2:
+        return []
+    sieve = bytearray([1]) * (n + 1)
+    sieve[0] = sieve[1] = 0
+    for i in range(2, isqrt(n) + 1):
+        if sieve[i]:
+            sieve[i * i::i] = bytes(len(range(i * i, n + 1, i)))
+    return [i for i, v in enumerate(sieve) if v]
+
+
+def primes_in_range(L, R, block=1 << 20):
+    """Yield all primes in [L, R] in increasing order (segmented sieve)."""
+    if R < 2 or L > R:
+        return
+    L = max(L, 2)
+    base = _base_primes(isqrt(R))
+    for lo in range(L, R + 1, block):
+        hi = min(R, lo + block - 1)
+        seg = bytearray([1]) * (hi - lo + 1)
+        for p in base:
+            if p * p > hi:
+                break
+            start = max(p * p, ((lo + p - 1) // p) * p)
+            if start <= hi:
+                seg[start - lo::p] = bytes(len(range(start - lo, hi - lo + 1, p)))
+        i = seg.find(1)
+        while i != -1:
+            yield lo + i
+            i = seg.find(1, i + 1)
+
+
+def list_primes(L, R):
+    """All primes in [L, R], ascending."""
+    return list(primes_in_range(L, R))
+
+
+def _scan_gaps(L, R):
+    """Return (max_gap, first_pair) in one streaming pass.
+    Strict '>' means ties keep the earliest pair. (0, None) if < 2 primes."""
+    best_gap, best_pair, prev = 0, None, None
+    for p in primes_in_range(L, R):
+        if prev is not None and p - prev > best_gap:
+            best_gap, best_pair = p - prev, (prev, p)
+        prev = p
+    return best_gap, best_pair
+
+
+def largest_prime_gap(L, R):
+    """Required result: the largest gap between consecutive primes in
+    [L, R] as an int; 0 if the range has fewer than two primes."""
+    return _scan_gaps(L, R)[0]
+
+
+def largest_gap_pair(L, R):
+    """Optional: the first (smallest) consecutive pair achieving the
+    largest gap, or None if fewer than two primes."""
+    return _scan_gaps(L, R)[1]
+
+
+if __name__ == "__main__":
+    for L, R in [(1, 100), (10, 20), (14, 16), (0, 1), (1, 10)]:
+        print(f"[{L}, {R}] -> gap={largest_prime_gap(L, R)}, "
+              f"pair={largest_gap_pair(L, R)}")
+```
+
+Expected output, traced by hand and not executed:
+
+```
+[1, 100] -> gap=8, pair=(89, 97)
+[10, 20] -> gap=4, pair=(13, 17)
+[14, 16] -> gap=0, pair=None
+[0, 1] -> gap=0, pair=None
+[1, 10] -> gap=2, pair=(3, 5)
+```
+
+The `[1, 10]` case shows the tie rule. The primes 2, 3, 5, 7 have gaps 1, 2, 2, so the maximum is 2, and the earlier pair `(3, 5)` wins over `(5, 7)`.

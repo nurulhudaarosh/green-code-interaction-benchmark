@@ -1,0 +1,85 @@
+## Problem
+
+Given an undirected weighted graph with `n` vertices and `m` edges, and a list of thresholds `q`, answer each query using only edges with `weight <= q`. For each query, report:
+
+1. the number of connected components (isolated vertices count), and
+2. the size of the largest component.
+
+## Constraints and edge cases
+
+- Queries can come in any order, so answers must be returned in the original query order.
+- Self-loops and parallel edges are possible, and the union step handles them naturally.
+- If `q` is below every edge weight, the answer is `(n, 1)`.
+- If `n == 0`, the answer is `(0, 0)`.
+- Weights and thresholds only need to be comparable, so integers, floats and negative values all work.
+
+**Output:** a list of `(components, largest_size)` tuples, one per query, in input order.
+
+## Algorithm
+
+1. Sort the edges by weight.
+2. Sort the query indices by threshold.
+3. Process queries in increasing threshold order, keeping a pointer into the sorted edges. Before answering a query, union every not-yet-added edge with weight `<= q`.
+4. Track the component count (decrement on each successful union) and the largest component size (update after each union) using a disjoint-set union (DSU) with union by size and path compression.
+5. Store each answer at the query's original index.
+
+**Complexity:** O((m + Q) log(m + Q) + (m + n) α(n)), with O(n + m + Q) memory.
+
+## Implementation
+
+```python
+def component_stats(n, edges, queries):
+    """
+    n       : number of vertices (labelled 0..n-1)
+    edges   : iterable of (u, v, w)
+    queries : list of thresholds q
+    returns : list of (num_components, largest_component_size) per query
+    """
+    parent = list(range(n))
+    size = [1] * n
+
+    def find(x):
+        root = x
+        while parent[root] != root:
+            root = parent[root]
+        while parent[x] != root:          # path compression
+            parent[x], x = root, parent[x]
+        return root
+
+    sorted_edges = sorted(edges, key=lambda e: e[2])
+    order = sorted(range(len(queries)), key=lambda i: queries[i])
+
+    components = n
+    largest = 1 if n > 0 else 0
+    ptr = 0
+    m = len(sorted_edges)
+    answers = [None] * len(queries)
+
+    for qi in order:
+        q = queries[qi]
+        while ptr < m and sorted_edges[ptr][2] <= q:
+            u, v, _ = sorted_edges[ptr]
+            ptr += 1
+            ru, rv = find(u), find(v)
+            if ru != rv:
+                if size[ru] < size[rv]:
+                    ru, rv = rv, ru
+                parent[rv] = ru
+                size[ru] += size[rv]
+                components -= 1
+                if size[ru] > largest:
+                    largest = size[ru]
+        answers[qi] = (components, largest)
+
+    return answers
+
+
+if __name__ == "__main__":
+    n = 5
+    edges = [(0, 1, 1), (1, 2, 3), (3, 4, 2), (2, 3, 5)]
+    queries = [3, 0, 10, 1, 5, 2]
+    print(component_stats(n, edges, queries))
+    # [(2, 3), (5, 1), (1, 5), (4, 2), (1, 5), (3, 2)]
+```
+
+The example is deterministic and needs no input. For the query `q = 3`, edges `0-1`, `3-4` and `1-2` are active, giving components `{0,1,2}` and `{3,4}`, so the answer is `(2, 3)`.

@@ -1,0 +1,151 @@
+```python
+def solve_tsp(dist_matrix):
+    """
+    Solves the Traveling Salesperson Problem using the Held-Karp dynamic programming algorithm.
+    
+    Parameters:
+        dist_matrix (list of list of float/int): Complete symmetric N x N distance matrix (N <= 14).
+        
+    Returns:
+        tuple: (min_cost, tour) where:
+            - min_cost is the total minimum distance of the optimal cycle.
+            - tour is the sequence of city indices starting and ending at 0.
+              Ties prefer smaller predecessor indices.
+    """
+    n = len(dist_matrix)
+    if n == 0:
+        return 0, []
+    if n == 1:
+        return 0, [0, 0]
+    if n == 2:
+        cost = dist_matrix[0][1] + dist_matrix[1][0]
+        return cost, [0, 1, 0]
+
+    # Pre-group bitmasks by population count (subset size) containing city 0
+    masks_by_popcount = [[] for _ in range(n + 1)]
+    for mask in range(1, 1 << n):
+        if mask & 1:  # Must include starting city 0
+            pop_cnt = bin(mask).count('1')
+            masks_by_popcount[pop_cnt].append(mask)
+
+    # dp[(mask, i)] = (min_cost, predecessor)
+    dp = {}
+    dp[(1, 0)] = (0, -1)
+
+    # Solve subset size layer-by-layer (from size 2 to N)
+    for size in range(2, n + 1):
+        for mask in masks_by_popcount[size]:
+            for i in range(1, n):
+                if not (mask & (1 << i)):
+                    continue
+                
+                prev_mask = mask ^ (1 << i)
+                best_cost = float('inf')
+                best_pred = -1
+
+                for j in range(n):
+                    if not (prev_mask & (1 << j)):
+                        continue
+                    if (prev_mask, j) in dp:
+                        prev_cost = dp[(prev_mask, j)][0]
+                        if prev_cost == float('inf') or dist_matrix[j][i] == float('inf'):
+                            continue
+                        
+                        cost = prev_cost + dist_matrix[j][i]
+                        
+                        # Primary criterion: Minimum distance cost
+                        # Secondary criterion: Smaller predecessor index tie-breaking
+                        if cost < best_cost:
+                            best_cost = cost
+                            best_pred = j
+                        elif cost == best_cost and (best_pred == -1 or j < best_pred):
+                            best_pred = j
+
+                if best_pred != -1:
+                    dp[(mask, i)] = (best_cost, best_pred)
+
+    # Complete cycle returning to city 0
+    full_mask = (1 << n) - 1
+    min_total_cost = float('inf')
+    best_last_city = -1
+
+    for j in range(1, n):
+        if (full_mask, j) in dp:
+            cost_to_j = dp[(full_mask, j)][0]
+            if cost_to_j == float('inf') or dist_matrix[j][0] == float('inf'):
+                continue
+            
+            total_cost = cost_to_j + dist_matrix[j][0]
+            if total_cost < min_total_cost:
+                min_total_cost = total_cost
+                best_last_city = j
+            elif total_cost == min_total_cost and (best_last_city == -1 or j < best_last_city):
+                best_last_city = j
+
+    if best_last_city == -1:
+        return float('inf'), []
+
+    # Backtrack to reconstruct path
+    curr_mask = full_mask
+    curr_city = best_last_city
+    rev_path = []
+
+    while curr_city != -1:
+        rev_path.append(curr_city)
+        next_city = dp[(curr_mask, curr_city)][1]
+        curr_mask ^= (1 << curr_city)
+        curr_city = next_city
+
+    tour = rev_path[::-1] + [0]
+    return min_total_cost, tour
+
+
+def run_tests():
+    # Test 1: Standard 4-City Example
+    dist1 = [
+        [0, 10, 15, 20],
+        [10, 0, 35, 25],
+        [15, 35, 0, 30],
+        [20, 25, 30, 0]
+    ]
+    cost1, path1 = solve_tsp(dist1)
+    assert cost1 == 80, f"Expected 80, got {cost1}"
+    assert path1 == [0, 1, 3, 2, 0], f"Expected [0, 1, 3, 2, 0], got {path1}"
+
+    # Test 2: Symmetric Ties (Verifying Tie-Breaking Rule for Smaller Predecessor)
+    dist_ties = [
+        [0, 5, 5, 5],
+        [5, 0, 5, 5],
+        [5, 5, 0, 5],
+        [5, 5, 5, 0]
+    ]
+    cost_tie, path_tie = solve_tsp(dist_ties)
+    assert cost_tie == 20, f"Expected 20, got {cost_tie}"
+    assert path_tie == [0, 1, 2, 3, 0], f"Expected [0, 1, 2, 3, 0], got {path_tie}"
+
+    # Test 3: Worst-Case Scale Boundary N = 14
+    import random
+    rng = random.Random(42)
+    n_14 = 14
+    dist_14 = [[0] * n_14 for _ in range(n_14)]
+    for i in range(n_14):
+        for j in range(i + 1, n_14):
+            val = rng.randint(10, 100)
+            dist_14[i][j] = val
+            dist_14[j][i] = val
+
+    cost_14, path_14 = solve_tsp(dist_14)
+    assert len(path_14) == 15, f"Expected tour length 15, got {len(path_14)}"
+    assert path_14[0] == 0 and path_14[-1] == 0, "Tour must start and end at 0"
+
+    # Test 4: Degenerate Single-City and Two-City Cases
+    assert solve_tsp([[0]]) == (0, [0, 0])
+    assert solve_tsp([[0, 7], [7, 0]]) == (14, [0, 1, 0])
+
+    print("All tests passed successfully!")
+
+
+if __name__ == "__main__":
+    run_tests()
+
+```

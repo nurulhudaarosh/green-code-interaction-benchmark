@@ -1,0 +1,103 @@
+Good call — with `n=1` the pairwise loop already does nothing (the inner `range(1, 1)` is empty), so it's technically safe today. But making the short-circuit explicit is worth doing: it documents intent, avoids spinning up a `tqdm` bar for a single item, and guards against future refactors that might index `paths[0]` unconditionally.
+
+Here's the updated function body with an early return for `n < 2`, plus the same short-circuit reflected in the `return_hashes=True` branch:
+
+```python
+def find_fuzzy_duplicates(input_dir, hash_size=8, max_hamming=5,
+                          return_hashes=False):
+    """
+    Cluster images in input_dir by average-hash Hamming distance.
+
+    Two images are considered "similar" if their aHash Hamming distance is
+    <= max_hamming. Clusters are formed via transitive closure using a
+    union-find structure.
+
+    Args:
+        input_dir: Directory containing image files.
+        hash_size: Side length of the square aHash (default 8 -> 64 bits).
+        max_hamming: Max Hamming distance to consider two hashes similar.
+            Must be in [0, hash_size * hash_size].
+        return_hashes: If True, also return a dict mapping each successfully
+            hashed file path to its integer hash.
+
+    Returns:
+        If return_hashes is False:
+            List of clusters (each a list of file paths). Only clusters with
+            >= 2 members are returned. Clusters sorted by descending size.
+            Returns [] when fewer than 2 valid images are found.
+        If return_hashes is True:
+            Tuple (clusters, hash_map) where hash_map maps file path ->
+            integer aHash.
+    """
+    if hash_size < 1:
+        raise ValueError("hash_size must be >= 1")
+
+    total_bits = hash_size * hash_size
+    if max_hamming < 0 or max_hamming > total_bits:
+        raise ValueError(
+            f"max_hamming must be between 0 and {total_bits} "
+            f"(hash_size={hash_size} produces {total_bits}-bit hashes)"
+        )
+
+    extensions = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff"}
+
+    hashes = {}   # path -> hash int
+    failures = [] # (path, error)
+    paths = []
+
+    for name in sorted(os.listdir(input_dir)):
+        path = os.path.join(input_dir, name)
+        if not os.path.isfile(path):
+            continue
+        if os.path.splitext(name)[1].lower() not in extensions:
+            continue
+        try:
+            hashes[path] = _average_hash(path, hash_size=hash_size)
+            paths.append(path)
+        except Exception as e:
+            failures.append((path, str(e)))
+
+    if failures:
+        import warnings
+        warnings.warn(
+            f"Skipped {len(failures)} unreadable file(s); "
+            f"first: {failures[0][0]} ({failures[0][1]})"
+        )
+
+    # Short-circuit: nothing to cluster with fewer than 2 valid images.
+    # (0 images -> [], 1 image -> []; no pairwise loop, no union-find,
+    # no tqdm bar.)
+    if len(paths) < 2:
+        return ([], dict(hashes)) if return_hashes else []
+
+    uf = _UnionFind()
+    for p in paths:
+        uf.add(p)
+
+    n = len(paths)
+    iterator = tqdm(range(n), desc="Comparing hashes", disable=(n < 200))
+    for i in iterator:
+        hi = hashes[paths[i]]
+        for j in range(i + 1, n):
+            if _hamming(hi, hashes[paths[j]]) <= max_hamming:
+                uf.union(paths[i], paths[j])
+
+    clusters_map = defaultdict(list)
+    for p in paths:
+        clusters_map[uf.find(p)].append(p)
+
+    clusters = [sorted(group) for group in clusters_map.values() if len(group) >= 2]
+    clusters.sort(key=len, reverse=True)
+
+    if return_hashes:
+        return clusters, dict(hashes)
+    return clusters
+```
+
+**What this guarantees:**
+
+- **0 valid images** → `[]` (or `([], {})`). The `os.listdir` loop simply finds nothing to hash.
+- **1 valid image** → `[]` (or `([], {path: hash})`). The early return fires before the union-find setup and before any pairwise work.
+- **The warning still fires** in both cases if unreadable files were present, so you're not silently swallowing the failures just because clustering was skipped.
+- **`hash_map` is still populated** on the `return_hashes=True` path — a lone image's hash is useful even though there's no cluster to put it in.
+- **No `tqdm` bar** is emitted for the trivial case, since we return before constructing the iterator.

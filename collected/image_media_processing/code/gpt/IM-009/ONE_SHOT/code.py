@@ -1,0 +1,49 @@
+import os
+import numpy as np
+from PIL import Image
+
+
+def compute_statistics(input_dir):
+    """
+    Compute per-image grayscale statistics.
+
+    Returns:
+        dict: {
+            filename: {
+                "histogram": [256 bin counts],
+                "mean": float,
+                "std": float
+            }
+        }
+    """
+    results = {}
+
+    for filename in sorted(os.listdir(input_dir)):
+        path = os.path.join(input_dir, filename)
+
+        # Only process regular image files
+        if not os.path.isfile(path):
+            continue
+
+        try:
+            with Image.open(path) as img:
+                # Convert to 8-bit grayscale
+                gray = np.array(img.convert("L"))
+
+                # 256-bin histogram: intensity values 0-255
+                histogram = np.bincount(
+                    gray.ravel(),
+                    minlength=256
+                ).tolist()
+
+                results[filename] = {
+                    "histogram": histogram,
+                    "mean": float(gray.mean()),
+                    "std": float(gray.std())
+                }
+
+        except (OSError, ValueError):
+            # Skip files that aren't valid images
+            continue
+
+    return results

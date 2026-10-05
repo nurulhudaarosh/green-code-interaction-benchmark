@@ -1,0 +1,134 @@
+# Minimum Cost Path (Right/Down Moves)
+
+## 1. Problem Understanding
+
+Given an `m × n` grid of non-negative costs, start at the top-left cell `(0, 0)` and reach the bottom-right cell `(m-1, n-1)`. At each step you may move only **right** `(r, c+1)` or **down** `(r+1, c)`. The cost of a path is the sum of the costs of all cells visited, including start and end.
+
+## 2. Key Constraints and Required Output
+
+**Constraints**
+- Costs are non-negative numbers (integers here, though floats also work).
+- The matrix must be non-empty and rectangular.
+- Only right/down moves are allowed, so there are no cycles.
+- No randomness, network access, or external libraries.
+
+**Required output**
+- The minimum total cost.
+- One optimal path as a list of `(row, col)` coordinates from start to end.
+- The path must be deterministic: when several optimal paths exist, the same one is always returned.
+
+## 3. Algorithm
+
+Use dynamic programming. Let `dp[r][c]` be the minimum cost to reach cell `(r, c)`:
+
+```
+dp[r][c] = grid[r][c] + min(dp[r-1][c], dp[r][c-1])
+```
+
+Alongside `dp`, store a predecessor coordinate `prev[r][c]` for each cell. Reconstruct the path by walking back from the end to the start via `prev`, then reversing.
+
+**Deterministic tie handling:** when `dp[r-1][c] == dp[r][c-1]`, always choose the predecessor from **above** (the down move into the cell). The rule is fixed, so the output never varies. Because ties favor "from above", the reconstructed path prefers going down as late as possible in the backward direction, i.e. it moves right earlier in the forward direction.
+
+**Complexity:** O(m·n) time and O(m·n) space.
+
+## 4. Implementation
+
+```python
+from typing import List, Optional, Tuple
+
+Coord = Tuple[int, int]
+
+
+def min_cost_path(grid: List[List[float]]) -> Tuple[float, List[Coord]]:
+    """
+    Return (minimum_cost, path) for moving only right or down from (0, 0)
+    to (m-1, n-1).
+
+    Tie rule: if arriving from above and from the left cost the same,
+    the predecessor is the cell above. This makes the result deterministic.
+    """
+    # ---- Validation ----
+    if not grid or not grid[0]:
+        raise ValueError("grid must be a non-empty matrix")
+    m, n = len(grid), len(grid[0])
+    for row in grid:
+        if len(row) != n:
+            raise ValueError("grid must be rectangular")
+        for v in row:
+            if v < 0:
+                raise ValueError("costs must be non-negative")
+
+    # ---- DP tables ----
+    dp: List[List[float]] = [[0] * n for _ in range(m)]
+    prev: List[List[Optional[Coord]]] = [[None] * n for _ in range(m)]
+
+    dp[0][0] = grid[0][0]
+
+    # First row: can only arrive from the left.
+    for c in range(1, n):
+        dp[0][c] = dp[0][c - 1] + grid[0][c]
+        prev[0][c] = (0, c - 1)
+
+    # First column: can only arrive from above.
+    for r in range(1, m):
+        dp[r][0] = dp[r - 1][0] + grid[r][0]
+        prev[r][0] = (r - 1, 0)
+
+    # Interior cells.
+    for r in range(1, m):
+        for c in range(1, n):
+            from_up = dp[r - 1][c]
+            from_left = dp[r][c - 1]
+            if from_up <= from_left:          # tie -> prefer "up"
+                dp[r][c] = grid[r][c] + from_up
+                prev[r][c] = (r - 1, c)
+            else:
+                dp[r][c] = grid[r][c] + from_left
+                prev[r][c] = (r, c - 1)
+
+    # ---- Path reconstruction ----
+    path: List[Coord] = []
+    cur: Optional[Coord] = (m - 1, n - 1)
+    while cur is not None:
+        path.append(cur)
+        cur = prev[cur[0]][cur[1]]
+    path.reverse()
+
+    return dp[m - 1][n - 1], path
+
+
+def main() -> None:
+    tests = [
+        [[1, 3, 1],
+         [1, 5, 1],
+         [4, 2, 1]],                     # classic example
+        [[5]],                           # single cell
+        [[1, 2, 3, 4]],                  # single row
+        [[1], [2], [3]],                 # single column
+        [[1, 1],
+         [1, 1]],                        # tie case
+        [[0, 0, 0],
+         [0, 0, 0]],                     # all zeros
+    ]
+    for g in tests:
+        cost, path = min_cost_path(g)
+        print(f"grid={g}")
+        print(f"  min cost = {cost}")
+        print(f"  path     = {path}\n")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## 5. Sample Output
+
+```
+grid=[[1, 3, 1], [1, 5, 1], [4, 2, 1]]
+  min cost = 7
+  path     = [(0, 0), (0, 1), (0, 2), (1, 2), (2, 2)]
+```
+
+Here two optimal paths cost 7: right-right-down-down, and down-right-right-down is not optimal, but the alternative right-right-down-down ties with down-down-right-right only if costs match. In this grid the "from above" tie rule at `(1, 2)` and `(2, 2)` selects the path shown, and rerunning always yields the identical result.
+
+**Tie example:** for `[[1, 1], [1, 1]]`, cell `(1, 1)` has equal costs from above and from the left, so the rule picks above. The path is `[(0, 0), (0, 1), (1, 1)]`, which is right then down, with cost 3.

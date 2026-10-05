@@ -1,0 +1,83 @@
+from pathlib import Path
+import numpy as np
+from PIL import Image
+
+
+def analyze_brightness(
+    input_dir: str | Path,
+    dark_threshold: float = 85.0,
+    bright_threshold: float = 170.0,
+) -> list[dict]:
+    """Analyzes brightness metrics for all valid images in a directory using PIL 'L' mode.
+
+    Args:
+        input_dir: Path to directory containing images.
+        dark_threshold: Grayscale mean threshold below which an image is 'dark'.
+        bright_threshold: Grayscale mean threshold above which an image is 'bright'.
+
+    Returns:
+        A list of dictionaries with image stats and classification.
+    """
+    path = Path(input_dir)
+    if not path.is_dir():
+        raise ValueError(f"Directory non-existent or invalid: {input_dir}")
+
+    valid_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
+    results = []
+
+    for file_path in sorted(path.iterdir()):
+        if file_path.suffix.lower() not in valid_extensions:
+            continue
+
+        try:
+            with Image.open(file_path) as img:
+                # Ensure RGB mode to handle RGBA/grayscale/palette inputs consistently
+                img_rgb = img.convert("RGB")
+                arr_rgb = np.array(img_rgb)
+
+                # 1. Per-channel means (RGB)
+                r_mean = float(np.mean(arr_rgb[:, :, 0]))
+                g_mean = float(np.mean(arr_rgb[:, :, 1]))
+                b_mean = float(np.mean(arr_rgb[:, :, 2]))
+
+                # 2. Perceptual luminance using PIL 'L' mode conversion
+                # PIL uses ITU-R 601-2: L = R * 299/1000 + G * 587/1000 + B * 114/1000
+                img_gray = img_rgb.convert("L")
+                grayscale_brightness = float(np.mean(np.array(img_gray)))
+
+                # 3. Determine classification
+                if grayscale_brightness < dark_threshold:
+                    classification = "dark"
+                elif grayscale_brightness > bright_threshold:
+                    classification = "bright"
+                else:
+                    classification = "normal"
+
+                results.append(
+                    {
+                        "filename": file_path.name,
+                        "path": str(file_path),
+                        "means_rgb": {
+                            "red": round(r_mean, 2),
+                            "green": round(g_mean, 2),
+                            "blue": round(b_mean, 2),
+                        },
+                        "brightness": round(grayscale_brightness, 2),
+                        "classification": classification,
+                    }
+                )
+        except Exception:
+            continue
+
+    return results
+
+
+# Example Usage
+if __name__ == "__main__":
+    image_stats = analyze_brightness("images")
+
+    for stat in image_stats:
+        print(f"[{stat['classification'].upper()}] {stat['filename']}")
+        print(f"  Grayscale Brightness ('L' mode): {stat['brightness']} / 255")
+        print(f"  Channel Means (RGB): R={stat['means_rgb']['red']}, "
+              f"G={stat['means_rgb']['green']}, B={stat['means_rgb']['blue']}\n")

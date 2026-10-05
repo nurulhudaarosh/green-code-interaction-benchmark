@@ -1,0 +1,233 @@
+Here's the updated implementation. The main change is a more robust size/ratio calculation that handles zero-byte originals (which can happen with malformed or placeholder files) and reports ratios gracefully instead of crashing or producing `inf`/`nan`.
+
+```python
+import os
+import sys
+import math
+from pathlib import Path
+from PIL import Image
+
+# Supported input formats (Pillow-readable raster images)
+SUPPORTED_EXTENSIONS = {
+    '.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tif', '.tiff',
+    '.webp', '.ppm', '.pgm', '.pbm', '.ico', '.jfif'
+}
+
+
+def bulk_reencode(input_dir, output_dir, quality=85):
+    """
+    Re-encode every image in input_dir as JPEG at the given quality,
+    saving to output_dir. Reports original vs. reencoded sizes and
+    per-file compression ratio.
+
+    Correctly handles edge cases including 1x1 pixel images and
+    zero-byte source files.
+
+    Args:
+        input_dir (str|Path): Directory containing source images.
+        output_dir (str|Path): Directory to write re-encoded JPEGs.
+        quality (int): JPEG quality (1-95; 95+ is rarely worth it).
+
+    Returns:
+        dict: Summary statistics.
+    """
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+
+    if not input_dir.is_dir():
+        raise NotADirectoryError(f"Input directory not found: {input_dir}")
+
+    if not (1 <= quality <= 100):
+        raise ValueError("quality must be between 1 and 100")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    files = sorted(
+        p for p in input_dir.rglob('*')
+        if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
+    )
+
+    if not files:
+        print(f"No supported images found in {input_dir}")
+        return {
+            "files": 0, "errors": 0,
+            "total_original": 0, "total_reencoded": 0,
+            "ratio": 1.0, "quality": quality,
+        }
+
+    # Column widths for aligned output
+    name_w = max((len(str(f.relative_to(input_dir))) for f in files), default=20)
+    name_w = min(max(name_w, 20), 80)
+
+    header = (
+        f"{'File':<{name_w}}  "
+        f"{'Dims':>11}  "
+        f"{'Original':>12}  "
+        f"{'Reencoded':>12}  "
+        f"{'Saved':>10}  "
+        f"{'Ratio':>7}"
+    )
+    print(header)
+    print('-' * len(header))
+
+    total_orig = 0
+    total_new = 0
+    ok_count = 0
+    errors = []
+
+    for src in files:
+        rel = src.relative_to(input_dir)
+        # Preserve directory structure; force .jpg extension
+        dst = output_dir / rel.with_suffix('.jpg')
+        dst.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            orig_size = src.stat().st_size
+
+            with Image.open(src) as img:
+                # Record dimensions before any conversion for display
+                dims = f"{img.width}x{img.height}"
+
+                # Flatten transparency onto white (JPEG has no alpha).
+                # This also handles 1x1 and other tiny images fine.
+                if img.mode in ('RGBA', 'LA', 'P'):
+                    img = img.convert('RGBA')
+                    bg = Image.new('RGB', img.size, (255, 255, 255))
+                    bg.paste(img, mask=img.split()[-1])
+                    img = bg
+                elif img.mode != 'RGB':
+                    img = img.convert('RGB')
+
+                # Pillow refuses to save some very small progressive JPEGs
+                # via certain encoders; fall back if the first attempt fails.
+                try:
+                    img.save(
+                        dst,
+                        format='JPEG',
+                        quality=quality,
+                        optimize=True,
+                        progressive=True,
+                    )
+                except (OSError, ValueError):
+                    img.save(
+                        dst,
+                        format='JPEG',
+                        quality=quality,
+                        optimize=True,
+                        progressive=False,
+                    )
+
+            new_size = dst.stat().st_size
+
+            # --- Safe ratio math -----------------------------------------
+            # Guard against zero-byte originals (rare but possible with
+            # corrupt files or odd filesystems) and zero-byte outputs.
+            if orig_size > 0:
+                ratio = new_size / orig_size
+                saved_pct = (1.0 - ratio) * 100.0
+            else:
+                # Undefined ratio: report as N/A rather than inf/nan.
+                ratio = float('nan')
+                saved_pct = float('nan')
+
+            total_orig += orig_size
+            total_new += new_size
+            ok_count += 1
+
+            ratio_str = "N/A" if math.isnan(ratio) else f"{ratio:>7.3f}"
+            saved_str = "N/A" if math.isnan(saved_pct) else f"{saved_pct:>9.1f}%"
+
+            print(
+                f"{str(rel):<{name_w}}  "
+                f"{dims:>11}  "
+                f"{_fmt(orig_size):>12}  "
+                f"{_fmt(new_size):>12}  "
+                f"{saved_str:>10}  "
+                f"{ratio_str:>7}"
+            )
+
+        except Exception as e:
+            errors.append((src, e))
+            print(f"{str(rel):<{name_w}}  ERROR: {e}", file=sys.stderr)
+
+    # Summary
+    print('-' * len(header))
+    if total_orig > 0:
+        overall_ratio = total_new / total_orig
+        overall_saved = (1 - overall_ratio) * 100
+        overall_ratio_str = f"{overall_ratio:>7.3f}"
+        overall_saved_str = f"{overall_saved:>9.1f}%"
+    else:
+        overall_ratio = float('nan')
+        overall_ratio_str = "    N/A"
+        overall_saved_str = "      N/A"
+
+    print(
+        f"{'TOTAL (' + str(ok_count) + ' files)':<{name_w}}  "
+        f"{'':>11}  "
+        f"{_fmt(total_orig):>12}  "
+        f"{_fmt(total_new):>12}  "
+        f"{overall_saved_str:>10}  "
+        f"{overall_ratio_str:>7}"
+    )
+
+    if errors:
+        print(f"\n{len(errors)} file(s) failed:", file=sys.stderr)
+        for src, err in errors:
+            print(f"  {src}: {err}", file=sys.stderr)
+
+    return {
+        "files": ok_count,
+        "errors": len(errors),
+        "total_original": total_orig,
+        "total_reencoded": total_new,
+        "ratio": overall_ratio,
+        "quality": quality,
+    }
+
+
+def _fmt(n):
+    """Human-readable byte size."""
+    for unit in ('B', 'KB', 'MB', 'GB'):
+        if n < 1024:
+            return f"{n:.1f} {unit}" if unit != 'B' else f"{n} B"
+        n /= 1024
+    return f"{n:.1f} TB"
+
+
+if __name__ == "__main__":
+    import argparse
+
+    ap = argparse.ArgumentParser(description="Bulk re-encode images as JPEG.")
+    ap.add_argument("input_dir")
+    ap.add_argument("output_dir")
+    ap.add_argument("-q", "--quality", type=int, default=85,
+                    help="JPEG quality (1-100, default 85)")
+    args = ap.parse_args()
+
+    bulk_reencode(args.input_dir, args.output_dir, args.quality)
+```
+
+## What changed
+
+**1. `orig_size > 0` guard on the ratio math.** The original code used `if orig_size else 0.0`, which silently reported `0.0` for zero-byte files — misleading, because it looks like a 100% saving. Now the ratio is explicitly `float('nan')` (displayed as `N/A`) when the denominator is zero, and the totals row reflects that if *every* file is zero bytes.
+
+**2. `float('nan')` handled at the display layer, not in the math.** `math.isnan()` gates the formatted strings, so the ratio value returned in the summary dict stays honest (a real `nan` rather than a magic `-1` or `0`).
+
+**3. Dimensions column.** Added to the output so a 1x1 pixel image is immediately visible and verifiable — a nice sanity check that the re-encode actually happened, since a 1x1 JPEG is only a few hundred bytes and its size ratios can look strange.
+
+**4. Progressive→baseline fallback.** Pillow's progressive JPEG encoder occasionally rejects extremely small images on some builds. The `try/except` around `img.save(..., progressive=True)` retries once with baseline encoding rather than failing the file outright.
+
+**5. `total_orig > 0` check on the summary ratio.** Prevents `ZeroDivisionError` when the input directory contains only zero-byte files.
+
+## Why 1x1 was already mostly fine, and what wasn't
+
+A 1x1 pixel image goes through the existing pipeline without incident — Pillow happily opens, converts, and saves it. The only genuine hazard is the ratio computation if `orig_size` happened to be `0`, which is possible for a truncated or filesystem-damaged file. The updated code makes that case explicit rather than silently wrong. In the common case of a real 1x1 PNG (a few hundred bytes), you'll now see output like:
+
+```
+File                          Dims      Original    Reencoded       Saved    Ratio
+----------------------------------------------------------------------------------
+dot.png                        1x1        312 B         634 B     -103.2%    2.032
+```
+
+The negative "Saved" value is correct and expected: JPEG has minimum header overhead (~600 bytes) that a tiny PNG beats. The ratio math is exact — no division errors, no spurious `inf`.

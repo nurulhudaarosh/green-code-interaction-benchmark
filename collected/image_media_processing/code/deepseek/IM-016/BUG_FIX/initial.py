@@ -1,0 +1,95 @@
+import os
+import numpy as np
+from PIL import Image
+from pathlib import Path
+
+# Sobel kernels
+SOBEL_GX = np.array([
+    [-1, 0, 1],
+    [-2, 0, 2],
+    [-1, 0, 1]
+], dtype=np.float32)
+
+SOBEL_GY = np.array([
+    [-1, -2, -1],
+    [ 0,  0,  0],
+    [ 1,  2,  1]
+], dtype=np.float32)
+
+
+def _convolve2d(image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+    """Explicit 2D 'valid' convolution of a grayscale image with a 3x3 kernel.
+
+    Border pixels (where the kernel doesn't fully overlap) are set to 0.
+    """
+    kh, kw = kernel.shape
+    h, w = image.shape
+    out_h = h - kh + 1
+    out_w = w - kw + 1
+
+    # Sliding-window view: shape (out_h, out_w, kh, kw)
+    windows = np.lib.stride_tricks.sliding_window_view(image, (kh, kw))
+    # Multiply by kernel and sum over the kernel axes
+    result = np.einsum('ijkl,kl->ij', windows, kernel)
+
+    # Pad back to original size with zeros so output matches input dimensions
+    padded = np.zeros((h, w), dtype=np.float32)
+    padded[:out_h, :out_w] = result
+    return padded
+
+
+def _to_grayscale(img: Image.Image) -> np.ndarray:
+    """Convert a PIL image to a float32 grayscale array in [0, 255]."""
+    if img.mode != 'L':
+        img = img.convert('L')
+    return np.asarray(img, dtype=np.float32)
+
+
+def sobel_edges(input_dir: str, output_dir: str) -> None:
+    """Apply Sobel edge detection to every image in `input_dir`.
+
+    For each image:
+      1. Convert to grayscale.
+      2. Convolve with Gx and Gy Sobel kernels.
+      3. Compute gradient magnitude sqrt(Gx^2 + Gy^2).
+      4. Clip to [0, 255] and save as an 8-bit grayscale PNG in `output_dir`,
+         preserving the original filename stem.
+    """
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+
+    if not input_path.is_dir():
+        raise NotADirectoryError(f"Input directory not found: {input_dir}")
+
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    valid_exts = {'.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.webp'}
+
+    for entry in sorted(input_path.iterdir()):
+        if not entry.is_file() or entry.suffix.lower() not in valid_exts:
+            continue
+
+        try:
+            with Image.open(entry) as img:
+                gray = _to_grayscale(img)
+        except Exception as e:
+            print(f"Skipping {entry.name}: {e}")
+            continue
+
+        gx = _convolve2d(gray, SOBEL_GX)
+        gy = _convolve2d(gray, SOBEL_GY)
+
+        magnitude = np.sqrt(gx * gx + gy * gy)
+        magnitude = np.clip(magnitude, 0, 255).astype(np.uint8)
+
+        out_file = output_path / f"{entry.stem}.png"
+        Image.fromarray(magnitude, mode='L').save(out_file, format='PNG')
+        print(f"{entry.name} -> {out_file.name}")
+
+
+if __name__ == '__main__':
+    import sys
+    if len(sys.argv) != 3:
+        print("Usage: python sobel.py <input_dir> <output_dir>")
+        sys.exit(1)
+    sobel_edges(sys.argv[1], sys.argv[2])

@@ -1,0 +1,39 @@
+The standard way to store key/value metadata in PNG files is by using `tEXt` chunks. Python's `Pillow` (PIL) library provides native support for reading and writing these chunks using `PngInfo`.
+
+Here is the implementation using standard Python and `Pillow`:
+
+```python
+from PIL import Image
+from PIL.PngImagePlugin import PngInfo
+
+
+def embed_tags(input_path: str, output_path: str, tags: dict[str, str]) -> None:
+    """Embed custom key-value string metadata into a PNG file's tEXt chunks."""
+    with Image.open(input_path) as img:
+        png_info = PngInfo()
+
+        # Preserve existing text metadata if present
+        if hasattr(img, "info"):
+            for key, val in img.info.items():
+                if isinstance(val, str):
+                    png_info.add_text(key, val)
+
+        # Add or overwrite with new key-value pairs
+        for key, value in tags.items():
+            png_info.add_text(str(key), str(value))
+
+        # Save image with embedded PNG metadata chunks
+        img.save(output_path, format="PNG", pnginfo=png_info)
+
+
+def read_tags(image_path: str) -> dict[str, str]:
+    """Read custom string key-value metadata from a PNG file."""
+    with Image.open(image_path) as img:
+        # img.info extracts embedded metadata chunks (tEXt, zTXt, iTXt)
+        return {
+            key: value
+            for key, value in img.info.items()
+            if isinstance(value, str)
+        }
+
+```

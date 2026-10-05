@@ -1,0 +1,119 @@
+## Problem Identification
+
+**Problem**: Interval Room Assignment (Meeting Rooms II variant)
+
+Given a list of intervals `[start, end)`, assign each interval to a room such that:
+- No two overlapping intervals share a room.
+- A room can be reused if its previous interval ends **at or before** the next interval's start (i.e., `prev_end <= next_start`).
+- Minimize the total number of rooms used.
+- Return the room ID assigned to **every original interval** (preserving input order).
+
+## Key Constraints
+
+- Intervals are half-open: `[start, end)`, so touching intervals (`end == start`) do **not** overlap.
+- Must minimize rooms → this is equivalent to finding the maximum number of intervals overlapping at any single point in time.
+- Output must map back to original interval indices (input order may not be sorted).
+- Deterministic solution: no randomness; ties broken consistently.
+
+## Required Output
+
+A list `room_ids` of the same length as `intervals`, where `room_ids[i]` is the room ID assigned to `intervals[i]`. Room IDs are `0`-indexed and assigned in the order rooms are first opened (greedy smallest available).
+
+## Algorithm
+
+1. **Sort** intervals by start time (tie-break by original index for determinism).
+2. Maintain a **min-heap** keyed by `(end_time, room_id)` representing rooms currently in use.
+3. For each interval in sorted order:
+   - Pop all heap entries whose `end_time <= current_start` — those rooms are now free.
+   - If the heap is non-empty, we can either reuse a freed room or open a new one. To **minimize rooms**, reuse the freed room with the smallest ID (or simply reuse any freed room; reusing is always at least as good as opening a new one).
+   - If heap is empty, open a new room with the next available ID.
+   - Push `(current_end, room_id)` onto the heap and record `room_ids[original_index] = room_id`.
+4. Return `room_ids`.
+
+> **Note**: A cleaner variant: keep a min-heap of `(end_time, room_id)` for *active* rooms, and a separate min-heap for *available* room IDs. When an interval starts, move all expired rooms from active to available, then pop the smallest available room ID (or allocate a new one if none available).
+
+## Python Implementation
+
+```python
+import heapq
+
+
+def assign_rooms(intervals):
+    """
+    Assign each interval to a room so that overlapping intervals never share a room.
+    Reuse a room when its previous interval ends at or before the next start.
+    Minimize the number of rooms.
+
+    Args:
+        intervals: list of [start, end] pairs (half-open: [start, end))
+
+    Returns:
+        list of room IDs (0-indexed), one per input interval, in original order.
+    """
+    n = len(intervals)
+    if n == 0:
+        return []
+
+    # Sort by start time; tie-break by original index for determinism.
+    order = sorted(range(n), key=lambda i: (intervals[i][0], i))
+
+    room_ids = [None] * n
+
+    # Min-heap of (end_time, room_id) for rooms currently occupied.
+    active = []
+    # Min-heap of available (freed) room IDs.
+    available = []
+    next_room_id = 0
+
+    for idx in order:
+        start, end = intervals[idx]
+
+        # Free rooms whose intervals have ended (end <= start).
+        while active and active[0][0] <= start:
+            _, freed_room = heapq.heappop(active)
+            heapq.heappush(available, freed_room)
+
+        # Pick the smallest available room, or open a new one.
+        if available:
+            room = heapq.heappop(available)
+        else:
+            room = next_room_id
+            next_room_id += 1
+
+        room_ids[idx] = room
+        heapq.heappush(active, (end, room))
+
+    return room_ids
+
+
+if __name__ == "__main__":
+    # Example 1
+    intervals1 = [[0, 30], [5, 10], [15, 20]]
+    print(assign_rooms(intervals1))  # e.g. [0, 1, 2] (3 rooms needed)
+
+    # Example 2 (reuse case)
+    intervals2 = [[7, 10], [2, 4], [1, 3], [5, 8]]
+    print(assign_rooms(intervals2))  # 2 rooms suffice
+
+    # Example 3 (touching intervals reuse the same room)
+    intervals3 = [[1, 2], [2, 3], [3, 4]]
+    print(assign_rooms(intervals3))  # all share room 0
+
+    # Example 4 (empty)
+    print(assign_rooms([]))  # []
+```
+
+### Example Walkthrough (`[[0, 30], [5, 10], [15, 20]]`)
+
+| Sorted idx | Interval | Active after freeing | Assigned room |
+|------------|----------|----------------------|---------------|
+| 0 | [0, 30] | — | 0 |
+| 1 | [5, 10] | (30, 0) active | 1 |
+| 2 | [15, 20]| (30, 0) active | 2 |
+
+Result (original order): `[0, 1, 2]` — 3 rooms, which is optimal since all three overlap at `t = 15`.
+
+### Complexity
+
+- **Time**: `O(n log n)` — sorting plus heap operations.
+- **Space**: `O(n)` for heaps and output.

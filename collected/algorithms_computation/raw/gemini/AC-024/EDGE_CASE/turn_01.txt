@@ -1,0 +1,87 @@
+### Problem & Requirements
+
+* **Goal:** Assign each interval in an array of intervals to a room such that no two overlapping intervals occupy the same room, while minimizing the total number of rooms used. Intervals can share a room if one ends at or before the next starts (i.e., if $[start, end]$ and $[start', end']$ share a room, then $end \le start'$ when ordered).
+* **Key Constraints:**
+* Must output a room ID (e.g., 0-indexed integers $0, 1, \dots, K-1$) assigned to each interval, maintaining the **original input ordering**.
+* Complete reuse: a room becomes available at $t = \text{end\_time}$.
+
+
+* **Required Output:** A list/array of room IDs corresponding element-by-element to the original interval list.
+
+---
+
+### Algorithm Overview
+
+1. **Track Original Indices:** Associate each interval $[start, end]$ with its original index $i$.
+2. **Sort:** Sort intervals primarily by start time $start$.
+3. **Min-Heap for Room Availability:** Maintain a min-heap where each entry stores `(end_time, room_id)` representing when each room becomes free.
+4. **Assignment:** Iterate through the sorted intervals:
+* If the earliest ending room in the heap ends at or before the current interval's start time, pop that room and reuse its `room_id`.
+* Otherwise, allocate a new `room_id` (equal to the current total room count).
+* Push `(current_interval_end, room_id)` back onto the heap.
+* Store `room_id` at position $i$ in the output array.
+
+
+
+---
+
+### Python Implementation
+
+```python
+import heapq
+
+def min_meeting_rooms_assignment(intervals: list[list[int]]) -> list[int]:
+    """
+    Assigns each interval to a room minimizing the number of rooms.
+    Intervals that touch (e.g. end == start) can reuse the same room.
+
+    :param intervals: List of [start, end] intervals
+    :return: List of room IDs corresponding to each input interval
+    """
+    if not intervals:
+        return []
+
+    # Attach original index to keep track of result order
+    indexed_intervals = [
+        (start, end, idx) for idx, (start, end) in enumerate(intervals)
+    ]
+    
+    # Sort primarily by start time
+    indexed_intervals.sort(key=lambda x: x[0])
+
+    # Min-heap stores tuples of (end_time, room_id)
+    room_heap = []
+    assignments = [0] * len(intervals)
+    next_room_id = 0
+
+    for start, end, original_idx in indexed_intervals:
+        # Check if the room with the earliest end time is free
+        if room_heap and room_heap[0][0] <= start:
+            # Reuse the room
+            _, room_id = heapq.heappop(room_heap)
+        else:
+            # Allocate a new room
+            room_id = next_room_id
+            next_room_id += 1
+
+        # Record assignment and update heap with new end time
+        assignments[original_idx] = room_id
+        heapq.heappush(room_heap, (end, room_id))
+
+    return assignments
+
+
+# Example Usage:
+if __name__ == "__main__":
+    test_intervals = [[0, 30], [5, 10], [15, 20], [10, 15]]
+    # Original intervals:
+    # 0: [0, 30]  -> needs Room 0
+    # 1: [5, 10]  -> needs Room 1
+    # 2: [15, 20] -> can reuse Room 1 (since [10, 15] ends at 15)
+    # 3: [10, 15] -> reuses Room 1 (starts at 10 after [5, 10] ends at 10)
+    
+    room_assignments = min_meeting_rooms_assignment(test_intervals)
+    print("Room assignments for original intervals:", room_assignments)
+    # Total rooms used = max(room_assignments) + 1
+
+```

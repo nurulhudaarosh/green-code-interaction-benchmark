@@ -1,0 +1,77 @@
+"""Per-image grayscale statistics for a directory of images."""
+
+import logging
+from pathlib import Path
+
+import numpy as np
+from PIL import Image
+
+logger = logging.getLogger(__name__)
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
+
+
+def _load_gray_uint8(path: Path) -> np.ndarray:
+    """Load an image as a 2-D uint8 grayscale array."""
+    with Image.open(path) as im:
+        im.load()
+        if im.mode.startswith("I"):
+            # 16/32-bit integer images: Pillow's convert("L") would clip, so rescale.
+            arr = np.asarray(im).astype(np.float64)
+            peak = arr.max() if arr.size else 0
+            if peak > 255:
+                arr = arr * (255.0 / peak)
+            return np.rint(arr).astype(np.uint8)
+        return np.asarray(im.convert("L"), dtype=np.uint8)
+
+
+def compute_statistics(input_dir):
+    """Compute grayscale statistics for every image in ``input_dir``.
+
+    Args:
+        input_dir: Path (str or Path-like) to a directory containing images.
+            Only the top level is scanned; non-image files are ignored.
+
+    Returns:
+        dict mapping filename -> {
+            "histogram": np.ndarray of shape (256,), dtype int64, where
+                         histogram[i] is the number of pixels with intensity i,
+            "mean":      float, mean pixel intensity (0-255),
+            "std":       float, population standard deviation of intensity,
+        }
+        Files that cannot be read as images are skipped with a warning.
+
+    Raises:
+        NotADirectoryError: if ``input_dir`` is not a directory.
+    """
+    input_path = Path(input_dir)
+    if not input_path.is_dir():
+        raise NotADirectoryError(f"Not a directory: {input_path}")
+
+    results = {}
+    for path in sorted(input_path.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS:
+            continue
+        try:
+            gray = _load_gray_uint8(path)
+        except Exception as exc:  # corrupt or unsupported file
+            logger.warning("Skipping %s: %s", path.name, exc)
+            continue
+        if gray.size == 0:
+            logger.warning("Skipping %s: empty image", path.name)
+            continue
+
+        results[path.name] = {
+            "histogram": np.bincount(gray.ravel(), minlength=256).astype(np.int64),
+            "mean": float(gray.mean()),
+            "std": float(gray.std()),
+        }
+    return results
+
+
+if __name__ == "__main__":
+    import sys
+
+    for name, s in compute_statistics(sys.argv[1]).items():
+        print(f"{name}: mean={s['mean']:.2f} std={s['std']:.2f} "
+              f"pixels={int(s['histogram'].sum())}")

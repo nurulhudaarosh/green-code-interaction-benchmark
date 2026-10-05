@@ -1,0 +1,78 @@
+import math
+from typing import List, Tuple, Optional
+
+def sieve_primes(limit: int) -> List[int]:
+    """Generate all primes up to limit using the Sieve of Eratosthenes."""
+    if limit < 2:
+        return []
+    is_prime = [True] * (limit + 1)
+    is_prime[0] = is_prime[1] = False
+    for i in range(2, int(math.sqrt(limit)) + 1):
+        if is_prime[i]:
+            for j in range(i * i, limit + 1, i):
+                is_prime[j] = False
+    return [i for i in range(2, limit + 1) if is_prime[i]]
+
+def segmented_sieve(L: int, R: int) -> Tuple[List[int], Optional[int], Optional[Tuple[int, int]]]:
+    """
+    Find all primes in [L, R] using a segmented sieve.
+
+    Returns: (primes, largest_gap, gap_pair)
+      - primes:        sorted list of primes in [L, R]
+      - largest_gap:   None if fewer than 2 primes, else the max consecutive gap
+      - gap_pair:      (a, b) with b - a == largest_gap and a < b;
+                       deterministically the LEFTMOST pair achieving the max gap
+                       (ties broken by smallest starting prime).
+    """
+    if L > R:
+        return [], None, None
+
+    L = max(L, 2)  # no primes below 2
+    if L > R:
+        return [], None, None
+
+    # 1) Base primes through sqrt(R)
+    limit = int(math.sqrt(R)) + 1
+    base_primes = sieve_primes(limit)
+
+    # 2) Segmented sieve over [L, R]
+    segment_size = R - L + 1
+    is_prime = [True] * segment_size
+    for p in base_primes:
+        start = max(p * p, ((L + p - 1) // p) * p)
+        for multiple in range(start, R + 1, p):
+            is_prime[multiple - L] = False
+
+    primes = [L + i for i in range(segment_size) if is_prime[i]]
+
+    # 3) Deterministic largest gap: leftmost pair wins on ties (strict '>')
+    if len(primes) < 2:
+        return primes, None, None
+
+    largest_gap = -1
+    gap_pair: Optional[Tuple[int, int]] = None
+    for i in range(len(primes) - 1):
+        gap = primes[i + 1] - primes[i]
+        if gap > largest_gap:  # strict '>' => keep leftmost on ties
+            largest_gap = gap
+            gap_pair = (primes[i], primes[i + 1])
+
+    return primes, largest_gap, gap_pair
+
+def solve(L: int, R: int) -> None:
+    """Print the primes in [L, R] and the largest gap (with deterministic tie handling)."""
+    primes, largest_gap, gap_pair = segmented_sieve(L, R)
+    if not primes:
+        print(f"No primes in [{L}, {R}]")
+    elif largest_gap is None:
+        print(f"Only one prime in [{L}, {R}]: {primes[0]}")
+    else:
+        print(f"Primes in [{L}, {R}]: {primes}")
+        print(f"Largest gap: {largest_gap} between {gap_pair[0]} and {gap_pair[1]}")
+
+if __name__ == "__main__":
+    # Includes the tie case [3, 19]: max gap 4 appears at (7,11) and (13,17).
+    # Deterministic rule picks the leftmost pair (7, 11).
+    for L, R in [(3, 19), (10, 30), (1, 10), (14, 16), (2, 3), (100, 200)]:
+        print(f"\n--- Interval [{L}, {R}] ---")
+        solve(L, R)

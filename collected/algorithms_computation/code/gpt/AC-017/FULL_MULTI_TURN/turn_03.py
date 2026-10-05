@@ -1,0 +1,276 @@
+"""
+Prime Range Analyzer
+
+Original problem
+----------------
+Given integers L and R, list all prime numbers in the inclusive interval
+[L, R] and return the largest gap between consecutive primes.
+
+Original required output
+------------------------
+{
+    "primes": [...],
+    "largest_gap": ...
+}
+
+Original requirements
+---------------------
+- "primes" contains every prime in [L, R], in increasing order.
+- "largest_gap" is the largest difference between consecutive primes.
+- If fewer than two primes exist, "largest_gap" is 0.
+- Generate base primes through sqrt(R).
+- Perform a segmented sieve over [L, R].
+- Return exactly the original fields when the new feature is disabled
+  or not requested.
+- Deterministic behavior.
+- Standard library only.
+- No network access, APIs, external services, randomness, or human interaction.
+
+New feature
+-----------
+An optional `operation_summary` field can be requested.
+
+When enabled, it reports a deterministic count of major computational
+decisions/operations made by the algorithm.
+
+The summary counts:
+    - each base-prime candidate examined by the base sieve;
+    - each base prime used during the segmented sieve;
+    - each composite-marking operation in the segmented segment;
+    - each consecutive-prime gap examined.
+
+The count is deterministic for the same input because the algorithm always
+processes values in the same order.
+
+When `include_operation_summary=False` (the default), the original output is
+preserved exactly:
+
+{
+    "primes": [...],
+    "largest_gap": ...
+}
+
+When `include_operation_summary=True`, the result becomes:
+
+{
+    "primes": [...],
+    "largest_gap": ...,
+    "operation_summary": <deterministic integer>
+}
+"""
+
+from math import isqrt
+
+
+def _generate_base_primes(limit: int, operation_counter: list[int]) -> list[int]:
+    """Generate base primes through limit using the ordinary sieve."""
+    if limit < 2:
+        return []
+
+    composite = bytearray(limit + 1)
+    primes = []
+
+    for p in range(2, limit + 1):
+        # Major decision: inspect whether p is prime.
+        operation_counter[0] += 1
+
+        if composite[p] == 0:
+            primes.append(p)
+
+            if p * p <= limit:
+                composite[p * p : limit + 1 : p] = b"\x01" * (
+                    (limit - p * p) // p + 1
+                )
+
+    return primes
+
+
+def prime_range_analyzer(
+    L: int,
+    R: int,
+    include_operation_summary: bool = False,
+) -> dict:
+    """
+    Analyze the inclusive interval [L, R].
+
+    Original output:
+        {
+            "primes": [...],
+            "largest_gap": ...
+        }
+
+    Optional output when include_operation_summary=True:
+        {
+            "primes": [...],
+            "largest_gap": ...,
+            "operation_summary": <integer>
+        }
+    """
+
+    operation_counter = [0]
+
+    # No prime exists when R < 2.
+    if R < 2:
+        result = {
+            "primes": [],
+            "largest_gap": 0,
+        }
+
+        if include_operation_summary:
+            result["operation_summary"] = 0
+
+        return result
+
+    start = max(L, 2)
+    width = R - start + 1
+
+    # Required step: generate base primes through sqrt(R).
+    base_primes = _generate_base_primes(
+        isqrt(R),
+        operation_counter,
+    )
+
+    # Segmented sieve.
+    is_prime = bytearray(b"\x01") * width
+
+    for p in base_primes:
+        # Major operation: process one base prime in the segmented sieve.
+        operation_counter[0] += 1
+
+        # First multiple of p inside [start, R].
+        first = max(
+            p * p,
+            ((start + p - 1) // p) * p,
+        )
+
+        if first > R:
+            continue
+
+        first_index = first - start
+        count = (width - 1 - first_index) // p + 1
+
+        # Count every composite position marked by this base prime
+        # as a major marking operation.
+        operation_counter[0] += count
+
+        is_prime[first_index::p] = b"\x00" * count
+
+    # Extract primes in increasing order.
+    primes = [
+        start + i
+        for i, value in enumerate(is_prime)
+        if value
+    ]
+
+    # Compute the largest consecutive-prime gap.
+    largest_gap = 0
+
+    for i in range(1, len(primes)):
+        # Major operation: examine one consecutive-prime gap.
+        operation_counter[0] += 1
+
+        gap = primes[i] - primes[i - 1]
+
+        if gap > largest_gap:
+            largest_gap = gap
+
+    # Preserve all original fields exactly.
+    result = {
+        "primes": primes,
+        "largest_gap": largest_gap,
+    }
+
+    # Add the new field only when explicitly requested.
+    if include_operation_summary:
+        result["operation_summary"] = operation_counter[0]
+
+    return result
+
+
+# ------------------------------------------------------------
+# Deterministic tests
+# ------------------------------------------------------------
+
+def _run_tests() -> None:
+    # Original behavior: no extra field.
+    assert prime_range_analyzer(10, 20) == {
+        "primes": [11, 13, 17, 19],
+        "largest_gap": 4,
+    }
+
+    # New feature enabled.
+    result = prime_range_analyzer(
+        10,
+        20,
+        include_operation_summary=True,
+    )
+
+    assert result["primes"] == [11, 13, 17, 19]
+    assert result["largest_gap"] == 4
+    assert isinstance(result["operation_summary"], int)
+    assert result["operation_summary"] >= 0
+
+    # Deterministic operation summary.
+    result_again = prime_range_analyzer(
+        10,
+        20,
+        include_operation_summary=True,
+    )
+    assert result == result_again
+
+    # One prime.
+    assert prime_range_analyzer(11, 11) == {
+        "primes": [11],
+        "largest_gap": 0,
+    }
+
+    # One prime with operation summary.
+    result = prime_range_analyzer(
+        11,
+        11,
+        include_operation_summary=True,
+    )
+    assert result["primes"] == [11]
+    assert result["largest_gap"] == 0
+    assert "operation_summary" in result
+
+    # No primes.
+    assert prime_range_analyzer(14, 16) == {
+        "primes": [],
+        "largest_gap": 0,
+    }
+
+    # Empty prime range below 2.
+    assert prime_range_analyzer(-5, 1) == {
+        "primes": [],
+        "largest_gap": 0,
+    }
+
+    # Operation summary is still present when explicitly requested.
+    assert prime_range_analyzer(
+        -5,
+        1,
+        include_operation_summary=True,
+    ) == {
+        "primes": [],
+        "largest_gap": 0,
+        "operation_summary": 0,
+    }
+
+    # Boundary including 2.
+    assert prime_range_analyzer(2, 10) == {
+        "primes": [2, 3, 5, 7],
+        "largest_gap": 2,
+    }
+
+    # Repeated execution must produce exactly the same summary.
+    first = prime_range_analyzer(20, 40, True)
+    second = prime_range_analyzer(20, 40, True)
+    assert first == second
+
+
+if __name__ == "__main__":
+    _run_tests()
+
+    print(prime_range_analyzer(10, 20))
+    print(prime_range_analyzer(10, 20, include_operation_summary=True))

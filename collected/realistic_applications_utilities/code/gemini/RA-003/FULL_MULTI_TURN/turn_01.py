@@ -1,0 +1,62 @@
+import pandas as pd
+import numpy as np
+
+# 1. Sample Dataset Creation
+data = {
+    'Student_ID': [101, 102, 103, 104, 105, 106, 107, 108],
+    'Name': ['Alice', 'Bob', 'Charlie', 'David', 'Eva', 'Frank', 'Grace', 'Hannah'],
+    'Math': [85, 58, 92, 45, 78, 88, 95, 62],
+    'Science': [90, 65, 88, 50, 82, 79, 91, 58],
+    'English': [78, 72, 95, 60, 85, 80, 89, 70],
+    'Attendance_%': [92, 80, 98, 70, 88, 91, 96, 75]
+}
+
+df = pd.DataFrame(data)
+
+# 2. Performance Analysis Calculations
+subject_cols = ['Math', 'Science', 'English']
+
+df['Total_Score'] = df[subject_cols].sum(axis=1)
+df['Average_Score'] = df[subject_cols].mean(axis=1).round(2)
+
+# Assign Grades based on Average Score
+def calculate_grade(avg):
+    if avg >= 90:
+        return 'A+'
+    elif avg >= 80:
+        return 'A'
+    elif avg >= 70:
+        return 'B'
+    elif avg >= 60:
+        return 'C'
+    else:
+        return 'F'
+
+df['Grade'] = df['Average_Score'].apply(calculate_grade)
+
+# Identify At-Risk Students (Average < 60 or Attendance < 75%)
+df['At_Risk'] = (df['Average_Score'] < 60) | (df['Attendance_%'] < 75)
+
+# Rank Students based on Total Score
+df['Rank'] = df['Total_Score'].rank(ascending=False, method='min').astype(int)
+
+# 3. Class-Level Summary Statistics
+class_summary = {
+    'Class Average (Math)': df['Math'].mean(),
+    'Class Average (Science)': df['Science'].mean(),
+    'Class Average (English)': df['English'].mean(),
+    'Overall Class Average': df['Average_Score'].mean(),
+    'Top Performer': df.loc[df['Rank'] == 1, 'Name'].values[0],
+    'Total At-Risk Students': df['At_Risk'].sum()
+}
+
+# Output Results
+print("--- STUDENT PERFORMANCE REPORT ---")
+print(df.sort_values('Rank').to_string(index=False))
+
+print("\n--- CLASS SUMMARY ---")
+for key, value in class_summary.items():
+    if isinstance(value, float):
+        print(f"{key}: {value:.2f}")
+    else:
+        print(f"{key}: {value}")

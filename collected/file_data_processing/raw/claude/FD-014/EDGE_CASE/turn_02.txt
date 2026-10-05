@@ -1,0 +1,205 @@
+Here's the revised version. It normalizes only what you listed (case, surrounding spaces, phone punctuation), so the earlier assumptions (Gmail dot-stripping, `+tag` removal, default country code, extension dropping, accent folding) are removed.
+
+```python
+"""
+Offline customer record matcher (strict normalization).
+
+Normalization (applied before blocking and matching):
+  - email:   trim surrounding spaces, lowercase
+  - phone:   trim surrounding spaces, remove all punctuation/spaces
+             (keeps digits only)
+  - surname: trim surrounding spaces, lowercase (used for blocking)
+  - postal:  trim surrounding spaces, uppercase, remove internal spaces/hyphens
+
+Blocking:  (first letter of surname, first N chars of postal code)
+Matching:  exact equality of normalized email OR normalized phone, within a block
+Clustering: union-find over matched pairs
+"""
+
+import csv
+import re
+import sys
+from collections import defaultdict
+from itertools import combinations
+
+
+# --------------------------------------------------------------------------
+# Normalization
+# --------------------------------------------------------------------------
+
+def normalize_email(email):
+    """Trim surrounding spaces and lowercase. Empty if it has no '@'."""
+    email = (email or "").strip().lower()
+    return email if "@" in email else ""
+
+
+def normalize_phone(phone, min_digits=7):
+    """Trim, then drop everything except digits: '(310) 555-0100' -> '3105550100'.
+    Numbers with fewer than min_digits digits are treated as missing."""
+    digits = re.sub(r"\D", "", (phone or "").strip())
+    return digits if len(digits) >= min_digits else ""
+
+
+def normalize_surname(surname):
+    return (surname or "").strip().lower()
+
+
+def normalize_postal(postal):
+    return re.sub(r"[\s\-]", "", (postal or "").strip().upper())
+
+
+def block_key(record, prefix_len=3):
+    surname = normalize_surname(record.get("surname"))
+    postal = normalize_postal(record.get("postal_code"))
+    if not surname or not postal:
+        return None
+    return (surname[0], postal[:prefix_len])
+
+
+# --------------------------------------------------------------------------
+# Union-Find
+# --------------------------------------------------------------------------
+
+class UnionFind:
+    def __init__(self, n):
+        self.parent = list(range(n))
+
+    def find(self, x):
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]
+            x = self.parent[x]
+        return x
+
+    def union(self, a, b):
+        ra, rb = self.find(a), self.find(b)
+        if ra != rb:
+            self.parent[max(ra, rb)] = min(ra, rb)
+
+
+# --------------------------------------------------------------------------
+# Matcher
+# --------------------------------------------------------------------------
+
+def match_records(records, prefix_len=3):
+    # 1. Normalize + block
+    blocks = defaultdict(list)
+    normalized = []
+    unblockable = 0
+    for i, rec in enumerate(records):
+        email = normalize_email(rec.get("email"))
+        phone = normalize_phone(rec.get("phone"))
+        normalized.append((email, phone))
+        key = block_key(rec, prefix_len)
+        if key is None:
+            unblockable += 1
+        else:
+            blocks[key].append(i)
+
+    # 2. Exact email/phone matching inside each block
+    uf = UnionFind(len(records))
+    pairs = []
+    for key, idxs in blocks.items():
+        if len(idxs) < 2:
+            continue
+        found = defaultdict(set)  # (a, b) -> {"email", "phone"}
+        for field, pos in (("email", 0), ("phone", 1)):
+            index = defaultdict(list)
+            for i in idxs:
+                value = normalized[i][pos]
+                if value:
+                    index[value].append(i)
+            for ids in index.values():
+                for a, b in combinations(ids, 2):
+                    found[(a, b)].add(field)
+        for (a, b), reasons in found.items():
+            uf.union(a, b)
+            pairs.append({"a": a, "b": b, "block": key, "reasons": sorted(reasons)})
+
+    # 3. Build clusters
+    clusters = defaultdict(list)
+    for i in range(len(records)):
+        clusters[uf.find(i)].append(i)
+
+    return {
+        "pairs": pairs,
+        "clusters": [sorted(c) for c in clusters.values()],
+        "stats": {
+            "records": len(records),
+            "blocks": len(blocks),
+            "unblockable_records": unblockable,
+            "matched_pairs": len(pairs),
+            "duplicate_clusters": sum(1 for c in clusters.values() if len(c) > 1),
+        },
+    }
+
+
+# --------------------------------------------------------------------------
+# I/O
+# --------------------------------------------------------------------------
+
+def load_csv(path):
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        return list(csv.DictReader(f))
+
+
+def write_output(path, records, result):
+    cluster_of = {}
+    for cluster in result["clusters"]:
+        for i in cluster:
+            cluster_of[i] = cluster[0]  # lowest index is canonical
+
+    fields = list(records[0].keys()) + ["cluster_id", "is_duplicate"]
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        for i, rec in enumerate(records):
+            writer.writerow({**rec, "cluster_id": cluster_of[i],
+                             "is_duplicate": cluster_of[i] != i})
+
+
+# --------------------------------------------------------------------------
+# Demo / CLI
+# --------------------------------------------------------------------------
+
+def demo():
+    records = [
+        {"id": "1", "surname": " Smith ", "postal_code": "90210",  "email": "  John.Smith@Example.COM ", "phone": "(310) 555-0100"},
+        {"id": "2", "surname": "SMITH",   "postal_code": "90210",  "email": "john.smith@example.com",     "phone": ""},
+        {"id": "3", "surname": "smith",   "postal_code": "90210",  "email": "",                           "phone": " 310.555.0100 "},
+        {"id": "4", "surname": "Jones",   "postal_code": "10001",  "email": "ajones@example.com",         "phone": "212-555-0199"},
+        {"id": "5", "surname": "Jones",   "postal_code": "10001",  "email": "other@example.com",          "phone": "212 555 0199"},
+        {"id": "6", "surname": "Jones",   "postal_code": "94105",  "email": "ajones@example.com",         "phone": ""},  # different block
+        {"id": "7", "surname": "Lee",     "postal_code": "",       "email": "lee@example.com",            "phone": ""},  # unblockable
+    ]
+
+    result = match_records(records)
+    print("Stats:", result["stats"])
+    print("\nMatched pairs:")
+    for p in result["pairs"]:
+        print(f"  id {records[p['a']]['id']} <-> id {records[p['b']]['id']} "
+              f"via {p['reasons']} in block {p['block']}")
+    print("\nDuplicate clusters:")
+    for c in result["clusters"]:
+        if len(c) > 1:
+            print("  ", [records[i]["id"] for i in c])
+
+
+if __name__ == "__main__":
+    if len(sys.argv) == 3:
+        recs = load_csv(sys.argv[1])
+        res = match_records(recs)
+        write_output(sys.argv[2], recs, res)
+        print(res["stats"])
+    else:
+        demo()
+```
+
+**What changed**
+
+- **Email:** only trimmed and lowercased, so `johnsmith+promo@gmail.com` and `johnsmith@gmail.com` are now different values.
+- **Phone:** trimmed, then reduced to digits, so `(310) 555-0100`, `310.555.0100`, and `310 555 0100` all become `3105550100`. A leading `+` is dropped as punctuation, but no country code is added, so `+1 310...` will not equal `310...`.
+- **Extensions:** `x22` is not removed, so its digits stay in the number. If your data has extensions, strip them before this step.
+- **Surname and postal code:** these get the same trimming and case treatment for blocking, with spaces and hyphens removed from postal codes so `SW1A 1AA` and `sw1a1aa` land in the same block.
+- **Records missing a surname or postal code** can't be blocked, so they're skipped and counted as `unblockable_records`.
+
+Run it with `python matcher.py` for the demo, or `python matcher.py customers.csv out.csv` (columns: `surname`, `postal_code`, `email`, `phone`).

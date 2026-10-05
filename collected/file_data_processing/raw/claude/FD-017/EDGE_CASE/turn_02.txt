@@ -1,0 +1,296 @@
+```python
+"""
+event_pivot.py
+
+Validate event records, aggregate counts by (date, region), pivot event types
+into deterministic columns, fill missing cells with zero, and sort rows.
+
+Column order depends only on the SET of event types (plus the optional
+`event_types` argument), never on the order records arrive in.
+
+Usage:
+    from event_pivot import build_event_pivot
+    df = build_event_pivot(records)
+"""
+
+from __future__ import annotations
+
+import random
+import re
+from dataclasses import dataclass
+from datetime import date, datetime
+from typing import Any, Iterable, Mapping
+
+import pandas as pd
+
+REQUIRED_FIELDS = ("date", "region", "event_type")
+DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%d-%m-%Y")
+
+
+class ValidationError(ValueError):
+    """Raised when one or more records fail validation (strict mode)."""
+
+    def __init__(self, errors: list[str]):
+        self.errors = errors
+        preview = "; ".join(errors[:5])
+        more = f" (+{len(errors) - 5} more)" if len(errors) > 5 else ""
+        super().__init__(f"{len(errors)} invalid record(s): {preview}{more}")
+
+
+@dataclass(frozen=True)
+class CleanRecord:
+    date: date
+    region: str
+    event_type: str
+    count: int
+
+
+def _parse_date(value: Any) -> date:
+    # pd.Timestamp subclasses datetime, but check it first for clarity.
+    if isinstance(value, pd.Timestamp):
+        return value.date()
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        for fmt in DATE_FORMATS:
+            try:
+                return datetime.strptime(text, fmt).date()
+            except ValueError:
+                continue
+    raise ValueError(f"unparseable date: {value!r}")
+
+
+def _clean_label(value: Any, field: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string, got {type(value).__name__}")
+    text = " ".join(value.split())
+    if not text:
+        raise ValueError(f"{field} is empty")
+    return text
+
+
+def _parse_count(value: Any) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"count must be a non-negative integer, got {value!r}")
+    if isinstance(value, int):
+        count = value
+    elif isinstance(value, float) and value.is_integer():
+        count = int(value)
+    elif isinstance(value, str) and value.strip().isdigit():
+        count = int(value.strip())
+    else:
+        raise ValueError(f"count must be a non-negative integer, got {value!r}")
+    if count < 0:
+        raise ValueError(f"count must be non-negative, got {count}")
+    return count
+
+
+def validate_records(
+    records: Iterable[Mapping[str, Any]],
+    *,
+    strict: bool = True,
+) -> tuple[list[CleanRecord], list[str]]:
+    """
+    Validate and normalize records.
+
+    Each record needs: date, region, event_type. An optional 'count' field
+    (default 1) lets pre-aggregated rows be supplied.
+
+    Region is normalized to upper-case; event_type to lower-case with
+    whitespace collapsed, so 'US-East ' and 'us-east' merge deterministically.
+
+    strict=True  -> raise ValidationError listing every problem.
+    strict=False -> skip bad records and return their error messages.
+    """
+    clean: list[CleanRecord] = []
+    errors: list[str] = []
+
+    for idx, rec in enumerate(records):
+        try:
+            if not isinstance(rec, Mapping):
+                raise ValueError("record is not a mapping")
+            missing = [f for f in REQUIRED_FIELDS if rec.get(f) is None]
+            if missing:
+                raise ValueError(f"missing field(s): {', '.join(missing)}")
+
+            clean.append(
+                CleanRecord(
+                    date=_parse_date(rec["date"]),
+                    region=_clean_label(rec["region"], "region").upper(),
+                    event_type=_clean_label(rec["event_type"], "event_type").lower(),
+                    count=_parse_count(rec.get("count", 1)),
+                )
+            )
+        except ValueError as exc:
+            errors.append(f"record {idx}: {exc}")
+
+    if errors and strict:
+        raise ValidationError(errors)
+    return clean, errors
+
+
+def derive_column_name(event_type: str, prefix: str = "evt_") -> str:
+    """Deterministically map an event type to a safe column name."""
+    slug = re.sub(r"[^a-z0-9]+", "_", event_type.lower()).strip("_")
+    return f"{prefix}{slug or 'unknown'}"
+
+
+def _build_column_map(
+    observed: Iterable[str],
+    prefix: str,
+    leading: Iterable[str] = (),
+) -> dict[str, str]:
+    """
+    Return {event_type: column_name} as an insertion-ordered dict whose order
+    IS the output column order. It is a pure function of the set of event
+    types and `leading`, never of the order in which they were seen.
+
+    1. Canonical order: sort by (derived column name, raw event type). Sorting
+       by the derived name means the final columns are alphabetical as users
+       see them, and the raw type is a total tie-breaker.
+    2. Collision suffixes (_2, _3, ...) are assigned in that canonical order,
+       so 'a-b' vs 'a b' always resolve the same way.
+    3. Types listed in `leading` are moved to the front in the order given;
+       everything else follows in canonical order.
+    """
+    leading_list = list(dict.fromkeys(leading))  # dedupe, keep given order
+    all_types = set(observed) | set(leading_list)
+
+    canonical = sorted(all_types, key=lambda et: (derive_column_name(et, prefix), et))
+
+    names: dict[str, str] = {}
+    seen: dict[str, int] = {}
+    for et in canonical:
+        base = derive_column_name(et, prefix)
+        n = seen.get(base, 0)
+        seen[base] = n + 1
+        names[et] = base if n == 0 else f"{base}_{n + 1}"
+
+    ordered = leading_list + [et for et in canonical if et not in set(leading_list)]
+    return {et: names[et] for et in ordered}
+
+
+def build_event_pivot(
+    records: Iterable[Mapping[str, Any]],
+    *,
+    strict: bool = True,
+    column_prefix: str = "evt_",
+    event_types: Iterable[str] | None = None,
+    add_total: bool = False,
+) -> pd.DataFrame:
+    """
+    Build a (date, region) x event-type count table.
+
+    Parameters
+    ----------
+    records       : iterable of dicts with date, region, event_type [, count]
+    strict        : raise on invalid records (True) or skip them (False)
+    column_prefix : prefix for derived event-type columns
+    event_types   : optional event types to always include. They are placed
+                    first, in the order given; any other observed types follow
+                    alphabetically. Gives a stable schema across batches.
+    add_total     : append a 'total' column
+
+    Returns
+    -------
+    DataFrame with columns [date, region, <event columns...>] sorted by
+    date, then region; missing cells are 0 (int64). Identical output for any
+    permutation of the input records.
+    """
+    clean, _ = validate_records(records, strict=strict)
+
+    leading = (
+        [_clean_label(e, "event_type").lower() for e in event_types]
+        if event_types is not None
+        else []
+    )
+    column_map = _build_column_map(
+        (r.event_type for r in clean), column_prefix, leading
+    )
+    event_cols = list(column_map.values())
+    extra = ["total"] if add_total else []
+
+    if not clean:
+        return pd.DataFrame(columns=["date", "region", *event_cols, *extra]).astype(
+            {c: "int64" for c in event_cols + extra}
+        )
+
+    df = pd.DataFrame(
+        [(r.date, r.region, column_map[r.event_type], r.count) for r in clean],
+        columns=["date", "region", "event_col", "count"],
+    )
+
+    pivot = (
+        df.pivot_table(
+            index=["date", "region"],
+            columns="event_col",
+            values="count",
+            aggfunc="sum",
+            fill_value=0,
+        )
+        .reindex(columns=event_cols, fill_value=0)  # explicit, fixed column order
+        .fillna(0)
+        .astype("int64")
+    )
+    pivot.columns.name = None
+
+    if add_total:
+        pivot["total"] = pivot.sum(axis=1)
+
+    return (
+        pivot.reset_index()
+        .sort_values(["date", "region"], kind="mergesort")
+        .reset_index(drop=True)
+    )
+
+
+if __name__ == "__main__":
+    sample = [
+        {"date": "2024-03-02", "region": "us-east", "event_type": "Login"},
+        {"date": "2024-03-02", "region": "US-EAST ", "event_type": "login"},
+        {"date": "2024-03-02", "region": "eu-west", "event_type": "Sign Up"},
+        {"date": "2024-03-01", "region": "eu-west", "event_type": "Login", "count": 3},
+        {"date": "03/01/2024", "region": "us-east", "event_type": "Purchase", "count": "2"},
+        {"date": "2024-03-01", "region": "eu-west", "event_type": "sign-up"},  # slug collision
+    ]
+
+    result = build_event_pivot(sample, add_total=True)
+    print(result.to_string(index=False))
+
+    # Determinism check: shuffled input must produce an identical frame,
+    # including column order.
+    rng = random.Random(0)
+    for _ in range(200):
+        shuffled = sample[:]
+        rng.shuffle(shuffled)
+        pd.testing.assert_frame_equal(
+            build_event_pivot(shuffled, add_total=True), result, check_like=False
+        )
+    print("\nOK: 200 shuffled inputs gave identical columns and rows.")
+
+    # Pin a preferred leading order; unlisted types follow alphabetically.
+    print("\nPinned order:")
+    print(
+        build_event_pivot(sample, event_types=["purchase", "login", "refund"])
+        .to_string(index=False)
+    )
+
+    bad = sample + [{"date": "not-a-date", "region": "", "event_type": "x"}]
+    try:
+        build_event_pivot(bad)
+    except ValidationError as err:
+        print("\nStrict mode error:", err)
+```
+
+**What changed**
+
+My earlier version already sorted event types, but two weak spots remained, and both are fixed:
+
+- **Sorted by what users see:** columns are now ordered by their derived name, with the raw event type as a tie-breaker. Before, the order was by raw type, which could leave the final column names out of alphabetical order (for example `sign up` vs `sign-up` vs `sign_in`).
+- **Collision suffixes:** `_2`, `_3` are assigned in that same canonical order, so which of two colliding types gets the suffix never depends on arrival order.
+- **Optional pinned order:** `event_types=[...]` now puts those types first in the order you give, and anything else observed follows alphabetically. This lets you keep a stable schema across batches.
+- **Explicit column order:** the final `reindex(columns=event_cols)` fixes the order, so `pivot_table` internals can't affect it.
+- **Self-check:** the demo shuffles the input 200 times and asserts that the output frames are identical, column order included.

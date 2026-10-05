@@ -1,72 +1,141 @@
 ```python
+import hashlib
 import json
-import traceback
+import logging
+import os
+import shutil
+import mimetypes
 from pathlib import Path
+from typing import Dict, List, Optional
+from datetime import datetime
 
-DATASET_PATH = "dataset.json"
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-def load_dataset(path):
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"'{path}' not found. Check the path.")
-    with open(p, "r", encoding="utf-8") as f:
-        return json.load(f)
+class DocumentOrganizer:
+    """
+    A complete document organization tool that automatically scans, categorizes,
+    renames, deduplicates, and moves files into a structured directory tree.
+    """
 
-def safe_get(lst, index, default=None, label="list"):
-    """Access list[index] safely, logging instead of crashing."""
-    try:
-        return lst[index]
-    except IndexError:
-        print(f"IndexError: {label} has length {len(lst)}, but index {index} was requested.")
-        return default
+    DEFAULT_CATEGORY_RULES = {
+        "Images": [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp", ".heic"],
+        "Documents": [".pdf", ".docx", ".doc", ".txt", ".rtf", ".odt", ".tex"],
+        "Spreadsheets": [".xlsx", ".xls", ".csv", ".ods"],
+        "Presentations": [".pptx", ".ppt", ".key", ".odp"],
+        "Audio": [".mp3", ".wav", ".aac", ".flac", ".m4a", ".ogg"],
+        "Video": [".mp4", ".mkv", ".mov", ".avi", ".flv", ".wmv"],
+        "Archives": [".zip", ".tar", ".gz", ".rar", ".7z"],
+        "Code": [".py", ".js", ".html", ".css", ".cpp", ".c", ".java", ".json", ".xml", ".sh"],
+        "Executable": [".exe", ".dmg", ".pkg", ".deb", ".sh", ".msi"]
+    }
 
-def diagnose_index_errors(data):
-    issues = []
-    interactions = data.get("interactions", []) if isinstance(data, dict) else []
+    def __init__(self, target_dir: str, rules: Optional[Dict[str, List[str]]] = None):
+        self.target_dir = Path(target_dir).resolve()
+        self.rules = rules or self.DEFAULT_CATEGORY_RULES
+        self.ext_to_category = self._build_extension_map()
 
-    if not interactions:
-        issues.append("'interactions' list is empty — nothing to advance through.")
-        return issues
+    def _build_extension_map(self) -> Dict[str, str]:
+        """Maps each file extension to its corresponding category."""
+        ext_map = {}
+        for category, extensions in self.rules.items():
+            for ext in extensions:
+                ext_map[ext.lower()] = category
+        return ext_map
 
-    for i, interaction in enumerate(interactions):
-        try:
-            # Example of the kind of indexing that typically throws this error:
-            # accessing a sub-list/messages array without checking length first
-            messages = interaction.get("messages", []) if isinstance(interaction, dict) else []
-            if not messages:
-                issues.append(f"Interaction {i}: 'messages' is empty — indexing into it would fail.")
+    def get_category(self, file_path: Path) -> str:
+        """Determines category based on extension or MIME type."""
+        ext = file_path.suffix.lower()
+        if ext in self.ext_to_category:
+            return self.ext_to_category[ext]
+        
+        # Fallback to MIME type detection
+        mime_type, _ = mimetypes.guess_type(file_path)
+        if mime_type:
+            main_type = mime_type.split("/")[0].capitalize()
+            return main_type if main_type in ["Image", "Audio", "Video", "Text"] else "Others"
+            
+        return "Others"
+
+    @staticmethod
+    def calculate_file_hash(file_path: Path, chunk_size: int = 8192) -> str:
+        """Calculates SHA256 hash for exact duplicate detection."""
+        hasher = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            while chunk := f.read(chunk_size):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+
+    def organize(self, move_files: bool = True, remove_duplicates: bool = False, date_folders: bool = False) -> Dict[str, List[str]]:
+        """
+        Executes the file organization process.
+        
+        :param move_files: Moves files if True, copies if False.
+        :param remove_duplicates: Deletes identical files if set to True.
+        :param date_folders: Organizes files further into Year/Month subfolders.
+        """
+        if not self.target_dir.exists():
+            raise FileNotFoundError(f"Directory not found: {self.target_dir}")
+
+        seen_hashes: Dict[str, Path] = {}
+        report = {"moved": [], "duplicates_removed": [], "skipped": []}
+
+        # Collect all files first to prevent modifying directory structure while iterating
+        files = [f for f in self.target_dir.rglob("*") if f.is_file()]
+
+        for file_path in files:
+            # Skip files inside already-organized category folders
+            if file_path.parent.name in self.rules.keys() or file_path.parent.name == "Others":
                 continue
 
-            first_msg = safe_get(messages, 0, label=f"interaction[{i}].messages")
-            last_msg = safe_get(messages, len(messages) - 1, label=f"interaction[{i}].messages")
+            # Deduplication Check
+            if remove_duplicates:
+                file_hash = self.calculate_file_hash(file_path)
+                if file_hash in seen_hashes:
+                    logging.info(f"Duplicate found: Removing {file_path.name}")
+                    file_path.unlink()
+                    report["duplicates_removed"].append(str(file_path))
+                    continue
+                seen_hashes[file_hash] = file_path
 
-            if first_msg is None or last_msg is None:
-                issues.append(f"Interaction {i}: could not safely access first/last message.")
+            category = self.get_category(file_path)
+            
+            # Construct target destination path
+            dest_dir = self.target_dir / category
+            if date_folders:
+                mtime = datetime.fromtimestamp(file_path.getmtime())
+                dest_dir = dest_dir / f"{mtime.year}" / f"{mtime.strftime('%m-%B')}"
 
-        except Exception:
-            issues.append(f"Interaction {i}: unexpected error:\n{traceback.format_exc()}")
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest_file_path = dest_dir / file_path.name
 
-    return issues
+            # Handle duplicate file names at target
+            counter = 1
+            while dest_file_path.exists():
+                dest_file_path = dest_dir / f"{file_path.stem}_{counter}{file_path.suffix}"
+                counter += 1
 
-def main():
-    try:
-        data = load_dataset(DATASET_PATH)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"Failed to load dataset: {e}")
-        return
+            # Move or Copy operations
+            if move_files:
+                shutil.move(str(file_path), str(dest_file_path))
+            else:
+                shutil.copy2(str(file_path), str(dest_file_path))
 
-    issues = diagnose_index_errors(data)
+            logging.info(f"Organized: {file_path.name} -> {dest_file_path}")
+            report["moved"].append(f"{file_path.name} -> {dest_file_path}")
 
-    if issues:
-        print("Issues found (likely causes of 'list index out of range'):")
-        for issue in issues:
-            print(f"  - {issue}")
-    else:
-        print("No obvious index issues found — the error may be occurring elsewhere in your pipeline.")
-        print("Check any loop like `data[i]` or `list[-1]` where the list could be shorter than expected.")
+        return report
 
+
+# Usage Example
 if __name__ == "__main__":
-    main()
-```
+    # Create test directory path
+    folder_to_organize = "./sample_documents"
+    
+    # Initialize and execute organizer
+    organizer = DocumentOrganizer(target_dir=folder_to_organize)
+    # Set parameters: move_files=True, remove_duplicates=True, date_folders=True
+    # summary_report = organizer.organize(move_files=True, remove_duplicates=True, date_folders=False)
+    # print(json.dumps(summary_report, indent=4))
 
-This assumes a `messages` list nested inside each interaction — swap that key/structure for whatever your actual pipeline indexes into. If you can share the traceback with a line number, I can point at the exact line instead of guessing at the shape.
+```

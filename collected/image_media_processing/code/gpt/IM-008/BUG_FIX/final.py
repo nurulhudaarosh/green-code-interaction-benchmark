@@ -1,0 +1,28 @@
+id="58321"
+import os
+import hashlib
+from collections import defaultdict
+
+
+def find_exact_duplicates(input_dir):
+    groups = defaultdict(list)
+
+    for root, _, files in os.walk(input_dir):
+        for filename in files:
+            filepath = os.path.join(root, filename)
+
+            sha256 = hashlib.sha256()
+
+            # Hash the complete file, not just the first 1024 bytes
+            with open(filepath, "rb") as f:
+                for chunk in iter(lambda: f.read(8192), b""):
+                    sha256.update(chunk)
+
+            groups[sha256.hexdigest()].append(filepath)
+
+    # Return only groups containing 2+ files
+    return [
+        sorted(paths)
+        for paths in groups.values()
+        if len(paths) >= 2
+    ]

@@ -1,0 +1,365 @@
+"""
+Problem Restatement
+-------------------
+There are multiple stages, and exactly one option must be selected from each
+stage.
+
+Each option has:
+    - budget cost
+    - memory cost
+    - score
+
+Choose exactly one option per stage so that:
+    - total budget <= budget_limit
+    - total memory <= memory_limit
+
+Among all feasible choice vectors, maximize total score. If several choice
+vectors have the same maximum score, return the lexicographically smallest
+choice vector.
+
+Key Constraints
+---------------
+- Exactly one option is selected from every stage.
+- Both global budget and global memory limits must be satisfied.
+- Scores, budget costs, and memory costs are integers.
+- The solution must be deterministic.
+- Only the Python standard library is used.
+- No network access, APIs, external services, randomness, or human interaction.
+
+Required Output
+---------------
+Return:
+{
+    "max_score": maximum achievable total score,
+    "choice_vector": lexicographically smallest optimal vector,
+                  or [] if no feasible solution exists
+}
+
+Algorithm
+---------
+Use layered two-resource dynamic programming.
+
+For each stage, maintain states indexed by:
+    (total_budget, total_memory)
+
+For every state, try each option in the next stage and keep the best score
+for the resulting resource usage.
+
+For equal scores at the same resource state, keep the lexicographically
+smallest choice prefix. This gives deterministic tie handling.
+
+After processing all stages, inspect all feasible final states and select:
+1. highest total score;
+2. lexicographically smallest choice vector on a score tie.
+
+For deterministic reconstruction without storing large parent structures,
+each DP state stores its complete choice prefix. This is straightforward and
+keeps the implementation self-contained.
+
+Complexity
+----------
+Let:
+    S = number of stages
+    B = budget limit
+    M = memory limit
+    K = maximum number of options in a stage
+
+Worst-case time:  O(S * B * M * K)
+Space:           O(B * M * S) in the straightforward prefix-storing version.
+
+The implementation below stores only the current layer and the selected
+choice prefix for each reachable state.
+
+Input Format
+------------
+stages = [
+    [
+        (budget_cost, memory_cost, score),
+        ...
+    ],
+    ...
+]
+
+budget_limit = maximum total budget
+memory_limit = maximum total memory
+
+The option index is zero-based and is the value placed in choice_vector.
+"""
+
+
+from typing import List, Tuple, Dict, Any
+
+
+Option = Tuple[int, int, int]
+State = Tuple[int, int]
+
+
+def layered_two_resource_dp(
+    stages: List[List[Option]],
+    budget_limit: int,
+    memory_limit: int,
+) -> Dict[str, Any]:
+    """
+    Solve the multi-stage two-resource optimization problem.
+
+    Returns:
+        {
+            "max_score": int,
+            "choice_vector": List[int]
+        }
+
+    If no feasible complete choice exists:
+        {
+            "max_score": None,
+            "choice_vector": []
+        }
+    """
+
+    if budget_limit < 0 or memory_limit < 0:
+        return {
+            "max_score": None,
+            "choice_vector": []
+        }
+
+    # dp[(budget, memory)] = (best_score, lexicographically smallest prefix)
+    dp: Dict[State, Tuple[int, Tuple[int, ...]]] = {
+        (0, 0): (0, ())
+    }
+
+    for stage in stages:
+        next_dp: Dict[State, Tuple[int, Tuple[int, ...]]] = {}
+
+        for (used_budget, used_memory), (score, prefix) in dp.items():
+
+            for option_index, option in enumerate(stage):
+                if len(option) != 3:
+                    raise ValueError(
+                        "Each option must be "
+                        "(budget_cost, memory_cost, score)."
+                    )
+
+                budget_cost, memory_cost, option_score = option
+
+                new_budget = used_budget + budget_cost
+                new_memory = used_memory + memory_cost
+
+                # Ignore options that immediately violate either limit.
+                if new_budget > budget_limit:
+                    continue
+                if new_memory > memory_limit:
+                    continue
+
+                new_score = score + option_score
+                new_prefix = prefix + (option_index,)
+                state = (new_budget, new_memory)
+
+                old = next_dp.get(state)
+
+                if old is None:
+                    next_dp[state] = (new_score, new_prefix)
+                else:
+                    old_score, old_prefix = old
+
+                    # Maximize score. On a tie, choose the
+                    # lexicographically smallest choice vector.
+                    if new_score > old_score:
+                        next_dp[state] = (new_score, new_prefix)
+                    elif new_score == old_score and new_prefix < old_prefix:
+                        next_dp[state] = (new_score, new_prefix)
+
+        dp = next_dp
+
+        # No state survived this layer, so completing the remaining stages
+        # is impossible.
+        if not dp:
+            return {
+                "max_score": None,
+                "choice_vector": []
+            }
+
+    if not dp:
+        return {
+            "max_score": None,
+            "choice_vector": []
+        }
+
+    # Find the globally optimal final state.
+    best_score = None
+    best_prefix: Tuple[int, ...] = ()
+
+    for score, prefix in dp.values():
+        if best_score is None:
+            best_score = score
+            best_prefix = prefix
+        elif score > best_score:
+            best_score = score
+            best_prefix = prefix
+        elif score == best_score and prefix < best_prefix:
+            best_prefix = prefix
+
+    return {
+        "max_score": best_score,
+        "choice_vector": list(best_prefix)
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+def run_tests() -> None:
+    # Test 1: Basic optimization.
+    stages = [
+        [(2, 3, 10), (3, 2, 8)],
+        [(2, 2, 7), (4, 1, 12)],
+        [(1, 3, 6), (2, 1, 5)],
+    ]
+
+    result = layered_two_resource_dp(
+        stages,
+        budget_limit=7,
+        memory_limit=6,
+    )
+
+    assert result == {
+        "max_score": 28,
+        "choice_vector": [0, 1, 0],
+    }
+
+    # Test 2: Score tie must use lexicographically smallest vector.
+    stages = [
+        [(1, 1, 5), (1, 1, 5)],
+        [(1, 1, 5), (1, 1, 5)],
+    ]
+
+    result = layered_two_resource_dp(
+        stages,
+        budget_limit=2,
+        memory_limit=2,
+    )
+
+    assert result == {
+        "max_score": 10,
+        "choice_vector": [0, 0],
+    }
+
+    # Test 3: A lexicographically smaller vector may have different
+    # resource usage while achieving the same final score.
+    stages = [
+        [(1, 1, 5), (2, 1, 5)],
+        [(1, 1, 5), (1, 2, 5)],
+    ]
+
+    result = layered_two_resource_dp(
+        stages,
+        budget_limit=3,
+        memory_limit=3,
+    )
+
+    assert result["max_score"] == 10
+    assert result["choice_vector"] == [0, 0]
+
+    # Test 4: Exactly one option must be selected from every stage.
+    stages = [
+        [(2, 2, 10)],
+        [(1, 1, 20)],
+    ]
+
+    result = layered_two_resource_dp(
+        stages,
+        budget_limit=3,
+        memory_limit=3,
+    )
+
+    assert result == {
+        "max_score": 30,
+        "choice_vector": [0, 0],
+    }
+
+    # Test 5: No feasible complete selection.
+    stages = [
+        [(5, 1, 10)],
+        [(1, 5, 20)],
+    ]
+
+    result = layered_two_resource_dp(
+        stages,
+        budget_limit=5,
+        memory_limit=5,
+    )
+
+    assert result == {
+        "max_score": None,
+        "choice_vector": [],
+    }
+
+    # Test 6: Empty stages.
+    result = layered_two_resource_dp(
+        [],
+        budget_limit=10,
+        memory_limit=10,
+    )
+
+    assert result == {
+        "max_score": 0,
+        "choice_vector": [],
+    }
+
+    # Test 7: Zero resource limits.
+    stages = [
+        [(0, 0, 5), (1, 0, 100)],
+        [(0, 0, 7), (0, 1, 50)],
+    ]
+
+    result = layered_two_resource_dp(
+        stages,
+        budget_limit=0,
+        memory_limit=0,
+    )
+
+    assert result == {
+        "max_score": 12,
+        "choice_vector": [0, 0],
+    }
+
+    # Test 8: Negative scores are valid; feasibility still determines
+    # whether a complete vector exists.
+    stages = [
+        [(0, 0, -5), (1, 1, -10)],
+        [(0, 0, -2), (1, 1, -3)],
+    ]
+
+    result = layered_two_resource_dp(
+        stages,
+        budget_limit=0,
+        memory_limit=0,
+    )
+
+    assert result == {
+        "max_score": -7,
+        "choice_vector": [0, 0],
+    }
+
+    # Test 9: Tie between states with different resource usage.
+    stages = [
+        [(1, 0, 10), (0, 1, 10)],
+        [(0, 1, 10), (1, 0, 10)],
+    ]
+
+    result = layered_two_resource_dp(
+        stages,
+        budget_limit=1,
+        memory_limit=1,
+    )
+
+    # Both [0, 1] and [1, 0] score 20, so [0, 1] wins.
+    assert result == {
+        "max_score": 20,
+        "choice_vector": [0, 1],
+    }
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()

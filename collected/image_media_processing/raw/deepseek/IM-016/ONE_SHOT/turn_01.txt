@@ -1,0 +1,77 @@
+Here's a complete implementation of `sobel_edges` using explicit Sobel convolution:
+
+```python
+import os
+import numpy as np
+from PIL import Image
+
+def sobel_edges(input_dir, output_dir):
+    """
+    Apply Sobel edge detection to all images in input_dir and save
+    gradient magnitude images to output_dir as grayscale PNGs.
+    
+    Uses explicit Sobel kernels for Gx and Gy convolution.
+    """
+    # Sobel kernels
+    Gx = np.array([[1, 0, -1],
+                   [2, 0, -2],
+                   [1, 0, -1]], dtype=np.float32)
+    
+    Gy = np.array([[ 1,  2,  1],
+                   [ 0,  0,  0],
+                   [-1, -2, -1]], dtype=np.float32)
+    
+    os.makedirs(output_dir, exist_ok=True)
+    
+    valid_exts = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff')
+    
+    for fname in os.listdir(input_dir):
+        if not fname.lower().endswith(valid_exts):
+            continue
+        
+        in_path = os.path.join(input_dir, fname)
+        
+        # Load as grayscale, float32
+        img = Image.open(in_path).convert('L')
+        arr = np.asarray(img, dtype=np.float32)
+        
+        h, w = arr.shape
+        
+        # Pad with edge replication to keep output same size
+        padded = np.pad(arr, pad_width=1, mode='edge')
+        
+        # Extract 3x3 sliding windows using stride tricks
+        # Shape: (h, w, 3, 3)
+        windows = np.lib.stride_tricks.sliding_window_view(padded, (3, 3))
+        
+        # Explicit convolution: sum over kernel positions
+        # Gx and Gy are already flipped appropriately for correlation == convolution
+        # when the kernel is symmetric under 180° rotation. Sobel kernels are
+        # anti-symmetric, so we need to flip for true convolution:
+        gx_mag = np.sum(windows * Gx[::-1, ::-1], axis=(-1, -2))
+        gy_mag = np.sum(windows * Gy[::-1, ::-1], axis=(-1, -2))
+        
+        # Gradient magnitude
+        magnitude = np.sqrt(gx_mag**2 + gy_mag**2)
+        
+        # Clip to [0, 255] and convert to uint8
+        magnitude = np.clip(magnitude, 0, 255).astype(np.uint8)
+        
+        out_path = os.path.join(output_dir, os.path.splitext(fname)[0] + '.png')
+        Image.fromarray(magnitude, mode='L').save(out_path)
+```
+
+### Key implementation notes
+
+**1. Kernel orientation.** The Sobel kernels are anti-symmetric (Gx[0,0] = 1 but Gx[2,2] = -1), so true *convolution* requires flipping the kernel by 180°. Since `sliding_window_view` gives us *correlation* windows, we flip with `Gx[::-1, ::-1]` to get real convolution. If you prefer the conventional "Sobel filter" behavior (which most libraries implement as correlation), drop the flips.
+
+**2. Explicit convolution.** Rather than using `scipy.signal.convolve2d` or `cv2.Sobel`, we build the sliding 3×3 windows and multiply-accumulate against the kernel, making the convolution explicit and dependency-free beyond NumPy/Pillow.
+
+**3. Edge handling.** `np.pad(..., mode='edge')` replicates border pixels, so the output has the same H×W as the input and borders aren't darkened by zero-padding.
+
+**4. Magnitude clipping.** Raw gradient magnitudes can exceed 255 (max possible ≈ 4·255 ≈ 1020 for 8-bit input), so we clip after computing `sqrt(Gx² + Gy²)`.
+
+### Usage
+
+
+For very large images or datasets, you may want to replace the strided-window approach with an explicit per-pixel loop or process in tiles to bound memory, since `windows` creates a view with shape `(H, W, 3, 3)` that is fine as a view but the intermediate products `windows * Gx` materialize full-size arrays.

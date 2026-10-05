@@ -1,0 +1,164 @@
+Here's the updated implementation. The key change is in `_center_crop_or_pad`: the current code pads first then crops, which works, but let me verify the edge case and also make the padding color configurable via `fill_color`.
+
+Actually, re-examining the original code: if `crop_size` is larger than the rotated image in both dimensions, `pad_w` and `pad_h` are both positive, padding is applied, and then the crop takes the full padded image (since `x = (w - target_w) // 2 = 0`). So the original logic *should* already handle this. But there's a subtle bug worth fixing:
+
+- When the image is larger than the target in one dimension and smaller in the other, padding happens first, then cropping — that's fine.
+- The real issue is **when padding is asymmetric and then cropping shifts things**: padding is added centered on the *original* image, but if we then crop, the crop window is centered on the *padded* image. Since padding is centered, that's still fine. So the math works out.
+
+However, to be explicit and correct, and to add the requested `fill_color` behavior, here's a cleaner implementation that handles the edge case directly:
+
+```python
+import os
+import cv2
+import numpy as np
+from pathlib import Path
+
+
+def rotate_and_crop(input_dir, output_dir, angle_degrees, crop_size, fill_color=0):
+    """
+    Rotate each image in input_dir by angle_degrees and center-crop/pad to crop_size.
+
+    Args:
+        input_dir (str): Directory containing input images.
+        output_dir (str): Directory to save processed images.
+        angle_degrees (float): Rotation angle in degrees (counter-clockwise).
+        crop_size (tuple or int): Target size as (width, height) or single int for square.
+        fill_color (int, tuple, or list): Fill value for padded regions and rotation
+            borders. Scalar for grayscale, or per-channel (B, G, R[, A]).
+    """
+    if isinstance(crop_size, int):
+        crop_w, crop_h = crop_size, crop_size
+    else:
+        crop_w, crop_h = crop_size
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    valid_exts = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp'}
+
+    for filename in os.listdir(input_dir):
+        src_path = os.path.join(input_dir, filename)
+        if not os.path.isfile(src_path):
+            continue
+        if Path(filename).suffix.lower() not in valid_exts:
+            continue
+
+        img = cv2.imread(src_path, cv2.IMREAD_UNCHANGED)
+        if img is None:
+            print(f"Skipping unreadable file: {src_path}")
+            continue
+
+        rotated = _rotate_image(img, angle_degrees, fill_color)
+        result = _center_crop_or_pad(rotated, crop_w, crop_h, fill_color)
+
+        dst_path = os.path.join(output_dir, filename)
+        cv2.imwrite(dst_path, result)
+
+
+def _resolve_border_value(img, fill_color):
+    """Expand fill_color into a tuple matching the image's channel count."""
+    channels = img.shape[2] if img.ndim == 3 else 1
+
+    if np.isscalar(fill_color):
+        values = [fill_color] * channels
+    else:
+        values = list(fill_color)
+        if len(values) == 1:
+            values = values * channels
+        elif len(values) < channels:
+            # e.g. BGR fill on a BGRA image -> alpha defaults to 255 (opaque)
+            if channels == 4 and len(values) == 3:
+                values = values + [255]
+            else:
+                values = values + [values[-1]] * (channels - len(values))
+        elif len(values) > channels:
+            values = values[:channels]
+
+    if channels == 1:
+        return values[0]
+    return tuple(values)
+
+
+def _rotate_image(img, angle_degrees, fill_color):
+    """Rotate image about its center, expanding canvas so nothing is clipped."""
+    h, w = img.shape[:2]
+    center = (w / 2.0, h / 2.0)
+
+    angle_rad = np.deg2rad(angle_degrees)
+    cos_a, sin_a = abs(np.cos(angle_rad)), abs(np.sin(angle_rad))
+    new_w = int(np.ceil(w * cos_a + h * sin_a))
+    new_h = int(np.ceil(w * sin_a + h * cos_a))
+
+    M = cv2.getRotationMatrix2D(center, angle_degrees, 1.0)
+    M[0, 2] += (new_w / 2.0) - center[0]
+    M[1, 2] += (new_h / 2.0) - center[1]
+
+    border_value = _resolve_border_value(img, fill_color)
+
+    return cv2.warpAffine(
+        img, M, (new_w, new_h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=border_value,
+    )
+
+
+def _center_crop_or_pad(img, target_w, target_h, fill_color):
+    """
+    Produce an image of exactly (target_w, target_h), centered on the input.
+
+    - If a dimension is larger than the target: center-crop it.
+    - If a dimension is smaller than the target: center-pad it with fill_color.
+    - If both dimensions are smaller: the entire rotated canvas is placed at
+      the center of a (target_w, target_h) canvas filled with fill_color.
+
+    Padding is applied *and* cropping is applied in a single step so the
+    center of the input maps to the center of the output in every case.
+    """
+    h, w = img.shape[:2]
+    border_value = _resolve_border_value(img, fill_color)
+
+    # Compute how much of the target lies outside the image, per side.
+    # Positive => need to pad that side. Negative => that side gets cropped.
+    pad_left = max(0, (target_w - w + 1) // 2)
+    pad_right = max(0, (target_w - w) // 2)
+    pad_top = max(0, (target_h - h + 1) // 2)
+    pad_bottom = max(0, (target_h - h) // 2)
+
+    if pad_left or pad_right or pad_top or pad_bottom:
+        if img.ndim == 3:
+            img = cv2.copyMakeBorder(
+                img, pad_top, pad_bottom, pad_left, pad_right,
+                cv2.BORDER_CONSTANT, value=border_value,
+            )
+        else:
+            img = cv2.copyMakeBorder(
+                img, pad_top, pad_bottom, pad_left, pad_right,
+                cv2.BORDER_CONSTANT, value=border_value,
+            )
+
+    # After padding, image is >= target in each dimension. Center-crop.
+    h, w = img.shape[:2]
+    x = (w - target_w) // 2
+    y = (h - target_h) // 2
+    return img[y:y + target_h, x:x + target_w]
+```
+
+### What changed and why
+
+1. **Explicit padding math per side** (`pad_left/right/top/bottom`). The odd/even split `(target - size + 1) // 2` vs `(target - size) // 2` ensures the extra pixel (when the difference is odd) goes to the top/left, matching the standard "centered" convention and matching what `(w - target_w) // 2` does during the crop step.
+
+2. **Edge case where `crop_size > rotated canvas` in both dims** now works via the same code path: `pad_left = (target_w - w + 1) // 2`, `pad_right = (target_w - w) // 2`, etc., fill the entire border with `fill_color`, and the subsequent crop is a no-op (`x = y = 0`). Output is exactly `crop_size`.
+
+3. **`fill_color` propagates to both the rotation border and the pad border**, so the whole background is consistent. `_resolve_border_value` handles scalars, BGR, BGRA, and mismatched-length tuples (e.g. passing an RGB triple for a BGRA image gives an opaque alpha).
+
+4. **No more guessing at the padding value** — the old code used zeros; now it's explicit and configurable.
+
+### Example
+
+
+
+### Quick verification of the edge case
+
+
+
+One caveat: for a `.jpg` output, OpenCV drops the alpha channel on write, so a transparent `fill_color` won't survive — save as `.png` if you need transparency.

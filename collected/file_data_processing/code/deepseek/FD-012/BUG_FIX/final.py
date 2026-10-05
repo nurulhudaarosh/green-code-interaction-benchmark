@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+import os, re, sys, argparse
+from collections import defaultdict
+
+WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
+
+def find_txt_files(root):
+    paths = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames.sort()
+        for name in sorted(filenames):
+            if name.lower().endswith(".txt"):
+                paths.append(os.path.join(dirpath, name))
+    paths.sort()
+    return paths
+
+def analyze_file(path, total_counts, doc_freq):
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError as e:
+        print(f"warning: could not read {path}: {e}", file=sys.stderr)
+        return False
+    folded = [w.casefold() for w in WORD_RE.findall(text)]
+    if not folded:
+        return True
+    for w in folded:
+        total_counts[w] += 1
+    for w in set(folded):
+        doc_freq[w] += 1
+    return True
+
+def rank_words(total_counts, doc_freq, top_n=None):
+    ranked = sorted(total_counts.keys(), key=lambda w: (-total_counts[w], -doc_freq[w], w))
+    return ranked[:top_n] if top_n is not None else ranked
+
+def main():
+    parser = argparse.ArgumentParser(description="Offline recursive .txt word analyzer.")
+    parser.add_argument("directory")
+    parser.add_argument("-n", "--top", type=int, default=None)
+    parser.add_argument("--min-count", type=int, default=1)
+    parser.add_argument("--min-docs", type=int, default=1)
+    parser.add_argument("--csv", action="store_true")
+    args = parser.parse_args()
+
+    if not os.path.isdir(args.directory):
+        print(f"error: {args.directory} is not a directory", file=sys.stderr)
+        sys.exit(1)
+
+    files = find_txt_files(args.directory)
+    if not files:
+        print(f"no .txt files found under {args.directory}", file=sys.stderr)
+        sys.exit(0)
+
+    total_counts, doc_freq = defaultdict(int), defaultdict(int)
+    files_read = 0
+    for path in files:
+        if analyze_file(path, total_counts, doc_freq):
+            files_read += 1
+
+    filtered = {w: c for w, c in total_counts.items()
+                if c >= args.min_count and doc_freq[w] >= args.min_docs}
+    ranked = rank_words(filtered, doc_freq, top_n=args.top)
+
+    if args.csv:
+        print("word,total_occurrences,document_frequency")
+        for w in ranked:
+            safe = w
+            if any(ch in safe for ch in ',"'):
+                safe = '"' + safe.replace('"', '""') + '"'
+            print(f"{safe},{total_counts[w]},{doc_freq[w]}")
+    else:
+        if not ranked:
+            print("no words matched the given thresholds.")
+        else:
+            ww = max(len("word"), max(len(w) for w in ranked))
+            header = f"{'word':<{ww}}  {'total':>10}  {'docs':>10}"
+            print(header)
+            print("-" * len(header))
+            for w in ranked:
+                print(f"{w:<{ww}}  {total_counts[w]:>10}  {doc_freq[w]:>10}")
+
+    print(f"\n[summary] files scanned: {len(files)}, files read: {files_read}, "
+          f"unique words: {len(total_counts)}", file=sys.stderr)
+
+if __name__ == "__main__":
+    main()

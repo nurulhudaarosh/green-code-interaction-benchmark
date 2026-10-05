@@ -1,0 +1,132 @@
+from __future__ import annotations
+import math
+from typing import Any
+
+_MISSING = object()
+_TRUE, _FALSE = {"1", "true", "yes", "on", "y"}, {"0", "false", "no", "off", "n"}
+
+
+def get_path(cfg: Any, path: str, default: Any = None, sep: str = ".") -> Any:
+    """Walk nested dicts/lists. Never raises: missing keys, bad or out-of-range
+    indexes, None, and descending into scalars all return `default`.
+    A legitimate 0 / False / "" is preserved; only None counts as unset."""
+    cur = cfg
+    for part in (path.split(sep) if path else []):
+        if isinstance(cur, dict):
+            cur = cur.get(part, _MISSING)
+        elif isinstance(cur, (list, tuple)):
+            try:
+                cur = cur[int(part)]
+            except (ValueError, IndexError):
+                cur = _MISSING
+        else:
+            cur = _MISSING
+        if cur is _MISSING:
+            return default
+    return default if cur is None else cur
+
+
+def coerce(v: Any, typ: type) -> Any:
+    """Strict-ish coercion for mixed types. Raises ValueError/TypeError on junk."""
+    if typ is bool:
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, (int, float)) and v in (0, 1):
+            return bool(v)
+        if isinstance(v, str) and v.strip().lower() in _TRUE | _FALSE:
+            return v.strip().lower() in _TRUE
+        raise ValueError(f"not a bool: {v!r}")
+    if isinstance(v, bool):                       # bool is an int subclass; reject
+        raise ValueError("bool is not numeric")
+    if typ is int:
+        if isinstance(v, int):
+            return v
+        f = float(v) if isinstance(v, (float, str)) else _raise(v)
+        if not math.isfinite(f) or not f.is_integer():
+            raise ValueError(f"lossy or non-finite int: {v!r}")
+        return int(f)
+    if typ is float:
+        if not isinstance(v, (int, float, str)):
+            raise TypeError(f"not a float: {v!r}")
+        f = float(v)
+        if not math.isfinite(f):
+            raise ValueError(f"non-finite float: {v!r}")
+        return f
+    if typ is str:
+        if isinstance(v, (dict, list, tuple, set)):
+            raise TypeError("container is not a str")
+        s = str(v).strip()
+        if not s:
+            raise ValueError("empty string")
+        return s
+    raise TypeError(f"unsupported type {typ}")
+
+
+def _raise(v):
+    raise TypeError(f"cannot convert {v!r}")
+
+
+# path: (type, default, min, max)
+SCHEMA = {
+    "server.host":    (str,   "localhost", None, None),
+    "server.port":    (int,   8080,        1,    65535),
+    "server.debug":   (bool,  False,       None, None),
+    "retry.attempts": (int,   3,           0,    10),
+    "retry.backoff":  (float, 1.5,         0.0,  60.0),
+}
+
+
+def load_config(user: Any) -> dict:
+    """Always returns a complete, valid config from None, {}, junk, or partial input."""
+    out: dict = {}
+    for path, (typ, default, lo, hi) in SCHEMA.items():
+        raw = get_path(user, path, _MISSING)
+        try:
+            val = default if raw is _MISSING else coerce(raw, typ)
+        except (ValueError, TypeError):
+            val = default                          # bad type -> default
+        if typ in (int, float):                    # boundary values -> clamp
+            if lo is not None:
+                val = max(val, lo)
+            if hi is not None:
+                val = min(val, hi)
+        node = out
+        *parents, leaf = path.split(".")
+        for p in parents:
+            node = node.setdefault(p, {})
+        node[leaf] = val
+
+    tags = get_path(user, "tags", [])
+    out["tags"] = [str(t) for t in tags if t is not None] if isinstance(tags, list) else []
+    return out
+
+
+if __name__ == "__main__":
+    D = load_config(None)
+    assert D == load_config({}) == load_config("oops") == load_config([1, 2])  # empty/junk root
+    assert D["server"] == {"host": "localhost", "port": 8080, "debug": False}
+
+    p = lambda v: load_config({"server": {"port": v}})["server"]["port"]
+    assert p(0) == 1 and p(70000) == 65535 and p(-5) == 1          # boundaries clamp
+    assert p(1) == 1 and p(65535) == 65535                          # exact edges kept
+    assert p("9000") == 9000 and p(80.0) == 80 and p(" 22 ") == 22  # mixed types coerce
+    assert p(80.5) == p(True) == p("abc") == p(None) == p([1]) == 8080  # junk -> default
+    assert p(float("nan")) == p(float("inf")) == 8080
+
+    c = load_config({"server": {"debug": "YES", "host": {"x": 1}},
+                     "retry": {"attempts": None, "backoff": "2.5"}})
+    assert c["server"]["debug"] is True and c["server"]["host"] == "localhost"
+    assert c["retry"] == {"attempts": 3, "backoff": 2.5}
+    assert load_config({"retry": {"backoff": 99}})["retry"]["backoff"] == 60.0
+    assert load_config({"server": None})["server"]["port"] == 8080  # null section
+
+    assert load_config({"tags": ["a", 2, None]})["tags"] == ["a", "2"]
+    assert load_config({"tags": "notalist"})["tags"] == []
+
+    assert get_path({"a": [{"b": 1}]}, "a.0.b") == 1
+    assert get_path({"a": [{"b": 1}]}, "a.-1.b") == 1               # negative index
+    assert get_path({"a": [{"b": 1}]}, "a.5.b", "n/a") == "n/a"     # out of range
+    assert get_path({"a": 5}, "a.b.c", "n/a") == "n/a"              # descend into int
+    assert get_path({"a": 0}, "a", 99) == 0                         # falsy value preserved
+    assert get_path(None, "a.b", "d") == "d" and get_path({}, "", "d") == {}
+    print("all checks passed")

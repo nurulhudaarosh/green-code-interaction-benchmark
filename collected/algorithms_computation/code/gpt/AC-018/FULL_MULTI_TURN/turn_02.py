@@ -1,0 +1,100 @@
+# Exact Polynomial Product
+#
+# Problem restatement:
+# Given two integer polynomials represented by coefficient arrays in
+# ascending order of degree, multiply them exactly and return the
+# coefficient array of the product. Coefficients may be negative.
+#
+# Expected behavior:
+# - For a[i] and b[j], their product contributes to result[i + j].
+# - Return exactly one coefficient array for the product.
+# - Preserve the original coefficient order: constant term first.
+# - Use direct coefficient convolution.
+# - The computation is deterministic.
+# - There is no meaningful tie-breaking choice in polynomial
+#   multiplication: every pair (i, j) has exactly one destination i + j.
+# - If either input is empty, return [].
+# - Do not introduce unrelated output fields or behavior.
+#
+# Bug report analysis:
+# The previously supplied implementation actually produces the correct
+# result for the reported rule. The claimed "tie handling" defect cannot
+# be reproduced because direct polynomial convolution has no tie-selection
+# step.
+#
+# Small valid example:
+#
+# A(x) = 1 + 2x
+# B(x) = 3 + 4x
+#
+# Direct convolution:
+# result[0] = 1*3 = 3
+# result[1] = 1*4 + 2*3 = 10
+# result[2] = 2*4 = 8
+#
+# Therefore the exact result is [3, 10, 8].
+#
+# Running the previous implementation on this example already returns
+# [3, 10, 8], so there is no actual incorrect output to fix.
+#
+# Corrected implementation:
+# It keeps the required direct O(n*m) convolution, explicitly preserves
+# deterministic iteration order, and returns only the required result.
+
+from typing import List
+
+
+def multiply_polynomials(a: List[int], b: List[int]) -> List[int]:
+    """Return the exact coefficient array of a(x) * b(x)."""
+    if not a or not b:
+        return []
+
+    result = [0] * (len(a) + len(b) - 1)
+
+    # Direct coefficient convolution.
+    # Every (i, j) pair has a unique deterministic destination i + j.
+    for i in range(len(a)):
+        for j in range(len(b)):
+            result[i + j] += a[i] * b[j]
+
+    return result
+
+
+# Deterministic tests
+def run_tests() -> None:
+    # Small example from the bug report analysis.
+    assert multiply_polynomials([1, 2], [3, 4]) == [3, 10, 8]
+
+    # Negative coefficients.
+    assert multiply_polynomials([2, -3], [-1, 4]) == [-2, 11, -12]
+
+    # Repeated values.
+    assert multiply_polynomials([2, 2, 2], [2, 2, 2]) == [
+        4, 8, 12, 8, 4
+    ]
+
+    # Mixed signs.
+    assert multiply_polynomials([1, -1, 1], [-2, 3]) == [
+        -2, 5, -5, 3
+    ]
+
+    # Zero polynomial.
+    assert multiply_polynomials([0, 0], [5, -2, 7]) == [0, 0, 0, 0]
+
+    # Single-term polynomials.
+    assert multiply_polynomials([7], [-3]) == [-21]
+
+    # Empty inputs.
+    assert multiply_polynomials([], [1, 2]) == []
+    assert multiply_polynomials([1, 2], []) == []
+
+    # Determinism: repeated execution gives exactly the same result.
+    a = [3, -1, 3, -1]
+    b = [-2, 4, -2]
+    expected = multiply_polynomials(a, b)
+    assert multiply_polynomials(a, b) == expected
+    assert multiply_polynomials(a, b) == expected
+
+
+if __name__ == "__main__":
+    run_tests()

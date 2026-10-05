@@ -1,0 +1,69 @@
+from pathlib import Path
+from PIL import Image
+
+
+def bulk_reencode(input_dir, output_dir, quality):
+    """
+    Re-encode every valid image as JPEG and report size statistics.
+
+    Returns:
+        dict with per-file results and an overall "__summary__".
+    """
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    results = {}
+    total_original_bytes = 0
+    total_reencoded_bytes = 0
+
+    for path in input_dir.iterdir():
+        if not path.is_file():
+            continue
+
+        try:
+            original_bytes = path.stat().st_size
+
+            with Image.open(path) as img:
+                # Handles RGB, RGBA, P, L, etc.
+                img = img.convert("RGB")
+
+                output_path = output_dir / f"{path.stem}.jpg"
+
+                # 1x1 images are valid and are saved normally.
+                img.save(output_path, format="JPEG", quality=quality)
+
+            reencoded_bytes = output_path.stat().st_size
+
+            # Prevent division by zero for any unexpected zero-byte output.
+            ratio = (
+                original_bytes / reencoded_bytes
+                if reencoded_bytes > 0
+                else float("inf")
+            )
+
+            results[path.name] = {
+                "original_bytes": original_bytes,
+                "reencoded_bytes": reencoded_bytes,
+                "ratio": ratio,
+            }
+
+            total_original_bytes += original_bytes
+            total_reencoded_bytes += reencoded_bytes
+
+        except (OSError, ValueError):
+            continue
+
+    overall_ratio = (
+        total_original_bytes / total_reencoded_bytes
+        if total_reencoded_bytes > 0
+        else float("inf")
+    )
+
+    results["__summary__"] = {
+        "total_original_bytes": total_original_bytes,
+        "total_reencoded_bytes": total_reencoded_bytes,
+        "overall_ratio": overall_ratio,
+    }
+
+    return results

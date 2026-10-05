@@ -1,0 +1,67 @@
+import os
+import numpy as np
+from PIL import Image
+
+
+def sobel_edges(input_dir, output_dir):
+    """
+    Apply Sobel edge detection to every image in input_dir,
+    saving the gradient magnitude as grayscale PNGs in output_dir.
+
+    Uses explicit 3x3 Sobel kernels for Gx and Gy, computed via
+    direct convolution (no scipy / cv2 dependency).
+    """
+    # 3x3 Sobel kernels
+    Gx = np.array([
+        [-1, 0, 1],
+        [-2, 0, 2],
+        [-1, 0, 1],
+    ], dtype=np.float32)
+
+    Gy = np.array([
+        [-1, -2, -1],
+        [ 0,  0,  0],
+        [ 1,  2,  1],
+    ], dtype=np.float32)
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    valid_exts = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp")
+
+    for fname in sorted(os.listdir(input_dir)):
+        if not fname.lower().endswith(valid_exts):
+            continue
+
+        in_path = os.path.join(input_dir, fname)
+        # Force PNG output with the same stem
+        stem = os.path.splitext(fname)[0]
+        out_path = os.path.join(output_dir, stem + ".png")
+
+        # Load as grayscale
+        img = Image.open(in_path).convert("L")
+        arr = np.asarray(img, dtype=np.float32)
+
+        h, w = arr.shape
+        # Zero-padded output (same size as input)
+        mag = np.zeros((h, w), dtype=np.float32)
+
+        if h >= 3 and w >= 3:
+            # Extract all 3x3 sliding windows at once using stride tricks
+            # shape: (h-2, w-2, 3, 3)
+            windows = np.lib.stride_tricks.sliding_window_view(arr, (3, 3))
+
+            # Explicit convolution: sum of element-wise products with kernels
+            gx = np.sum(windows * Gx, axis=(-1, -2))
+            gy = np.sum(windows * Gy, axis=(-1, -2))
+
+            # Gradient magnitude
+            magnitude = np.sqrt(gx * gx + gy * gy)
+
+            # Place into center of each 3x3 window (border stays 0)
+            mag[1:-1, 1:-1] = magnitude
+
+        # Clip to [0, 255] and save as uint8 grayscale PNG
+        mag_clipped = np.clip(mag, 0, 255).astype(np.uint8)
+        Image.fromarray(mag_clipped, mode="L").save(out_path, format="PNG")
+
+        print(f"{fname} -> {os.path.basename(out_path)}")

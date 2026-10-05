@@ -1,0 +1,94 @@
+Here is a production-ready Python utility using `pandas` that validates record inputs, dynamically derives event types, pivots counts by date and region, fills missing values with zero, and returns sorted output.
+
+```python
+import pandas as pd
+from typing import List, Dict, Any, Union
+
+def pivot_event_records(
+    records: List[Dict[str, Any]], 
+    date_col: str = 'date', 
+    region_col: str = 'region', 
+    event_type_col: str = 'event_type'
+) -> pd.DataFrame:
+    """
+    Validates, aggregates, and pivots event data.
+
+    Parameters:
+    -----------
+    records : List[Dict[str, Any]]
+        List of dictionaries containing event record data.
+    date_col : str
+        Column name for event dates.
+    region_col : str
+        Column name for regions.
+    event_type_col : str
+        Column name for event types.
+
+    Returns:
+    --------
+    pd.DataFrame
+        Pivoted DataFrame with dates/regions as row index, 
+        deterministic event types as columns, filled zeros, and sorted rows.
+    """
+    if not records:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(records)
+
+    # 1. Validation: Ensure required columns exist
+    required_cols = {date_col, region_col, event_type_col}
+    missing_cols = required_cols - set(df.columns)
+    if missing_cols:
+        raise ValueError(f"Input records are missing required fields: {missing_cols}")
+
+    # Drop rows with null values in core grouping keys
+    df = df.dropna(subset=[date_col, region_col, event_type_col]).copy()
+
+    # Normalize date values to datetime for proper sorting and presentation
+    df[date_col] = pd.to_datetime(df[date_col])
+
+    # 2. Derive deterministic event-type columns (sorted uniquely)
+    unique_event_types = sorted(df[event_type_col].dropna().astype(str).unique())
+
+    # 3. Aggregate counts & Pivot
+    pivoted_df = df.pivot_table(
+        index=[date_col, region_col],
+        columns=event_type_col,
+        aggfunc='size',
+        fill_value=0
+    )
+
+    # Reindex columns to guarantee deterministic ordering across runs
+    pivoted_df = pivoted_df.reindex(columns=unique_event_types, fill_value=0)
+
+    # 4. Sort rows chronologically by date and alphabetically by region
+    pivoted_df = pivoted_df.sort_index(ascending=[True, True]).reset_index()
+
+    # Format date back to standard string representation (YYYY-MM-DD)
+    pivoted_df[date_col] = pivoted_df[date_col].dt.strftime('%Y-%m-%d')
+
+    return pivoted_df
+
+
+# --- Example Usage ---
+if __name__ == "__main__":
+    sample_events = [
+        {"date": "2026-10-02", "region": "North", "event_type": "click"},
+        {"date": "2026-10-01", "region": "South", "event_type": "purchase"},
+        {"date": "2026-10-01", "region": "North", "event_type": "click"},
+        {"date": "2026-10-01", "region": "North", "event_type": "click"},
+        {"date": "2026-10-01", "region": "North", "event_type": "view"},
+        {"date": "2026-10-02", "region": "South", "event_type": "click"},
+    ]
+
+    result = pivot_event_records(sample_events)
+    print(result.to_string(index=False))
+
+```
+
+### Key Highlights:
+
+* **Validation**: Ensures required fields exist and drops incomplete records before processing.
+* **Dynamic & Deterministic Columns**: Detects all unique event types and sorts them alphabetically (`sorted(...)`) so column order remains predictable.
+* **Aggregation & Zero-Filling**: Uses `pivot_table` with `aggfunc='size'` and `fill_value=0` to populate missing combinations.
+* **Sorting**: Performs multi-level sorting on `date` (chronological) and `region` (alphabetical).

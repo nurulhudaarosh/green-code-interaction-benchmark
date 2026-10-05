@@ -1,0 +1,166 @@
+I'll solve this step by step.
+
+## Problem Understanding
+
+**Problem:** For each weight threshold `q`, we:
+1. Consider only edges with weight ≤ q
+2. Find connected components in this subgraph
+3. Return: (number of components, size of largest component)
+
+**Constraints:**
+- Graph has `n` nodes (0 to n-1) and `m` edges
+- Each edge: `(u, v, w)` - undirected, weight `w`
+- Multiple threshold queries `q`
+- Need efficient processing (likely large inputs)
+
+**Output:** For each query `q`: `[num_components, max_component_size]`
+
+## Algorithm
+
+**Key Insight:** If we sort queries by threshold and sort edges by weight, we can incrementally add edges as threshold increases. Use Union-Find (DSU) to maintain components.
+
+**Steps:**
+1. Sort edges by weight ascending
+2. Sort queries by threshold ascending (keep original indices)
+3. Process queries in order:
+   - Add all edges with weight ≤ current threshold
+   - Union their endpoints
+   - DSU tracks: number of components, size of largest component
+4. Output results in original query order
+
+**Complexity:** O((m + q) α(n) + m log m + q log q)
+
+## Implementation
+
+```python
+import sys
+
+class DSU:
+    def __init__(self, n):
+        self.parent = list(range(n))
+        self.size = [1] * n
+        self.num_components = n
+        self.max_size = 1 if n > 0 else 0
+    
+    def find(self, x):
+        # Path compression (iterative)
+        root = x
+        while self.parent[root] != root:
+            root = self.parent[root]
+        while self.parent[x] != root:
+            self.parent[x], x = root, self.parent[x]
+        return root
+    
+    def union(self, a, b):
+        ra, rb = self.find(a), self.find(b)
+        if ra == rb:
+            return
+        # Union by size
+        if self.size[ra] < self.size[rb]:
+            ra, rb = rb, ra
+        self.parent[rb] = ra
+        self.size[ra] += self.size[rb]
+        self.num_components -= 1
+        if self.size[ra] > self.max_size:
+            self.max_size = self.size[ra]
+
+
+def solve(n, edges, queries):
+    """
+    n: number of nodes (0-indexed)
+    edges: list of (u, v, w)
+    queries: list of thresholds
+    returns: list of [num_components, max_size] per query
+    """
+    m = len(edges)
+    q = len(queries)
+    
+    # Sort edges by weight
+    edges_sorted = sorted(edges, key=lambda e: e[2])
+    
+    # Sort queries with original index
+    queries_indexed = sorted([(thr, i) for i, thr in enumerate(queries)])
+    
+    dsu = DSU(n)
+    results = [None] * q
+    edge_ptr = 0
+    
+    for threshold, orig_idx in queries_indexed:
+        # Add all edges with weight <= threshold
+        while edge_ptr < m and edges_sorted[edge_ptr][2] <= threshold:
+            u, v, _ = edges_sorted[edge_ptr]
+            dsu.union(u, v)
+            edge_ptr += 1
+        results[orig_idx] = [dsu.num_components, dsu.max_size]
+    
+    return results
+
+
+def main():
+    data = sys.stdin.buffer.read().split()
+    if not data:
+        return
+    idx = 0
+    n = int(data[idx]); idx += 1
+    m = int(data[idx]); idx += 1
+    
+    edges = []
+    for _ in range(m):
+        u = int(data[idx]); idx += 1
+        v = int(data[idx]); idx += 1
+        w = int(data[idx]); idx += 1
+        edges.append((u, v, w))
+    
+    q = int(data[idx]); idx += 1
+    queries = []
+    for _ in range(q):
+        queries.append(int(data[idx])); idx += 1
+    
+    results = solve(n, edges, queries)
+    out = []
+    for r in results:
+        out.append(f"{r[0]} {r[1]}")
+    sys.stdout.write("\n".join(out) + "\n")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## Example Walkthrough
+
+Input:
+```
+5 6
+0 1 1
+1 2 2
+2 3 3
+3 4 4
+0 4 5
+1 3 6
+3
+0
+2
+4
+```
+
+- **q=0:** No edges → 5 components, max size 1 → `[5, 1]`
+- **q=2:** Edges (0,1,1), (1,2,2) → components: {0,1,2}, {3}, {4} → `[3, 3]`
+- **q=4:** Add (2,3,3), (3,4,4) → all connected → `[1, 5]`
+
+Output:
+```
+5 1
+3 3
+1 5
+```
+
+## Key Design Choices
+
+1. **Deterministic:** No randomness, sorted operations are stable/deterministic.
+2. **Path compression + union by size:** Near O(1) amortized per union.
+3. **Offline processing:** Sorting queries enables single pass through edges.
+4. **Iterative find:** Avoids recursion depth issues for large `n`.
+5. **Standard library only:** Uses `sys` for fast I/O.
+
+The DSU maintains both `num_components` and `max_size` incrementally, so each query is answered in O(1) after edge processing, giving overall efficiency for large inputs.

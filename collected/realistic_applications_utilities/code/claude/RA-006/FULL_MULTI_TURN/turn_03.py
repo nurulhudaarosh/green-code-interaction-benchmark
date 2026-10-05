@@ -1,0 +1,465 @@
+from __future__ import annotations
+
+import copy
+import dataclasses
+import json
+import math
+import os
+from dataclasses import dataclass, field
+from typing import Any, Callable
+
+_MISSING = object()
+
+
+class ConfigError(Exception):
+    """Raised when validation fails; holds every error found, not just the first."""
+
+    def __init__(self, errors: list[str]):
+        self.errors = errors
+        super().__init__("Invalid configuration:\n  - " + "\n  - ".join(errors))
+
+
+# ------------------------------ Dependencies ------------------------------
+
+@dataclass(frozen=True)
+class Rule:
+    """A cross-field constraint over sibling keys of one dict (top level or nested)."""
+    kind: str                                   # any_of | one_of | all_or_none | check
+    fields: tuple[str, ...] = ()
+    fn: Callable[[dict[str, Any]], bool] | None = None
+    message: str | None = None
+
+
+def any_of(*fields: str, message: str | None = None) -> Rule:
+    """At least one of `fields` must be set."""
+    return Rule("any_of", fields, message=message)
+
+
+def one_of(*fields: str, message: str | None = None) -> Rule:
+    """Exactly one of `fields` must be set."""
+    return Rule("one_of", fields, message=message)
+
+
+def all_or_none(*fields: str, message: str | None = None) -> Rule:
+    """Either every field is set or none is (e.g. a TLS cert and its key)."""
+    return Rule("all_or_none", fields, message=message)
+
+
+def check(fn: Callable[[dict[str, Any]], bool], message: str) -> Rule:
+    """Arbitrary predicate over the validated dict (defaults applied)."""
+    return Rule("check", fn=fn, message=message)
+
+
+@dataclass
+class Field:
+    type: Any = None                      # a type or tuple of types
+    required: bool = False
+    default: Any = _MISSING               # value, or zero-arg callable (called fresh each time)
+    nullable: bool = False                # explicit null is allowed
+    choices: list[Any] | None = None
+    min: float | None = None
+    max: float | None = None
+    min_len: int | None = None
+    max_len: int | None = None
+    validator: Callable[[Any], bool] | None = None
+    message: str | None = None
+    schema: dict[str, "Field"] | None = None   # nested dict schema (value must be a dict)
+    item: "Field | None" = None                # list item schema (value must be a list)
+    coerce: bool = False
+    allow_extra: bool = False
+    # --- dependencies (all refer to sibling keys in the same dict) ---
+    requires: list[str] = field(default_factory=list)        # if I'm set, these must be set
+    conflicts_with: list[str] = field(default_factory=list)  # if I'm set, these must not be
+    # Required only when every sibling matches; a condition is a value (==) or a predicate.
+    required_if: dict[str, Any] = field(default_factory=dict)
+    rules: list[Rule] = field(default_factory=list)          # group rules for my nested schema
+
+
+# ------------------------------ Type helpers ------------------------------
+
+def _types_of(f: Field) -> tuple[type, ...]:
+    if f.type is None:
+        return ()
+    return f.type if isinstance(f.type, tuple) else (f.type,)
+
+
+def _names(types: tuple[type, ...]) -> str:
+    return "/".join(t.__name__ for t in types)
+
+
+def _is_num(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _matches(value: Any, types: tuple[type, ...]) -> bool:
+    """isinstance that treats bool as its own type and lets ints satisfy float."""
+    if isinstance(value, bool):
+        return bool in types
+    if isinstance(value, int) and float in types:
+        return True
+    return isinstance(value, types)
+
+
+def _coerce_one(value: Any, target: type) -> Any:
+    """Lossless conversion of a scalar to `target`; raises ValueError otherwise."""
+    if target is bool:
+        if isinstance(value, str) and value.strip().lower() in {"true", "false", "1", "0", "yes", "no"}:
+            return value.strip().lower() in {"true", "1", "yes"}
+        raise ValueError
+    if target is int:
+        if isinstance(value, str):
+            return int(value.strip())
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        raise ValueError
+    if target is float:
+        if isinstance(value, (str, int)):
+            result = float(value)
+            if not math.isfinite(result):
+                raise ValueError
+            return result
+        raise ValueError
+    if target is str:
+        if _is_num(value):
+            return str(value)
+        raise ValueError
+    raise ValueError
+
+
+def _coerce(value: Any, types: tuple[type, ...], path: str, errors: list[str]) -> tuple[Any, bool]:
+    if _matches(value, types):
+        return value, True
+    if isinstance(value, (str, int, float)):
+        for target in types:
+            try:
+                return _coerce_one(value, target), True
+            except (ValueError, TypeError):
+                continue
+    errors.append(f"{path}: cannot convert {value!r} to {_names(types)}")
+    return value, False
+
+
+# ------------------------------ Schema sanity ------------------------------
+
+def _check_schema(schema: dict[str, Field], path: str = "") -> None:
+    """Fail fast (ValueError) on a broken schema: dependencies naming unknown siblings."""
+    prefix = f"{path}." if path else ""
+
+    def known(owner: str, name: str) -> None:
+        if name not in schema:
+            raise ValueError(f"schema error at {owner!r}: dependency on unknown sibling {name!r}")
+
+    for key, f in schema.items():
+        where = f"{prefix}{key}"
+        for dep in (*f.requires, *f.conflicts_with, *f.required_if):
+            known(where, dep)
+        if key in f.requires or key in f.conflicts_with or key in f.required_if:
+            raise ValueError(f"schema error at {where!r}: field depends on itself")
+        if f.schema is not None:
+            _check_schema(f.schema, where)
+            for rule in f.rules:
+                for name in rule.fields:
+                    if name not in f.schema:
+                        raise ValueError(f"schema error at {where!r}: rule names unknown field {name!r}")
+        elif f.rules:
+            raise ValueError(f"schema error at {where!r}: rules require a nested schema")
+        if f.item is not None and f.item.schema is not None:
+            _check_schema(f.item.schema, f"{where}[]")
+
+
+# ------------------------------ Dependency checks ------------------------------
+
+def _condition_holds(actual: Any, cond: Any) -> bool:
+    return bool(cond(actual)) if callable(cond) else actual == cond
+
+
+def _describe(cond: dict[str, Any], prefix: str) -> str:
+    parts = [
+        f"{prefix}{k} satisfies a condition" if callable(v) else f"{prefix}{k} is {v!r}"
+        for k, v in cond.items()
+    ]
+    return " and ".join(parts)
+
+
+def _apply_dependencies(
+    config: dict[str, Any],
+    schema: dict[str, Field],
+    result: dict[str, Any],
+    rules: list[Rule],
+    prefix: str,
+    errors: list[str],
+) -> None:
+    """Cross-field checks. "Set" means supplied by the user and not null, so a default
+    never satisfies (or triggers) a dependency; conditions on *values* use the
+    effective value (defaults applied)."""
+
+    def is_set(k: str) -> bool:
+        return k in config and config[k] is not None
+
+    reported_conflicts: set[frozenset[str]] = set()
+
+    for key, f in schema.items():
+        p = f"{prefix}{key}"
+        if is_set(key):
+            for dep in f.requires:
+                if not is_set(dep):
+                    errors.append(f"{p}: requires {prefix}{dep} to be set")
+            for other in f.conflicts_with:
+                pair = frozenset((key, other))
+                if is_set(other) and pair not in reported_conflicts:
+                    reported_conflicts.add(pair)
+                    errors.append(f"{p}: cannot be set together with {prefix}{other}")
+        elif f.required_if and all(
+            _condition_holds(result.get(sib), cond) for sib, cond in f.required_if.items()
+        ):
+            errors.append(f"{p}: required when {_describe(f.required_if, prefix)}")
+
+    for rule in rules:
+        names = ", ".join(f"{prefix}{n}" for n in rule.fields)
+        given = [n for n in rule.fields if is_set(n)]
+        scope = prefix.rstrip(".") or "top level"
+        if rule.kind == "any_of" and not given:
+            errors.append(f"{scope}: {rule.message or f'at least one of {names} is required'}")
+        elif rule.kind == "one_of" and len(given) != 1:
+            default = (f"exactly one of {names} is required" if not given
+                       else f"only one of {names} may be set (got {', '.join(prefix + g for g in given)})")
+            errors.append(f"{scope}: {rule.message or default}")
+        elif rule.kind == "all_or_none" and given and len(given) != len(rule.fields):
+            missing = ", ".join(f"{prefix}{n}" for n in rule.fields if n not in given)
+            errors.append(f"{scope}: {rule.message or f'{names} must be set together (missing {missing})'}")
+        elif rule.kind == "check":
+            try:
+                ok = rule.fn(result) is not False
+            except Exception as exc:  # a predicate tripping over bad values is a failed check
+                ok = False
+                errors.append(f"{scope}: {rule.message} ({exc})")
+                continue
+            if not ok:
+                errors.append(f"{scope}: {rule.message}")
+
+
+# ------------------------------ Core validation ------------------------------
+
+def _check_value(value: Any, f: Field, path: str, errors: list[str]) -> Any:
+    """Entry point for any value: handles explicit null, then full validation."""
+    if value is None:
+        if not f.nullable:
+            errors.append(f"{path}: must not be null")
+        return None
+    return _validate_value(value, f, path, errors)
+
+
+def _validate_value(value: Any, f: Field, path: str, errors: list[str]) -> Any:
+    types = _types_of(f)
+
+    if f.coerce and types:
+        value, ok = _coerce(value, types, path, errors)
+        if not ok:
+            return value
+
+    if types:
+        if not _matches(value, types):
+            errors.append(f"{path}: expected {_names(types)}, got {type(value).__name__}")
+            return value
+        if float in types and int not in types and _is_num(value):
+            value = float(value)
+
+    if f.schema is not None and not isinstance(value, dict):
+        errors.append(f"{path}: expected dict, got {type(value).__name__}")
+        return value
+    if f.item is not None and not isinstance(value, list):
+        errors.append(f"{path}: expected list, got {type(value).__name__}")
+        return value
+
+    if f.choices is not None and value not in f.choices:
+        errors.append(f"{path}: {value!r} not in allowed values {f.choices}")
+
+    if _is_num(value):
+        if f.min is not None and value < f.min:
+            errors.append(f"{path}: {value} is below minimum {f.min}")
+        if f.max is not None and value > f.max:
+            errors.append(f"{path}: {value} is above maximum {f.max}")
+
+    if hasattr(value, "__len__"):
+        if f.min_len is not None and len(value) < f.min_len:
+            errors.append(f"{path}: length {len(value)} is below minimum {f.min_len}")
+        if f.max_len is not None and len(value) > f.max_len:
+            errors.append(f"{path}: length {len(value)} is above maximum {f.max_len}")
+
+    if f.validator is not None:
+        try:
+            if f.validator(value) is False:
+                errors.append(f"{path}: {f.message or 'failed custom validation'}")
+        except Exception as exc:
+            errors.append(f"{path}: {f.message or exc}")
+
+    if f.schema is not None:
+        value = _validate_dict(value, f.schema, path, errors, f.allow_extra, f.rules)
+    elif f.item is not None:
+        value = [_check_value(v, f.item, f"{path}[{i}]", errors) for i, v in enumerate(value)]
+
+    return value
+
+
+def _validate_dict(
+    config: dict[str, Any],
+    schema: dict[str, Field],
+    path: str,
+    errors: list[str],
+    allow_extra: bool,
+    rules: list[Rule] | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    prefix = f"{path}." if path else ""
+
+    for key, f in schema.items():
+        p = f"{prefix}{key}"
+        if key in config:
+            result[key] = _check_value(config[key], f, p, errors)
+        elif f.default is not _MISSING:
+            d = f.default
+            result[key] = d() if callable(d) else copy.deepcopy(d)
+        elif f.required:
+            errors.append(f"{p}: required field is missing")
+        elif f.schema is not None:
+            # Optional section omitted: fill nested defaults only if that succeeds on its
+            # own; unmet required children must not create errors for an unused section.
+            scratch: list[str] = []
+            nested = _validate_dict({}, f.schema, p, scratch, f.allow_extra, f.rules)
+            if not scratch:
+                result[key] = nested
+
+    extras = sorted(set(config) - set(schema), key=str)
+    if allow_extra:
+        for k in extras:
+            result[k] = copy.deepcopy(config[k])
+    else:
+        errors.extend(f"{prefix}{k}: unknown field" for k in extras)
+
+    _apply_dependencies(config, schema, result, rules or [], prefix, errors)
+    return result
+
+
+def validate(
+    config: Any,
+    schema: dict[str, Field],
+    *,
+    allow_extra: bool = False,
+    rules: list[Rule] | None = None,
+) -> dict[str, Any]:
+    """Validate `config` against `schema`; return a new dict with defaults applied.
+
+    `rules` are top-level cross-field rules. Raises ConfigError listing all problems
+    at once, and ValueError if the schema itself is inconsistent.
+    """
+    _check_schema(schema)
+    for rule in rules or []:
+        for name in rule.fields:
+            if name not in schema:
+                raise ValueError(f"schema error: top-level rule names unknown field {name!r}")
+    if not isinstance(config, dict):
+        raise ConfigError([f"top level: expected dict, got {type(config).__name__}"])
+    errors: list[str] = []
+    result = _validate_dict(config, schema, "", errors, allow_extra, rules)
+    if errors:
+        raise ConfigError(errors)
+    return result
+
+
+def load_config(
+    path: str,
+    schema: dict[str, Field],
+    env_prefix: str = "",
+    *,
+    rules: list[Rule] | None = None,
+) -> dict[str, Any]:
+    """Load JSON, overlay top-level env vars (PREFIX_KEY), then validate.
+
+    The caller's schema is never mutated; env-overridden fields get a coercing copy.
+    Env vars count as "set" for dependency checks.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except FileNotFoundError:
+        raise ConfigError([f"config file not found: {path}"]) from None
+    except json.JSONDecodeError as exc:
+        raise ConfigError([f"{path}: invalid JSON ({exc})"]) from None
+    if not isinstance(raw, dict):
+        raise ConfigError([f"{path}: top level must be an object"])
+
+    env_errors: list[str] = []
+    effective = dict(schema)
+    if env_prefix:
+        for key, f in schema.items():
+            name = f"{env_prefix}{key.upper()}"
+            env_val = os.environ.get(name)
+            if env_val is None:
+                continue
+            if f.schema is not None or f.item is not None or any(t in (dict, list) for t in _types_of(f)):
+                try:
+                    raw[key] = json.loads(env_val)  # structured values arrive as JSON
+                except json.JSONDecodeError as exc:
+                    env_errors.append(f"{name}: invalid JSON ({exc})")
+            else:
+                raw[key] = env_val
+                effective[key] = dataclasses.replace(f, coerce=True)
+
+    try:
+        result = validate(raw, effective, rules=rules)
+    except ConfigError as exc:
+        raise ConfigError(env_errors + exc.errors) from None
+    if env_errors:  # previously dropped when everything else validated
+        raise ConfigError(env_errors)
+    return result
+
+
+# ------------------------------- Example -------------------------------
+if __name__ == "__main__":
+    SCHEMA = {
+        "app_name": Field(str, required=True, min_len=1),
+        "env": Field(str, default="dev", choices=["dev", "staging", "prod"]),
+        "port": Field(int, default=8000, min=1, max=65535, coerce=True),
+        # Required in prod (explicitly set; a default would defeat the point)
+        "sentry_dsn": Field(str, required_if={"env": "prod"}),
+        # Predicate conditions work too
+        "workers": Field(int, min=1, required_if={"port": lambda p: p < 1024}),
+        # Pair that only makes sense together
+        "tls_cert": Field(str, requires=["tls_key"]),
+        "tls_key": Field(str, requires=["tls_cert"]),
+        # Mutually exclusive auth styles
+        "token": Field(str, conflicts_with=["username"]),
+        "username": Field(str, requires=["password"]),
+        "password": Field(str, requires=["username"]),
+        "database": Field(
+            dict,
+            required=True,
+            schema={
+                "url": Field(str),
+                "host": Field(str),
+                "port": Field(int, default=5432),
+            },
+            rules=[one_of("url", "host", message="provide either url or host")],
+        ),
+    }
+    RULES = [
+        any_of("token", "username", message="configure authentication (token or username/password)"),
+        check(lambda c: not (c["env"] == "prod" and c["port"] == 80), "prod must not run on port 80"),
+    ]
+
+    good = {"app_name": "demo", "token": "abc", "database": {"host": "db.local"}}
+    print(validate(good, SCHEMA, rules=RULES))
+
+    bad = {
+        "app_name": "demo",
+        "env": "prod",                          # -> sentry_dsn required
+        "port": 80,                             # -> workers required, and the check rule fails
+        "tls_cert": "/etc/cert.pem",            # -> requires tls_key
+        "token": "abc",
+        "username": "bob",                      # -> conflicts with token, requires password
+        "database": {"url": "x", "host": "y"},  # -> only one of url/host
+    }
+    try:
+        validate(bad, SCHEMA, rules=RULES)
+    except ConfigError as e:
+        print(e)

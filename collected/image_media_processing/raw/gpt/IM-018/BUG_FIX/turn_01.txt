@@ -1,0 +1,87 @@
+```python
+import os
+from PIL import Image
+import numpy as np
+
+
+def find_near_duplicates(input_dir, threshold):
+    """
+    Cluster images whose normalized grayscale histogram L1 distance
+    is <= threshold. Uses transitive union-find grouping.
+
+    Returns:
+        list[list[str]]: Clusters containing image file paths.
+                       Singleton clusters are included.
+    """
+    if not (0 <= threshold):
+        raise ValueError("threshold must be non-negative")
+
+    # Supported image files
+    extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
+
+    image_paths = sorted(
+        os.path.join(input_dir, name)
+        for name in os.listdir(input_dir)
+        if os.path.splitext(name)[1].lower() in extensions
+    )
+
+    n = len(image_paths)
+
+    # Union-Find data structure
+    parent = list(range(n))
+    rank = [0] * n
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra == rb:
+            return
+
+        if rank[ra] < rank[rb]:
+            ra, rb = rb, ra
+
+        parent[rb] = ra
+        if rank[ra] == rank[rb]:
+            rank[ra] += 1
+
+    def normalized_histogram(path):
+        with Image.open(path) as img:
+            gray = np.asarray(img.convert("L"), dtype=np.uint8)
+
+        # 256-bin grayscale histogram
+        hist = np.bincount(gray.ravel(), minlength=256).astype(np.float64)
+
+        total = hist.sum()
+        if total > 0:
+            hist /= total
+
+        return hist
+
+    # Compute each histogram once
+    histograms = [normalized_histogram(path) for path in image_paths]
+
+    # Connect every pair within the threshold.
+    # Union-Find makes the final clusters transitive:
+    # A~B and B~C => A, B, C belong to one cluster.
+    for i in range(n):
+        for j in range(i + 1, n):
+            distance = np.abs(histograms[i] - histograms[j]).sum()
+
+            if distance <= threshold:
+                union(i, j)
+
+    # Build clusters from final connected components
+    clusters = {}
+    for i, path in enumerate(image_paths):
+        root = find(i)
+        clusters.setdefault(root, []).append(path)
+
+    return list(clusters.values())
+```
+
+For example, `threshold=0.05` groups images whose normalized grayscale histogram L1 distance is at most `0.05`; union-find ensures the grouping is **transitive** rather than requiring every image in a cluster to be directly within the threshold of every other image.

@@ -1,0 +1,96 @@
+You're right to flag that — the original code I posted actually did use `min(target_w / orig_w, target_h / orig_h)`, which is correct. But since you're seeing overflow/cropping, it's likely the version you're running has the buggy `target_w / orig_w` only. Here's a corrected, explicit version with the scale factor clearly computed as `min(...)`, plus a few hardening improvements so the bug can't sneak back in:
+
+```python
+import os
+from pathlib import Path
+from PIL import Image
+
+def letterbox_resize(input_dir, output_dir, target_size, pad_color=(0, 0, 0)):
+    """
+    Resize all images in input_dir preserving aspect ratio, padding to target_size.
+    Content is centered; padding uses pad_color.
+
+    Scale factor = min(target_w / src_w, target_h / src_h)  <-- guarantees fit.
+    """
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    target_w, target_h = target_size
+    if target_w <= 0 or target_h <= 0:
+        raise ValueError("target_size must be positive (width, height)")
+
+    valid_ext = {'.jpg', '.jpeg', '.png', '.bmp', '.webp', '.tif', '.tiff', '.gif'}
+
+    for img_path in input_dir.iterdir():
+        if not img_path.is_file() or img_path.suffix.lower() not in valid_ext:
+            continue
+
+        try:
+            with Image.open(img_path) as img:
+                # Normalize mode
+                if img.mode in ('RGBA', 'LA', 'P'):
+                    img = img.convert('RGB')
+                elif img.mode not in ('RGB', 'L'):
+                    img = img.convert('RGB')
+
+                src_w, src_h = img.size
+                if src_w == 0 or src_h == 0:
+                    print(f"Skipping {img_path}: zero-sized image")
+                    continue
+
+                # --- The fix: scale must respect BOTH dimensions ---
+                scale = min(target_w / src_w, target_h / src_h)
+
+                new_w = max(1, int(round(src_w * scale)))
+                new_h = max(1, int(round(src_h * scale)))
+
+                # Hard guarantee: never exceed target (guards against rounding)
+                new_w = min(new_w, target_w)
+                new_h = min(new_h, target_h)
+
+                resized = img.resize((new_w, new_h), Image.LANCZOS)
+
+                # Build canvas
+                if resized.mode == 'L':
+                    if isinstance(pad_color, (tuple, list)):
+                        pad_val = pad_color[0] if len(pad_color) == 1 else sum(pad_color) // 3
+                    else:
+                        pad_val = pad_color
+                    canvas = Image.new('L', (target_w, target_h), pad_val)
+                else:
+                    canvas = Image.new('RGB', (target_w, target_h), pad_color)
+
+                # Center the resized content
+                paste_x = (target_w - new_w) // 2
+                paste_y = (target_h - new_h) // 2
+                canvas.paste(resized, (paste_x, paste_y))
+
+                out_path = output_dir / img_path.name
+                save_kwargs = {}
+                if out_path.suffix.lower() in ('.jpg', '.jpeg'):
+                    save_kwargs['quality'] = 95
+                    save_kwargs['subsampling'] = 0
+                canvas.save(out_path, **save_kwargs)
+
+        except Exception as e:
+            print(f"Failed to process {img_path}: {e}")
+
+    print(f"Done. Processed images saved to {output_dir}")
+```
+
+**What changed / why it's now safe:**
+
+1. **Explicit correct scale** – `scale = min(target_w / src_w, target_h / src_h)`. Written as a single clear line with a comment so it can't be mis-edited into a width-only version.
+
+2. **Zero-size guard** – Skips images with `src_w == 0` or `src_h == 0` to avoid division-by-zero producing `inf`/`nan`.
+
+3. **Post-round clamp** – `new_w = min(new_w, target_w)` and `new_h = min(new_h, target_h)`. Even though `min(...)` should already guarantee this, integer rounding of `round(src_w * scale)` can in rare cases produce a value one pixel larger than `target_w` or `target_h`. The clamp makes overflow literally impossible.
+
+4. **Centered paste** – Unchanged; `(target - new) // 2` places the content symmetrically.
+
+**Quick sanity check** — for a 1920×1080 source into a 640×640 target:
+- `scale = min(640/1920, 640/1080) = min(0.333, 0.593) = 0.333`
+- `new_w = 640`, `new_h = 360` → fits, padded 140px top and bottom. ✅
+
+If you're still seeing vertical cropping after this, the culprit is almost certainly an older cached version of the file being imported — try clearing `__pycache__` or restarting the interpreter.

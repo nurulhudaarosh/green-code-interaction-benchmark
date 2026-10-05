@@ -1,0 +1,149 @@
+```python
+#!/usr/bin/env python3
+"""Filter a JSONL file: validate, keep active records >= threshold, sort, count skips.
+
+Skipped records are counted in three groups:
+  malformed  - undecodable bytes, invalid JSON, non-object lines, wrong field types
+  incomplete - required field missing, null, or empty
+  filtered   - valid records that are inactive or below the score threshold
+
+Usage:
+    python filter_jsonl.py input.jsonl --min-score 70 -o output.jsonl
+    cat input.jsonl | python filter_jsonl.py - --min-score 70
+"""
+import argparse
+import json
+import math
+import sys
+from collections import Counter
+
+REQUIRED = ("id", "category", "score", "status")
+
+
+def classify(rec):
+    """Return (group, reason) if the record is bad, else None."""
+    if not isinstance(rec, dict):
+        return "malformed", "not_an_object"
+
+    # Incomplete: missing, null, or blank required fields
+    for field in REQUIRED:
+        value = rec.get(field)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return "incomplete", f"missing_{field}"
+
+    # Malformed: present but wrong type/value (bool is a subclass of int)
+    if isinstance(rec["id"], bool) or not isinstance(rec["id"], (int, str)):
+        return "malformed", "bad_id"
+    if not isinstance(rec["category"], str):
+        return "malformed", "bad_category"
+    score = rec["score"]
+    if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(score):
+        return "malformed", "bad_score"
+    if not isinstance(rec["status"], str):
+        return "malformed", "bad_status"
+    return None
+
+
+def sort_key(rec):
+    # Category A-Z, score high-to-low, then ID A-Z (IDs compared as strings
+    # so mixed int/str IDs never raise TypeError).
+    return (rec["category"], -rec["score"], str(rec["id"]))
+
+
+def filter_records(raw_lines, min_score):
+    kept = []
+    skipped = Counter()  # keys: (group, reason)
+
+    for raw in raw_lines:
+        try:
+            line = raw.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            skipped[("malformed", "bad_encoding")] += 1
+            continue
+        if not line:
+            continue  # blank lines are ignored, not counted
+
+        try:
+            rec = json.loads(line)
+        except (json.JSONDecodeError, RecursionError):
+            skipped[("malformed", "invalid_json")] += 1
+            continue
+
+        problem = classify(rec)
+        if problem:
+            skipped[problem] += 1
+            continue
+
+        if rec["status"].strip().lower() != "active":
+            skipped[("filtered", "inactive")] += 1
+            continue
+        if rec["score"] < min_score:
+            skipped[("filtered", "below_threshold")] += 1
+            continue
+
+        kept.append(rec)
+
+    kept.sort(key=sort_key)
+    return kept, skipped
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("input", help="input JSONL path, or '-' for stdin")
+    parser.add_argument("--min-score", type=float, required=True,
+                        help="minimum score (inclusive)")
+    parser.add_argument("-o", "--output", help="output path (default: stdout)")
+    args = parser.parse_args()
+
+    infile = sys.stdin.buffer if args.input == "-" else open(args.input, "rb")
+    with infile:
+        kept, skipped = filter_records(infile, args.min_score)
+
+    out = open(args.output, "w", encoding="utf-8") if args.output else sys.stdout
+    try:
+        for rec in kept:
+            out.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    finally:
+        if out is not sys.stdout:
+            out.close()
+
+    # Summary goes to stderr so piped output stays clean
+    group_totals = Counter()
+    for (group, _), n in skipped.items():
+        group_totals[group] += n
+
+    print(f"Kept: {len(kept)} | Skipped: {sum(skipped.values())}", file=sys.stderr)
+    for group in ("malformed", "incomplete", "filtered"):
+        if group_totals[group]:
+            print(f"  {group}: {group_totals[group]}", file=sys.stderr)
+            for (g, reason), n in sorted(skipped.items()):
+                if g == group:
+                    print(f"    {reason}: {n}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+**What changed**
+
+- **Malformed** records (bad bytes, invalid JSON, a non-object line, or a field with the wrong type such as a string `score`) are skipped and counted.
+- **Incomplete** records (a required field missing, `null`, or blank) are skipped and counted separately per field, e.g. `missing_score`.
+- The script reads bytes and decodes line by line, so one bad byte sequence no longer crashes the run. It is counted as `bad_encoding` instead.
+- The summary groups the skips, and valid records dropped for being inactive or under the threshold appear under `filtered`.
+
+**Example output**
+
+```
+Kept: 42 | Skipped: 9
+  malformed: 3
+    bad_score: 1
+    invalid_json: 2
+  incomplete: 2
+    missing_category: 1
+    missing_score: 1
+  filtered: 4
+    below_threshold: 3
+    inactive: 1
+```

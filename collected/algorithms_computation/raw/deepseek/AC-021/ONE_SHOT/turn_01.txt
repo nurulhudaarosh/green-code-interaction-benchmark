@@ -1,0 +1,131 @@
+## Problem Restatement
+
+We are given a multiset of **positive integers** and a **target** value. We must determine whether some subset sums **exactly** to the target. Among all valid subsets:
+
+1. Minimize the **number of chosen elements** (cardinality).
+2. If there are ties, choose the **lexicographically smallest list of indices** (0-based, in ascending order).
+
+If no valid subset exists, output a clear "not possible" indication.
+
+## Key Constraints / Requirements
+
+- Elements are positive integers, so sums strictly increase and DP over sum is bounded by target.
+- 0/1 knapsack style: each element may be used at most once.
+- Need not just feasibility but also **optimal cardinality** and **lexicographically smallest index sequence** among equal-cardinality solutions.
+- Deterministic output; standard library only.
+
+## Algorithm
+
+We use DP over sums `0..target`:
+
+- `min_count[s]` = minimum number of elements needed to reach sum `s` (`INF` if unreachable).
+- `choice[s]` = the index last added to reach `s` optimally, or `-1`.
+
+Initialization:
+- `min_count[0] = 0`, all others `INF`.
+
+Process elements in increasing index order `i = 0..n-1`. For each `i`, iterate sums **downward** from `target` to `a[i]` (0/1 DP). Update if using element `i` improves cardinality:
+
+```
+if min_count[s - a[i]] + 1 < min_count[s]:
+    min_count[s] = min_count[s - a[i]] + 1
+    choice[s] = i
+```
+
+This greedy-by-index update naturally favors smaller indices among equal cardinalities because we process indices increasing and only replace on strict improvement. However, to guarantee **lexicographically smallest index list** among all optimal-cardinality solutions, processing order and tie-breaking must be handled carefully.
+
+To get lexicographically smallest sequence, reconstruct from target using `choice`; but the DP update must ensure that for equal cardinality we prefer smaller indices. Since we process `i` in increasing order and only update on strictly smaller count, the first time a state gets its minimal count it uses the earliest possible last index. Reconstruction then yields the lexicographically smallest sequence.
+
+Reconstruction:
+```
+if min_count[target] == INF: no solution
+else:
+    indices = []
+    s = target
+    while s > 0:
+        i = choice[s]
+        indices.append(i)
+        s -= a[i]
+    reverse indices -> ascending order
+```
+
+## Python Implementation
+
+```python
+from typing import List, Optional
+
+def subset_sum_optimal(nums: List[int], target: int) -> Optional[List[int]]:
+    """
+    Returns a list of 0-based indices forming a subset of nums that sums to target,
+    minimizing first the number of elements, then lexicographically smallest index list.
+    Returns None if no such subset exists.
+    """
+    n = len(nums)
+    INF = float('inf')
+
+    # min_count[s] = minimum number of elements to reach sum s
+    min_count = [INF] * (target + 1)
+    min_count[0] = 0
+
+    # choice[s] = index of the last element used to reach sum s optimally
+    choice = [-1] * (target + 1)
+
+    for i, val in enumerate(nums):
+        if val > target:
+            continue
+        # Iterate downward to ensure each element used at most once
+        for s in range(target, val - 1, -1):
+            if min_count[s - val] + 1 < min_count[s]:
+                min_count[s] = min_count[s - val] + 1
+                choice[s] = i
+
+    if min_count[target] == INF:
+        return None
+
+    # Reconstruct indices
+    indices = []
+    s = target
+    while s > 0:
+        i = choice[s]
+        if i == -1:
+            return None  # should not happen if min_count[target] is finite
+        indices.append(i)
+        s -= nums[i]
+
+    indices.reverse()
+    return indices
+
+
+if __name__ == "__main__":
+    # Example usage
+    nums = [3, 34, 4, 12, 5, 2]
+    target = 9
+    result = subset_sum_optimal(nums, target)
+    if result is None:
+        print("No subset sums to target.")
+    else:
+        print("Indices:", result)
+        print("Values:", [nums[i] for i in result])
+        print("Sum:", sum(nums[i] for i in result))
+        print("Count:", len(result))
+```
+
+### Example Output
+
+For `nums = [3, 34, 4, 12, 5, 2]` and `target = 9`:
+
+```
+Indices: [2, 4]
+Values: [4, 5]
+Sum: 9
+Count: 2
+```
+
+This is optimal: 2 elements, and `[2, 4]` is lexicographically smallest among 2-element solutions (`[0, 5]` gives 3+2=5? no; actually [0,5]=3+2=5, [1,...] too big; [2,4]=4+5=9, [3,...] too big). So correct.
+
+### Notes on Correctness
+
+- **Cardinality minimization**: `min_count` stores the minimum number of elements.
+- **Lexicographic tie-breaking**: Processing indices in increasing order and updating only on strict improvement means the first time a state reaches its minimal count, it uses the smallest possible last index. Reconstruction from target backward yields the lexicographically smallest ascending index list.
+- **0/1 constraint**: Downward iteration over sums prevents reusing the same element.
+- **Positive integers**: Ensures DP over sum is bounded and reconstruction terminates.

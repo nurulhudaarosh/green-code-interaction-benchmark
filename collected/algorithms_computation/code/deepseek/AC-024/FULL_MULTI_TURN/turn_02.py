@@ -1,0 +1,67 @@
+from heapq import heappush, heappop
+from typing import List
+
+
+def assign_rooms(intervals: List[List[int]]) -> List[int]:
+    """
+    Minimum Room Assignment.
+
+    Assign every interval to a room so overlapping intervals never share a
+    room. A room is reusable iff its previous interval ends at or before the
+    next interval's start (prev_end <= next_start). Minimize the number of
+    rooms and return the room ID for every original interval.
+
+    Determinism:
+      - Intervals are sorted by (start, end, original_index).
+      - The min-heap is keyed by (end_time, room_id), so ties in availability
+        are broken by smallest room_id.
+
+    Returns:
+        List of room IDs aligned with the input order (0-indexed).
+    """
+    n = len(intervals)
+    if n == 0:
+        return []
+
+    # Deterministic sort: start, then end, then original index.
+    indexed = [(s, e, i) for i, (s, e) in enumerate(intervals)]
+    indexed.sort(key=lambda x: (x[0], x[1], x[2]))
+
+    result = [0] * n
+    heap = []              # min-heap of (end_time, room_id)
+    next_room_id = 0
+
+    for start, end, orig_idx in indexed:
+        if heap and heap[0][0] <= start:
+            # Earliest-freeing room; ties broken by smallest room_id.
+            _, room_id = heappop(heap)
+        else:
+            # No reusable room; allocate a new one.
+            room_id = next_room_id
+            next_room_id += 1
+
+        result[orig_idx] = room_id
+        heappush(heap, (end, room_id))
+
+    return result
+
+
+if __name__ == "__main__":
+    # Tie-handling case: both rooms free at time 2 -> reuse room 0.
+    print(assign_rooms([[0, 2], [0, 2], [2, 3]]))          # [0, 1, 0]
+
+    # Determinism across repeated runs.
+    for _ in range(5):
+        assert assign_rooms([[0, 2], [0, 2], [2, 3]]) == [0, 1, 0]
+
+    # More tie-heavy case.
+    print(assign_rooms([[1, 3], [1, 3], [3, 5], [3, 5]]))  # [0, 1, 0, 1]
+
+    # Touching intervals reuse (allowed by <=).
+    print(assign_rooms([[1, 3], [3, 5], [5, 7]]))          # [0, 0, 0]
+
+    # Fully overlapping.
+    print(assign_rooms([[1, 10], [2, 3], [4, 5]]))         # [0, 1, 1]
+
+    # Empty input.
+    print(assign_rooms([]))                                # []

@@ -1,0 +1,77 @@
+### Problem Identification & Understanding
+
+The goal is to compute the exact product of two single-variable polynomials with integer coefficients:
+
+$$P(x) = \sum_{i=0}^{m} a_i x^i \quad \text{and} \quad Q(x) = \sum_{j=0}^{n} b_j x^j$$
+
+The resulting polynomial $R(x) = P(x) \times Q(x)$ has degree $(m + n)$ with coefficients given by direct discrete convolution:
+
+$$c_k = \sum_{i=0}^{k} a_i b_{k-i}$$
+
+---
+
+### Key Constraints & Required Output
+
+* **Input:** Two lists of integers representing the coefficients of $P(x)$ and $Q(x)$ in ascending degree order (index $i$ corresponds to the $x^i$ term).
+* **Constraints:**
+* Coefficients can be positive, negative, or zero.
+* Inputs can be of different lengths; an empty input yields an empty output.
+* Direct polynomial degree bounds allow $O(N \cdot M)$ standard linear convolution without risk of precision loss or overflow.
+
+
+* **Output:** A list of integers representing the coefficients of the product polynomial $R(x)$ in ascending degree order.
+
+---
+
+### Algorithm Description
+
+We use direct linear coefficient convolution (polynomial long multiplication):
+
+1. Handle empty polynomial inputs (if either polynomial has no coefficients, return `[]`).
+2. Allocate a result list `C` of size `len(A) + len(B) - 1`, initialized to all zeros.
+3. Use nested loops to iterate over all index pairs $(i, j)$ and add $A[i] \times B[j]$ to `C[i + j]`.
+4. Return the resulting coefficient list `C`.
+
+---
+
+### Deterministic Python Solution
+
+```python
+def multiply_polynomials(a: list[int], b: list[int]) -> list[int]:
+    """
+    Multiplies two integer polynomials using direct linear convolution.
+    
+    :param a: List of integer coefficients for P(x) in ascending order.
+    :param b: List of integer coefficients for Q(x) in ascending order.
+    :return: List of integer coefficients for R(x) = P(x) * Q(x) in ascending order.
+    """
+    if not a or not b:
+        return []
+    
+    len_a = len(a)
+    len_b = len(b)
+    
+    # Allocating memory for product polynomial of degree (len_a + len_b - 2)
+    result = [0] * (len_a + len_b - 1)
+    
+    # Direct coefficient convolution
+    for i in range(len_a):
+        for j in range(len_b):
+            result[i + j] += a[i] * b[j]
+            
+    return result
+
+
+# Example Usage & Verification:
+if __name__ == "__main__":
+    # P(x) = 1 + 2x - 3x^2
+    # Q(x) = 4 - x + 5x^2
+    poly1 = [1, 2, -3]
+    poly2 = [4, -1, 5]
+    
+    # Expected product: 4 + 7x - 9x^2 + 13x^3 - 15x^4
+    # Resulting coefficients: [4, 7, -9, 13, -15]
+    product = multiply_polynomials(poly1, poly2)
+    print("Product coefficients:", product)
+
+```

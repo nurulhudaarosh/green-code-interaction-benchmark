@@ -1,0 +1,67 @@
+from pathlib import Path
+
+import numpy as np
+from PIL import Image, UnidentifiedImageError
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
+
+
+def compute_statistics(input_dir):
+    """Compute grayscale statistics for every image in a directory.
+
+    Args:
+        input_dir: Path (str or Path) to a directory containing images.
+
+    Returns:
+        dict mapping each image's filename to:
+            {
+                "histogram": np.ndarray of shape (256,), int64 pixel counts per
+                             intensity level 0..255,
+                "mean":      float, mean pixel intensity,
+                "std":       float, population standard deviation of intensity,
+            }
+        Files that are not readable images are skipped.
+    """
+    input_dir = Path(input_dir)
+    if not input_dir.is_dir():
+        raise NotADirectoryError(f"{input_dir} is not a directory")
+
+    levels = np.arange(256, dtype=np.float64)
+    results = {}
+
+    for path in sorted(input_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS:
+            continue
+        try:
+            with Image.open(path) as img:
+                # "L" = 8-bit grayscale (ITU-R 601 luma conversion for color images)
+                pixels = np.asarray(img.convert("L"), dtype=np.uint8)
+        except (UnidentifiedImageError, OSError):
+            continue  # corrupt or non-image file
+
+        n = pixels.size
+        if n == 0:
+            continue
+
+        hist = np.bincount(pixels.ravel(), minlength=256).astype(np.int64)
+
+        # Derive moments from the histogram: exact and avoids a float copy
+        # of the full image.
+        mean = float((hist * levels).sum() / n)
+        var = float((hist * (levels - mean) ** 2).sum() / n)
+
+        results[path.name] = {
+            "histogram": hist,
+            "mean": mean,
+            "std": var ** 0.5,
+        }
+
+    return results
+
+
+if __name__ == "__main__":
+    import sys
+
+    stats = compute_statistics(sys.argv[1] if len(sys.argv) > 1 else ".")
+    for name, s in stats.items():
+        print(f"{name}: mean={s['mean']:.2f} std={s['std']:.2f}")

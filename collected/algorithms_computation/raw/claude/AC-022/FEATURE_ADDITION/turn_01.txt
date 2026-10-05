@@ -1,0 +1,100 @@
+# Edit Distance with Adjacent Transposition (Damerau–Levenshtein, OSA variant)
+
+## 1. Problem identification
+
+Given two strings `a` and `b`, find the minimum number of operations to turn `a` into `b`. Allowed operations, each costing 1:
+
+- **Insert** a character
+- **Delete** a character
+- **Substitute** one character for another
+- **Transpose** two adjacent characters (`"ab"` → `"ba"`)
+
+## 2. Key constraints and required output
+
+- **Input:** two strings `a` (length *n*) and `b` (length *m*). Either may be empty.
+- **Output:** a single non-negative integer, the minimum total cost.
+- **Interpretation of transposition:** I use the *optimal string alignment* (restricted) model: a transposition swaps two adjacent characters of `a`, and no substring is edited more than once after being transposed. This is the standard "edit distance with adjacent transposition" and is what the DP below computes. (The unrestricted Damerau–Levenshtein distance differs in rare cases, e.g. `"CA"` → `"ABC"`: OSA gives 3, unrestricted gives 2.)
+- **Complexity:** O(n·m) time; O(m) space with rolling rows (the transposition needs rows *i−2*, *i−1*, *i*).
+- **Restrictions:** standard library only, deterministic, no I/O beyond a demo/test block.
+
+## 3. Algorithm
+
+Let `d[i][j]` be the distance between `a[:i]` and `b[:j]`.
+
+**Base cases:** `d[i][0] = i`, `d[0][j] = j`.
+
+**Transition** (with `cost = 0` if `a[i-1] == b[j-1]` else `1`):
+
+```
+d[i][j] = min(
+    d[i-1][j] + 1,            # deletion
+    d[i][j-1] + 1,            # insertion
+    d[i-1][j-1] + cost,       # substitution / match
+    d[i-2][j-2] + 1           # transposition, only if i,j >= 2 and
+                              #   a[i-1] == b[j-2] and a[i-2] == b[j-1]
+)
+```
+
+The transposition term is the explicit extra transition. Three rolling rows keep memory at O(m).
+
+## 4. Implementation
+
+```python
+def edit_distance(a: str, b: str) -> int:
+    """Edit distance with insert, delete, substitute, and adjacent
+    transposition, each costing 1 (optimal string alignment)."""
+    n, m = len(a), len(b)
+    if n == 0:
+        return m
+    if m == 0:
+        return n
+
+    prev2 = [0] * (m + 1)            # row i-2
+    prev = list(range(m + 1))        # row i-1 (row 0)
+
+    for i in range(1, n + 1):
+        curr = [i] + [0] * m         # d[i][0] = i
+        ai = a[i - 1]
+        for j in range(1, m + 1):
+            bj = b[j - 1]
+            cost = 0 if ai == bj else 1
+            best = min(
+                prev[j] + 1,          # deletion
+                curr[j - 1] + 1,      # insertion
+                prev[j - 1] + cost,   # substitution / match
+            )
+            # adjacent transposition
+            if i > 1 and j > 1 and ai == b[j - 2] and a[i - 2] == bj:
+                best = min(best, prev2[j - 2] + 1)
+            curr[j] = best
+        prev2, prev = prev, curr
+
+    return prev[m]
+
+
+if __name__ == "__main__":
+    tests = [
+        ("", "", 0),
+        ("", "abc", 3),
+        ("abc", "", 3),
+        ("abc", "abc", 0),
+        ("ab", "ba", 1),            # one transposition
+        ("abcd", "acbd", 1),        # one transposition
+        ("kitten", "sitting", 3),   # classic Levenshtein case
+        ("ca", "abc", 3),           # OSA restriction
+        ("teh", "the", 1),
+        ("abcdef", "badcfe", 3),    # three transpositions
+        ("a", "b", 1),
+    ]
+    for x, y, expected in tests:
+        got = edit_distance(x, y)
+        assert got == expected, (x, y, got, expected)
+        assert got == edit_distance(y, x), "distance should be symmetric"
+    print("All tests passed.")
+```
+
+## 5. Notes
+
+- **Correctness check:** `"ab"` → `"ba"`: at `i=2, j=2`, the transposition condition holds (`a[1]=='b'==b[0]`, `a[0]=='a'==b[1]`), giving `prev2[0] + 1 = 1`, beating substitution twice (cost 2).
+- **Determinism:** pure function of the two inputs, with no randomness or external state.
+- **Space optimization:** only three rows are retained; the full matrix is unnecessary unless you need to reconstruct the edit script.

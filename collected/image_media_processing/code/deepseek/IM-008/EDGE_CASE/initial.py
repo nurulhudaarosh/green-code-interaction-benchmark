@@ -1,0 +1,57 @@
+import hashlib
+import os
+from collections import defaultdict
+
+
+def find_exact_duplicates(input_dir):
+    """
+    Find groups of byte-identical files in input_dir.
+
+    Files are grouped by their SHA-256 checksum. Only groups containing
+    2 or more files are returned, and each group is sorted alphabetically.
+
+    Args:
+        input_dir: Directory to scan (recursively).
+
+    Returns:
+        A list of lists, where each inner list contains paths of
+        byte-identical files, sorted alphabetically.
+    """
+    # First pass: group candidate files by size to avoid hashing unique files.
+    by_size = defaultdict(list)
+    for root, _, filenames in os.walk(input_dir):
+        for name in filenames:
+            path = os.path.join(root, name)
+            if not os.path.isfile(path) or os.path.islink(path):
+                continue
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                continue
+            by_size[size].append(path)
+
+    # Second pass: hash only files that share a size with another file.
+    by_hash = defaultdict(list)
+    for size, paths in by_size.items():
+        if len(paths) < 2:
+            continue
+        for path in paths:
+            digest = _sha256(path)
+            if digest is not None:
+                by_hash[digest].append(path)
+
+    # Collect groups with 2+ members, sorted.
+    groups = [sorted(paths) for paths in by_hash.values() if len(paths) >= 2]
+    return groups
+
+
+def _sha256(path, chunk_size=1 << 20):
+    """Return the hex SHA-256 digest of a file, or None on read error."""
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(chunk_size), b""):
+                h.update(chunk)
+    except OSError:
+        return None
+    return h.hexdigest()

@@ -1,0 +1,89 @@
+```python
+import pandas as pd
+
+
+def process_sensor_readings(df: pd.DataFrame) -> pd.DataFrame:
+    """Sorts input sensor readings chronologically before detecting interior gaps,
+
+    fills missing hourly timestamps via linear interpolation, marks inserted rows,
+
+    and returns a deterministic output DataFrame.
+
+    Expected input columns: 'sensor_id', 'timestamp', 'value'
+    """
+    if df.empty:
+        return pd.DataFrame(
+            columns=["sensor_id", "timestamp", "value", "is_interpolated"]
+        )
+
+    df = df.copy()
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df["value"] = pd.to_numeric(df["value"], errors="coerce")
+
+    # Explicitly sort the entire DataFrame by sensor_id and timestamp chronologically first
+    df = df.sort_values(
+        by=["sensor_id", "timestamp"], ascending=[True, True]
+    ).reset_index(drop=True)
+
+    processed_groups = []
+
+    for sensor_id, group in df.groupby("sensor_id", sort=True):
+        # Ensure chronological ordering within group and drop duplicate timestamps
+        group = group.sort_values(by="timestamp", ascending=True).drop_duplicates(
+            subset=["timestamp"]
+        )
+
+        if group.empty:
+            continue
+
+        min_time = group["timestamp"].min()
+        max_time = group["timestamp"].max()
+
+        group = group.set_index("timestamp")
+
+        # Generate hourly grid bounded strictly by this sensor's min and max timestamp
+        full_index = pd.date_range(
+            start=min_time, end=max_time, freq="h", name="timestamp"
+        )
+
+        # Reindex to expose interior missing hourly slots
+        resampled = group.reindex(full_index)
+
+        # Mark interpolated rows (True if timestamp was missing in original sequence)
+        resampled["is_interpolated"] = resampled["sensor_id"].isna()
+
+        # Restore sensor identifier
+        resampled["sensor_id"] = sensor_id
+
+        # Interpolate values linearly for interior gaps
+        resampled["value"] = resampled["value"].interpolate(method="linear")
+
+        processed_groups.append(resampled.reset_index())
+
+    if not processed_groups:
+        return pd.DataFrame(
+            columns=["sensor_id", "timestamp", "value", "is_interpolated"]
+        )
+
+    # Combine and enforce deterministic sort order across all sensors
+    result = pd.concat(processed_groups, ignore_index=True)
+    result = result.sort_values(
+        by=["sensor_id", "timestamp"], ascending=[True, True]
+    ).reset_index(drop=True)
+
+    return result[["sensor_id", "timestamp", "value", "is_interpolated"]]
+
+
+if __name__ == "__main__":
+    # Example with out-of-order input
+    unsorted_data = [
+        {"sensor_id": "S1", "timestamp": "2026-03-01 13:00:00", "value": 25.0},
+        {"sensor_id": "S1", "timestamp": "2026-03-01 10:00:00", "value": 10.0},
+        {"sensor_id": "S2", "timestamp": "2026-03-01 09:00:00", "value": 110.0},
+        {"sensor_id": "S2", "timestamp": "2026-03-01 07:00:00", "value": 90.0},
+    ]
+
+    df_out = process_sensor_readings(pd.DataFrame(unsorted_data))
+    print(df_out)
+
+```

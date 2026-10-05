@@ -1,0 +1,28 @@
+On Pillow, `img.info` is a `dict` populated at load time. `tEXt`/`iTXt` chunks are **not** guaranteed to be flattened into `img.info['text']` — behavior varies by version and by how the file was written. On many versions you get `{}` or only a partial mapping, so tags silently disappear.
+
+## The fix — use `img.text`
+
+```python
+from PIL import Image
+
+def read_tags(image_path):
+    """Return {keyword: value} for all PNG text chunks."""
+    with Image.open(image_path) as img:
+        # img.text is the correct, complete mapping of text chunks.
+        # It works for PNG (tEXt/iTXt/zTXt) and is populated on open().
+        return dict(img.text)
+```
+
+`Image.text` is the documented property that exposes all textual metadata. For PNG it aggregates `tEXt`, `zTXt`, and `iTXt` chunks. On formats that have no text concept it returns `{}`.
+
+If you want to be defensive across very old Pillow versions (pre-`img.text`, roughly < 6.0), fall back to `img.info`:
+
+
+
+
+## Which approach to use
+
+- **The stdlib version I posted earlier** is correct and self-contained — it never touches Pillow, so the `img.info` bug can't occur. Prefer it if you don't already depend on Pillow.
+- **The Pillow version above** is what you want if Pillow is already in your stack. The key fix is `img.text`, not `img.info.get('text', {})`.
+
+If you can paste the exact snippet you're seeing the bug in, I can point at the precise line and confirm which of the two cases it is.

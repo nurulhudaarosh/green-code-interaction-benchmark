@@ -1,0 +1,120 @@
+# Interval Room Assignment
+
+## Problem
+
+Given a list of intervals `[start, end)`, assign each one a room ID so that no two overlapping intervals share a room, using as few rooms as possible. Return the room ID for each interval in the original input order.
+
+## Key constraints
+
+- **Touching is allowed.** Intervals are half-open: a room is reusable when its previous interval's `end <= next start`.
+- **Minimality.** The number of rooms must equal the maximum number of simultaneously overlapping intervals.
+- **Output.** A list `rooms` where `rooms[i]` is the room ID of `intervals[i]`, plus the room count.
+- **Determinism.** Ties must be broken by fixed rules, so the same input always gives the same output.
+- **Zero-length intervals** (`start == end`) are accepted and treated as occupying nothing, but they still receive a room ID. They are assigned like any other interval.
+
+## Algorithm
+
+1. Sort interval indices by `(start, end, original_index)`. This is a fixed total order, so the processing order is deterministic.
+2. Maintain a min-heap of `(end_time, room_id)` for rooms in use.
+3. For each interval in sorted order:
+   - If the heap's top has `end_time <= start`, pop it and reuse that room. Because the heap is keyed on `(end_time, room_id)`, ties on end time choose the smallest room ID.
+   - Otherwise, open a new room with the next unused ID.
+   - Push `(end, room_id)` and record the assignment at the interval's original index.
+4. The number of rooms opened is the answer.
+
+**Why it is optimal:** a new room is opened only when every existing room is busy at that start time. At that moment, those rooms plus the new interval all overlap at the point `start`, so that many rooms are genuinely required.
+
+**Complexity:** O(n log n) time, O(n) space.
+
+## Implementation
+
+```python
+import heapq
+from typing import List, Tuple
+
+
+def assign_rooms(intervals: List[Tuple[int, int]]) -> Tuple[int, List[int]]:
+    """
+    Assign each interval a room ID (0-based) so that overlapping intervals
+    never share a room, using the minimum number of rooms.
+
+    Intervals are half-open [start, end): a room is free for reuse when
+    its previous interval's end <= the next interval's start.
+
+    Returns (number_of_rooms, room_ids) where room_ids[i] corresponds to
+    intervals[i] in the original input order.
+    """
+    n = len(intervals)
+    for i, iv in enumerate(intervals):
+        if len(iv) != 2:
+            raise ValueError(f"Interval {i} must have exactly two elements: {iv!r}")
+        if iv[0] > iv[1]:
+            raise ValueError(f"Interval {i} has start > end: {iv!r}")
+
+    # Deterministic total order: start, then end, then original index.
+    order = sorted(range(n), key=lambda i: (intervals[i][0], intervals[i][1], i))
+
+    result = [-1] * n
+    heap: List[Tuple[int, int]] = []  # (end_time, room_id)
+    room_count = 0
+
+    for i in order:
+        start, end = intervals[i]
+
+        if heap and heap[0][0] <= start:
+            _, room = heapq.heappop(heap)   # reuse earliest-free (lowest ID on ties)
+        else:
+            room = room_count               # all rooms busy: open a new one
+            room_count += 1
+
+        result[i] = room
+        heapq.heappush(heap, (end, room))
+
+    return room_count, result
+
+
+def _verify(intervals, room_count, rooms):
+    """Check validity (no overlaps in a room) and minimality."""
+    by_room = {}
+    for i, r in enumerate(rooms):
+        by_room.setdefault(r, []).append(intervals[i])
+    for ivs in by_room.values():
+        ivs.sort()
+        for (s1, e1), (s2, e2) in zip(ivs, ivs[1:]):
+            assert e1 <= s2, f"overlap: {(s1, e1)} and {(s2, e2)}"
+
+    # Minimum = max simultaneous overlap (sweep line; ends before starts at ties).
+    events = []
+    for s, e in intervals:
+        if s < e:
+            events.append((s, 1))
+            events.append((e, -1))
+    events.sort(key=lambda x: (x[0], x[1]))
+    cur = peak = 0
+    for _, d in events:
+        cur += d
+        peak = max(peak, cur)
+    # Zero-length intervals still need a room if there are no others.
+    if intervals and peak == 0:
+        peak = 1
+    assert room_count == peak, f"not minimal: {room_count} vs {peak}"
+
+
+if __name__ == "__main__":
+    tests = [
+        [],
+        [(0, 30), (5, 10), (15, 20)],
+        [(1, 3), (3, 5), (5, 7)],              # touching -> one room
+        [(1, 4), (2, 5), (3, 6), (4, 7)],
+        [(7, 7), (7, 7), (1, 2)],              # zero-length intervals
+        [(5, 10), (0, 30), (15, 20), (0, 30)], # unsorted input, duplicates
+    ]
+    for t in tests:
+        count, rooms = assign_rooms(t)
+        _verify(t, count, rooms)
+        print(f"{t}\n  -> rooms={count}, ids={rooms}")
+```
+
+## Example output
+
+For `[(0, 30), (5, 10), (15, 20)]`, the result is `rooms=2, ids=[0, 1, 1]`. The interval `(0, 30)` holds room 0 throughout, while `(5, 10)` and `(15, 20)` share room 1 since 10 <= 15.

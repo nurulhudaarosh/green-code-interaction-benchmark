@@ -1,0 +1,58 @@
+def process_assessment_results(assessments, pass_mark=50):
+    """
+    Processes assessment results handling empty data, exact pass marks (>= pass_mark),
+    ties in scoring/ranking, and malformed assessment entries.
+    """
+    if not assessments:
+        return {"status": "empty", "message": "No assessment data provided.", "results": []}
+
+    valid_records = []
+    malformed_records = []
+
+    # 1. Parse and validate assessments (Handle malformed entries)
+    for idx, record in enumerate(assessments):
+        if not isinstance(record, dict):
+            malformed_records.append({"index": idx, "data": record, "reason": "Record must be a dictionary."})
+            continue
+
+        student_id = record.get("student_id")
+        score = record.get("score")
+
+        if student_id is None or not isinstance(score, (int, float)):
+            malformed_records.append({"index": idx, "data": record, "reason": "Missing or non-numeric score/student_id."})
+            continue
+
+        # Exact pass mark check (>= pass_mark)
+        passed = score >= pass_mark
+        valid_records.append({
+            "student_id": student_id,
+            "score": score,
+            "passed": passed
+        })
+
+    if not valid_records:
+        return {
+            "status": "invalid_data",
+            "message": "All records were malformed or invalid.",
+            "malformed_count": len(malformed_records),
+            "malformed_records": malformed_records
+        }
+
+    # 2. Sort by score descending to rank and handle ties
+    valid_records.sort(key=lambda x: x["score"], reverse=True)
+
+    # Standard competition ranking (1224) handling ties
+    current_rank = 1
+    for i, rec in enumerate(valid_records):
+        if i > 0 and rec["score"] < valid_records[i - 1]["score"]:
+            current_rank = i + 1
+        rec["rank"] = current_rank
+
+    return {
+        "status": "success",
+        "total_processed": len(assessments),
+        "valid_count": len(valid_records),
+        "malformed_count": len(malformed_records),
+        "results": valid_records,
+        "malformed_records": malformed_records
+    }

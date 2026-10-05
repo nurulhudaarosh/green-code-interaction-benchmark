@@ -1,0 +1,238 @@
+from typing import List, Tuple, Union
+
+Number = Union[int, float]
+
+
+def held_karp_tsp(dist: List[List[Number]]) -> Tuple[Number, List[int]]:
+    """
+    Traveling Salesperson Solver using Held-Karp subset DP.
+
+    Requirements:
+    - Complete symmetric distance matrix.
+    - 1 <= n <= 14.
+    - Start and end at city 0.
+    - Visit every city exactly once.
+    - Non-negative integer or float distances.
+    - Deterministic tie-breaking:
+        * For each DP state, choose the smaller predecessor
+          when candidate costs are equal.
+        * For the final tour, choose the smaller last city
+          when total costs are equal.
+
+    Returns:
+        (minimum_cost, optimal_cycle)
+    """
+
+    n = len(dist)
+
+    # Validate input
+    if not 1 <= n <= 14:
+        raise ValueError("Number of cities must be between 1 and 14.")
+
+    if any(len(row) != n for row in dist):
+        raise ValueError("Distance matrix must be square.")
+
+    for i in range(n):
+        if dist[i][i] != 0:
+            raise ValueError("Diagonal distances must be zero.")
+
+        for j in range(n):
+            if dist[i][j] < 0:
+                raise ValueError("Distances must be non-negative.")
+
+            if dist[i][j] != dist[j][i]:
+                raise ValueError("Distance matrix must be symmetric.")
+
+    # Single-city case
+    if n == 1:
+        return 0, [0, 0]
+
+    # Cities 1..n-1 are represented using bits 0..n-2.
+    size = 1 << (n - 1)
+    INF = float("inf")
+
+    # dp[mask][j] = minimum cost of starting at 0,
+    # visiting exactly the cities in mask, and ending at j.
+    dp = [[INF] * n for _ in range(size)]
+
+    # parent[mask][j] = predecessor city used to reach j.
+    parent = [[-1] * n for _ in range(size)]
+
+    # Base cases: 0 -> j
+    for j in range(1, n):
+        mask = 1 << (j - 1)
+        dp[mask][j] = dist[0][j]
+        parent[mask][j] = 0
+
+    # Held-Karp subset DP
+    for mask in range(1, size):
+        for j in range(1, n):
+
+            j_bit = 1 << (j - 1)
+
+            # j must belong to mask.
+            if not (mask & j_bit):
+                continue
+
+            previous_mask = mask ^ j_bit
+
+            # Already initialized by the base case.
+            if previous_mask == 0:
+                continue
+
+            best_cost = INF
+            best_predecessor = -1
+
+            # Try every possible predecessor.
+            for k in range(1, n):
+                k_bit = 1 << (k - 1)
+
+                if not (previous_mask & k_bit):
+                    continue
+
+                candidate_cost = dp[previous_mask][k] + dist[k][j]
+
+                if candidate_cost < best_cost:
+                    best_cost = candidate_cost
+                    best_predecessor = k
+
+                elif (
+                    candidate_cost == best_cost
+                    and k < best_predecessor
+                ):
+                    # Deterministic tie-breaking:
+                    # smaller predecessor wins.
+                    best_predecessor = k
+
+            dp[mask][j] = best_cost
+            parent[mask][j] = best_predecessor
+
+    # Close the cycle by returning to city 0.
+    full_mask = size - 1
+
+    best_tour_cost = INF
+    best_last_city = -1
+
+    for j in range(1, n):
+        candidate_cost = dp[full_mask][j] + dist[j][0]
+
+        if candidate_cost < best_tour_cost:
+            best_tour_cost = candidate_cost
+            best_last_city = j
+
+        elif (
+            candidate_cost == best_tour_cost
+            and j < best_last_city
+        ):
+            # Deterministic final tie-breaking.
+            best_last_city = j
+
+    # Reconstruct the optimal path.
+    reversed_path = []
+
+    mask = full_mask
+    current = best_last_city
+
+    while current != 0:
+        reversed_path.append(current)
+
+        predecessor = parent[mask][current]
+        mask ^= 1 << (current - 1)
+        current = predecessor
+
+    # Fixed reconstruction:
+    # reversed(...) returns an iterator, so convert it to a list.
+    path = [0] + list(reversed(reversed_path)) + [0]
+
+    return best_tour_cost, path
+
+
+# =========================================================
+# Tests
+# =========================================================
+
+def run_tests():
+    # Test 1: Small valid example that exposed the
+    # reconstruction bug in the previous implementation.
+    dist1 = [
+        [0, 1, 1],
+        [1, 0, 1],
+        [1, 1, 0],
+    ]
+
+    cost, cycle = held_karp_tsp(dist1)
+
+    assert cost == 3
+    assert cycle == [0, 1, 2, 0]
+
+    # Test 2: Integer distances.
+    dist2 = [
+        [0, 10, 15, 20],
+        [10, 0, 35, 25],
+        [15, 35, 0, 30],
+        [20, 25, 30, 0],
+    ]
+
+    cost, cycle = held_karp_tsp(dist2)
+
+    assert cost == 80
+    assert cycle == [0, 1, 3, 2, 0]
+
+    # Test 3: Floating-point distances.
+    dist3 = [
+        [0.0, 1.5, 2.5],
+        [1.5, 0.0, 1.0],
+        [2.5, 1.0, 0.0],
+    ]
+
+    cost, cycle = held_karp_tsp(dist3)
+
+    assert cost == 5.0
+    assert cycle == [0, 1, 2, 0]
+
+    # Test 4: Single city.
+    dist4 = [[0]]
+
+    cost, cycle = held_karp_tsp(dist4)
+
+    assert cost == 0
+    assert cycle == [0, 0]
+
+    # Test 5: Deterministic tie case.
+    #
+    # Multiple Hamiltonian cycles have the same total cost.
+    # The solver must still return the same result every time.
+    dist5 = [
+        [0, 1, 1, 1],
+        [1, 0, 1, 1],
+        [1, 1, 0, 1],
+        [1, 1, 1, 0],
+    ]
+
+    cost, cycle = held_karp_tsp(dist5)
+
+    assert cost == 4
+    assert cycle == [0, 1, 2, 3, 0]
+
+    # Repeat to verify deterministic behavior.
+    for _ in range(10):
+        assert held_karp_tsp(dist5) == (4, [0, 1, 2, 3, 0])
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()
+
+    # Example
+    distance = [
+        [0, 10, 15, 20],
+        [10, 0, 35, 25],
+        [15, 35, 0, 30],
+        [20, 25, 30, 0],
+    ]
+
+    cost, cycle = held_karp_tsp(distance)
+
+    print("Minimum cost:", cost)
+    print("Optimal cycle:", cycle)

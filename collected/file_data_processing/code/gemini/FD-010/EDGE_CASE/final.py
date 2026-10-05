@@ -1,0 +1,127 @@
+import json
+from typing import Any, Dict, List, Tuple
+
+
+def process_product_data(
+    json_data: str | List[Dict[str, Any]]
+) -> Tuple[List[Dict[str, Any]], int]:
+    """Processes product JSON data, validates schema, flattens valid warehouse entries,
+
+    and counts invalid product entries.
+
+    Rules:
+      - Valid product fields: 'id', 'name', 'warehouses' (must be a list).
+      - Empty warehouse lists (`"warehouses": []`) are VALID products and produce no rows.
+      - Zero stock (`"stock": 0`) is VALID and retained.
+      - Invalid warehouse entries (missing fields or non-numeric stock) invalidate the entire product.
+
+    Returns:
+      A tuple containing:
+        1. List of flattened dicts sorted by 'product_id' and 'warehouse_id'.
+        2. Count of invalid products skipped.
+    """
+    if isinstance(json_data, str):
+        products = json.loads(json_data)
+    else:
+        products = json_data
+
+    flattened_rows: List[Dict[str, Any]] = []
+    invalid_count: int = 0
+
+    for product in products:
+        # Validate product-level structure
+        if not isinstance(product, dict):
+            invalid_count += 1
+            continue
+
+        product_id = product.get("id")
+        product_name = product.get("name")
+        warehouses = product.get("warehouses")
+
+        # Validate required product attributes
+        if product_id is None or product_name is None or not isinstance(warehouses, list):
+            invalid_count += 1
+            continue
+
+        product_valid = True
+        product_rows: List[Dict[str, Any]] = []
+
+        # Validate warehouse entries (works even if warehouses is empty `[]`)
+        for wh in warehouses:
+            if not isinstance(wh, dict):
+                product_valid = False
+                break
+
+            wh_id = wh.get("warehouse_id")
+            stock = wh.get("stock")
+
+            # Check explicit warehouse fields and ensure stock is numeric (bool is excluded)
+            if (
+                wh_id is None
+                or stock is None
+                or not isinstance(stock, (int, float))
+                or isinstance(stock, bool)
+            ):
+                product_valid = False
+                break
+
+            product_rows.append({
+                "product_id": product_id,
+                "product_name": product_name,
+                "category": product.get("category", "N/A"),
+                "warehouse_id": wh_id,
+                "location": wh.get("location", "N/A"),
+                "stock": stock
+            })
+
+        if not product_valid:
+            invalid_count += 1
+        else:
+            flattened_rows.extend(product_rows)
+
+    # Sort flattened rows by product_id, then warehouse_id
+    flattened_rows.sort(key=lambda x: (x["product_id"], x["warehouse_id"]))
+
+    return flattened_rows, invalid_count
+
+
+# ==========================================
+# Example Usage
+# ==========================================
+if __name__ == "__main__":
+    sample_json = """
+    [
+        {
+            "id": "P101",
+            "name": "Wireless Mouse",
+            "category": "Electronics",
+            "warehouses": [
+                {"warehouse_id": "WH-A", "location": "NY", "stock": 150},
+                {"warehouse_id": "WH-B", "location": "TX", "stock": 0}
+            ]
+        },
+        {
+            "id": "P102",
+            "name": "Out of Stock Item",
+            "category": "Electronics",
+            "warehouses": []
+        },
+        {
+            "id": "P103",
+            "name": "Mechanical Keyboard",
+            "warehouses": [
+                {"warehouse_id": "WH-A", "location": "NY", "stock": "INVALID_STOCK"}
+            ]
+        },
+        {
+            "name": "Missing ID Product",
+            "warehouses": []
+        }
+    ]
+    """
+
+    rows, invalid_products = process_product_data(sample_json)
+
+    print("--- Flattened & Validated Inventory Rows ---")
+    print(json.dumps(rows, indent=2))
+    print(f"\nTotal Invalid Products Skipped: {invalid_products}")

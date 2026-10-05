@@ -1,0 +1,108 @@
+```python
+"""Cluster visually similar images using average hash + union-find."""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+from PIL import Image
+
+log = logging.getLogger(__name__)
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
+
+
+def _average_hash(path: Path, hash_size: int) -> int:
+    """Return a hash_size*hash_size-bit integer: bit=1 where pixel > mean."""
+    with Image.open(path) as img:
+        img = img.convert("L").resize((hash_size, hash_size), Image.LANCZOS)
+        pixels = list(img.getdata())
+    mean = sum(pixels) / len(pixels)
+    bits = 0
+    for p in pixels:
+        bits = (bits << 1) | (1 if p > mean else 0)
+    return bits
+
+
+def _hamming(a: int, b: int) -> int:
+    return bin(a ^ b).count("1")
+
+
+class _UnionFind:
+    def __init__(self, n: int):
+        self.parent = list(range(n))
+        self.size = [1] * n
+
+    def find(self, x: int) -> int:
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]  # path halving
+            x = self.parent[x]
+        return x
+
+    def union(self, a: int, b: int) -> None:
+        ra, rb = self.find(a), self.find(b)
+        if ra == rb:
+            return
+        if self.size[ra] < self.size[rb]:
+            ra, rb = rb, ra
+        self.parent[rb] = ra
+        self.size[ra] += self.size[rb]
+
+
+def find_fuzzy_duplicates(input_dir, hash_size=8, max_hamming=5):
+    """Group near-duplicate images found (recursively) under ``input_dir``.
+
+    Each image is reduced to an average hash of ``hash_size**2`` bits. Two
+    images are linked if their Hamming distance is <= ``max_hamming``.
+    Links are transitive (A~B and B~C puts A, B, C in one cluster, even if
+    A and C are farther apart than ``max_hamming``).
+
+    Returns a list of clusters (each a sorted list of path strings) with at
+    least two members, ordered largest cluster first. Unreadable files are
+    skipped with a warning.
+    """
+    if hash_size < 1:
+        raise ValueError("hash_size must be >= 1")
+    if max_hamming < 0:
+        raise ValueError("max_hamming must be >= 0")
+
+    root = Path(input_dir)
+    if not root.is_dir():
+        raise NotADirectoryError(f"{input_dir!r} is not a directory")
+
+    paths, hashes = [], []
+    for p in sorted(root.rglob("*")):
+        if not p.is_file() or p.suffix.lower() not in IMAGE_EXTS:
+            continue
+        try:
+            hashes.append(_average_hash(p, hash_size))
+            paths.append(p)
+        except Exception as exc:  # corrupt / unsupported file
+            log.warning("Skipping %s: %s", p, exc)
+
+    n = len(paths)
+    uf = _UnionFind(n)
+    for i in range(n):
+        hi = hashes[i]
+        for j in range(i + 1, n):
+            if _hamming(hi, hashes[j]) <= max_hamming:
+                uf.union(i, j)
+
+    groups: dict[int, list[str]] = {}
+    for i, p in enumerate(paths):
+        groups.setdefault(uf.find(i), []).append(str(p))
+
+    clusters = [sorted(g) for g in groups.values() if len(g) > 1]
+    clusters.sort(key=lambda g: (-len(g), g[0]))
+    return clusters
+
+
+if __name__ == "__main__":
+    import sys
+
+    for k, cluster in enumerate(find_fuzzy_duplicates(sys.argv[1]), 1):
+        print(f"Cluster {k} ({len(cluster)} images)")
+        for path in cluster:
+            print(f"  {path}")
+```

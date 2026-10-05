@@ -1,0 +1,85 @@
+```python
+from typing import Any, Dict, List
+
+
+def validate_configuration(config: Any) -> Dict[str, Any]:
+    """
+    Validate an application configuration.
+
+    Expected configuration:
+    {
+        "name": str,
+        "enabled": bool,
+        "settings": dict
+    }
+
+    Returns:
+        {
+            "valid": bool,
+            "errors": list[str]
+        }
+    """
+    errors: List[str] = []
+
+    if not isinstance(config, dict):
+        return {
+            "valid": False,
+            "errors": ["Configuration must be a dictionary."]
+        }
+
+    # Required fields
+    required_fields = {
+        "name": str,
+        "enabled": bool,
+        "settings": dict,
+    }
+
+    for field, expected_type in required_fields.items():
+        if field not in config:
+            errors.append(f"Missing required field: {field}.")
+            continue
+
+        value = config[field]
+
+        # bool is a subclass of int, so explicit type checking is useful.
+        if type(value) is not expected_type:
+            errors.append(
+                f"Field '{field}' must be of type "
+                f"{expected_type.__name__}."
+            )
+
+    # Validate name
+    if "name" in config and isinstance(config["name"], str):
+        if not config["name"].strip():
+            errors.append("Field 'name' cannot be empty.")
+
+    # Validate settings
+    if "settings" in config and isinstance(config["settings"], dict):
+        if not config["settings"]:
+            errors.append("Field 'settings' cannot be empty.")
+
+    return {
+        "valid": not errors,
+        "errors": errors,
+    }
+
+
+if __name__ == "__main__":
+    valid_config = {
+        "name": "my_app",
+        "enabled": True,
+        "settings": {
+            "timeout": 30,
+            "retries": 3,
+        },
+    }
+
+    invalid_config = {
+        "name": "",
+        "enabled": "true",
+        "settings": {},
+    }
+
+    print(validate_configuration(valid_config))
+    print(validate_configuration(invalid_config))
+```

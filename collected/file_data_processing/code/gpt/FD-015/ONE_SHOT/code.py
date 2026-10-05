@@ -1,0 +1,78 @@
+import json
+import sys
+
+def main():
+    if len(sys.argv) != 4:
+        print("Usage: python filter.py input.jsonl output.jsonl score_threshold")
+        return
+
+    input_file = sys.argv[1]
+    output_file = sys.argv[2]
+
+    try:
+        threshold = float(sys.argv[3])
+    except ValueError:
+        print("Invalid score threshold")
+        return
+
+    valid_records = []
+    skipped = 0
+
+    with open(input_file, "r", encoding="utf-8") as infile:
+        for line in infile:
+            line = line.strip()
+
+            if not line:
+                skipped += 1
+                continue
+
+            try:
+                record = json.loads(line)
+
+                if not isinstance(record, dict):
+                    skipped += 1
+                    continue
+
+                record_id = record.get("id")
+                category = record.get("category")
+                status = record.get("status")
+                score = record.get("score")
+
+                if (
+                    record_id is None
+                    or not isinstance(category, str)
+                    or not category.strip()
+                    or status != "active"
+                    or isinstance(score, bool)
+                    or not isinstance(score, (int, float))
+                ):
+                    skipped += 1
+                    continue
+
+                if score < threshold:
+                    skipped += 1
+                    continue
+
+                valid_records.append(record)
+
+            except (json.JSONDecodeError, TypeError, ValueError):
+                skipped += 1
+
+    valid_records.sort(
+        key=lambda r: (
+            str(r["category"]).casefold(),
+            -r["score"],
+            str(r["id"])
+        )
+    )
+
+    with open(output_file, "w", encoding="utf-8") as outfile:
+        for record in valid_records:
+            outfile.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    print(f"kept: {len(valid_records)}")
+    print(f"skipped: {skipped}")
+
+
+if __name__ == "__main__":
+    main()

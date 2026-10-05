@@ -1,0 +1,233 @@
+```python
+"""
+Problem: Minimum-Cardinality Subset Sum
+
+Restatement:
+Given a list of positive integers and a target sum, determine whether some
+subset of the integers sums exactly to the target.
+
+If a solution exists:
+1. Choose the subset containing the fewest elements.
+2. If multiple subsets have the same minimum cardinality, choose the
+   lexicographically smallest list of their original indices.
+
+If no subset can reach the target, return that no solution exists.
+
+Key constraints / requirements:
+- Each input value is a positive integer.
+- Each element can be used at most once (0/1 subset sum).
+- The target must be matched exactly.
+- Minimize the number of selected elements.
+- Break cardinality ties deterministically using the lexicographically
+  smallest index list.
+- Preserve original input indices.
+- Use only the Python standard library.
+- No network access, APIs, external services, randomness, or human interaction.
+
+Required output:
+{
+    "possible": bool,
+    "count": int,          # minimum number of elements, or -1 if impossible
+    "indices": list[int]   # selected original indices, or [] if impossible
+}
+
+Algorithm:
+Use 0/1 subset-sum dynamic programming.
+
+For every reachable sum, store:
+- the minimum number of elements needed to obtain that sum;
+- the lexicographically smallest index sequence among solutions with
+  that minimum cardinality.
+
+Each input value is processed once, and sums are updated in descending
+order so that an element cannot be used more than once.
+
+When a candidate solution has fewer elements, it replaces the current
+solution. If it has the same number of elements, the lexicographically
+smaller index list is retained.
+
+Time complexity: O(n * target), with lexicographic-list comparison adding
+the cost of comparing candidate index sequences.
+Space complexity: O(target).
+
+Deterministic tie handling:
+For equal cardinality, Python's normal list lexicographic ordering is used.
+"""
+
+from typing import List, Dict, Any
+
+
+def minimum_cardinality_subset_sum(
+    values: List[int],
+    target: int
+) -> Dict[str, Any]:
+    """
+    Find the minimum-cardinality subset whose values sum exactly to target.
+
+    Returns:
+        {
+            "possible": True/False,
+            "count": minimum number of elements or -1,
+            "indices": lexicographically smallest selected index list
+        }
+    """
+
+    if target < 0:
+        return {
+            "possible": False,
+            "count": -1,
+            "indices": []
+        }
+
+    # dp[sum] = (minimum cardinality, lexicographically smallest index list)
+    #
+    # Sum 0 is always reachable with the empty subset.
+    dp = {
+        0: (0, [])
+    }
+
+    for index, value in enumerate(values):
+        if value <= 0:
+            raise ValueError("All input values must be positive integers.")
+
+        # Descending iteration enforces the 0/1 restriction.
+        reachable_sums = sorted(dp.keys(), reverse=True)
+
+        for current_sum in reachable_sums:
+            new_sum = current_sum + value
+
+            if new_sum > target:
+                continue
+
+            current_count, current_indices = dp[current_sum]
+
+            candidate_count = current_count + 1
+            candidate_indices = current_indices + [index]
+
+            existing = dp.get(new_sum)
+
+            if existing is None:
+                dp[new_sum] = (candidate_count, candidate_indices)
+            else:
+                existing_count, existing_indices = existing
+
+                if candidate_count < existing_count:
+                    dp[new_sum] = (candidate_count, candidate_indices)
+                elif (
+                    candidate_count == existing_count
+                    and candidate_indices < existing_indices
+                ):
+                    dp[new_sum] = (candidate_count, candidate_indices)
+
+    if target not in dp:
+        return {
+            "possible": False,
+            "count": -1,
+            "indices": []
+        }
+
+    count, indices = dp[target]
+
+    return {
+        "possible": True,
+        "count": count,
+        "indices": indices
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+def _run_tests() -> None:
+    # Basic possible case.
+    assert minimum_cardinality_subset_sum(
+        [3, 7, 2, 5], 10
+    ) == {
+        "possible": True,
+        "count": 2,
+        "indices": [0, 1]
+    }
+
+    # Impossible target.
+    assert minimum_cardinality_subset_sum(
+        [2, 4, 6], 5
+    ) == {
+        "possible": False,
+        "count": -1,
+        "indices": []
+    }
+
+    # Minimum cardinality is preferred.
+    # 1 + 2 + 3 = 6 uses 3 elements,
+    # while 6 alone uses only 1 element.
+    assert minimum_cardinality_subset_sum(
+        [1, 2, 3, 6], 6
+    ) == {
+        "possible": True,
+        "count": 1,
+        "indices": [3]
+    }
+
+    # Equal-cardinality tie:
+    # 2 + 8 = 10 -> [0, 1]
+    # 3 + 7 = 10 -> [2, 3]
+    # [0, 1] is lexicographically smaller.
+    assert minimum_cardinality_subset_sum(
+        [2, 8, 3, 7], 10
+    ) == {
+        "possible": True,
+        "count": 2,
+        "indices": [0, 1]
+    }
+
+    # Repeated values with deterministic tie handling.
+    # Any pair of 5s reaches 10, so [0, 1] is selected.
+    assert minimum_cardinality_subset_sum(
+        [5, 5, 5, 5], 10
+    ) == {
+        "possible": True,
+        "count": 2,
+        "indices": [0, 1]
+    }
+
+    # Target zero: the empty subset is the unique minimum-cardinality choice.
+    assert minimum_cardinality_subset_sum(
+        [4, 7, 9], 0
+    ) == {
+        "possible": True,
+        "count": 0,
+        "indices": []
+    }
+
+    # Smallest permitted non-empty input.
+    assert minimum_cardinality_subset_sum(
+        [5], 5
+    ) == {
+        "possible": True,
+        "count": 1,
+        "indices": [0]
+    }
+
+    # Smallest permitted input with no solution.
+    assert minimum_cardinality_subset_sum(
+        [5], 4
+    ) == {
+        "possible": False,
+        "count": -1,
+        "indices": []
+    }
+
+    # A longer solution must not beat a shorter one.
+    assert minimum_cardinality_subset_sum(
+        [1, 1, 1, 1, 4], 4
+    ) == {
+        "possible": True,
+        "count": 1,
+        "indices": [4]
+    }
+
+
+if __name__ == "__main__":
+    _run_tests()
+```

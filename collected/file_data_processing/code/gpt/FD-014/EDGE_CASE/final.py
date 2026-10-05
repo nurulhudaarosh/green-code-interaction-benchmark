@@ -1,0 +1,135 @@
+import csv
+import re
+import sys
+import unicodedata
+from collections import defaultdict
+
+
+def normalize_text(value):
+    if value is None:
+        return ""
+    return unicodedata.normalize("NFKC", str(value)).strip().casefold()
+
+
+def normalize_email(value):
+    return normalize_text(value)
+
+
+def normalize_phone(value):
+    if value is None:
+        return ""
+    return re.sub(r"\D", "", str(value))
+
+
+def surname_initial(value):
+    value = normalize_text(value)
+    return value[:1] if value else ""
+
+
+def postal_prefix(value):
+    value = normalize_text(value)
+    return value[:3] if value else ""
+
+
+def blocking_keys(record):
+    keys = []
+
+    initial = surname_initial(record.get("surname", ""))
+    prefix = postal_prefix(record.get("postal_code", ""))
+
+    if initial:
+        keys.append(("surname", initial))
+
+    if prefix:
+        keys.append(("postal", prefix))
+
+    return keys
+
+
+def load_csv(path):
+    with open(path, "r", encoding="utf-8-sig", newline="") as file:
+        return list(csv.DictReader(file))
+
+
+def match_records(left_records, right_records):
+    blocks = defaultdict(list)
+
+    for right in right_records:
+        for key in blocking_keys(right):
+            blocks[key].append(right)
+
+    results = []
+
+    for left in left_records:
+        left_email = normalize_email(left.get("email", ""))
+        left_phone = normalize_phone(left.get("phone", ""))
+
+        candidates = {}
+
+        for key in blocking_keys(left):
+            for right in blocks.get(key, []):
+                right_id = right.get("id", "")
+                candidates[right_id] = right
+
+        matches = []
+
+        for right in candidates.values():
+            right_email = normalize_email(right.get("email", ""))
+            right_phone = normalize_phone(right.get("phone", ""))
+
+            email_match = (
+                left_email != ""
+                and right_email != ""
+                and left_email == right_email
+            )
+
+            phone_match = (
+                left_phone != ""
+                and right_phone != ""
+                and left_phone == right_phone
+            )
+
+            if email_match:
+                matches.append((0, right.get("id", ""), right, "email"))
+            elif phone_match:
+                matches.append((1, right.get("id", ""), right, "phone"))
+
+        if matches:
+            matches.sort(key=lambda x: (x[0], normalize_text(x[1])))
+            _, _, right, match_type = matches[0]
+
+            results.append({
+                "left_id": left.get("id", ""),
+                "right_id": right.get("id", ""),
+                "match_type": match_type
+            })
+        else:
+            results.append({
+                "left_id": left.get("id", ""),
+                "right_id": "",
+                "match_type": ""
+            })
+
+    return results
+
+
+def main():
+    if len(sys.argv) != 3:
+        print("Usage: python matcher.py left.csv right.csv")
+        return
+
+    left_records = load_csv(sys.argv[1])
+    right_records = load_csv(sys.argv[2])
+
+    results = match_records(left_records, right_records)
+
+    writer = csv.DictWriter(
+        sys.stdout,
+        fieldnames=["left_id", "right_id", "match_type"]
+    )
+    writer.writeheader()
+    writer.writerows(results)
+
+
+if __name__ == "__main__":
+    main()

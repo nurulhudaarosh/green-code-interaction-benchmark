@@ -1,0 +1,31 @@
+from pathlib import Path
+from PIL import Image
+
+
+def merge_channels(r_path, g_path, b_path, output_path):
+    """
+    Merge three grayscale channel images into a single RGB image.
+
+    Raises:
+        ValueError: If the three channel images do not have matching sizes.
+    """
+    with Image.open(r_path) as r_img, \
+         Image.open(g_path) as g_img, \
+         Image.open(b_path) as b_img:
+
+        # Explicitly validate dimensions before attempting to merge.
+        if r_img.size != g_img.size or r_img.size != b_img.size:
+            raise ValueError(
+                "Channel images must have matching dimensions: "
+                f"R={r_img.size}, G={g_img.size}, B={b_img.size}"
+            )
+
+        r = r_img.convert("L")
+        g = g_img.convert("L")
+        b = b_img.convert("L")
+
+        rgb = Image.merge("RGB", (r, g, b))
+
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        rgb.save(output_path)

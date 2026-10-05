@@ -1,0 +1,56 @@
+```python
+from typing import List, Sequence
+
+
+def multiply_polynomials(a: Sequence[int], b: Sequence[int]) -> List[int]:
+    """
+    Multiply two integer polynomials given as ascending-degree coefficient lists
+    (a[i] is the coefficient of x^i). Coefficients may be negative.
+
+    Uses direct coefficient convolution with exact arbitrary-precision ints.
+    Returns the product in canonical form: no high-degree zero coefficients,
+    and the zero polynomial is always [0] (including for empty input).
+    Deterministic; standard library only; no I/O, network, or randomness.
+    """
+    if len(a) == 0 or len(b) == 0:
+        return [0]
+
+    result = [0] * (len(a) + len(b) - 1)
+
+    for i, ai in enumerate(a):
+        if ai == 0:
+            continue
+        for j, bj in enumerate(b):
+            result[i + j] += ai * bj
+
+    # Canonical form: drop high-degree zeros, keep at least one coefficient.
+    while len(result) > 1 and result[-1] == 0:
+        result.pop()
+
+    return result
+
+
+def main() -> None:
+    # Previously failing cases (defect demonstration, now fixed)
+    assert multiply_polynomials([1, 0], [2]) == [2]
+    assert multiply_polynomials([0, 0], [5]) == [0]
+    assert multiply_polynomials([], [5]) == [0]
+    assert multiply_polynomials([0, 0, 0], [0]) == [0]
+
+    # Unchanged behavior
+    assert multiply_polynomials([1, 2], [3, -1]) == [3, 5, -2]
+    assert multiply_polynomials([-1, 1], [1, 1]) == [-1, 0, 1]
+    assert multiply_polynomials([1, 1, 1], [1, -1]) == [1, 0, 0, -1]
+    assert multiply_polynomials([10**30, -10**30], [10**30]) == [10**60, -10**60]
+
+    # Commutativity and non-canonical inputs give the same canonical output
+    p, q = [2, -3, 0, 4], [-1, 5]
+    assert multiply_polynomials(p, q) == multiply_polynomials(q, p)
+    assert multiply_polynomials([1, 2, 0, 0], [3, -1, 0]) == [3, 5, -2]
+
+    print(multiply_polynomials([1, 2], [3, -1]))  # [3, 5, -2]
+
+
+if __name__ == "__main__":
+    main()
+```

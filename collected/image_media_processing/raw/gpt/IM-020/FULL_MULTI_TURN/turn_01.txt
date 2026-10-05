@@ -1,0 +1,66 @@
+```python
+from pathlib import Path
+from PIL import Image
+import numpy as np
+
+
+def analyze_brightness(input_dir):
+    """
+    Analyze brightness statistics for every valid image in input_dir.
+
+    Returns:
+        list of dictionaries containing:
+            - filename
+            - r_mean
+            - g_mean
+            - b_mean
+            - brightness: mean grayscale (L-mode) brightness
+            - classification: dark / normal / bright
+    """
+    input_dir = Path(input_dir)
+
+    valid_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
+    results = []
+
+    for path in sorted(input_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in valid_extensions:
+            continue
+
+        try:
+            with Image.open(path) as img:
+                # RGB image for per-channel statistics
+                rgb = img.convert("RGB")
+                arr = np.asarray(rgb, dtype=np.float64)
+
+                r_mean = float(arr[:, :, 0].mean())
+                g_mean = float(arr[:, :, 1].mean())
+                b_mean = float(arr[:, :, 2].mean())
+
+                # True perceptual grayscale brightness
+                grayscale = np.asarray(img.convert("L"), dtype=np.float64)
+                brightness = float(grayscale.mean())
+
+                if brightness < 85:
+                    classification = "dark"
+                elif brightness >= 170:
+                    classification = "bright"
+                else:
+                    classification = "normal"
+
+                results.append({
+                    "filename": path.name,
+                    "r_mean": r_mean,
+                    "g_mean": g_mean,
+                    "b_mean": b_mean,
+                    "brightness": brightness,
+                    "classification": classification,
+                })
+
+        except (OSError, ValueError):
+            # Skip files that cannot be opened as valid images
+            continue
+
+    return results
+```
+
+The `brightness` value is calculated from the image's actual **grayscale (`L`) conversion**, rather than simply averaging the RGB means. Thus, perceptual luminance weighting is respected.

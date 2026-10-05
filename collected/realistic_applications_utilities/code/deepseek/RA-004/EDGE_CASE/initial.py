@@ -1,0 +1,164 @@
+import os
+from pathlib import Path
+
+def parse_filename(filename):
+    """
+    Parse a filename and handle edge cases:
+    - Missing extensions
+    - Missing separators
+    - Empty names
+    - Exact size boundaries
+    """
+    result = {
+        "original": filename,
+        "name": None,
+        "extension": None,
+        "base": None,
+        "has_extension": False,
+        "is_empty": False,
+        "is_valid": False,
+        "size": 0,
+        "error": None
+    }
+    
+    # Handle None or non-string input
+    if filename is None:
+        result["error"] = "Filename is None"
+        return result
+    
+    if not isinstance(filename, str):
+        result["error"] = f"Filename must be a string, got {type(filename).__name__}"
+        return result
+    
+    # Exact size boundaries
+    length = len(filename)
+    result["size"] = length
+    
+    # Empty name check (size == 0 boundary)
+    if length == 0:
+        result["is_empty"] = True
+        result["error"] = "Filename is empty"
+        return result
+    
+    # Extremely long filename (filesystem boundary ~255 bytes)
+    MAX_FILENAME_BYTES = 255
+    if len(filename.encode('utf-8', errors='ignore')) > MAX_FILENAME_BYTES:
+        result["error"] = f"Filename exceeds {MAX_FILENAME_BYTES} bytes"
+        # Still parse but flag the error
+    
+    # Missing separator check - look for path separators
+    has_separator = any(sep in filename for sep in (os.sep, os.altsep or os.sep, '/', '\\'))
+    
+    # Use Path for robust parsing (handles both / and \)
+    try:
+        path = Path(filename)
+        name_with_ext = path.name  # strips directory components
+    except (ValueError, OSError) as e:
+        result["error"] = f"Invalid path: {e}"
+        return result
+    
+    # If path.name is empty (e.g., filename was just "/" or "\\")
+    if not name_with_ext:
+        result["is_empty"] = True
+        result["error"] = "No filename component after separator"
+        return result
+    
+    # Split extension
+    # Handle dotfiles like ".bashrc" (leading dot is not an extension separator)
+    if name_with_ext.startswith('.') and name_with_ext.count('.') == 1:
+        # Dotfile with no extension (e.g., ".bashrc")
+        result["name"] = name_with_ext
+        result["base"] = name_with_ext
+        result["extension"] = ""
+        result["has_extension"] = False
+    else:
+        stem, ext = os.path.splitext(name_with_ext)
+        
+        # os.path.splitext returns ("name", ".ext") or ("name", "")
+        if ext:
+            result["has_extension"] = True
+            result["extension"] = ext[1:]  # strip leading dot
+            result["base"] = stem
+            result["name"] = name_with_ext
+        else:
+            # Missing extension case
+            result["has_extension"] = False
+            result["extension"] = None
+            result["base"] = name_with_ext
+            result["name"] = name_with_ext
+    
+    # Name empty after removing extension (e.g., ".txt" alone)
+    if not result["base"] and result["has_extension"]:
+        result["error"] = "Base name is empty (only extension provided)"
+    
+    # Missing separator warning (not an error per se)
+    if not has_separator:
+        # This is fine - just a bare filename
+        pass
+    
+    result["is_valid"] = result["error"] is None
+    return result
+
+
+def process_filenames(filenames):
+    """Process a list of filenames and report results."""
+    print(f"{'INPUT':<30} {'NAME':<20} {'EXT':<10} {'VALID':<6} {'ERROR'}")
+    print("-" * 100)
+    
+    for fn in filenames:
+        r = parse_filename(fn)
+        print(f"{repr(fn):<30} {repr(r['name']):<20} {repr(r['extension']):<10} "
+              f"{str(r['is_valid']):<6} {r['error'] or ''}")
+
+
+if __name__ == "__main__":
+    test_cases = [
+        # Normal cases
+        "document.txt",
+        "archive.tar.gz",
+        "myfile",
+        
+        # Missing extension
+        "README",
+        "Makefile",
+        
+        # Missing separator (bare filename)
+        "no_separator_here.txt",
+        
+        # With separators
+        "/path/to/file.txt",
+        "C:\\Users\\test\\file.doc",
+        "folder/file",
+        
+        # Empty names
+        "",
+        None,
+        "/",
+        "//",
+        "\\",
+        
+        # Empty name but with extension
+        ".txt",
+        ".gitignore",  # dotfile, no extension
+        
+        # Exact size boundaries
+        "a",                                    # 1 char
+        "a" * 255,                              # 255 chars (max typical)
+        "a" * 256,                              # 256 chars (exceeds)
+        "a" * 300 + ".txt",                     # exceeds with extension
+        
+        # Multiple dots
+        "...",
+        "file.",
+        ".file.",
+        "a.b.c.d",
+        
+        # Trailing/leading separators
+        "folder/",
+        "/file.txt",
+        
+        # Non-string
+        123,
+    ]
+    
+    process_filenames(test_cases)

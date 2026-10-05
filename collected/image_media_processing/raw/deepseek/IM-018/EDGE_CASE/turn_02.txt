@@ -1,0 +1,93 @@
+The current implementation already handles this case correctly — `if n < 2: return []` catches it. But let me trace through the edge cases carefully and make the guard more robust, since there are actually a few subtle issues worth tightening up:
+
+1. **Exactly one image**: `n == 1` → the `n < 2` guard returns `[]`. ✅ (already works)
+2. **Exactly one *loadable* image** among many files: `n == 1` after filtering → `[]`. ✅
+3. **`np.vstack` on a single histogram** would produce shape `(1, 256)`, and `combinations(range(1), 2)` is empty, so even without the guard it wouldn't crash — but the guard makes the intent explicit.
+4. **Zero images**: `n == 0` → `[]`. ✅
+5. **All images unreadable**: `n == 0` → `[]`. ✅
+
+The one thing that *could* be tightened: the early-return guard is placed after `np.vstack`, which is fine, but for clarity and to avoid ever calling `np.vstack` on an empty list (which raises `ValueError: need at least one array to concatenate`), the guard must come **before** `np.vstack`. Let me check the original:
+
+
+
+Good — the guard is already before `vstack`, so `n == 0` is also safe. Here's the updated function with the guard made explicit and a test for the single-image case:
+
+```python
+def find_near_duplicates(input_dir, threshold):
+    """
+    Cluster images in `input_dir` whose normalized grayscale histograms have
+    L1 distance <= `threshold`.
+
+    Transitive grouping: if A~B and B~C, then A, B, C are in the same cluster
+    even if A and C exceed the threshold (union-find).
+
+    Parameters
+    ----------
+    input_dir : str | os.PathLike
+        Directory to scan (recursively) for images.
+    threshold : float
+        Maximum L1 distance between normalized histograms (range 0.0 - 2.0).
+
+    Returns
+    -------
+    list[list[str]]
+        A list of clusters. Each cluster is a list of file paths. Only clusters
+        with 2+ members are returned (singletons are dropped). Sorted by
+        descending cluster size, then by first path.
+
+    Notes
+    -----
+    - An empty directory, a directory with no readable images, or a directory
+      containing exactly one image all return ``[]``: a cluster requires at
+      least two members.
+    - Files that fail to load (corrupt, unsupported codec, etc.) are silently
+      skipped and do not contribute to the cluster count.
+    """
+    input_dir = Path(input_dir)
+    if not input_dir.is_dir():
+        raise NotADirectoryError(f"Not a directory: {input_dir}")
+
+    # 1. Collect image paths (recursive)
+    paths = sorted(
+        p for p in input_dir.rglob("*")
+        if p.is_file() and p.suffix.lower() in IMAGE_EXTS
+    )
+
+    # 2. Compute histograms; unreadable files are skipped.
+    hists = []
+    valid_paths = []
+    for p in paths:
+        h = _load_histogram(p)
+        if h is not None:
+            hists.append(h)
+            valid_paths.append(p)
+
+    # 3. Edge-case guard: need at least two *loadable* images to form a cluster.
+    #    Covers 0 images, 1 image, and "many files but only 1 readable image".
+    #    Must run BEFORE np.vstack (which rejects an empty list) and before
+    #    the pairwise loop (which would yield an empty combinations iterator
+    #    anyway, but this makes the intent explicit and avoids wasted work).
+    n = len(valid_paths)
+    if n < 2:
+        return []
+
+    hists = np.vstack(hists)  # shape (n, HIST_BINS), n >= 2
+
+    # 4. Union-find over all pairs; O(n^2) comparisons.
+    uf = UnionFind(n)
+    for i, j in combinations(range(n), 2):
+        d = np.abs(hists[i] - hists[j]).sum()
+        if d <= threshold:
+            uf.union(i, j)
+
+    # 5. Group members by root.
+    clusters = {}
+    for i in range(n):
+        root = uf.find(i)
+        clusters.setdefault(root, []).append(str(valid_paths[i]))
+
+    # 6. Keep only clusters with 2+ members, then sort.
+    result = [sorted(members) for members in clusters.values() if len(members) > 1]
+    result.sort(key=lambda c: (-len(c), c[0]))
+    return result
+```

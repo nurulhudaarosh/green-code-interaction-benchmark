@@ -1,0 +1,419 @@
+import statistics
+from collections import defaultdict
+
+
+class ValidationError(Exception):
+    """Custom exception for validation failures."""
+    pass
+
+
+class StudentAnalyzer:
+    MIN_GRADE = 0
+    MAX_GRADE = 100
+    MAX_GRADES_PER_STUDENT = 50
+    MAX_NAME_LENGTH = 100
+    MIN_STUDENT_ID = 1
+    MAX_STUDENT_ID = 10**9
+
+    def __init__(self):
+        self.students = {}
+
+    # ---------- Validation Helpers ----------
+    @staticmethod
+    def _is_nan(x):
+        return isinstance(x, float) and x != x
+
+    @staticmethod
+    def _is_inf(x):
+        return isinstance(x, float) and x in (float('inf'), float('-inf'))
+
+    @classmethod
+    def _validate_student_id(cls, student_id):
+        if isinstance(student_id, bool):
+            raise ValidationError("Student ID must be an integer, not bool.")
+        if not isinstance(student_id, int):
+            raise ValidationError(f"Student ID must be an integer, got {type(student_id).__name__}.")
+        if student_id < cls.MIN_STUDENT_ID:
+            raise ValidationError(f"Student ID must be >= {cls.MIN_STUDENT_ID}, got {student_id}.")
+        if student_id > cls.MAX_STUDENT_ID:
+            raise ValidationError(f"Student ID must be <= {cls.MAX_STUDENT_ID}, got {student_id}.")
+
+    @classmethod
+    def _validate_name(cls, name):
+        if not isinstance(name, str):
+            raise ValidationError(f"Name must be a string, got {type(name).__name__}.")
+        stripped = name.strip()
+        if not stripped:
+            raise ValidationError("Name cannot be empty or whitespace.")
+        if len(stripped) > cls.MAX_NAME_LENGTH:
+            raise ValidationError(f"Name cannot exceed {cls.MAX_NAME_LENGTH} characters.")
+        # boundary: exactly at max length is allowed
+        if len(stripped) == cls.MAX_NAME_LENGTH:
+            pass  # valid edge case
+
+    @classmethod
+    def _validate_grades(cls, grades):
+        if isinstance(grades, str):
+            raise ValidationError("Grades must be a list or tuple, not a string.")
+        if not isinstance(grades, (list, tuple)):
+            raise ValidationError(f"Grades must be a list or tuple, got {type(grades).__name__}.")
+        if len(grades) == 0:
+            raise ValidationError("Grades list cannot be empty.")
+        if len(grades) > cls.MAX_GRADES_PER_STUDENT:
+            raise ValidationError(f"Cannot exceed {cls.MAX_GRADES_PER_STUDENT} grades per student.")
+        for i, g in enumerate(grades):
+            if isinstance(g, bool):
+                raise ValidationError(f"Grade at index {i} must be numeric, not bool.")
+            if not isinstance(g, (int, float)):
+                raise ValidationError(f"Grade at index {i} must be numeric, got {type(g).__name__}.")
+            if cls._is_nan(g):
+                raise ValidationError(f"Grade at index {i} cannot be NaN.")
+            if cls._is_inf(g):
+                raise ValidationError(f"Grade at index {i} cannot be infinite.")
+            if g < cls.MIN_GRADE or g > cls.MAX_GRADE:
+                raise ValidationError(
+                    f"Grade at index {i} must be between {cls.MIN_GRADE} and {cls.MAX_GRADE}, got {g}."
+                )
+
+    # ---------- Core Methods ----------
+    def add_student(self, student_id, name, grades):
+        try:
+            self._validate_student_id(student_id)
+            self._validate_name(name)
+            self._validate_grades(grades)
+            if student_id in self.students:
+                raise ValidationError(f"Student ID {student_id} already exists.")
+            self.students[student_id] = {'name': name.strip(), 'grades': list(grades)}
+            return True, f"Student '{name.strip()}' (ID: {student_id}) added successfully."
+        except ValidationError as e:
+            return False, f"Validation failed: {e}"
+
+    def update_grades(self, student_id, new_grades):
+        try:
+            self._validate_student_id(student_id)
+            if student_id not in self.students:
+                raise ValidationError(f"Student ID {student_id} not found.")
+            self._validate_grades(new_grades)
+            self.students[student_id]['grades'] = list(new_grades)
+            return True, f"Grades updated for ID {student_id}."
+        except ValidationError as e:
+            return False, f"Update failed: {e}"
+
+    def remove_student(self, student_id):
+        try:
+            self._validate_student_id(student_id)
+            if student_id not in self.students:
+                raise ValidationError(f"Student ID {student_id} not found.")
+            name = self.students[student_id]['name']
+            del self.students[student_id]
+            return True, f"Student '{name}' (ID: {student_id}) removed."
+        except ValidationError as e:
+            return False, f"Removal failed: {e}"
+
+    def clear_all(self):
+        count = len(self.students)
+        self.students.clear()
+        return True, f"Cleared {count} student(s)."
+
+    def is_empty(self):
+        return len(self.students) == 0
+
+    def student_count(self):
+        return len(self.students)
+
+    def calculate_average(self, student_id):
+        if student_id not in self.students:
+            return None
+        grades = self.students[student_id]['grades']
+        if not grades:
+            return None
+        return sum(grades) / len(grades)
+
+    def get_letter_grade(self, average):
+        if average is None or isinstance(average, bool) or not isinstance(average, (int, float)):
+            return 'N/A'
+        if self._is_nan(average) or self._is_inf(average):
+            return 'N/A'
+        # boundary: exactly 90 -> A, 89.99 -> B, etc.
+        if average >= 90: return 'A'
+        elif average >= 80: return 'B'
+        elif average >= 70: return 'C'
+        elif average >= 60: return 'D'
+        else: return 'F'
+
+    # ---------- Analysis ----------
+    def analyze_student(self, student_id):
+        if student_id not in self.students:
+            return {'error': f"Student {student_id} not found."}
+        student = self.students[student_id]
+        grades = student['grades']
+        if not grades:
+            return {'error': f"{student['name']}: No grades available."}
+        avg = self.calculate_average(student_id)
+        if avg is None:
+            return {'error': f"{student['name']}: Unable to compute average."}
+        return {
+            'id': student_id,
+            'name': student['name'],
+            'average': round(avg, 2),
+            'letter_grade': self.get_letter_grade(avg),
+            'highest': max(grades),
+            'lowest': min(grades),
+            'std_dev': round(statistics.stdev(grades), 2) if len(grades) > 1 else 0.0,
+            'num_grades': len(grades)
+        }
+
+    def class_statistics(self):
+        if not self.students:
+            return {'error': "No students in the system."}
+        all_averages = [self.calculate_average(sid) for sid in self.students]
+        all_averages = [a for a in all_averages if a is not None]
+        all_grades = [g for s in self.students.values() for g in s['grades']]
+        if not all_grades or not all_averages:
+            return {'error': "No grades available."}
+        distribution = defaultdict(int)
+        for sid in self.students:
+            avg = self.calculate_average(sid)
+            distribution[self.get_letter_grade(avg)] += 1
+        return {
+            'total_students': len(self.students),
+            'class_average': round(sum(all_averages) / len(all_averages), 2),
+            'highest_average': round(max(all_averages), 2),
+            'lowest_average': round(min(all_averages), 2),
+            'grade_distribution': dict(sorted(distribution.items())),
+            'total_grades_recorded': len(all_grades),
+            'overall_std_dev': round(statistics.stdev(all_grades), 2) if len(all_grades) > 1 else 0.0
+        }
+
+    # ---------- Ranking ----------
+    def rank_students(self):
+        if not self.students:
+            return []
+        entries = []
+        for sid, data in self.students.items():
+            avg = self.calculate_average(sid)
+            if avg is None:
+                continue
+            entries.append({
+                'id': sid,
+                'name': data['name'],
+                'average': round(avg, 2),
+                'letter_grade': self.get_letter_grade(avg)
+            })
+        if not entries:
+            return []
+        entries.sort(key=lambda x: (-x['average'], x['name'].lower()))
+        ranked = []
+        prev_avg = None
+        current_rank = 0
+        for i, e in enumerate(entries, 1):
+            if e['average'] != prev_avg:
+                current_rank = i
+                prev_avg = e['average']
+            ranked.append({
+                'rank': current_rank,
+                'id': e['id'],
+                'name': e['name'],
+                'average': e['average'],
+                'letter_grade': e['letter_grade']
+            })
+        return ranked
+
+    def get_top_n(self, n=3):
+        if not isinstance(n, int) or isinstance(n, bool) or n <= 0:
+            return []
+        ranked = self.rank_students()
+        if not ranked:
+            return []
+        return ranked[:n]
+
+    def get_rank_of(self, student_id):
+        try:
+            self._validate_student_id(student_id)
+        except ValidationError:
+            return None
+        for entry in self.rank_students():
+            if entry['id'] == student_id:
+                return entry
+        return None
+
+    def percentile_of(self, student_id):
+        entry = self.get_rank_of(student_id)
+        if entry is None:
+            return None
+        ranked = self.rank_students()
+        total = len(ranked)
+        if total == 0:
+            return None
+        at_or_below = sum(1 for e in ranked if e['average'] <= entry['average'])
+        return round((at_or_below / total) * 100, 2)
+
+    # ---------- Reports ----------
+    def generate_ranking_report(self):
+        print("=" * 60)
+        print("STUDENT RANKING REPORT")
+        print("=" * 60)
+        ranked = self.rank_students()
+        if not ranked:
+            print("\nNo students available for ranking.")
+            print("=" * 60)
+            return
+        print(f"\nTotal ranked students: {len(ranked)}")
+        print(f"\n{'Rank':<6}{'ID':<8}{'Name':<22}{'Average':<10}{'Grade':<6}")
+        print("-" * 60)
+        for e in ranked:
+            print(f"{e['rank']:<6}{e['id']:<8}{e['name']:<22}{e['average']:<10}{e['letter_grade']:<6}")
+        top = self.get_top_n(3)
+        if top:
+            print("\n--- Top 3 ---")
+            for e in top:
+                print(f"  #{e['rank']}  {e['name']} (ID: {e['id']}) - {e['average']} [{e['letter_grade']}]")
+        print("\n" + "=" * 60)
+
+    def generate_report(self):
+        print("=" * 60)
+        print("STUDENT ANALYSIS REPORT")
+        print("=" * 60)
+        if not self.students:
+            print("\nNo students available for analysis.")
+            print("=" * 60)
+            return
+        print("\n--- Individual Student Performance ---")
+        for sid in self.students:
+            a = self.analyze_student(sid)
+            if 'error' in a:
+                print(f"\n{sid}: {a['error']}")
+            else:
+                print(f"\nID: {a['id']} | {a['name']}")
+                print(f"  Average: {a['average']} ({a['letter_grade']})")
+                print(f"  Highest: {a['highest']} | Lowest: {a['lowest']}")
+                print(f"  Std Dev: {a['std_dev']} | Grades: {a['num_grades']}")
+        print("\n--- Class Statistics ---")
+        stats = self.class_statistics()
+        if 'error' in stats:
+            print(f"  {stats['error']}")
+        else:
+            for key, value in stats.items():
+                print(f"  {key.replace('_', ' ').title()}: {value}")
+        print("\n--- Student Rankings ---")
+        ranked = self.rank_students()
+        if not ranked:
+            print("  No students available for ranking.")
+        else:
+            for e in ranked:
+                print(f"  #{e['rank']}. {e['name']} (ID: {e['id']}) - {e['average']} [{e['letter_grade']}]")
+        print("\n" + "=" * 60)
+
+
+# ================= DEMO / TESTS =================
+if __name__ == "__main__":
+    analyzer = StudentAnalyzer()
+
+    print("### EMPTY STATE TESTS ###")
+    print("is_empty():", analyzer.is_empty())
+    print("student_count():", analyzer.student_count())
+    print("rank_students():", analyzer.rank_students())
+    print("get_top_n(3):", analyzer.get_top_n(3))
+    print("get_rank_of(101):", analyzer.get_rank_of(101))
+    print("percentile_of(101):", analyzer.percentile_of(101))
+    print("class_statistics():", analyzer.class_statistics())
+    analyzer.generate_report()
+    analyzer.generate_ranking_report()
+
+    print("\n### ADD VALID STUDENTS ###")
+    print(analyzer.add_student(101, "Alice Johnson", [92, 88, 95, 90, 87]))
+    print(analyzer.add_student(102, "Bob Smith", [75, 82, 68, 79, 71]))
+    print(analyzer.add_student(103, "Carol Davis", [85, 90, 88, 92, 86]))
+    print(analyzer.add_student(104, "David Lee", [55, 62, 58, 60, 65]))
+    print(analyzer.add_student(105, "Emma Wilson", [98, 95, 97, 99, 96]))
+    print(analyzer.add_student(106, "Frank Miller", [90, 90, 90, 90, 90]))
+
+    print("\n### BOUNDARY TESTS ###")
+    # Exact max grades (50)
+    print("50 grades (exactly max):",
+          analyzer.add_student(200, "Max Grades", [50] * 50))
+    # 51 grades (over limit)
+    print("51 grades (over limit):",
+          analyzer.add_student(201, "Too Many Grades", [50] * 51))
+    # Exact boundary grade 0 and 100
+    print("Boundary grades [0, 100]:",
+          analyzer.add_student(202, "Boundary Grades", [0, 100]))
+    # Just below boundary
+    print("Grade -0.01 (below min):",
+          analyzer.add_student(203, "Below Min", [-0.01]))
+    print("Grade 100.01 (above max):",
+          analyzer.add_student(204, "Above Max", [100.01]))
+    # Exact name length 100
+    print("Name at max length (100):",
+          analyzer.add_student(205, "A" * 100, [80]))
+    # Name at 101 chars
+    print("Name over max length (101):",
+          analyzer.add_student(206, "A" * 101, [80]))
+    # Single grade (std_dev boundary: len == 1)
+    print("Single grade:",
+          analyzer.add_student(207, "Single Grade", [85]))
+    # Exactly boundary average -> letter grade boundaries
+    print("Avg exactly 90:",
+          analyzer.add_student(208, "Ninety", [90]))
+    print("Avg 89.99:",
+          analyzer.add_student(209, "EightyNinePoint99", [89.99]))
+    print("Avg exactly 60:",
+          analyzer.add_student(210, "Sixty", [60]))
+    print("Avg 59.99:",
+          analyzer.add_student(211, "FiftyNinePoint99", [59.99]))
+
+    print("\n### INVALID INPUT TESTS ###")
+    print(analyzer.add_student(300, "Ghost", [101, 50]))
+    print(analyzer.add_student(-1, "NegID", [80]))
+    print(analyzer.add_student(0, "ZeroID", [80]))
+    print(analyzer.add_student("abc", "BadID", [80]))
+    print(analyzer.add_student(True, "BoolID", [80]))
+    print(analyzer.add_student(301, "", [80]))
+    print(analyzer.add_student(302, "   ", [80]))
+    print(analyzer.add_student(303, "No Grades", []))
+    print(analyzer.add_student(304, "Bool Grade", [True, 80]))
+    print(analyzer.add_student(305, "NaN Grade", [float('nan')]))
+    print(analyzer.add_student(306, "Inf Grade", [float('inf')]))
+    print(analyzer.add_student(307, "Neg Inf", [float('-inf')]))
+    print(analyzer.add_student(101, "Duplicate", [80]))
+    print(analyzer.add_student(308, "String Grades", "not a list"))
+    print(analyzer.add_student(309, 12345, [80]))
+
+    print("\n### UPDATE / REMOVE TESTS ###")
+    print(analyzer.update_grades(101, [95, 92, 93]))
+    print(analyzer.update_grades(999, [80]))
+    print(analyzer.update_grades(102, [150]))
+    print(analyzer.update_grades(103, []))
+    print(analyzer.update_grades(103, [float('nan')]))
+    print(analyzer.remove_student(999))
+    print(analyzer.remove_student(104))
+    print(analyzer.remove_student("bad"))
+
+    print("\n### FULL REPORT ###")
+    analyzer.generate_report()
+
+    print()
+    analyzer.generate_ranking_report()
+
+    print("\n### RANKING API BOUNDARY CHECKS ###")
+    print("Top 3:", [f"#{e['rank']} {e['name']}" for e in analyzer.get_top_n(3)])
+    print("Top 0 (invalid):", analyzer.get_top_n(0))
+    print("Top -5 (invalid):", analyzer.get_top_n(-5))
+    print("Top 'a' (invalid):", analyzer.get_top_n('a'))
+    print("Top 1000 (over count):", len(analyzer.get_top_n(1000)))
+    print("Rank of 102:", analyzer.get_rank_of(102))
+    print("Rank of 999 (missing):", analyzer.get_rank_of(999))
+    print("Percentile of 102:", analyzer.percentile_of(102))
+    print("Percentile of 105:", analyzer.percentile_of(105))
+    print("Percentile of 999 (missing):", analyzer.percentile_of(999))
+
+    print("\n### CLEAR ALL + RE-VERIFY EMPTY STATE ###")
+    print(analyzer.clear_all())
+    print("is_empty():", analyzer.is_empty())
+    print("student_count():", analyzer.student_count())
+    print("rank_students():", analyzer.rank_students())
+    print("class_statistics():", analyzer.class_statistics())
+    print("get_top_n(3):", analyzer.get_top_n(3))
+    print("percentile_of(101):", analyzer.percentile_of(101))
+    analyzer.generate_report()
+    analyzer.generate_ranking_report()

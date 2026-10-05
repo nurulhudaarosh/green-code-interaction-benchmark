@@ -1,0 +1,97 @@
+## Restated problem: Exact Polynomial Product
+
+Given two integer polynomials as coefficient arrays `a` (length n) and `b` (length m), where index `i` holds the coefficient of `x^i`, return the exact product as a coefficient array of length `n + m - 1`, with `result[k] = Σ a[i]·b[k-i]`. Coefficients may be negative or arbitrarily large. If either input is empty, return `[]`. Zero coefficients are preserved, with no trimming. Standard library only, deterministic, no network or interaction.
+
+## Handling the difficult cases
+
+**Repeated values.** Inputs may contain many equal coefficients (for example `[2, 2, 2]`, or all zeros). Nothing is deduplicated or merged: every `(i, j)` pair contributes independently, so repeated values simply accumulate into the same output slot. Equal coefficients at different positions remain distinct terms.
+
+**Deterministic ties.** Ties arise when several pairs `(i, j)` map to the same output index `k = i + j`, and when different inputs yield identical results. The problem has no ordering or selection step, so there is no tie-breaking choice to make. The tie rule is fixed by the algorithm: contributions to each slot are summed in increasing `i` (outer loop), then increasing `j` (inner loop). Since integer addition is exact and associative, the result is independent of that order, and the same input always gives the same output. This preserves all original rules: output length `n + m - 1`, `[]` for empty input, zeros kept, and no trimming.
+
+The implementation is unchanged in behavior. I only made the summation order explicit in the docstring.
+
+## Implementation
+
+```python
+from typing import List
+
+
+def multiply_polynomials(a: List[int], b: List[int]) -> List[int]:
+    """Return the exact coefficient array of the product of polynomials a and b.
+
+    a[i] is the coefficient of x^i. Result has length len(a) + len(b) - 1,
+    or [] if either input is empty.
+
+    Repeated values: every (i, j) pair contributes independently; nothing is
+    deduplicated. Ties (several pairs landing on the same index i + j) are
+    resolved deterministically by accumulating in increasing i, then
+    increasing j. Integer addition is exact, so the result is order-independent.
+    """
+    if not a or not b:
+        return []
+
+    result = [0] * (len(a) + len(b) - 1)
+    for i, ai in enumerate(a):
+        if ai == 0:
+            continue  # contributes nothing; output length is unaffected
+        for j, bj in enumerate(b):
+            result[i + j] += ai * bj
+    return result
+
+
+def _self_test() -> None:
+    # --- Original tests (unchanged) ---
+    assert multiply_polynomials([1, 2], [3, -1]) == [3, 5, -2]
+    assert multiply_polynomials([-1, 1], [1, 1]) == [-1, 0, 1]
+    assert multiply_polynomials([5], [1, -2, 3]) == [5, -10, 15]
+    assert multiply_polynomials([0, 0], [1, 2]) == [0, 0, 0]
+    assert multiply_polynomials([], [1, 2]) == []
+    big = 10**30
+    assert multiply_polynomials([big], [big]) == [big * big]
+
+    # --- Repeated values ---
+    # (2 + 2x + 2x^2)(2 + 2x + 2x^2) = 4 + 8x + 12x^2 + 8x^3 + 4x^4
+    assert multiply_polynomials([2, 2, 2], [2, 2, 2]) == [4, 8, 12, 8, 4]
+    # All ones: convolution counts the pairs per slot
+    assert multiply_polynomials([1, 1, 1, 1], [1, 1, 1]) == [1, 2, 3, 3, 2, 1]
+    # Repeated negative values
+    assert multiply_polynomials([-3, -3], [-3, -3]) == [9, 18, 9]
+    # All zeros, repeated: length preserved, no trimming
+    assert multiply_polynomials([0, 0, 0], [0, 0]) == [0, 0, 0, 0]
+    # Repeated values with trailing zeros preserved
+    assert multiply_polynomials([1, 0, 0], [1, 0]) == [1, 0, 0, 0]
+
+    # --- Deterministic ties (many pairs land on the same index) ---
+    # Cancellation tie: x^1 slot gets 1*(-1) + 1*1 = 0, kept as an explicit 0
+    assert multiply_polynomials([1, 1], [-1, 1]) == [-1, 0, 1]
+    # Symmetric inputs give a palindromic result
+    r = multiply_polynomials([1, 2, 1], [1, 2, 1])
+    assert r == [1, 4, 6, 4, 1] and r == r[::-1]
+    # Commutativity: swapping arguments gives an identical result
+    p, q = [3, -1, 3, 3], [2, 2, -5]
+    assert multiply_polynomials(p, q) == multiply_polynomials(q, p)
+    # Determinism: repeated calls agree and inputs are not mutated
+    p_copy, q_copy = p[:], q[:]
+    first = multiply_polynomials(p, q)
+    assert multiply_polynomials(p, q) == first
+    assert p == p_copy and q == q_copy
+    # Order of accumulation does not matter: compare with reversed-loop reference
+    def reference(a, b):
+        res = [0] * (len(a) + len(b) - 1)
+        for j in range(len(b) - 1, -1, -1):
+            for i in range(len(a) - 1, -1, -1):
+                res[i + j] += a[i] * b[j]
+        return res
+    assert multiply_polynomials(p, q) == reference(p, q)
+
+
+if __name__ == "__main__":
+    _self_test()
+    print(multiply_polynomials([1, 2, 3], [4, -5, 6]))  # [4, 3, 8, -3, 18]
+    print("all tests passed")
+```
+
+## What the new tests cover
+
+- **Repeated values:** identical coefficients, all-ones convolution counts, repeated negatives, all-zero inputs, and trailing zeros that must stay in the output.
+- **Ties:** cancellation at a shared slot (kept as an explicit `0`), palindromic symmetry, commutativity, repeat-call determinism with no input mutation, and agreement with a reverse-order reference to show the result does not depend on accumulation order.

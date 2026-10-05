@@ -1,0 +1,46 @@
+```python
+import re
+from collections import Counter
+from pathlib import Path
+
+_TOKEN_RE = re.compile(r"\w+(?:'\w+)?", re.UNICODE)
+
+
+def keyword_freq(paths, stopwords=None, top_k=10, include_bigrams=False):
+    """Count unigrams (and optionally bigrams) across text files.
+
+    paths: iterable of file paths
+    stopwords: iterable of words to ignore (case-insensitive)
+    top_k: number of most frequent terms to return
+    include_bigrams: also count adjacent word pairs (neither word a stopword)
+
+    Returns a list of (term, count) sorted by count desc, then term asc.
+    """
+    stop = {w.lower() for w in (stopwords or [])}
+    counts = Counter()
+
+    for p in paths:
+        text = Path(p).read_text(encoding="utf-8", errors="ignore").lower()
+        tokens = _TOKEN_RE.findall(text)
+
+        prev = None
+        for tok in tokens:
+            if tok in stop:
+                prev = None  # a stopword breaks bigram adjacency
+                continue
+            counts[tok] += 1
+            if include_bigrams and prev is not None:
+                counts[f"{prev} {tok}"] += 1
+            prev = tok
+
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return ranked[:top_k]
+
+
+if __name__ == "__main__":
+    import sys
+
+    sw = {"the", "a", "an", "and", "or", "of", "to", "in", "is", "it"}
+    for term, n in keyword_freq(sys.argv[1:], sw, top_k=10, include_bigrams=True):
+        print(f"{n:5d}  {term}")
+```

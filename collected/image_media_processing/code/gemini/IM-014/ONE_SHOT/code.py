@@ -1,0 +1,73 @@
+import os
+from pathlib import Path
+from PIL import Image
+
+
+def bulk_reencode(input_dir: str | Path, output_dir: str | Path, quality: int = 85) -> list[dict]:
+    """Re-encodes all images in input_dir to JPEG format at the specified quality.
+
+    Args:
+        input_dir: Path to directory containing images to re-encode.
+        output_dir: Path to directory where JPEG outputs will be saved.
+        quality: JPEG quality setting (1-95 recommended, default 85).
+
+    Returns:
+        List of dictionaries containing stats for each processed file.
+    """
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    valid_extensions = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}
+    results = []
+
+    for file_path in input_path.iterdir():
+        if not file_path.is_file() or file_path.suffix.lower() not in valid_extensions:
+            continue
+
+        try:
+            orig_size = file_path.stat().st_size
+
+            # Generate output filename (force .jpg extension)
+            out_file_path = output_path / f"{file_path.stem}.jpg"
+
+            with Image.open(file_path) as img:
+                # Convert RGBA/Palette images to RGB for JPEG compliance
+                if img.mode in ("RGBA", "LA", "P"):
+                    img = img.convert("RGB")
+
+                # Save as JPEG
+                img.save(out_file_path, "JPEG", quality=quality, optimize=True)
+
+            reencoded_size = out_file_path.stat().st_size
+            compression_ratio = (
+                orig_size / reencoded_size if reencoded_size > 0 else 0.0
+            )
+            space_saved_pct = (
+                ((orig_size - reencoded_size) / orig_size) * 100
+                if orig_size > 0
+                else 0.0
+            )
+
+            file_stat = {
+                "filename": file_path.name,
+                "original_bytes": orig_size,
+                "reencoded_bytes": reencoded_size,
+                "compression_ratio": round(compression_ratio, 2),
+                "space_saved_percent": round(space_saved_pct, 2),
+            }
+
+            results.append(file_stat)
+
+            # Console output summary
+            print(
+                f"Processed: {file_path.name} -> {out_file_path.name} | "
+                f"Original: {orig_size / 1024:.1f} KB | "
+                f"New: {reencoded_size / 1024:.1f} KB | "
+                f"Ratio: {compression_ratio:.2f}x ({space_saved_pct:+.1f}%)"
+            )
+
+        except Exception as e:
+            print(f"Error processing {file_path.name}: {e}")
+
+    return results

@@ -1,0 +1,197 @@
+```python
+"""
+Prime Range Analyzer — Bug Report and Corrected Implementation
+
+1. Problem restatement
+-----------------------
+Given integers L and R, find every prime number in the inclusive interval
+[L, R] and return the largest gap between consecutive primes.
+
+Expected behavior:
+    {
+        "primes": [...],
+        "largest_gap": ...
+    }
+
+Rules:
+    - "primes" must contain every prime in [L, R], in increasing order.
+    - "largest_gap" is the maximum difference between consecutive primes.
+    - If fewer than two primes exist, largest_gap must be 0.
+    - The result must contain exactly the required fields.
+    - The computation must be deterministic.
+    - Generate base primes through sqrt(R).
+    - Then perform a segmented sieve over [L, R].
+    - Use only the Python standard library.
+    - No network, APIs, external services, randomness, or human interaction.
+
+2. Bug report
+-------------
+The previous implementation used a segmented sieve, but its behavior was not
+strictly aligned with the requirement to "return exactly the required result"
+because it also included validation behavior and test-oriented handling that
+were outside the required result contract.
+
+A small valid example demonstrates the expected contract:
+
+    Input:
+        L = 10
+        R = 20
+
+    Primes:
+        [11, 13, 17, 19]
+
+    Gaps:
+        2, 4, 2
+
+    Required result:
+        {
+            "primes": [11, 13, 17, 19],
+            "largest_gap": 4
+        }
+
+The corrected implementation below keeps the required result exactly to those
+two fields and uses the specified two-stage algorithm:
+    1. Base sieve through sqrt(R).
+    2. Segmented sieve over [L, R].
+
+There is no ambiguity in the largest-gap value because the requirement asks
+only for the largest gap, not which pair produced it. If multiple consecutive
+pairs have the same largest gap, the numerical result remains deterministic.
+
+3. Corrected implementation
+---------------------------
+"""
+
+from math import isqrt
+
+
+def _generate_base_primes(limit: int) -> list[int]:
+    """Generate all primes from 2 through limit using a standard sieve."""
+    if limit < 2:
+        return []
+
+    composite = bytearray(limit + 1)
+    primes = []
+
+    for p in range(2, limit + 1):
+        if composite[p] == 0:
+            primes.append(p)
+
+            if p * p <= limit:
+                composite[p * p : limit + 1 : p] = b"\x01" * (
+                    (limit - p * p) // p + 1
+                )
+
+    return primes
+
+
+def prime_range_analyzer(L: int, R: int) -> dict:
+    """
+    Return exactly:
+        {
+            "primes": [...],
+            "largest_gap": ...
+        }
+
+    The interval is inclusive: [L, R].
+    """
+    # No prime can exist when R < 2.
+    if R < 2:
+        return {
+            "primes": [],
+            "largest_gap": 0,
+        }
+
+    start = max(L, 2)
+    width = R - start + 1
+
+    # Generate base primes through sqrt(R).
+    base_primes = _generate_base_primes(isqrt(R))
+
+    # Segmented sieve:
+    # True means "currently considered prime".
+    is_prime = bytearray(b"\x01") * width
+
+    for p in base_primes:
+        # The first relevant multiple must be at least p*p.
+        first = max(
+            p * p,
+            ((start + p - 1) // p) * p
+        )
+
+        if first > R:
+            continue
+
+        first_index = first - start
+        count = (width - 1 - first_index) // p + 1
+
+        is_prime[first_index::p] = b"\x00" * count
+
+    # Collect primes in increasing order.
+    primes = [
+        start + index
+        for index, value in enumerate(is_prime)
+        if value
+    ]
+
+    # Find the largest consecutive-prime gap.
+    largest_gap = 0
+
+    for i in range(1, len(primes)):
+        gap = primes[i] - primes[i - 1]
+        if gap > largest_gap:
+            largest_gap = gap
+
+    # Exactly the required result.
+    return {
+        "primes": primes,
+        "largest_gap": largest_gap,
+    }
+
+
+# ------------------------------------------------------------
+# Small valid examples demonstrating the corrected behavior
+# ------------------------------------------------------------
+
+def _tests() -> None:
+    # Bug-report example.
+    assert prime_range_analyzer(10, 20) == {
+        "primes": [11, 13, 17, 19],
+        "largest_gap": 4,
+    }
+
+    # One prime: no consecutive pair exists.
+    assert prime_range_analyzer(11, 11) == {
+        "primes": [11],
+        "largest_gap": 0,
+    }
+
+    # No primes.
+    assert prime_range_analyzer(14, 16) == {
+        "primes": [],
+        "largest_gap": 0,
+    }
+
+    # Includes the smallest prime.
+    assert prime_range_analyzer(2, 10) == {
+        "primes": [2, 3, 5, 7],
+        "largest_gap": 2,
+    }
+
+    # Boundary below 2.
+    assert prime_range_analyzer(-5, 1) == {
+        "primes": [],
+        "largest_gap": 0,
+    }
+
+    # Multiple gaps, with the maximum occurring deterministically.
+    assert prime_range_analyzer(20, 40) == {
+        "primes": [23, 29, 31, 37],
+        "largest_gap": 6,
+    }
+
+
+if __name__ == "__main__":
+    _tests()
+    print(prime_range_analyzer(10, 20))
+```

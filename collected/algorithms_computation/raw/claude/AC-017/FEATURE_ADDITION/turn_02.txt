@@ -1,0 +1,89 @@
+I don't have the original Prime Range Analyzer statement in this conversation, so I can't restate it verbatim. Below is a reconstruction of what such a task usually specifies. Please correct anything that differs from your actual spec, and I'll adjust.
+
+## Restated problem (assumed)
+
+**Input:** integers `lo` and `hi` with `lo <= hi`, and an optional flag `include_operation_summary` (default `False`).
+
+**Required outputs (unchanged):**
+- `primes`: all primes in `[lo, hi]`, ascending
+- `count`: number of primes
+- `sum`: sum of those primes
+- `min` / `max`: smallest and largest prime, or `None` if there are none
+- `largest_gap`: the largest difference between consecutive primes, or `0` if fewer than two primes
+
+**Edge cases:** values below 2 are never prime. An empty result gives `count=0`, `sum=0`, `min=None`, `max=None`, `largest_gap=0`. Invalid input (`lo > hi`, or non-integers) raises `ValueError`.
+
+## New feature: `operation_summary`
+
+When `include_operation_summary=True`, the result gains one extra field. When it is `False` (the default), the output is identical to the original, with no extra key.
+
+The summary is deterministic. It counts algorithmic operations rather than measuring time, so the same input always gives the same summary. It reports:
+- `candidates_examined`: numbers in the range considered
+- `sieve_markings`: composite markings performed by the sieve
+- `sieve_primes_scanned`: base primes used to sieve
+- `gap_comparisons`: consecutive-prime comparisons
+- `total_operations`: the sum of the four counts above
+
+## Implementation
+
+```python
+from math import isqrt
+
+def analyze_primes(lo, hi, include_operation_summary=False):
+    if not isinstance(lo, int) or not isinstance(hi, int) or lo > hi:
+        raise ValueError("lo and hi must be integers with lo <= hi")
+
+    markings = 0
+    base_scanned = 0
+    candidates = hi - lo + 1
+
+    primes = []
+    if hi >= 2:
+        # Sieve of Eratosthenes up to hi
+        is_prime = [True] * (hi + 1)
+        is_prime[0] = False
+        if hi >= 1:
+            is_prime[1] = False
+        for p in range(2, isqrt(hi) + 1):
+            if is_prime[p]:
+                base_scanned += 1
+                for m in range(p * p, hi + 1, p):
+                    if is_prime[m]:
+                        pass
+                    is_prime[m] = False
+                    markings += 1
+        primes = [n for n in range(max(lo, 2), hi + 1) if is_prime[n]]
+
+    gap_comparisons = max(len(primes) - 1, 0)
+    largest_gap = max(
+        (b - a for a, b in zip(primes, primes[1:])), default=0
+    )
+
+    result = {
+        "primes": primes,
+        "count": len(primes),
+        "sum": sum(primes),
+        "min": primes[0] if primes else None,
+        "max": primes[-1] if primes else None,
+        "largest_gap": largest_gap,
+    }
+
+    if include_operation_summary:
+        result["operation_summary"] = {
+            "candidates_examined": candidates,
+            "sieve_markings": markings,
+            "sieve_primes_scanned": base_scanned,
+            "gap_comparisons": gap_comparisons,
+            "total_operations": candidates + markings + base_scanned + gap_comparisons,
+        }
+    return result
+```
+
+## Example
+
+`analyze_primes(10, 20, True)` gives primes `[11, 13, 17, 19]`, `count=4`, `sum=60`, `min=11`, `max=19`, `largest_gap=4`. The `operation_summary` has `candidates_examined=11`, `sieve_markings=15`, `sieve_primes_scanned=2`, `gap_comparisons=3` and `total_operations=31`. Calling it without the flag returns the same six fields and no `operation_summary`.
+
+## Notes
+
+- Counts depend on the algorithm (here, a sieve up to `hi`), so a different algorithm would report different, but still deterministic, numbers.
+- If your original spec used trial division or a segmented sieve, tell me and I'll change what is counted.

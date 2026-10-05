@@ -1,0 +1,107 @@
+Here is a complete, self-contained Python script that normalizes titles and descriptions, groups records with identical normalized text and dates, and produces deterministic duplicate ID groups.
+
+```python
+import re
+import string
+import unicodedata
+from collections import defaultdict
+from typing import Any, Dict, List
+
+
+def normalize_text(text: str) -> str:
+    """Normalizes input text by lowercasing, removing accents, stripping
+
+    punctuation, and collapsing whitespace.
+    """
+    if not text:
+        return ""
+
+    # Convert to lowercase
+    text = text.lower()
+
+    # Strip accents/diacritics using NFD decomposition
+    text = "".join(
+        c
+        for c in unicodedata.normalize("NFD", text)
+        if unicodedata.category(c) != "Mn"
+    )
+
+    # Remove punctuation
+    text = text.translate(str.maketrans("", "", string.punctuation))
+
+    # Collapse multiple whitespace characters into a single space
+    text = re.sub(r"\s+", " ", text).strip()
+
+    return text
+
+
+def detect_duplicates(records: List[Dict[str, Any]]) -> List[List[Any]]:
+    """Groups record IDs by exact matches on normalized title, normalized
+
+    description, and date. Returns a deterministic list of duplicate ID groups.
+    """
+    grouped_records = defaultdict(list)
+
+    for record in records:
+        record_id = record.get("id")
+        norm_title = normalize_text(record.get("title", ""))
+        norm_desc = normalize_text(record.get("description", ""))
+        date_str = str(record.get("date", "")).strip()
+
+        # Composite key for exact matching across all three attributes
+        composite_key = (norm_title, norm_desc, date_str)
+        grouped_records[composite_key].append(record_id)
+
+    # Filter for groups with 2 or more records (duplicates)
+    duplicate_groups = [
+        sorted(ids) for ids in grouped_records.values() if len(ids) > 1
+    ]
+
+    # Ensure deterministic output order by sorting duplicate groups by their first ID
+    duplicate_groups.sort(key=lambda group: group[0])
+
+    return duplicate_groups
+
+
+if __name__ == "__main__":
+    # Example Dataset
+    sample_records = [
+        {
+            "id": 101,
+            "title": "  Widget Pro - 2026 Edition  ",
+            "description": "High performance, sleek design!",
+            "date": "2026-10-05",
+        },
+        {
+            "id": 102,
+            "title": "widget pro 2026 edition",
+            "description": "high performance sleek design",
+            "date": "2026-10-05",
+        },
+        {
+            "id": 103,
+            "title": "Widget Pro - 2026 Edition",
+            "description": "High performance, sleek design!",
+            "date": "2026-10-06",  # Different date
+        },
+        {
+            "id": 104,
+            "title": "Café Grand opening",
+            "description": "Join us for free coffee.",
+            "date": "2026-05-12",
+        },
+        {
+            "id": 105,
+            "title": "Cafe Grand Opening!",
+            "description": "JOIN US FOR FREE COFFEE...",
+            "date": "2026-05-12",
+        },
+    ]
+
+    duplicates = detect_duplicates(sample_records)
+
+    print("Detected Duplicate Groups (IDs):")
+    for group in duplicates:
+        print(f" - Duplicate Group: {group}")
+
+```

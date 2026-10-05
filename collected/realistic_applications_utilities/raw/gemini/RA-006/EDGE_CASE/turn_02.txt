@@ -1,0 +1,242 @@
+```python
+from typing import Any, Dict, List, Tuple
+
+
+def get_nested_value(config: Any, path: str) -> Tuple[bool, Any]:
+    """Safely retrieve a nested value using dot notation."""
+    current = config
+
+    for part in path.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return False, None
+        current = current[part]
+
+    return True, current
+
+
+def is_exact_type(value: Any, expected_type: type) -> bool:
+    """Use strict type checking so bool is never accepted as int."""
+    return type(value) is expected_type
+
+
+def validate_configuration(config: Any) -> Dict[str, Any]:
+    errors: List[str] = []
+
+    # Handle None, non-dictionary, and empty configurations.
+    if config is None:
+        return {
+            "valid": False,
+            "errors": ["Configuration cannot be None."]
+        }
+
+    if not isinstance(config, dict):
+        return {
+            "valid": False,
+            "errors": ["Configuration must be a dictionary."]
+        }
+
+    if not config:
+        return {
+            "valid": False,
+            "errors": ["Configuration cannot be empty."]
+        }
+
+    # Top-level required fields.
+    top_level_rules = {
+        "name": str,
+        "enabled": bool,
+        "settings": dict,
+    }
+
+    for path, expected_type in top_level_rules.items():
+        exists, value = get_nested_value(config, path)
+
+        if not exists:
+            errors.append(f"Missing required field: {path}.")
+        elif not is_exact_type(value, expected_type):
+            errors.append(
+                f"Field '{path}' must be of type "
+                f"{expected_type.__name__}."
+            )
+
+    # Validate name.
+    exists, name = get_nested_value(config, "name")
+    if exists and is_exact_type(name, str) and not name.strip():
+        errors.append("Field 'name' cannot be empty.")
+
+    # Stop nested validation if settings is missing or invalid.
+    settings_exists, settings = get_nested_value(config, "settings")
+
+    if not settings_exists or not is_exact_type(settings, dict):
+        return {
+            "valid": not errors,
+            "errors": errors,
+        }
+
+    # Required nested fields.
+    nested_rules = {
+        "settings.timeout": int,
+        "settings.retries": int,
+        "settings.logging": dict,
+    }
+
+    for path, expected_type in nested_rules.items():
+        exists, value = get_nested_value(config, path)
+
+        if not exists:
+            errors.append(f"Missing required field: {path}.")
+        elif not is_exact_type(value, expected_type):
+            errors.append(
+                f"Field '{path}' must be of type "
+                f"{expected_type.__name__}."
+            )
+
+    # Boundary validation.
+    # Zero is valid; negative values are invalid.
+    exists, timeout = get_nested_value(config, "settings.timeout")
+    if exists and is_exact_type(timeout, int) and timeout < 0:
+        errors.append(
+            "Field 'settings.timeout' must be greater than or equal to 0."
+        )
+
+    exists, retries = get_nested_value(config, "settings.retries")
+    if exists and is_exact_type(retries, int) and retries < 0:
+        errors.append(
+            "Field 'settings.retries' must be greater than or equal to 0."
+        )
+
+    # Logging validation.
+    logging_exists, logging = get_nested_value(
+        config, "settings.logging"
+    )
+
+    if logging_exists and is_exact_type(logging, dict):
+        logging_rules = {
+            "settings.logging.enabled": bool,
+            "settings.logging.level": str,
+        }
+
+        for path, expected_type in logging_rules.items():
+            exists, value = get_nested_value(config, path)
+
+            if not exists:
+                errors.append(f"Missing required field: {path}.")
+            elif not is_exact_type(value, expected_type):
+                errors.append(
+                    f"Field '{path}' must be of type "
+                    f"{expected_type.__name__}."
+                )
+
+        exists, level = get_nested_value(
+            config, "settings.logging.level"
+        )
+
+        if exists and is_exact_type(level, str) and not level.strip():
+            errors.append(
+                "Field 'settings.logging.level' cannot be empty."
+            )
+
+    # Cross-field dependency.
+    app_exists, app_enabled = get_nested_value(config, "enabled")
+    log_exists, logging_enabled = get_nested_value(
+        config, "settings.logging.enabled"
+    )
+
+    if (
+        app_exists
+        and log_exists
+        and is_exact_type(app_enabled, bool)
+        and is_exact_type(logging_enabled, bool)
+    ):
+        if app_enabled is False and logging_enabled is True:
+            errors.append(
+                "Logging cannot be enabled when the application is disabled."
+            )
+
+    # When the application is disabled, retries must be zero.
+    if (
+        app_exists
+        and is_exact_type(app_enabled, bool)
+        and app_enabled is False
+    ):
+        retries_exists, retries = get_nested_value(
+            config, "settings.retries"
+        )
+
+        if (
+            retries_exists
+            and is_exact_type(retries, int)
+            and retries != 0
+        ):
+            errors.append(
+                "Retries must be 0 when the application is disabled."
+            )
+
+    return {
+        "valid": not errors,
+        "errors": errors,
+    }
+
+
+if __name__ == "__main__":
+    test_cases = {
+        "empty": {},
+
+        "valid_boundary": {
+            "name": "app",
+            "enabled": True,
+            "settings": {
+                "timeout": 0,
+                "retries": 0,
+                "logging": {
+                    "enabled": False,
+                    "level": "INFO",
+                },
+            },
+        },
+
+        "missing_nested": {
+            "name": "app",
+            "enabled": True,
+            "settings": {
+                "timeout": 10,
+            },
+        },
+
+        "mixed_types": {
+            "name": 123,
+            "enabled": 1,  # Invalid: int is not bool.
+            "settings": {
+                "timeout": True,  # Invalid: bool is not int.
+                "retries": "3",
+                "logging": {
+                    "enabled": "true",
+                    "level": 10,
+                },
+            },
+        },
+
+        "negative_boundaries": {
+            "name": "app",
+            "enabled": True,
+            "settings": {
+                "timeout": -1,
+                "retries": -1,
+                "logging": {
+                    "enabled": False,
+                    "level": "INFO",
+                },
+            },
+        },
+
+        "missing_settings": {
+            "name": "app",
+            "enabled": True,
+        },
+    }
+
+    for name, config in test_cases.items():
+        print(f"{name}:")
+        print(validate_configuration(config))
+        print()
+```

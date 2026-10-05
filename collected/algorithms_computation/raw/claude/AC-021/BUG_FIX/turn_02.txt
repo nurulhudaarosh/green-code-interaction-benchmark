@@ -1,0 +1,99 @@
+I'll restate the spec, then test the current code against a brute-force oracle instead of assuming a bug exists.## Restated problem
+
+Given positive integers `nums` and a target `T >= 0`, decide whether some subset (each index used at most once) sums exactly to `T`. If so, return the ascending 0-based index list of the subset with the **fewest elements**, breaking ties by the **lexicographically smallest index list**. Return `None` if no subset works, and `[]` when `T = 0`. The result must be deterministic.
+
+## Finding
+
+I could not reproduce a defect in the core rule. I compared the previous implementation against an exhaustive oracle on 20,000 seeded random cases (up to 8 items, values 1–9, targets 0–30) and got **0 mismatches**. The cardinality DP and the greedy reconstruction (take index `i` whenever `cnt[i+1][s-a] + 1 == cnt[i][s]`) are correct for the stated ordering. For `[1, 2, 3, 4]` with `T = 5` the code returns `[0, 3]` over `[1, 2]`, as required.
+
+The bug report is therefore only partly supported. The probe did expose real defects in **input validation**, where the contract ("positive integers, `T >= 0`") is not enforced:
+
+| Input | Current behavior | Expected |
+|---|---|---|
+| `nums=[True, 2], T=3` | accepts the bool as the integer 1 and returns `[0, 1]` | `ValueError` |
+| `nums=[1, 2], T=True` | accepts the bool as a target and returns `[0]` | `ValueError` |
+| `T=2.0` or `T="3"` | crashes with an incidental `TypeError` | clear `ValueError` |
+
+The first row is the small valid-looking example that shows the defect. Bools slip through because `bool` is a subclass of `int`, and the target is never type-checked at all.
+
+If you had a specific failing input in mind for the ordering rule, please send it, because I would want to check it against the oracle.
+
+## Fix
+
+Only validation changes. I also replaced `float("inf")` with an integer sentinel so the DP table stays all-integer. The algorithm and output rules are unchanged.
+
+```python
+from typing import List, Optional
+
+
+def _is_int(x) -> bool:
+    return isinstance(x, int) and not isinstance(x, bool)
+
+
+def min_card_lex_subset(nums: List[int], target: int) -> Optional[List[int]]:
+    """Return ascending indices of a subset of nums summing to target,
+    with minimum cardinality, then lexicographically smallest index list.
+    Return None if impossible. Raise ValueError on invalid input."""
+    if not _is_int(target) or target < 0:
+        raise ValueError("target must be a non-negative integer")
+    if any(not _is_int(x) or x <= 0 for x in nums):
+        raise ValueError("nums must contain only positive integers")
+
+    n = len(nums)
+    INF = n + 1  # more than any possible subset size
+
+    # cnt[i][s]: min elements from nums[i:] summing to s (INF if impossible)
+    cnt = [[INF] * (target + 1) for _ in range(n + 1)]
+    cnt[n][0] = 0
+
+    for i in range(n - 1, -1, -1):
+        a = nums[i]
+        nxt, cur = cnt[i + 1], cnt[i]
+        for s in range(target + 1):
+            best = nxt[s]                          # skip item i
+            if s >= a and nxt[s - a] + 1 < best:
+                best = nxt[s - a] + 1              # take item i
+            cur[s] = best
+
+    if cnt[0][target] >= INF:
+        return None
+
+    # Greedy reconstruction: taking the smallest feasible index first
+    # yields the lexicographically smallest optimal list.
+    result, s = [], target
+    for i in range(n):
+        if s == 0:
+            break
+        a = nums[i]
+        if s >= a and cnt[i + 1][s - a] + 1 == cnt[i][s]:
+            result.append(i)
+            s -= a
+    return result
+
+
+if __name__ == "__main__":
+    tests = [
+        ([3, 34, 4, 12, 5, 2], 9, [2, 4]),
+        ([1, 2, 3, 4], 5, [0, 3]),
+        ([5, 5, 5], 10, [0, 1]),
+        ([2, 4], 7, None),
+        ([7], 0, []),
+        ([], 0, []),
+        ([1, 1, 1, 1], 3, [0, 1, 2]),
+        ([2, 3, 5, 7], 12, [2, 3]),
+    ]
+    for nums, t, expected in tests:
+        assert min_card_lex_subset(nums, t) == expected, (nums, t)
+
+    for bad in [([True, 2], 3), ([1, 2], True), ([1, 2], 2.0),
+                ([1, 2], "3"), ([0, 1], 1), ([1], -1)]:
+        try:
+            min_card_lex_subset(*bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"should have rejected {bad}")
+    print("All tests passed.")
+```
+
+The `INF = n + 1` sentinel is safe because a valid count never exceeds `n`. Since `INF + 1 > INF` as well, a "take" transition from an unreachable state can never win the `min`. I also checked this version with the same brute-force comparison described above.

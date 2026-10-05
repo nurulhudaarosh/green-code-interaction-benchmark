@@ -1,0 +1,128 @@
+## Problem Identification
+
+**Core Problem:** Interval Partitioning / Meeting Rooms Assignment
+
+**Goal:** Assign each interval to a room such that:
+1. No two overlapping intervals share the same room
+2. A room can be reused when its previous interval ends at or before the next interval starts
+3. Minimize the total number of rooms used
+4. Return the room ID assigned to each original interval
+
+## Key Constraints
+
+- **Input:** A list of intervals `[start, end]` (where `start < end`)
+- **Non-overlap rule:** For reuse, `previous_end <= next_start` (touching is allowed)
+- **Determinism:** Output must be stable and reproducible
+- **Standard library only:** No external dependencies
+- **Output:** Room IDs (0-indexed) corresponding to original interval order
+
+## Algorithm
+
+**Greedy with Min-Heap:**
+
+1. Pair each interval with its original index, then sort by start time
+2. Use a min-heap keyed by `end_time`, storing `(end_time, room_id)`
+3. For each interval in sorted order:
+   - If heap top's `end_time <= current_start`, reuse that room (pop and reassign)
+   - Otherwise, allocate a new room
+   - Push `(current_end, room_id)` onto the heap
+4. Map results back to original indices
+
+**Time Complexity:** O(n log n) — dominated by sorting and heap operations  
+**Space Complexity:** O(n) — for the heap and result array
+
+**Optimality:** The greedy approach is provably optimal because we only allocate a new room when no existing room is free, which is exactly the minimum needed at any point in time.
+
+## Python Implementation
+
+```python
+from heapq import heappush, heappop
+from typing import List
+
+
+def assign_rooms(intervals: List[List[int]]) -> List[int]:
+    """
+    Assign a room ID to each interval, minimizing the number of rooms.
+
+    Args:
+        intervals: List of [start, end] pairs (start < end).
+
+    Returns:
+        List of room IDs aligned with the input order (0-indexed).
+    """
+    n = len(intervals)
+    if n == 0:
+        return []
+
+    # (start, end, original_index)
+    indexed = [(s, e, i) for i, (s, e) in enumerate(intervals)]
+    indexed.sort(key=lambda x: (x[0], x[1]))
+
+    result = [0] * n
+    # Min-heap of (end_time, room_id) for rooms currently in use
+    heap = []
+    next_room_id = 0
+
+    for start, end, orig_idx in indexed:
+        if heap and heap[0][0] <= start:
+            # Reuse the room that frees up earliest
+            _, room_id = heappop(heap)
+        else:
+            # Allocate a new room
+            room_id = next_room_id
+            next_room_id += 1
+
+        result[orig_idx] = room_id
+        heappush(heap, (end, room_id))
+
+    return result
+
+
+if __name__ == "__main__":
+    # Example: overlapping intervals
+    intervals = [[1, 4], [2, 5], [7, 9], [3, 6], [8, 10]]
+    print("Intervals:", intervals)
+    print("Rooms    :", assign_rooms(intervals))
+    # Expected: minimal rooms = 3
+    # Possible assignment: [0, 1, 0, 2, 1] (or similar valid assignment)
+
+    # Edge cases
+    print("\nTouching intervals (reuse allowed):")
+    print("Intervals:", [[1, 3], [3, 5], [5, 7]])
+    print("Rooms    :", assign_rooms([[1, 3], [3, 5], [5, 7]]))
+    # Expected: [0, 0, 0]
+
+    print("\nFully overlapping:")
+    print("Intervals:", [[1, 10], [2, 3], [4, 5]])
+    print("Rooms    :", assign_rooms([[1, 10], [2, 3], [4, 5]]))
+    # Expected: [0, 1, 1]
+
+    print("\nEmpty input:")
+    print("Rooms    :", assign_rooms([]))
+    # Expected: []
+```
+
+### Sample Output
+
+```
+Intervals: [[1, 4], [2, 5], [7, 9], [3, 6], [8, 10]]
+Rooms    : [0, 1, 0, 2, 1]
+
+Touching intervals (reuse allowed):
+Intervals: [[1, 3], [3, 5], [5, 7]]
+Rooms    : [0, 0, 0]
+
+Fully overlapping:
+Intervals: [[1, 10], [2, 3], [4, 5]]
+Rooms    : [0, 1, 1]
+
+Empty input:
+Rooms    : []
+```
+
+### Why This Works
+
+- **Sorting by start time** ensures we always process intervals in the order they "begin," which matches how a real scheduler would allocate rooms.
+- **Min-heap by end time** lets us cheaply check whether the earliest-finishing in-use room is free for the next interval.
+- **`<=` comparison** (not `<`) allows back-to-back intervals to share a room.
+- **`next_room_id`** only increments when truly necessary, so the total number of rooms equals the maximum "depth" of overlapping intervals at any point — which is the theoretical minimum.

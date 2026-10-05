@@ -1,0 +1,148 @@
+```python
+import json
+from typing import Any, Dict, List, Tuple
+
+
+def process_inventory(data: Any) -> Tuple[List[Dict[str, Any]], int]:
+    """
+    Reads nested product JSON, flattens valid warehouse stock entries into separate rows,
+    and explicitly preserves valid empty warehouse arrays and zero stock cases.
+
+    Rules:
+    - Products with valid schemas are retained even if 'warehouses' is an empty list `[]`.
+      These products will yield a row with `location=None` and `stock=0`.
+    - Valid warehouse stock entries with `stock == 0` are explicitly preserved as separate rows.
+    - Malformed products or top-level invalid structures are skipped and counted.
+    - Negative stock or non-dict warehouse items are ignored.
+    - Results are sorted by `product_id`, then `location` (with `None` sorted first).
+
+    :param data: Parsed JSON data or list of product dictionaries.
+    :return: Tuple of (flattened_rows, skipped_invalid_product_count)
+    """
+    flattened_rows: List[Dict[str, Any]] = []
+    invalid_product_count = 0
+
+    if not isinstance(data, list):
+        return [], 1
+
+    for product in data:
+        try:
+            # 1. Skip non-dict product entries
+            if not isinstance(product, dict):
+                invalid_product_count += 1
+                continue
+
+            product_id = product.get("id")
+            product_name = product.get("name")
+            warehouses = product.get("warehouses")
+
+            # 2. Validate top-level product schema
+            if (
+                product_id is None
+                or not isinstance(product_name, str)
+                or not product_name.strip()
+                or not isinstance(warehouses, list)
+            ):
+                invalid_product_count += 1
+                continue
+
+            # 3. Preserve valid empty warehouse list case (`warehouses: []`)
+            if len(warehouses) == 0:
+                flattened_rows.append(
+                    {
+                        "product_id": product_id,
+                        "product_name": product_name,
+                        "location": None,
+                        "stock": 0,
+                    }
+                )
+                continue
+
+            valid_warehouses_found = 0
+
+            # 4. Process and flatten each valid warehouse entry
+            for wh in warehouses:
+                if not isinstance(wh, dict):
+                    continue
+
+                location = wh.get("location")
+                stock = wh.get("stock")
+
+                # Validate warehouse entry: preserve stock == 0, reject negative/invalid stock
+                if (
+                    not isinstance(location, str)
+                    or not location.strip()
+                    or stock is None
+                    or isinstance(stock, bool)  # exclude booleans
+                    or not isinstance(stock, (int, float))
+                    or stock < 0
+                ):
+                    continue
+
+                flattened_rows.append(
+                    {
+                        "product_id": product_id,
+                        "product_name": product_name,
+                        "location": location,
+                        "stock": stock,
+                    }
+                )
+                valid_warehouses_found += 1
+
+            # If the product had warehouse entries, but none were structurally valid
+            if valid_warehouses_found == 0:
+                invalid_product_count += 1
+
+        except Exception:
+            invalid_product_count += 1
+            continue
+
+    # 5. Sort flattened rows by product_id, then location (handling None safely)
+    flattened_rows.sort(
+        key=lambda row: (
+            row["product_id"],
+            row["location"] if row["location"] is not None else "",
+        )
+    )
+
+    return flattened_rows, invalid_product_count
+
+
+# ==========================================
+# Example Usage & Verification
+# ==========================================
+if __name__ == "__main__":
+    raw_json = """
+    [
+        {
+            "id": 401,
+            "name": "Product With Empty Warehouses Array",
+            "warehouses": []
+        },
+        {
+            "id": 402,
+            "name": "Product With Zero Stock Warehouse",
+            "warehouses": [
+                {"location": "US-East", "stock": 0},
+                {"location": "US-West", "stock": 15}
+            ]
+        },
+        {
+            "id": 403,
+            "name": "Product With Only Negative Stock (Invalid)",
+            "warehouses": [
+                {"location": "EU-Central", "stock": -10}
+            ]
+        },
+        "malformed_string_entry"
+    ]
+    """
+
+    data = json.loads(raw_json)
+    rows, skipped_count = process_inventory(data)
+
+    print(f"Skipped / Invalid Products Count: {skipped_count}\n")
+    print("Flattened Inventory (Preserving Empty Warehouses & Zero Stock):")
+    print(json.dumps(rows, indent=2))
+
+```

@@ -1,0 +1,128 @@
+## Problem Understanding
+
+We have an undirected graph with `n` nodes and `m` weighted edges. For each query threshold `q`, we consider only edges whose weight is `≤ q`. For that filtered subgraph we must report:
+
+1. The number of connected components.
+2. The size of the largest connected component.
+
+## Key Constraints (typical interpretation)
+
+- `1 ≤ n ≤ 2·10^5`
+- `0 ≤ m ≤ 2·10^5`
+- Edge weights and query thresholds fit in 64-bit integers.
+- Queries may be many; process them efficiently (offline).
+- Graph may be disconnected even when all edges are included.
+- Isolated nodes count as components of size `1`.
+
+## Required Output
+
+For each query, output two integers: `components largest_component_size`.
+
+## Algorithm
+
+1. Sort all edges by weight ascending.
+2. Sort queries by threshold ascending, keeping original indices.
+3. Maintain a Disjoint Set Union (DSU) structure over the `n` nodes.
+   - Initially every node is its own component: `components = n`, `largest = 1` (if `n > 0`).
+4. Iterate through queries in increasing threshold order.
+   - Add all edges with weight `≤ current_threshold` that have not been added yet.
+   - When unioning two different components, update:
+     - `components -= 1`
+     - `largest = max(largest, new_component_size)`
+5. Record answers at the original query indices.
+
+This is deterministic and uses only the Python standard library.
+
+```python
+import sys
+from bisect import bisect_right
+
+class DSU:
+    __slots__ = ("parent", "size", "components", "largest")
+
+    def __init__(self, n: int):
+        self.parent = list(range(n))
+        self.size = [1] * n
+        self.components = n
+        self.largest = 1 if n > 0 else 0
+
+    def find(self, x: int) -> int:
+        parent = self.parent
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(self, a: int, b: int) -> None:
+        ra = self.find(a)
+        rb = self.find(b)
+        if ra == rb:
+            return
+        # Union by size
+        if self.size[ra] < self.size[rb]:
+            ra, rb = rb, ra
+        self.parent[rb] = ra
+        self.size[ra] += self.size[rb]
+        self.components -= 1
+        if self.size[ra] > self.largest:
+            self.largest = self.size[ra]
+
+
+def solve() -> None:
+    data = sys.stdin.buffer.read().split()
+    if not data:
+        return
+
+    it = iter(data)
+    n = int(next(it))
+    m = int(next(it))
+
+    edges = []
+    for _ in range(m):
+        u = int(next(it)) - 1
+        v = int(next(it)) - 1
+        w = int(next(it))
+        edges.append((w, u, v))
+
+    edges.sort(key=lambda x: x[0])
+    weights = [e[0] for e in edges]
+
+    q = int(next(it))
+    queries = []
+    for i in range(q):
+        threshold = int(next(it))
+        queries.append((threshold, i))
+
+    queries.sort(key=lambda x: x[0])
+
+    dsu = DSU(n)
+    answers = [None] * q
+    edge_idx = 0
+
+    for threshold, original_idx in queries:
+        # Add every edge whose weight <= threshold
+        limit = bisect_right(weights, threshold)
+        while edge_idx < limit:
+            _, u, v = edges[edge_idx]
+            dsu.union(u, v)
+            edge_idx += 1
+
+        answers[original_idx] = (dsu.components, dsu.largest)
+
+    out = []
+    for comp, largest in answers:
+        out.append(f"{comp} {largest}")
+    sys.stdout.write("\n".join(out))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+### Complexity
+
+- Sorting edges: `O(m log m)`
+- Sorting queries: `O(q log q)`
+- DSU operations: `O((m + q) α(n))` amortized
+- Overall: `O(m log m + q log q + (m + q) α(n))`
+- Memory: `O(n + m + q)`

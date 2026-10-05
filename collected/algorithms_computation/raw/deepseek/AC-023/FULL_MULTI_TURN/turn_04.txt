@@ -1,0 +1,239 @@
+```python
+import sys
+import subprocess
+
+# ============================================================
+# SOLUTION
+# ============================================================
+
+class DSU:
+    __slots__ = ("parent", "size")
+    def __init__(self, n):
+        self.parent = list(range(n))
+        self.size = [1] * n
+
+    def find(self, x):
+        parent = self.parent
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]  # path halving
+            x = parent[x]
+        return x
+
+    def union(self, a, b):
+        ra = self.find(a)
+        rb = self.find(b)
+        if ra == rb:
+            return 0, 0
+        if self.size[ra] < self.size[rb]:
+            ra, rb = rb, ra
+        self.parent[rb] = ra
+        self.size[ra] += self.size[rb]
+        return 1, self.size[ra]
+
+
+def solve(emit_operation_summary=False, stdin=None, stdout=None):
+    stdin = stdin or sys.stdin
+    stdout = stdout or sys.stdout
+    data = stdin.buffer.read().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    m = int(next(it))
+
+    raw_edges = []
+    max_node = -1
+    min_node = None
+    for _ in range(m):
+        u = int(next(it))
+        v = int(next(it))
+        w = int(next(it))
+        raw_edges.append((w, u, v))
+        if min_node is None or u < min_node:
+            min_node = u
+        if min_node is None or v < min_node:
+            min_node = v
+        if u > max_node:
+            max_node = u
+        if v > max_node:
+            max_node = v
+
+    q = int(next(it))
+    queries = []
+    for i in range(q):
+        t = int(next(it))
+        queries.append((t, i))
+
+    # Deterministic indexing detection (1-indexed vs 0-indexed)
+    one_indexed = False
+    if m > 0 and n > 0:
+        if min_node >= 1 and max_node <= n and max_node == n:
+            one_indexed = True
+        elif min_node == 0 and max_node <= n - 1:
+            one_indexed = False
+        else:
+            one_indexed = (max_node == n)
+
+    shift = 1 if one_indexed else 0
+    edges = [(w, u - shift, v - shift) for (w, u, v) in raw_edges]
+
+    edges.sort(key=lambda e: e[0])
+    queries.sort(key=lambda x: x[0])
+
+    dsu = DSU(n)
+    components = n
+    largest = 0 if n == 0 else 1
+
+    ans_components = [0] * q
+    ans_largest = [0] * q
+
+    edge_union_attempts = 0
+    successful_unions = 0
+    largest_updates = 0
+    query_resolutions = 0
+
+    ei = 0
+    for t, idx in queries:
+        while ei < m and edges[ei][0] <= t:
+            _, u, v = edges[ei]
+            edge_union_attempts += 1
+            merged, new_size = dsu.union(u, v)
+            if merged:
+                successful_unions += 1
+                components -= 1
+                if new_size > largest:
+                    largest = new_size
+                    largest_updates += 1
+            ei += 1
+        ans_components[idx] = components
+        ans_largest[idx] = largest
+        query_resolutions += 1
+
+    out_lines = []
+    for i in range(q):
+        out_lines.append(f"{ans_components[i]} {ans_largest[i]}")
+
+    if emit_operation_summary:
+        total_major_operations = (
+            edge_union_attempts + largest_updates + query_resolutions
+        )
+        out_lines.append(
+            "operation_summary "
+            f"edge_union_attempts={edge_union_attempts} "
+            f"successful_unions={successful_unions} "
+            f"largest_updates={largest_updates} "
+            f"query_resolutions={query_resolutions} "
+            f"total_major_operations={total_major_operations}"
+        )
+
+    stdout.write("\n".join(out_lines))
+
+
+# ============================================================
+# TESTS FOR BOUNDARY / DIFFICULT CASES
+# ============================================================
+
+def _run_solution(inp, args=None):
+    """Run solve() in-process by redirecting stdin/stdout."""
+    import io
+    args = args or []
+    emit = "--operation-summary" in args
+    stdin_wrapper = type("S", (), {})()
+    stdin_wrapper.buffer = io.BytesIO(inp.encode())
+    stdout_wrapper = io.StringIO()
+    solve(emit_operation_summary=emit, stdin=stdin_wrapper, stdout=stdout_wrapper)
+    return stdout_wrapper.getvalue()
+
+
+def check(name, inp, expected, args=None):
+    got = _run_solution(inp, args)
+    status = "PASS" if got == expected else "FAIL"
+    print(f"[{status}] {name}")
+    if got != expected:
+        print("  expected:", repr(expected))
+        print("  got:     ", repr(got))
+
+
+def run_all_tests():
+    # B1: empty graph, no queries
+    check("B1 n=0,m=0,q=0", "0 0\n0\n", "")
+
+    # B2: n=0, queries exist -> all "0 0"
+    check("B2 n=0,q=3", "0 0\n3\n5\n10\n100\n", "0 0\n0 0\n0 0")
+
+    # B3: n=1, m=0, multiple queries -> all "1 1"
+    check("B3 n=1,m=0", "1 0\n3\n0\n5\n-100\n", "1 1\n1 1\n1 1")
+
+    # B4: n=1, self-loops only -> all "1 1"
+    check("B4 self-loops", "1 2\n1 1 5\n1 1 10\n2\n5\n10\n", "1 1\n1 1")
+
+    # B5: threshold below all weights (negative weights present)
+    check("B5 t below all", "3 2\n1 2 -5\n2 3 10\n1\n-100\n", "3 1")
+
+    # B6: threshold exactly equals min edge weight (boundary <=)
+    check("B6 t == min weight", "3 2\n1 2 5\n2 3 10\n1\n5\n", "2 2")
+
+    # B7: threshold above all weights
+    check("B7 t above all", "3 2\n1 2 5\n2 3 10\n1\n1000\n", "1 3")
+
+    # B8: duplicate edges
+    check("B8 duplicates", "3 4\n1 2 5\n1 2 5\n2 3 5\n2 3 5\n1\n5\n", "1 3")
+
+    # B9: self-loops mixed with real edges
+    check("B9 self-loop mixed", "3 3\n1 1 1\n1 2 5\n2 3 5\n2\n1\n5\n", "3 1\n1 3")
+
+    # B10: large stress - chain of 200000 nodes
+    n = 200000
+    m = 199999
+    lines = [f"{n} {m}"]
+    for i in range(1, n):
+        lines.append(f"{i} {i+1} 1")
+    lines.append("1")
+    lines.append(str(m))
+    inp = "\n".join(lines) + "\n"
+    got = _run_solution(inp)
+    assert got == f"1 {n}", f"B10 failed: {got!r}"
+    print("[PASS] B10 large chain n=200000")
+
+    # B11: very large and very negative weights/thresholds
+    big = 10**18
+    inp = f"3 2\n1 2 {big}\n2 3 {big}\n3\n{-big}\n{big}\n{big+1}\n"
+    check("B11 extreme weights", inp, "3 1\n2 2\n1 3")
+
+    # B12: all isolated for all queries
+    check("B12 all isolated", "4 0\n2\n0\n100\n", "4 1\n4 1")
+
+    # B13: two components of equal max size
+    check("B13 equal max", "4 2\n1 2 5\n3 4 5\n1\n5\n", "2 2")
+
+    # B14: duplicate thresholds
+    check("B14 duplicate t", "3 2\n1 2 5\n2 3 10\n3\n5\n5\n5\n", "2 2\n2 2\n2 2")
+
+    # B15: queries unsorted by threshold (order must be preserved)
+    check("B15 unsorted queries", "3 2\n1 2 5\n2 3 10\n3\n10\n0\n5\n", "1 3\n3 1\n2 2")
+
+    # B16: 0-indexed input detection
+    check("B16 0-indexed", "3 2\n0 1 5\n1 2 10\n1\n10\n", "1 3")
+
+    # Feature toggle preserved - legacy output unchanged when off
+    out = _run_solution("3 2\n1 2 5\n2 3 10\n1\n10\n")
+    assert out == "1 3", out
+    print("[PASS] legacy output unchanged when feature off")
+
+    # Feature on - operation_summary is additive
+    out = _run_solution("3 2\n1 2 5\n2 3 10\n1\n10\n", ["--operation-summary"])
+    assert out.startswith("1 3\noperation_summary "), out
+    print("[PASS] operation_summary additive when requested")
+
+
+# ============================================================
+# ENTRY POINT
+# ============================================================
+
+if __name__ == "__main__":
+    if "--test" in sys.argv[1:]:
+        run_all_tests()
+    else:
+        emit = "--operation-summary" in sys.argv[1:]
+        solve(emit_operation_summary=emit)
+```

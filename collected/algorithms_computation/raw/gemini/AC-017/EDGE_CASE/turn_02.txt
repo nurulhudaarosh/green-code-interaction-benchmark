@@ -1,0 +1,107 @@
+### Problem Restatement: Prime Range Analyzer
+
+Given a closed interval $[L, R]$ with $1 \le L \le R$, analyze all prime numbers within the range $[L, R]$, find the maximum gap between any two consecutive prime numbers in the range, and return that maximum gap value.
+
+---
+
+### Explicit Edge & Boundary Case Handling
+
+1. **Smallest Permitted Inputs ($L = 1, R = 1$ or $R < 2$):**
+* Since prime numbers start at $2$, any range entirely strictly less than $2$ contains zero primes. The gap is non-existent, returning `0`.
+
+
+2. **Empty / Disconnected Structures (No Primes or Single Prime in Range):**
+* **No primes in range:** e.g., $[24, 28]$ contains no prime numbers. Return `0`.
+* **Single prime in range:** e.g., $[14, 18]$ contains only the single prime $17$. Since at least two primes are required to form a gap, return `0`.
+
+
+3. **Tie-Breaking & Output Rules:**
+* **Output format:** Returns a single non-negative integer representing the maximal difference $p_{i+1} - p_i$.
+* **Tie-breaking:** When multiple pairs of consecutive primes share the same maximal distance (e.g., in $[2, 10]$, gaps between $(2,3)$, $(3,5)$, $(5,7)$ are $1, 2, 2$), the value of the maximum gap itself is unique ($2$), so tie-breaking between equal max gaps preserves the scalar maximum value cleanly without requiring arbitrary index selection.
+
+
+
+---
+
+### Python Implementation with Comprehensive Test Suite
+
+```python
+import math
+
+def max_prime_gap(L: int, R: int) -> int:
+    """
+    Finds all prime numbers in the range [L, R] using a segmented sieve
+    and returns the largest gap between consecutive primes.
+    
+    Handles extreme lower bounds (L=1, R=1) and single/zero prime cases safely.
+    """
+    # Boundary check for invalid range or range with no possible primes
+    if R < 2 or L > R:
+        return 0
+
+    limit = math.isqrt(R)
+
+    # Step 1: Base sieve up to sqrt(R)
+    base_is_prime = [True] * (limit + 1)
+    base_is_prime[0] = base_is_prime[1] = False
+    for i in range(2, math.isqrt(limit) + 1):
+        if base_is_prime[i]:
+            for j in range(i * i, limit + 1, i):
+                base_is_prime[j] = False
+
+    base_primes = [p for p in range(2, limit + 1) if base_is_prime[p]]
+
+    # Step 2: Segmented sieve on [L, R]
+    segment_len = R - L + 1
+    segment_is_prime = [True] * segment_len
+
+    # Invalidate L=0 and L=1 if within the range
+    if L < 2:
+        for i in range(min(2 - L, segment_len)):
+            segment_is_prime[i] = False
+
+    for p in base_primes:
+        # Smallest multiple of p that is >= L and >= 2*p
+        start = max(p * p, ((L + p - 1) // p) * p)
+        for j in range(start, R + 1, p):
+            segment_is_prime[j - L] = False
+
+    # Step 3: Collect primes and compute maximal gap
+    primes_in_range = [L + i for i in range(segment_len) if segment_is_prime[i]]
+
+    if len(primes_in_range) < 2:
+        return 0
+
+    max_gap = 0
+    for i in range(len(primes_in_range) - 1):
+        gap = primes_in_range[i + 1] - primes_in_range[i]
+        if gap > max_gap:
+            max_gap = gap
+
+    return max_gap
+
+
+# Unit Tests
+def run_tests():
+    test_cases = [
+        # (L, R, expected_max_gap, description)
+        (1, 1, 0, "Smallest permitted input (L=1, R=1)"),
+        (1, 2, 0, "Single prime in range [1, 2] -> prime: [2]"),
+        (2, 2, 0, "Single prime in range [2, 2] -> prime: [2]"),
+        (24, 28, 0, "No primes in range [24, 28]"),
+        (14, 18, 0, "Single prime in range [14, 18] -> prime: [17]"),
+        (2, 3, 1, "Two adjacent primes [2, 3] -> gap 1"),
+        (100, 200, 14, "Standard range [100, 200] -> max gap between 113 and 127"),
+        (2, 10, 2, "Multiple ties for max gap: gaps (2,3)->1, (3,5)->2, (5,7)->2"),
+        (1, 100, 8, "Range including 1: [1, 100] -> max gap 8 (89 to 97)"),
+    ]
+
+    for L, R, expected, desc in test_cases:
+        result = max_prime_gap(L, R)
+        assert result == expected, f"Failed '{desc}': expected {expected}, got {result}"
+        print(f"PASS: {desc} -> {result}")
+
+if __name__ == "__main__":
+    run_tests()
+
+```

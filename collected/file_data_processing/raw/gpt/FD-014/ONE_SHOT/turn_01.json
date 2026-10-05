@@ -1,0 +1,11 @@
+{
+  "task_id": "FD-014",
+  "model": "gpt",
+  "interaction": "ONE_SHOT",
+  "turn": 1,
+  "saved_at": "2026-10-05T00:40:07.462170+00:00",
+  "response_sha256": "53e487d3935505dcecf76cb4009f7cb876f9615c2d0649dc80cb430288dc5ad8",
+  "code_sha256": "1c35d9902bf758a4424d59793fbc34414df5ee213efb8542d68db4c7d2d8a29e",
+  "raw_file": ".collection/raw/gpt/FD-014/ONE_SHOT/turn_01.txt",
+  "code_file": ".collection/code/gpt/FD-014/ONE_SHOT/code.py"
+}

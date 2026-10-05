@@ -1,0 +1,87 @@
+"""
+Edit Distance With Transposition (Damerau-Levenshtein distance).
+
+Operations (each cost 1):
+    1. Insertion of a single character
+    2. Deletion of a single character
+    3. Substitution of a single character
+    4. Transposition of two ADJACENT and DISTINCT characters
+
+Rule enforced: a transposition is legal only when the two swapped
+characters are distinct. Swapping two equal characters is a no-op
+and must NOT be counted as an operation.
+
+Implementation: dynamic programming with an explicit transposition
+transition. Deterministic (min over integers). Standard library only.
+"""
+
+
+def damerau_levenshtein(a: str, b: str) -> int:
+    """
+    Compute the edit distance between a and b using insertion,
+    deletion, substitution, and adjacent transposition, each cost 1.
+
+    Returns a non-negative integer.
+    """
+    n, m = len(a), len(b)
+
+    # dp[i][j] = edit distance between a[:i] and b[:j]
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+
+    # Base cases
+    for i in range(n + 1):
+        dp[i][0] = i
+    for j in range(m + 1):
+        dp[0][j] = j
+
+    # Fill the table
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+
+            dp[i][j] = min(
+                dp[i - 1][j] + 1,        # deletion
+                dp[i][j - 1] + 1,        # insertion
+                dp[i - 1][j - 1] + cost  # match or substitution
+            )
+
+            # Adjacent transposition: a[i-2],a[i-1] <-> b[j-2],b[j-1]
+            # Legal ONLY if the two swapped source characters are distinct.
+            if (i >= 2 and j >= 2
+                    and a[i - 1] == b[j - 2]
+                    and a[i - 2] == b[j - 1]
+                    and a[i - 1] != a[i - 2]):
+                dp[i][j] = min(dp[i][j], dp[i - 2][j - 2] + 1)
+
+    return dp[n][m]
+
+
+if __name__ == "__main__":
+    # Deterministic self-tests. Each tuple: (a, b, expected_distance).
+    tests = [
+        ("", "", 0),
+        ("", "abc", 3),
+        ("abc", "", 3),
+        ("abc", "abc", 0),
+        ("abc", "abd", 1),            # substitution
+        ("abc", "ab", 1),             # deletion
+        ("ab", "abc", 1),             # insertion
+        ("ab", "ba", 1),              # legal transposition (distinct)
+        ("abcd", "abdc", 1),          # legal transposition in middle
+        ("aa", "aa", 0),              # identical; no illegal transpose
+        ("aa", "aaa", 1),             # insertion; not a transpose
+        ("a cat", "an act", 2),       # transposition + insertion
+        ("kitten", "sitting", 3),
+        ("Saturday", "Sunday", 3),
+        ("ca", "abc", 3),
+    ]
+
+    ok = True
+    for s1, s2, expected in tests:
+        got = damerau_levenshtein(s1, s2)
+        status = "OK" if got == expected else "FAIL"
+        if got != expected:
+            ok = False
+        print(f"[{status}] d({s1!r}, {s2!r}) = {got} (expected {expected})")
+
+    print("ALL TESTS PASSED" if ok else "SOME TESTS FAILED")

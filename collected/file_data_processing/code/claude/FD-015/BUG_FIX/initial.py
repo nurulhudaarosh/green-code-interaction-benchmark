@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+"""Filter a JSONL file: validate, keep active records >= threshold, sort, count skips.
+
+Usage:
+    python filter_jsonl.py input.jsonl --min-score 70 -o output.jsonl
+    cat input.jsonl | python filter_jsonl.py - --min-score 70
+"""
+import argparse
+import json
+import math
+import sys
+from collections import Counter
+
+
+def validate(rec):
+    """Return an error string if the record is invalid, else None."""
+    if not isinstance(rec, dict):
+        return "not_an_object"
+    for field in ("id", "category", "score", "status"):
+        if field not in rec:
+            return f"missing_{field}"
+    # bool is a subclass of int, so exclude it explicitly
+    if isinstance(rec["id"], bool) or not isinstance(rec["id"], (int, str)):
+        return "bad_id"
+    if not isinstance(rec["category"], str) or not rec["category"].strip():
+        return "bad_category"
+    if (isinstance(rec["score"], bool)
+            or not isinstance(rec["score"], (int, float))
+            or not math.isfinite(rec["score"])):
+        return "bad_score"
+    if not isinstance(rec["status"], str):
+        return "bad_status"
+    return None
+
+
+def sort_key(rec):
+    # Category A-Z, score high-to-low, then ID A-Z.
+    # IDs are compared as strings so mixed int/str IDs never raise TypeError.
+    return (rec["category"], -rec["score"], str(rec["id"]))
+
+
+def filter_records(lines, min_score):
+    kept = []
+    skipped = Counter()
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue  # blank lines are ignored, not counted
+
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            skipped["invalid_json"] += 1
+            continue
+
+        error = validate(rec)
+        if error:
+            skipped[error] += 1
+            continue
+
+        if rec["status"].strip().lower() != "active":
+            skipped["inactive"] += 1
+            continue
+
+        if rec["score"] < min_score:
+            skipped["below_threshold"] += 1
+            continue
+
+        kept.append(rec)
+
+    kept.sort(key=sort_key)
+    return kept, skipped
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("input", help="input JSONL path, or '-' for stdin")
+    parser.add_argument("--min-score", type=float, required=True,
+                        help="minimum score (inclusive)")
+    parser.add_argument("-o", "--output", help="output path (default: stdout)")
+    args = parser.parse_args()
+
+    infile = sys.stdin if args.input == "-" else open(args.input, encoding="utf-8")
+    with infile:
+        kept, skipped = filter_records(infile, args.min_score)
+
+    out = open(args.output, "w", encoding="utf-8") if args.output else sys.stdout
+    try:
+        for rec in kept:
+            out.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    finally:
+        if out is not sys.stdout:
+            out.close()
+
+    total_skipped = sum(skipped.values())
+    print(f"Kept: {len(kept)} | Skipped: {total_skipped}", file=sys.stderr)
+    for reason, count in sorted(skipped.items()):
+        print(f"  {reason}: {count}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

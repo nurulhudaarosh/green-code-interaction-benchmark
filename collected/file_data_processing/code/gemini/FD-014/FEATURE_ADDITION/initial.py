@@ -1,0 +1,196 @@
+import re
+from collections import defaultdict
+from typing import Dict, List, Set, Tuple
+
+# Optional dependency: pip install rapidfuzz
+try:
+    from rapidfuzz import fuzz
+    HAS_RAPIDFUZZ = True
+except ImportError:
+    HAS_RAPIDFUZZ = False
+
+
+def normalize_string(text: str) -> str:
+    """Removes special characters and normalizes string to lowercase ASCII."""
+    if not text:
+        return ""
+    text = text.strip().lower()
+    return re.sub(r"[^a-z0-9]", "", text)
+
+
+def normalize_phone(phone: str) -> str:
+    """Extracts trailing digits from phone numbers to handle country codes/formatting."""
+    if not phone:
+        return ""
+    digits = re.sub(r"\D", "", phone)
+    # Take last 10 digits to match national standards across varying formats
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
+def normalize_postcode(postcode: str) -> str:
+    """Normalizes postal codes to alphanumeric uppercase."""
+    if not postcode:
+        return ""
+    return re.sub(r"[^A-Za-z0-9]", "", postcode).upper()
+
+
+def extract_blocking_keys(record: Dict[str, str]) -> Set[str]:
+    """Generates blocking keys based on surname initial and postal code prefix."""
+    keys = set()
+    surname = normalize_string(record.get("surname", ""))
+    postcode = normalize_postcode(record.get("postcode", ""))
+
+    surname_initial = surname[0] if surname else ""
+    postcode_prefix = postcode[:3] if len(postcode) >= 3 else postcode
+
+    # Composite block key (Surname Initial + Postal Prefix)
+    if surname_initial and postcode_prefix:
+        keys.add(f"SP_{surname_initial}_{postcode_prefix}")
+
+    # Pure deterministic fallback blocking keys
+    email = normalize_string(record.get("email", ""))
+    phone = normalize_phone(record.get("phone", ""))
+
+    if email:
+        keys.add(f"EMAIL_{email}")
+    if phone:
+        keys.add(f"PHONE_{phone}")
+
+    return keys
+
+
+def fuzzy_name_match(
+    rec1: Dict[str, str], rec2: Dict[str, str], threshold: float = 85.0
+) -> bool:
+    """Compares names using RapidFuzz ratio if available, else exact normalized match."""
+    first1, last1 = normalize_string(rec1.get("first_name", "")), normalize_string(
+        rec1.get("surname", "")
+    )
+    first2, last2 = normalize_string(rec2.get("first_name", "")), normalize_string(
+        rec2.get("surname", "")
+    )
+
+    full1 = f"{first1}{last1}"
+    full2 = f"{first2}{last2}"
+
+    if not full1 or not full2:
+        return False
+
+    if HAS_RAPIDFUZZ:
+        return fuzz.ratio(full1, full2) >= threshold
+    return full1 == full2
+
+
+def records_match(rec1: Dict[str, str], rec2: Dict[str, str]) -> Tuple[bool, str]:
+    """Evaluates if two records represent the same customer."""
+    # 1. Deterministic High-Confidence Match: Normalized Email
+    email1 = normalize_string(rec1.get("email", ""))
+    email2 = normalize_string(rec2.get("email", ""))
+    if email1 and email2 and email1 == email2:
+        return True, "EXACT_EMAIL"
+
+    # 2. Deterministic High-Confidence Match: Normalized Phone
+    phone1 = normalize_phone(rec1.get("phone", ""))
+    phone2 = normalize_phone(rec2.get("phone", ""))
+    if phone1 and phone2 and phone1 == phone2:
+        return True, "EXACT_PHONE"
+
+    # 3. Blocked Match: Surname Initial + Postal Prefix with Name/Address Similarity
+    post1 = normalize_postcode(rec1.get("postcode", ""))
+    post2 = normalize_postcode(rec2.get("postcode", ""))
+
+    if post1 and post2 and post1 == post2:
+        if fuzzy_name_match(rec1, rec2):
+            return True, "BLOCK_NAME_AND_POSTCODE"
+
+    return False, "NO_MATCH"
+
+
+class RecordMatcher:
+    def __init__(self):
+        self.blocks = defaultdict(set)
+        self.records = {}
+
+    def add_records(self, records: List[Dict[str, str]]):
+        """Indexes customer records into blocks."""
+        for rec in records:
+            rec_id = rec["id"]
+            self.records[rec_id] = rec
+            keys = extract_blocking_keys(rec)
+            for k in keys:
+                self.blocks[k].add(rec_id)
+
+    def find_matches(self) -> List[Dict[str, str]]:
+        """Performs candidate pair extraction within blocks and yields matches."""
+        candidate_pairs = set()
+
+        # Generate candidate pairs only from within the same block bucket
+        for block_id, rec_ids in self.blocks.items():
+            ids_list = list(rec_ids)
+            for i in range(len(ids_list)):
+                for j in range(i + 1, len(ids_list)):
+                    id1, id2 = ids_list[i], ids_list[j]
+                    if id1 > id2:
+                        id1, id2 = id2, id1
+                    candidate_pairs.add((id1, id2))
+
+        matches = []
+        for id1, id2 in candidate_pairs:
+            is_match, reason = records_match(self.records[id1], self.records[id2])
+            if is_match:
+                matches.append(
+                    {
+                        "record_id_1": id1,
+                        "record_id_2": id2,
+                        "match_type": reason,
+                    }
+                )
+
+        return matches
+
+
+# --- Example Usage ---
+if __name__ == "__main__":
+    sample_dataset = [
+        {
+            "id": "1",
+            "first_name": "John",
+            "surname": "Smith",
+            "email": "john.smith@gmail.com",
+            "phone": "+1 (555) 019-2834",
+            "postcode": "SW1A 1AA",
+        },
+        {
+            "id": "2",
+            "first_name": "Jon",
+            "surname": "Smyth",  # Misspelled name, same block (S + SW1)
+            "email": "jsmith99@yahoo.com",
+            "phone": "555-019-2834",  # Same phone number
+            "postcode": "SW1A 1AA",
+        },
+        {
+            "id": "3",
+            "first_name": "Jane",
+            "surname": "Doe",
+            "email": "jane.doe@company.org",
+            "phone": "+1 555-987-6543",
+            "postcode": "90210",
+        },
+        {
+            "id": "4",
+            "first_name": "Jane",
+            "surname": "Doe",
+            "email": "JANE.DOE@company.org",  # Same email, normalized
+            "phone": "555-000-0000",
+            "postcode": "10001",
+        },
+    ]
+
+    matcher = RecordMatcher()
+    matcher.add_records(sample_dataset)
+    results = matcher.find_matches()
+
+    for match in results:
+        print(
+            f"Matched Pair: Record {match['record_id_1']} <-> Record {match['record_id_2']} | Reason: {match['match_type']}"
+        )

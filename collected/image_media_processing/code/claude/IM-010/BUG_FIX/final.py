@@ -1,0 +1,56 @@
+from pathlib import Path
+
+from PIL import Image, ImageOps
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp", ".gif"}
+
+
+def rotate_and_crop(input_dir, output_dir, angle_degrees, crop_size, fill=0):
+    """Rotate every image in input_dir and center-crop/pad it to exactly crop_size.
+
+    Args:
+        input_dir:     Directory containing the source images.
+        output_dir:    Directory to write results to (created if missing).
+        angle_degrees: Counter-clockwise rotation angle in degrees.
+        crop_size:     int (square) or (width, height) of the output images.
+        fill:          Background for padded areas (int or color tuple).
+                       Images with an alpha channel are padded transparent.
+    """
+    if isinstance(crop_size, int):
+        crop_size = (crop_size, crop_size)
+    cw, ch = crop_size
+    if cw <= 0 or ch <= 0:
+        raise ValueError("crop_size must be positive")
+
+    input_dir, output_dir = Path(input_dir), Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for path in sorted(input_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in IMAGE_EXTS:
+            continue
+
+        with Image.open(path) as img:
+            img = ImageOps.exif_transpose(img)  # respect camera orientation
+            if img.mode not in ("RGB", "RGBA", "L", "LA"):
+                img = img.convert("RGBA" if "transparency" in img.info or "A" in img.mode else "RGB")
+
+            # expand=True grows the canvas so no rotated content is clipped
+            rotated = img.rotate(angle_degrees, resample=Image.BICUBIC, expand=True)
+
+            bg = (0, 0, 0, 0) if rotated.mode in ("RGBA", "LA") else fill
+            if rotated.mode == "RGBA" and not isinstance(bg, tuple):
+                bg = (bg, bg, bg, 0)
+            canvas = Image.new(rotated.mode, (cw, ch), bg)
+
+            # Negative offsets crop, positive offsets pad.
+            offset = ((cw - rotated.width) // 2, (ch - rotated.height) // 2)
+            canvas.paste(rotated, offset)
+
+            out_path = output_dir / path.name
+            if out_path.suffix.lower() in (".jpg", ".jpeg") and canvas.mode in ("RGBA", "LA"):
+                canvas = canvas.convert("RGB")  # JPEG has no alpha
+            canvas.save(out_path)
+
+
+if __name__ == "__main__":
+    rotate_and_crop("input_images", "output_images", angle_degrees=15, crop_size=(256, 256))

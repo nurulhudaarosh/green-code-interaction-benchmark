@@ -1,0 +1,175 @@
+# Exact Polynomial Product — Restated with Tie Handling
+
+## Original Problem (Restated)
+
+Given two integer polynomials represented as coefficient arrays (index = power of the variable, ascending order), compute their **exact product** and return the resulting coefficient array. Coefficients may be negative, zero, or repeated. Multiplication must be exact integer arithmetic (no floating point), and the result must be deterministic — the same inputs always produce the same output.
+
+**Input:** Two lists of integers `a` and `b`.
+**Output:** A list of integers representing the coefficients of `a(x) · b(x)`.
+
+## Key Constraints
+
+- Coefficients are integers (may be negative, zero, or duplicated).
+- Result length = `len(a) + len(b) - 1` (when both are non-empty).
+- Empty input on either side → empty output.
+- **Determinism required:** No randomness, no reordering that depends on hashing or unordered iteration, no reliance on external state.
+- **Ties must be handled explicitly:** When equal values appear in the input, or when distinct index pairs produce the same output power `i + j`, accumulation order must be fixed so results are reproducible bit-for-bit.
+
+## Handling "Repeated Values" and "Deterministic Ties"
+
+Two distinct notions of "tie" appear here, and both must be handled:
+
+### 1. Repeated values in the input
+Duplicate coefficients (e.g., `[2, 2, 2]`) are legitimate. The algorithm must not deduplicate, collapse, or reorder them, since each occurrence carries a distinct power of `x`. We preserve positional identity by iterating with `enumerate`, so equal-valued terms at different indices remain distinct.
+
+### 2. Deterministic ties in output accumulation
+Multiple index pairs `(i, j)` and `(i', j')` can map to the same output power `k = i + j` (e.g., `(0,2)` and `(1,1)` and `(2,0)` all land on `k = 2`). The sum `result[k] = Σ a[i]·b[j]` is mathematically order-independent, but to guarantee a deterministic *execution path* (relevant for auditing, reproducibility, and any future extension like floating-point or modular variants), we fix the accumulation order:
+
+- Outer loop over `i` in **increasing** order.
+- Inner loop over `j` in **increasing** order.
+- Each contribution is added in that canonical order.
+
+**Tie-breaking rule:** For equal output powers, the contribution from the lexicographically smaller pair `(i, j)` is added first. This is a stable, documented convention — not a mathematical necessity, but a determinism guarantee.
+
+Additionally, when the problem asks for a *canonical* representation of tied results, we do **not** trim trailing zeros by default (trailing zeros are significant only if the caller declares a fixed degree). We state this explicitly: **the output length is exactly `len(a) + len(b) - 1`, including any leading or trailing zeros that arise.** This is the preserved original output rule.
+
+## Algorithm (Direct Coefficient Convolution, Deterministic)
+
+```
+if a is empty or b is empty: return []
+result = [0] * (len(a) + len(b) - 1)
+for i in 0..len(a)-1:              # fixed increasing order
+    for j in 0..len(b)-1:          # fixed increasing order
+        result[i + j] += a[i] * b[j]
+return result
+```
+
+Complexity: O(n·m) time, O(n+m) space. Fully deterministic.
+
+## Python Implementation
+
+```python
+def multiply_polynomials(a, b):
+    """
+    Multiply two integer polynomials given as coefficient lists
+    (index = power of x, ascending order).
+
+    Determinism guarantees:
+      - Outer loop over a in increasing index order.
+      - Inner loop over b in increasing index order.
+      - Ties at the same output power k = i + j are accumulated in
+        lexicographic (i, j) order.
+      - Output length is exactly len(a) + len(b) - 1, preserving any
+        leading/trailing zeros that arise from the exact product.
+      - Repeated input values are preserved positionally; no dedup.
+    """
+    if not a or not b:
+        return []
+
+    result = [0] * (len(a) + len(b) - 1)
+
+    # Fixed iteration order -> deterministic tie accumulation.
+    for i in range(len(a)):
+        ai = a[i]
+        if ai == 0:
+            # Zero terms contribute nothing; skipping them does not
+            # change the result and keeps the execution path stable.
+            continue
+        for j in range(len(b)):
+            result[i + j] += ai * b[j]
+
+    return result
+
+
+# ----------------------------------------------------------------------
+# Tests — original cases + explicit repeated-value and tie cases
+# ----------------------------------------------------------------------
+def _run_tests():
+    # --- Original / basic cases ---
+    assert multiply_polynomials([1, 2], [3, 4]) == [3, 10, 8]
+    assert multiply_polynomials([5], [1, 2, 3]) == [5, 10, 15]
+    assert multiply_polynomials([1], [1, 2, 3]) == [1, 2, 3]
+    assert multiply_polynomials([1, -2], [3, -4]) == [3, -10, 8]
+    assert multiply_polynomials([0, 1], [0, 0, 1]) == [0, 0, 0, 1]
+    assert multiply_polynomials([0], [1, 2, 3]) == [0, 0, 0]
+    assert multiply_polynomials([], [1, 2]) == []
+    assert multiply_polynomials([1, 2], []) == []
+    assert multiply_polynomials([1, 1], [1, 1]) == [1, 2, 1]
+    assert multiply_polynomials([1, 1], [1, 2, 1]) == [1, 3, 3, 1]
+    assert multiply_polynomials([2, 3, 4], [5, 6]) == [10, 27, 38, 24]
+
+    # --- Repeated values in a single input ---
+    # [2, 2, 2] represents 2 + 2x + 2x^2
+    # times [3, 3] = 3 + 3x  ->  6 + 12x + 12x^2 + 6x^3
+    assert multiply_polynomials([2, 2, 2], [3, 3]) == [6, 12, 12, 6]
+
+    # All-equal inputs, symmetric check
+    # [1, 1, 1] * [1, 1, 1] = [1, 2, 3, 2, 1]
+    assert multiply_polynomials([1, 1, 1], [1, 1, 1]) == [1, 2, 3, 2, 1]
+
+    # Repeated negatives: [-1, -1] * [-1, -1] = [1, 2, 1]
+    assert multiply_polynomials([-1, -1], [-1, -1]) == [1, 2, 1]
+
+    # --- Deterministic tie cases (multiple (i,j) -> same output power) ---
+    # Power 2 receives contributions from (0,2),(1,1),(2,0).
+    # a = [1, 2, 3], b = [4, 5, 6]
+    #   k=0: 1*4 = 4
+    #   k=1: 1*5 + 2*4 = 13
+    #   k=2: 1*6 + 2*5 + 3*4 = 6 + 10 + 12 = 28
+    #   k=3: 2*6 + 3*5 = 12 + 15 = 27
+    #   k=4: 3*6 = 18
+    assert multiply_polynomials([1, 2, 3], [4, 5, 6]) == [4, 13, 28, 27, 18]
+
+    # Ties that sum to zero (cancellation must be exact, not reordered)
+    # a = [1, -1], b = [1, 1] -> [1, 0, -1]
+    assert multiply_polynomials([1, -1], [1, 1]) == [1, 0, -1]
+
+    # Ties with identical magnitudes and signs
+    # a = [2, 3], b = [2, 3] -> [4, 12, 9]
+    assert multiply_polynomials([2, 3], [2, 3]) == [4, 12, 9]
+
+    # Many-way tie at the middle coefficient
+    # a = b = [1, 1, 1, 1] -> binomial row [1, 2, 3, 4, 3, 2, 1]
+    assert multiply_polynomials([1, 1, 1, 1], [1, 1, 1, 1]) == [1, 2, 3, 4, 3, 2, 1]
+
+    # Repeated values + ties combined
+    # a = [5, 5, 5], b = [5, 5, 5] -> 25 * [1,2,3,2,1] = [25,50,75,50,25]
+    assert multiply_polynomials([5, 5, 5], [5, 5, 5]) == [25, 50, 75, 50, 25]
+
+    # --- Determinism check: same inputs, repeated calls, identical output ---
+    import copy
+    a_in = [1, -2, 3, -4, 5]
+    b_in = [5, -4, 3, -2, 1]
+    a_snapshot = copy.deepcopy(a_in)
+    b_snapshot = copy.deepcopy(b_in)
+    first = multiply_polynomials(a_in, b_in)
+    for _ in range(50):
+        assert multiply_polynomials(a_in, b_in) == first
+    # Inputs must not be mutated
+    assert a_in == a_snapshot and b_in == b_snapshot
+
+    # --- Output-length rule preserved (no zero-trimming) ---
+    # Leading/trailing zeros from zero coefficients are kept.
+    # [0, 1] * [0, 1] = [0, 0, 1]  (length 3, not trimmed to [1])
+    assert multiply_polynomials([0, 1], [0, 1]) == [0, 0, 1]
+    # Zero polynomial retains full length
+    assert multiply_polynomials([0, 0], [0, 0, 0]) == [0, 0, 0, 0]
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    _run_tests()
+```
+
+## Summary of Preserved Rules
+
+| Rule | Behavior |
+|------|----------|
+| Exact integer arithmetic | Yes — no floats, no rounding |
+| Output length | Exactly `len(a) + len(b) - 1` (empty inputs → `[]`) |
+| Trailing/leading zeros | Preserved — no trimming |
+| Repeated input values | Positionally preserved; no deduplication |
+| Tie accumulation order | Fixed lexicographic `(i, j)` order |
+| Determinism | Verified across 50 repeated calls with unchanged inputs |
+| Side effects | None — inputs are never mutated |

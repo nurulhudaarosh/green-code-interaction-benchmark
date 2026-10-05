@@ -1,0 +1,59 @@
+```python
+from collections import Counter
+from pathlib import Path
+import re
+from typing import Iterable, List, Sequence, Tuple, Union
+
+
+def keyword_freq(
+    paths: Sequence[Union[str, Path]],
+    stopwords: Iterable[str],
+    top_k: int = 10,
+    include_bigrams: bool = False,
+) -> List[Tuple[str, int]]:
+    """Tokenizes text files, filters stopwords case-insensitively, counts
+
+    unigrams and cross-line bigrams, and returns the top-k most frequent terms.
+    Safely handles empty files, missing files, and unreadable encodings.
+    """
+    # 1. Ensure case-insensitive stopword matching with stripped whitespace
+    stop_set = {str(w).strip().lower() for w in stopwords}
+
+    # Regex matches words across newlines and allows contractions
+    word_pattern = re.compile(r"\b[a-zA-Z0-9]+(?:'[a-zA-Z0-9]+)?\b")
+    counts = Counter()
+
+    for path in paths:
+        path_obj = Path(path)
+        if not path_obj.is_file():
+            continue
+
+        try:
+            # Handle empty/corrupt files cleanly
+            text = path_obj.read_text(encoding="utf-8", errors="ignore")
+            if not text.strip():
+                continue
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        # re.findall scans the entire multi-line string, bridging line breaks
+        tokens = [
+            token.lower()
+            for token in word_pattern.findall(text)
+            if token.lower() not in stop_set
+        ]
+
+        if not tokens:
+            continue
+
+        # Count unigrams
+        counts.update(tokens)
+
+        # Count bigrams across line boundaries
+        if include_bigrams and len(tokens) >= 2:
+            bigrams = (f"{tokens[i]} {tokens[i + 1]}" for i in range(len(tokens) - 1))
+            counts.update(bigrams)
+
+    return counts.most_common(top_k)
+
+```

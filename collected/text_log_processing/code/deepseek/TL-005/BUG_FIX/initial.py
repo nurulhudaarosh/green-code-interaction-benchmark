@@ -1,0 +1,98 @@
+import os
+import unicodedata
+import re
+
+
+def normalize_corpus(input_dir, output_dir, lowercase=False):
+    """
+    Normalize every .txt file under input_dir and mirror the folder structure
+    into output_dir.
+
+    Normalization applied:
+      1. Unicode NFC normalization.
+      2. Whitespace collapse: any run of whitespace -> single space; strip ends.
+      3. Optional lowercasing.
+
+    Args:
+        input_dir (str): Root directory containing .txt files.
+        output_dir (str): Root directory to write normalized .txt files.
+        lowercase (bool): If True, lowercase the text.
+
+    Returns:
+        dict: Summary with counts of files processed, skipped, and errors.
+    """
+    if not os.path.isdir(input_dir):
+        raise NotADirectoryError(f"Input directory does not exist: {input_dir}")
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Collapse any run of Unicode whitespace into a single ASCII space.
+    whitespace_re = re.compile(r"\s+", flags=re.UNICODE)
+
+    stats = {"processed": 0, "skipped": 0, "errors": 0}
+    errors = []
+
+    for root, _dirs, files in os.walk(input_dir):
+        for filename in files:
+            if not filename.lower().endswith(".txt"):
+                stats["skipped"] += 1
+                continue
+
+            src_path = os.path.join(root, filename)
+
+            # Compute mirrored destination path.
+            rel_path = os.path.relpath(src_path, input_dir)
+            dst_path = os.path.join(output_dir, rel_path)
+            os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+
+            try:
+                with open(src_path, "r", encoding="utf-8", errors="strict") as f:
+                    text = f.read()
+
+                # 1. Unicode NFC normalization
+                text = unicodedata.normalize("NFC", text)
+
+                # 2. Whitespace collapse + trim
+                text = whitespace_re.sub(" ", text).strip()
+
+                # 3. Optional lowercasing
+                if lowercase:
+                    text = text.lower()
+
+                with open(dst_path, "w", encoding="utf-8") as f:
+                    f.write(text)
+
+                stats["processed"] += 1
+
+            except UnicodeDecodeError as e:
+                stats["errors"] += 1
+                errors.append((src_path, f"decode error: {e}"))
+            except Exception as e:
+                stats["errors"] += 1
+                errors.append((src_path, f"{type(e).__name__}: {e}"))
+
+    stats["error_details"] = errors
+    return stats
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Normalize a .txt corpus.")
+    parser.add_argument("input_dir", help="Source directory")
+    parser.add_argument("output_dir", help="Destination directory")
+    parser.add_argument(
+        "--lowercase",
+        action="store_true",
+        help="Lowercase the normalized text",
+    )
+    args = parser.parse_args()
+
+    result = normalize_corpus(args.input_dir, args.output_dir, args.lowercase)
+    print(
+        f"Processed: {result['processed']}  "
+        f"Skipped: {result['skipped']}  "
+        f"Errors: {result['errors']}"
+    )
+    for path, msg in result["error_details"]:
+        print(f"  ! {path}: {msg}")

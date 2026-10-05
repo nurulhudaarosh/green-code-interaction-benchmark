@@ -1,0 +1,109 @@
+### Problem Identification & Understanding
+
+The goal is to find a subset of a given list of positive integers $A = [a_0, a_1, \dots, a_{n-1}]$ that sums to a target integer $T$.
+
+When multiple valid subsets sum to $T$:
+
+1. **Primary criterion:** Choose a subset with the **minimum number of elements** (fewest elements / smallest cardinality).
+2. **Secondary criterion:** Among subsets with the minimum number of elements, choose the **lexicographically smallest index list** (comparing 0-based indices).
+
+---
+
+### Key Constraints & Required Output
+
+* **Constraints:**
+* Elements in $A$ are positive integers ($a_i \ge 1$).
+* $T \ge 0$.
+
+
+* **Required Output:**
+* A list of 0-based indices corresponding to the chosen subset, sorted in ascending order of indices. If no valid subset exists, return `None` (or empty result depending on interface).
+
+
+
+---
+
+### Algorithm Description
+
+We use Dynamic Programming (DP) based on the 0/1 Subset-Sum problem:
+
+1. **DP State:** `dp[s]` stores a tuple `(count, indices)` representing the best valid subset that sums to $s$:
+* `count`: Minimum number of elements needed to form sum $s$.
+* `indices`: The sorted list of 0-based indices forming sum $s$.
+
+
+2. **Initialization:**
+* `dp[0] = (0, [])`
+* `dp[s] = None` for $s = 1, \dots, T$.
+
+
+3. **Transitions:**
+Iterate through each item $i$ with value $v = A[i]$ from $i = 0$ to $n - 1$:
+* Iterate $s$ backward from $T$ down to $v$:
+* If `dp[s - v]` is reachable:
+* Form a new candidate state for $s$: `new_count = dp[s - v][0] + 1`, `new_indices = dp[s - v][1] + [i]`.
+* Compare with current `dp[s]`:
+* Update `dp[s]` if `dp[s]` is `None`, or if `new_count < current_count`, or if `new_count == current_count` and `new_indices` is lexicographically smaller than `current_indices`.
+
+
+
+
+
+
+
+
+4. **Final Result:** `dp[T]` gives the optimal subset indices, or `None` if unreachable.
+
+---
+
+### Python Implementation
+
+```python
+def subset_sum_optimal(numbers: list[int], target: int) -> list[int] | None:
+    """
+    Finds a subset of positive integers that sums to target.
+    Breaks ties by:
+      1. Fewest elements
+      2. Lexicographically smallest 0-based index list
+    """
+    if target < 0:
+        return None
+    if target == 0:
+        return []
+
+    # dp[s] = (count, indices)
+    dp: list[tuple[int, list[int]] | None] = [None] * (target + 1)
+    dp[0] = (0, [])
+
+    for i, v in enumerate(numbers):
+        if v > target:
+            continue
+        for s in range(target, v - 1, -1):
+            prev = dp[s - v]
+            if prev is not None:
+                cand_count = prev[0] + 1
+                cand_indices = prev[1] + [i]
+
+                curr = dp[s]
+                if curr is None:
+                    dp[s] = (cand_count, cand_indices)
+                else:
+                    curr_count, curr_indices = curr
+                    # Compare cardinality first, then lexicographical index list
+                    if (cand_count, cand_indices) < (curr_count, curr_indices):
+                        dp[s] = (cand_count, cand_indices)
+
+    return dp[target][1] if dp[target] is not None else None
+
+
+# Example usage
+if __name__ == "__main__":
+    nums = [3, 34, 4, 12, 5, 2]
+    tgt = 9
+    indices = subset_sum_optimal(nums, tgt)
+    print(f"Indices: {indices}")
+    if indices is not None:
+        print(f"Values: {[nums[i] for i in indices]}")
+        print(f"Sum: {sum(nums[i] for i in indices)}")
+
+```

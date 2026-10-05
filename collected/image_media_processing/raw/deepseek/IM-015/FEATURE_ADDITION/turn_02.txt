@@ -1,0 +1,268 @@
+# Extended Implementation with Alpha Channel Support
+
+Here's the updated `split_channels.py` with the new `include_alpha` flag. Only the parts that changed are highlighted in the notes below the code.
+
+```python
+"""
+split_channels.py
+
+Utilities to:
+  - split_channels(input_dir, output_dir, include_alpha=False):
+      Decompose every image in a directory into three grayscale R/G/B files
+      (plus an optional A file when the source carries an alpha channel).
+  - merge_channels(r_path, g_path, b_path, output_path):
+      Recombine three single-channel images into one RGB image.
+
+Requires: Pillow  (pip install Pillow)
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Iterable, NamedTuple
+
+from PIL import Image, UnidentifiedImageError
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_SUPPORTED_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+
+
+def _iter_image_files(input_dir: Path) -> Iterable[Path]:
+    """Yield every file in *input_dir* whose suffix looks like an image."""
+    for path in sorted(input_dir.iterdir()):
+        if path.is_file() and path.suffix.lower() in _SUPPORTED_EXTS:
+            yield path
+
+
+def _has_alpha(img: Image.Image) -> bool:
+    """True when *img* carries an explicit or palette-embedded alpha channel."""
+    if img.mode in ("RGBA", "LA"):
+        return True
+    if img.mode == "P" and "transparency" in img.info:
+        return True
+    return False
+
+
+def _to_rgba(img: Image.Image) -> Image.Image:
+    """
+    Return an RGBA copy of *img*.
+
+    - RGB(A)/L/LA sources convert directly.
+    - Palette images with transparency are expanded to RGBA.
+    - Anything else is coerced to RGB and then given an opaque alpha plane,
+      so the alpha channel is well-defined (all 255) even for sources that
+      had none originally.
+    """
+    if img.mode == "RGBA":
+        return img
+    if img.mode == "P" and "transparency" in img.info:
+        return img.convert("RGBA")
+    if img.mode in ("RGB", "L", "LA"):
+        return img.convert("RGBA")
+    return img.convert("RGB").convert("RGBA")
+
+
+def _ensure_rgb(img: Image.Image) -> Image.Image:
+    """Convert *img* to RGB, flattening alpha onto a black background if needed."""
+    if img.mode == "RGB":
+        return img
+    if _has_alpha(img):
+        rgba = _to_rgba(img)
+        background = Image.new("RGB", rgba.size, (0, 0, 0))
+        background.paste(rgba, mask=rgba.split()[-1])
+        return background
+    return img.convert("RGB")
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+class SplitResult(NamedTuple):
+    """Paths produced for a single source image."""
+    r: str
+    g: str
+    b: str
+    a: str | None = None   # only set when include_alpha=True and source had alpha
+
+
+def split_channels(input_dir: str | os.PathLike,
+                   output_dir: str | os.PathLike,
+                   include_alpha: bool = False) -> list[SplitResult]:
+    """
+    Split every image found in *input_dir* into single-channel PNGs.
+
+    For an input named ``photo.png`` the outputs are::
+
+        <output_dir>/photo_R.png
+        <output_dir>/photo_G.png
+        <output_dir>/photo_B.png
+        <output_dir>/photo_A.png   # only when include_alpha=True
+                                   # and the source has an alpha channel
+
+    Parameters
+    ----------
+    input_dir : path-like
+        Directory containing the source images.
+    output_dir : path-like
+        Directory to receive the channel images. Created if missing.
+    include_alpha : bool, default False
+        When True, also emit a ``<stem>_A.png`` file for any source that
+        carries an alpha channel (RGBA, LA, or a palette image with a
+        ``transparency`` entry). Sources without alpha are unaffected --
+        no ``_A.png`` is written for them, and R/G/B output is identical
+        to the ``include_alpha=False`` case.
+
+    Returns
+    -------
+    list of SplitResult
+        One entry per successfully processed image. ``.a`` is ``None`` when
+        no alpha file was written.
+    """
+    in_dir = Path(input_dir)
+    out_dir = Path(output_dir)
+
+    if not in_dir.is_dir():
+        raise NotADirectoryError(f"Input directory does not exist: {in_dir}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    written: list[SplitResult] = []
+
+    for src in _iter_image_files(in_dir):
+        try:
+            with Image.open(src) as img:
+                # --- remember whether alpha is present BEFORE flattening ---
+                source_has_alpha = _has_alpha(img)
+
+                # --- R/G/B output ---------------------------------------
+                rgb = _ensure_rgb(img)
+                r, g, b = rgb.split()
+                stem = src.stem
+
+                r_path = out_dir / f"{stem}_R.png"
+                g_path = out_dir / f"{stem}_G.png"
+                b_path = out_dir / f"{stem}_B.png"
+
+                r.save(r_path, format="PNG")
+                g.save(g_path, format="PNG")
+                b.save(b_path, format="PNG")
+
+                # --- optional A output ----------------------------------
+                a_path: Path | None = None
+                if include_alpha and source_has_alpha:
+                    alpha = _to_rgba(img).split()[3]   # "L" mode plane
+                    a_path = out_dir / f"{stem}_A.png"
+                    alpha.save(a_path, format="PNG")
+
+                if a_path is not None:
+                    print(f"[split] {src.name} -> {stem}_R/G/B/A.png")
+                else:
+                    print(f"[split] {src.name} -> {stem}_R/G/B.png")
+
+                written.append(SplitResult(
+                    r=str(r_path),
+                    g=str(g_path),
+                    b=str(b_path),
+                    a=str(a_path) if a_path is not None else None,
+                ))
+        except (UnidentifiedImageError, OSError) as exc:
+            print(f"[split] skipping {src.name}: {exc}")
+
+    return written
+
+
+def merge_channels(r_path: str | os.PathLike,
+                   g_path: str | os.PathLike,
+                   b_path: str | os.PathLike,
+                   output_path: str | os.PathLike,
+                   a_path: str | os.PathLike | None = None) -> str:
+    """
+    Recombine channel images into one RGB (or RGBA) image.
+
+    Parameters
+    ----------
+    r_path, g_path, b_path : path-like
+        Paths to the red, green and blue channel images.
+    output_path : path-like
+        Destination file. The format is inferred from its suffix.
+    a_path : path-like or None, default None
+        Optional fourth channel. When supplied, the result is written as
+        RGBA. When None the result is RGB, matching the original behaviour.
+
+    Returns
+    -------
+    str
+        The path that was written.
+    """
+    r_path, g_path, b_path = Path(r_path), Path(g_path), Path(b_path)
+    out_path = Path(output_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with Image.open(r_path) as r_img, \
+         Image.open(g_path) as g_img, \
+         Image.open(b_path) as b_img:
+
+        r = r_img.convert("L")
+        g = g_img.convert("L")
+        b = b_img.convert("L")
+
+        if not (r.size == g.size == b.size):
+            raise ValueError(
+                "Channel images must share the same dimensions: "
+                f"R={r.size}, G={g.size}, B={b.size}"
+            )
+
+        if a_path is not None:
+            with Image.open(a_path) as a_img:
+                a = a_img.convert("L")
+                if a.size != r.size:
+                    raise ValueError(
+                        "Alpha channel must match R/G/B dimensions: "
+                        f"A={a.size} vs RGB={r.size}"
+                    )
+            merged = Image.merge("RGBA", (r, g, b, a))
+        else:
+            merged = Image.merge("RGB", (r, g, b))
+
+        fmt = Image.registered_extensions().get(out_path.suffix.lower(), "PNG")
+        merged.save(out_path, format=fmt)
+
+    print(f"[merge] {'RGBA' if a_path is not None else 'RGB'} -> {out_path}")
+    return str(out_path)
+
+
+# ---------------------------------------------------------------------------
+# Demo / CLI
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Split and merge image channels.")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_split = sub.add_parser("split", help="Split images into R/G/B[/A] files")
+    p_split.add_argument("input_dir")
+    p_split.add_argument("output_dir")
+    p_split.add_argument("--include-alpha", action="store_true",
+                         help="Also emit <stem>_A.png for sources with alpha.")
+
+    p_merge = sub.add_parser("merge", help="Merge channel files into one image")
+    p_merge.add_argument("r"); p_merge.add_argument("g"); p_merge.add_argument("b")
+    p_merge.add_argument("output")
+    p_merge.add_argument("--alpha", default=None,
+                         help="Optional alpha channel file -> writes RGBA.")
+
+    args = parser.parse_args()
+
+    if args.cmd == "split":
+        split_channels(args.input_dir, args.output_dir,
+                       include_alpha=args.include_alpha)
+    else:
+        merge_channels(args.r, args.g, args.b, args.output, a_path=args.alpha)
+```

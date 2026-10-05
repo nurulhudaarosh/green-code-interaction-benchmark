@@ -1,0 +1,45 @@
+Yes. The implementation already handles those cases correctly, including a single line without a trailing newline. Here is the complete version:
+
+```python
+def dedup_lines(in_path, out_path, mode='exact'):
+    if mode not in ('exact', 'normalized'):
+        raise ValueError("mode must be 'exact' or 'normalized'")
+
+    total = unique = removed = 0
+    seen = set()
+
+    with open(in_path, 'r', encoding='utf-8', newline='') as infile, \
+         open(out_path, 'w', encoding='utf-8', newline='') as outfile:
+
+        for line in infile:
+            total += 1
+
+            if mode == 'exact':
+                key = line
+            else:
+                key = ' '.join(line.strip().lower().split())
+
+            if key in seen:
+                removed += 1
+            else:
+                seen.add(key)
+                outfile.write(line)
+                unique += 1
+
+    return {
+        'total': total,
+        'unique': unique,
+        'removed': removed
+    }
+```
+
+### Edge cases
+
+| Input | Result | Counts |
+|---|---|---|
+| Empty file | Empty output | `0, 0, 0` |
+| One line | Same line preserved | `1, 1, 0` |
+| `A\nA\nA\n` | One `A` preserved | `3, 1, 2` |
+| `A\nA` without final newline | One `A\n` +? | `2, 1, 1` |
+
+The **original first-occurrence line is always written unchanged**, while `normalized` mode only normalizes the value used for comparison.

@@ -1,0 +1,53 @@
+import hashlib
+from collections import defaultdict
+from pathlib import Path
+
+def find_exact_duplicates(input_dir: str | Path) -> list[list[str]]:
+    """
+    Finds byte-identical files in `input_dir` grouped by SHA-256 hash.
+    Explicitly filters for regular files (`is_file()` without symlinks/subdirectories)
+    at every stage to prevent reading non-file filesystem entries.
+    
+    Returns a list of duplicate groups, where each group is a list of 
+    alphabetically sorted file path strings.
+    """
+    input_path = Path(input_dir)
+    if not input_path.is_dir():
+        raise ValueError(f"Directory not found: {input_dir}")
+
+    # Step 1: Group regular files by size (skipping subdirectories, symlinks, special files)
+    size_map = defaultdict(list)
+    for path in input_path.rglob('*'):
+        # is_file() evaluates to False for subdirectories even if named identically to a checksum/size key
+        if path.is_file() and not path.is_symlink():
+            try:
+                size_map[path.stat().st_size].append(path)
+            except OSError:
+                continue  # Skip broken links or permission issues
+
+    # Step 2: Hash only files that share a non-unique size
+    hash_map = defaultdict(list)
+    for size, paths in size_map.items():
+        if len(paths) < 2:
+            continue
+
+        for path in paths:
+            # Secondary safety check to guarantee `path` is still a readable file
+            if not path.is_file() or path.is_symlink():
+                continue
+
+            sha256 = hashlib.sha256()
+            try:
+                with open(path, 'rb') as f:
+                    while chunk := f.read(128 * 1024):
+                        sha256.update(chunk)
+                hash_map[sha256.hexdigest()].append(str(path))
+            except (OSError, IsADirectoryError, PermissionError):
+                continue
+
+    # Step 3: Filter for duplicate groups with 2+ files and sort alphabetically
+    duplicates = [
+        sorted(paths) for paths in hash_map.values() if len(paths) > 1
+    ]
+
+    return duplicates

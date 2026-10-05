@@ -1,0 +1,149 @@
+import argparse
+import csv
+import json
+import re
+import sys
+from typing import Dict, Iterable, Optional, Set
+
+LOG_PATTERN = re.compile(
+    r'^(?P<ip>\S+)\s+'
+    r'(?P<ident>\S+)\s+'
+    r'(?P<user>\S+)\s+'
+    r'\[(?P<timestamp>[^\]]+)\]\s+'
+    r'"(?P<request>[^"]*)"\s+'
+    r'(?P<status>\d{3})\s+'
+    r'(?P<size>\S+)'
+    r'(?:\s+"(?P<referrer>[^"]*)")?'
+    r'(?:\s+"(?P<user_agent>[^"]*)")?'
+)
+
+
+def get_status_class(status_code: str) -> str:
+    """Returns HTTP status class (e.g., '2xx', '4xx', '5xx')."""
+    if len(status_code) == 3 and status_code[0] in "12345":
+        return f"{status_code[0]}xx"
+    return "unknown"
+
+
+def convert_logs_to_csv(
+    input_log_path: str,
+    output_csv_path: str,
+    allowed_methods: Optional[Iterable[str]] = None,
+    allowed_status_classes: Optional[Iterable[str]] = None,
+) -> Dict[str, int]:
+    """
+    Parses access logs, applies optional method & status class filters,
+    and writes to CSV. Returns a dict: {'written': n, 'skipped': m}.
+    """
+    method_filter: Optional[Set[str]] = (
+        {m.strip().upper() for m in allowed_methods} if allowed_methods else None
+    )
+    status_filter: Optional[Set[str]] = (
+        {s.strip().lower() for s in allowed_status_classes} if allowed_status_classes else None
+    )
+
+    fieldnames = [
+        "ip",
+        "ident",
+        "user",
+        "timestamp",
+        "method",
+        "endpoint",
+        "protocol",
+        "status",
+        "status_class",
+        "bytes",
+        "referrer",
+        "user_agent",
+    ]
+
+    written_count = 0
+    skipped_count = 0
+
+    with open(input_log_path, "r", encoding="utf-8", errors="replace") as log_file, \
+         open(output_csv_path, "w", newline="", encoding="utf-8") as csv_file:
+
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for line in log_file:
+            line = line.strip()
+            if not line:
+                continue
+
+            match = LOG_PATTERN.match(line)
+            if not match:
+                skipped_count += 1
+                continue
+
+            data = match.groupdict()
+            status = data.get("status", "")
+            status_class = get_status_class(status)
+
+            req_parts = data.get("request", "").split()
+            method = req_parts[0].upper() if len(req_parts) > 0 else ""
+            endpoint = req_parts[1] if len(req_parts) > 1 else ""
+            protocol = req_parts[2] if len(req_parts) > 2 else ""
+
+            # Check method and status filters
+            if method_filter and method not in method_filter:
+                skipped_count += 1
+                continue
+
+            if status_filter and status_class not in status_filter:
+                skipped_count += 1
+                continue
+
+            size = data.get("size")
+            size_bytes = 0 if size == "-" else size
+
+            row = {
+                "ip": data.get("ip"),
+                "ident": data.get("ident"),
+                "user": data.get("user"),
+                "timestamp": data.get("timestamp"),
+                "method": method,
+                "endpoint": endpoint,
+                "protocol": protocol,
+                "status": status,
+                "status_class": status_class,
+                "bytes": size_bytes,
+                "referrer": data.get("referrer") or "",
+                "user_agent": data.get("user_agent") or "",
+            }
+
+            writer.writerow(row)
+            written_count += 1
+
+    return {"written": written_count, "skipped": skipped_count}
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Convert access logs to CSV with status class and filtering."
+    )
+    parser.add_argument("input_log", help="Path to input .log file")
+    parser.add_argument("output_csv", help="Path to output .csv file")
+    parser.add_argument(
+        "--methods",
+        nargs="+",
+        help="HTTP methods to include (e.g. GET POST PUT)",
+        default=None,
+    )
+    parser.add_argument(
+        "--status-classes",
+        nargs="+",
+        help="Status classes to include (e.g. 4xx 5xx)",
+        default=None,
+    )
+
+    args = parser.parse_args()
+
+    results = convert_logs_to_csv(
+        input_log_path=args.input_log,
+        output_csv_path=args.output_csv,
+        allowed_methods=args.methods,
+        allowed_status_classes=args.status_classes,
+    )
+
+    print(json.dumps(results))

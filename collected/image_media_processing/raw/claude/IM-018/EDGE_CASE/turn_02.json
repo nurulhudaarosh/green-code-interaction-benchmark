@@ -1,0 +1,11 @@
+{
+  "task_id": "IM-018",
+  "model": "claude",
+  "interaction": "EDGE_CASE",
+  "turn": 2,
+  "saved_at": "2026-10-05T00:42:54.832510+00:00",
+  "response_sha256": "bf52e863bf9251d8a7c2c42e95fbae3df361060dc1414851c786c2a823008a3a",
+  "code_sha256": "8029476186c4411578fab314c4008033ea73010677492a64ac1e386df9c8df37",
+  "raw_file": ".collection/raw/claude/IM-018/EDGE_CASE/turn_02.txt",
+  "code_file": ".collection/code/claude/IM-018/EDGE_CASE/final.py"
+}

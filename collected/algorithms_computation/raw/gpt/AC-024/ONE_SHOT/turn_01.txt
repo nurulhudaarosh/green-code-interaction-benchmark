@@ -1,0 +1,208 @@
+```python
+"""
+Problem: Interval Room Assignment
+
+Given a collection of intervals, assign every interval to a room so that
+overlapping intervals never use the same room.
+
+A room can be reused when its previous interval ends at or before the next
+interval's start time:
+
+    previous_end <= next_start
+
+The goal is to:
+1. Minimize the total number of rooms.
+2. Return the room ID assigned to every interval in its original input order.
+
+Key constraints / assumptions:
+- There are n intervals.
+- Each interval is represented as (start, end).
+- start <= end.
+- Intervals are indexed by their original input position: 0, 1, ..., n-1.
+- Endpoints are treated so that an interval ending at time t can share a
+  room with an interval starting at time t.
+- Room IDs are non-negative integers starting from 0.
+- The solution must be deterministic.
+- If several rooms are available, the smallest room ID is chosen.
+- Only the Python standard library is used.
+
+Required output:
+- A list room_ids where room_ids[i] is the room assigned to the i-th
+  original interval.
+- The number of rooms used is max(room_ids) + 1 when intervals exist,
+  otherwise 0.
+
+Algorithm:
+1. Sort intervals by:
+       (start_time, end_time, original_index)
+   so processing order is deterministic.
+2. Maintain a min-heap of occupied rooms:
+       (available_time, room_id)
+   The room at the top becomes available earliest.
+3. For each interval:
+   - If the earliest available room has available_time <= start, reuse it.
+   - Otherwise, create a new room.
+4. Store the selected room ID using the original interval index.
+5. Because intervals are processed in increasing start time and the earliest
+   available room is always reused, the number of simultaneously active
+   intervals determines the minimum possible number of rooms.
+
+Time complexity:
+- Sorting: O(n log n)
+- Heap operations: O(n log n)
+- Total: O(n log n)
+- Extra space: O(n)
+
+Deterministic tie handling:
+- Intervals with equal starts are ordered by end time and then original index.
+- Among reusable rooms, the smallest room ID is selected.
+"""
+
+from heapq import heappop, heappush
+
+
+def assign_rooms(intervals):
+    """
+    Assign every interval to a room while minimizing the number of rooms.
+
+    Parameters:
+        intervals: list of (start, end) pairs
+
+    Returns:
+        (room_ids, room_count)
+
+        room_ids[i] = room assigned to the original interval i
+        room_count = minimum number of rooms required
+    """
+    n = len(intervals)
+
+    if n == 0:
+        return [], 0
+
+    # Validate the basic interval structure.
+    for i, interval in enumerate(intervals):
+        if len(interval) != 2:
+            raise ValueError(f"Interval at index {i} must contain (start, end).")
+
+        start, end = interval
+
+        if start > end:
+            raise ValueError(
+                f"Invalid interval at index {i}: start must be <= end."
+            )
+
+    # Deterministic processing order.
+    ordered = sorted(
+        (start, end, index)
+        for index, (start, end) in enumerate(intervals)
+    )
+
+    # Heap entries:
+    # (time when room becomes available, room_id)
+    occupied_rooms = []
+
+    room_ids = [None] * n
+    next_room_id = 0
+
+    for start, end, original_index in ordered:
+        # Reuse the earliest available room when possible.
+        if occupied_rooms and occupied_rooms[0][0] <= start:
+            available_time, room_id = heappop(occupied_rooms)
+        else:
+            room_id = next_room_id
+            next_room_id += 1
+
+        room_ids[original_index] = room_id
+
+        # The room becomes available after this interval ends.
+        heappush(occupied_rooms, (end, room_id))
+
+    return room_ids, next_room_id
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+def run_tests():
+    # Test 1: No overlap -> one room is sufficient.
+    intervals = [(1, 2), (2, 4), (4, 5)]
+    room_ids, room_count = assign_rooms(intervals)
+
+    assert room_count == 1
+    assert room_ids == [0, 0, 0]
+
+    # Test 2: Fully overlapping intervals require three rooms.
+    intervals = [(1, 5), (2, 6), (3, 7)]
+    room_ids, room_count = assign_rooms(intervals)
+
+    assert room_count == 3
+    assert room_ids == [0, 1, 2]
+
+    # Test 3: Reuse must happen when end == next start.
+    intervals = [(1, 3), (3, 5), (3, 4)]
+    room_ids, room_count = assign_rooms(intervals)
+
+    assert room_count == 2
+
+    # The interval (1,3) can reuse room 0 at time 3.
+    assert room_ids[0] == 0
+    assert room_ids[1] == 0
+    assert room_ids[2] == 1
+
+    # Test 4: Input order differs from chronological order.
+    intervals = [(5, 7), (1, 3), (3, 5)]
+    room_ids, room_count = assign_rooms(intervals)
+
+    assert room_count == 1
+    assert room_ids == [0, 0, 0]
+
+    # Test 5: Equal starts are handled deterministically.
+    intervals = [(1, 4), (1, 2), (1, 3)]
+    room_ids, room_count = assign_rooms(intervals)
+
+    assert room_count == 3
+    assert room_ids == [2, 0, 1]
+
+    # Test 6: Empty input.
+    intervals = []
+    room_ids, room_count = assign_rooms(intervals)
+
+    assert room_ids == []
+    assert room_count == 0
+
+    # Test 7: Single interval.
+    intervals = [(10, 20)]
+    room_ids, room_count = assign_rooms(intervals)
+
+    assert room_ids == [0]
+    assert room_count == 1
+
+    # Test 8: Zero-length intervals can share a room.
+    intervals = [(5, 5), (5, 5), (5, 5)]
+    room_ids, room_count = assign_rooms(intervals)
+
+    assert room_count == 1
+    assert room_ids == [0, 0, 0]
+
+    # Test 9: Multiple rooms become available at the same time.
+    # The smallest room ID must be selected.
+    intervals = [(1, 3), (1, 3), (3, 4)]
+    room_ids, room_count = assign_rooms(intervals)
+
+    assert room_count == 2
+    assert room_ids == [0, 1, 0]
+
+    # Test 10: Invalid interval.
+    try:
+        assign_rooms([(5, 2)])
+        assert False, "Expected ValueError"
+    except ValueError:
+        pass
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()
+```

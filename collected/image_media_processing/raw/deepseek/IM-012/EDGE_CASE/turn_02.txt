@@ -1,0 +1,92 @@
+Here's the updated implementation that correctly handles images already at `target_size`:
+
+```python
+import os
+from PIL import Image
+
+
+def letterbox_resize(input_dir, output_dir, target_size, pad_color=(0, 0, 0)):
+    """
+    Resize all images in input_dir preserving aspect ratio, then pad them
+    to exactly target_size with the content centered.
+
+    Args:
+        input_dir (str): Directory containing source images.
+        output_dir (str): Directory to write resized images to.
+        target_size (tuple): (width, height) of the output image.
+        pad_color (tuple): RGB tuple for padding color. Default black.
+
+    Returns:
+        list: Paths of the written output files.
+    """
+    if not os.path.isdir(input_dir):
+        raise NotADirectoryError(f"Input directory not found: {input_dir}")
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    target_w, target_h = target_size
+    if target_w <= 0 or target_h <= 0:
+        raise ValueError("target_size dimensions must be positive")
+
+    written = []
+
+    for filename in sorted(os.listdir(input_dir)):
+        src_path = os.path.join(input_dir, filename)
+        if not os.path.isfile(src_path):
+            continue
+
+        try:
+            with Image.open(src_path) as img:
+                img = img.convert("RGB")
+                src_w, src_h = img.size
+
+                # Scale factor that fits the image inside target box
+                scale = min(target_w / src_w, target_h / src_h)
+                new_w = max(1, int(round(src_w * scale)))
+                new_h = max(1, int(round(src_h * scale)))
+
+                # If already exactly target_size, copy through unchanged:
+                # scale == 1.0, no resampling, no padding.
+                if (new_w, new_h) == (target_w, target_h) and (src_w, src_h) == (target_w, target_h):
+                    canvas = img
+                else:
+                    resized = img.resize((new_w, new_h), Image.LANCZOS)
+
+                    # Create padded canvas
+                    canvas = Image.new("RGB", (target_w, target_h), pad_color)
+
+                    # Center the resized image
+                    offset_x = (target_w - new_w) // 2
+                    offset_y = (target_h - new_h) // 2
+                    canvas.paste(resized, (offset_x, offset_y))
+
+                # Save with original basename but .png extension
+                base = os.path.splitext(filename)[0]
+                dst_path = os.path.join(output_dir, base + ".png")
+                canvas.save(dst_path, "PNG")
+                written.append(dst_path)
+
+        except Exception as e:
+            # Skip files that aren't valid images
+            print(f"Skipping {filename}: {e}")
+
+    return written
+```
+
+### What changed
+
+The key insight is checking whether the source is **already exactly `target_size`** *before* running the resize/pad path:
+
+
+
+- **No resampling** — avoids the unnecessary LANCZOS pass, which can introduce subtle pixel changes even at identical dimensions.
+- **No padding** — since the source fills the target box exactly, there are no bars to draw.
+- **Pixel-identical output** — the image is written through unchanged (only the container format changes to PNG).
+
+### Why check both conditions?
+
+`(new_w, new_h) == (target_w, target_h)` alone isn't sufficient — for example, a `1024×512` source targeting `512×512` produces `new_w, new_h == 512, 512` via scaling, which still needs the *resize* step even though the scaled size matches. Requiring `(src_w, src_h) == (target_w, target_h)` as well guarantees scale is exactly `1.0` and no resize occurred.
+
+### Note on the guard
+
+The `(new_w, new_h) == (target_w, target_h)` clause is technically redundant given the second check (if `src == target`, then `scale == 1.0`, so `new == src == target`). I kept it explicit for readability, but you can simplify to:

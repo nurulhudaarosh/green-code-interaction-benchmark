@@ -1,0 +1,115 @@
+```python
+def summarize_logs(logs, repeated_error_threshold=2):
+    """
+    Complete robust log summarizer.
+
+    Valid format:
+        LEVEL: message
+
+    Supported levels:
+        INFO, WARNING, ERROR
+
+    Malformed lines are ignored.
+    """
+
+    summary = {
+        "INFO": 0,
+        "WARNING": 0,
+        "ERROR": 0,
+        "repeated_errors": {}
+    }
+
+    # Validate threshold.
+    if isinstance(repeated_error_threshold, bool):
+        repeated_error_threshold = 2
+    elif not isinstance(repeated_error_threshold, (int, float)):
+        repeated_error_threshold = 2
+
+    if repeated_error_threshold < 1:
+        repeated_error_threshold = 1
+
+    if not logs:
+        return summary
+
+    error_counts = {}
+
+    for line in logs:
+        # Ignore non-string records.
+        if not isinstance(line, str):
+            continue
+
+        line = line.strip()
+
+        # Ignore empty lines.
+        if not line:
+            continue
+
+        # A valid log must contain exactly one meaningful level
+        # before the first colon and a non-empty message afterward.
+        if ":" not in line:
+            continue
+
+        level_text, message = line.split(":", 1)
+
+        level = level_text.strip().upper()
+        message = message.strip()
+
+        # Reject missing level/message.
+        if not level or not message:
+            continue
+
+        # Reject malformed levels.
+        if level not in {"INFO", "WARNING", "ERROR"}:
+            continue
+
+        # Reject cases where the level contains unexpected whitespace
+        # or additional structural content.
+        if any(char.isspace() for char in level):
+            continue
+
+        summary[level] += 1
+
+        if level == "ERROR":
+            # Normalize case and whitespace for repeated-error detection.
+            normalized_message = " ".join(message.split()).casefold()
+
+            error_counts[normalized_message] = (
+                error_counts.get(normalized_message, 0) + 1
+            )
+
+    # Inclusive threshold: count == threshold also qualifies.
+    summary["repeated_errors"] = {
+        message: count
+        for message, count in error_counts.items()
+        if count >= repeated_error_threshold
+    }
+
+    return summary
+
+
+if __name__ == "__main__":
+    logs = [
+        "INFO: Server started",
+        " ERROR : Database connection failed ",
+        "error: database connection failed",
+        "ERROR: Database connection failed",
+        "WARNING: High memory usage",
+        "ERROR: Request failed: timeout",
+
+        # Malformed lines
+        "",
+        "   ",
+        "INFO",
+        "ERROR",
+        ": Missing level",
+        "ERROR:",
+        "ERROR:   ",
+        "DEBUG: Unknown level",
+        "INFO Server started",
+        "INFO:: malformed level",
+        None,
+        123
+    ]
+
+    print(summarize_logs(logs, repeated_error_threshold=3))
+```

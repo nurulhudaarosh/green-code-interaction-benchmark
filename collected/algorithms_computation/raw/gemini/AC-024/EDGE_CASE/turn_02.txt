@@ -1,0 +1,87 @@
+```python
+import heapq
+
+def min_meeting_rooms_assignment(intervals: list[list[int]]) -> list[int]:
+    """
+    Assigns each interval to a room while minimizing the total number of rooms used.
+    
+    Rules & Tie-Breaking:
+    1. Intervals can share a room if end <= start.
+    2. Sorts primary by start time, secondary by end time, tertiary by original index.
+    3. When multiple rooms are free at or before 'start', reuses the room with the 
+       smallest room_id for deterministic assignment.
+    4. Returns room assignments in the original input interval order.
+    """
+    if not intervals:
+        return []
+
+    # Attach original index: (start, end, original_index)
+    indexed_intervals = [
+        (start, end, idx) for idx, (start, end) in enumerate(intervals)
+    ]
+    
+    # Sort by start time, then end time, then original index
+    indexed_intervals.sort(key=lambda x: (x[0], x[1], x[2]))
+
+    # Min-heap stores tuples of (end_time, room_id)
+    room_heap = []
+    assignments = [0] * len(intervals)
+    next_room_id = 0
+
+    for start, end, original_idx in indexed_intervals:
+        # Collect all rooms available at or before current 'start' time
+        available_rooms = []
+        while room_heap and room_heap[0][0] <= start:
+            available_rooms.append(heapq.heappop(room_heap))
+
+        if available_rooms:
+            # Deterministically choose the free room with the lowest room_id
+            available_rooms.sort(key=lambda x: x[1])
+            selected_end, room_id = available_rooms[0]
+
+            # Re-insert unused available rooms back into heap
+            for r_end, r_id in available_rooms[1:]:
+                heapq.heappush(room_heap, (r_end, r_id))
+        else:
+            # Allocate a new room if none are available
+            room_id = next_room_id
+            next_room_id += 1
+
+        # Record assigned room ID and update end time in heap
+        assignments[original_idx] = room_id
+        heapq.heappush(room_heap, (end, room_id))
+
+    return assignments
+
+
+# Test suite covering general, edge, tie-breaking, and worst-case scenarios
+def run_tests():
+    # Standard overlapping intervals
+    assert min_meeting_rooms_assignment([[0, 30], [5, 10], [15, 20], [10, 15]]) == [0, 1, 1, 1]
+
+    # Chained touching intervals (Continuous room reuse)
+    assert min_meeting_rooms_assignment([[0, 5], [5, 10], [10, 15], [15, 20]]) == [0, 0, 0, 0]
+
+    # Worst-case completely overlapping structure (N rooms required)
+    worst_case = [[i, 100] for i in range(5)]
+    assert min_meeting_rooms_assignment(worst_case) == [0, 1, 2, 3, 4]
+
+    # Duplicate / identical start & end times
+    assert min_meeting_rooms_assignment([[1, 5], [1, 5], [1, 5]]) == [0, 1, 2]
+
+    # Empty input & single interval
+    assert min_meeting_rooms_assignment([]) == []
+    assert min_meeting_rooms_assignment([[10, 20]]) == [0]
+
+    # Deterministic smallest room_id selection when multiple rooms are free simultaneously
+    # Room 0 free at 5, Room 1 free at 4 -> At t=5 both free, picks Room 0
+    test_ties = [[0, 5], [2, 4], [5, 8]]
+    assert min_meeting_rooms_assignment(test_ties) == [0, 1, 0]
+
+    print("All tests passed successfully!")
+
+
+if __name__ == "__main__":
+    run_tests()
+
+```

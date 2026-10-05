@@ -1,0 +1,110 @@
+Here is the whole solution as one Python block. It is the same as the file I made, with one redundant test line removed.
+
+```python
+"""
+Largest gap between consecutive primes in [L, R] using a segmented sieve.
+
+Output: (max_gap, p, q) with q - p == max_gap (first occurrence on ties),
+or None if [L, R] contains fewer than two primes.
+Standard library only; deterministic; no I/O besides optional argv/print.
+
+Usage:
+    python3 prime_gap.py            # runs self-tests
+    python3 prime_gap.py L R        # prints result for [L, R]
+"""
+
+import sys
+from math import isqrt
+
+BLOCK_SIZE = 1 << 18  # numbers per segment
+
+
+def simple_sieve(n):
+    """Return list of all primes <= n."""
+    if n < 2:
+        return []
+    sieve = bytearray([1]) * (n + 1)
+    sieve[0] = sieve[1] = 0
+    for i in range(2, isqrt(n) + 1):
+        if sieve[i]:
+            sieve[i * i::i] = bytes(len(range(i * i, n + 1, i)))
+    return [i for i, v in enumerate(sieve) if v]
+
+
+def iter_primes(L, R, block_size=BLOCK_SIZE):
+    """Yield all primes in [L, R] in increasing order (segmented sieve)."""
+    L = max(L, 2)
+    if L > R:
+        return
+    base = simple_sieve(isqrt(R))          # base primes up to sqrt(R)
+    lo = L
+    while lo <= R:
+        hi = min(lo + block_size - 1, R)
+        size = hi - lo + 1
+        seg = bytearray([1]) * size
+        for p in base:
+            pp = p * p
+            if pp > hi:
+                break
+            start = max(pp, ((lo + p - 1) // p) * p)
+            if start > hi:
+                continue
+            seg[start - lo::p] = bytes(len(range(start - lo, size, p)))
+        for i in range(size):
+            if seg[i]:
+                yield lo + i
+        lo = hi + 1
+
+
+def list_primes(L, R):
+    """Return all primes in [L, R] as a list."""
+    return list(iter_primes(L, R))
+
+
+def largest_prime_gap(L, R):
+    """Return (gap, p, q) for the largest gap between consecutive primes
+    in [L, R], or None if fewer than two primes exist."""
+    best = None
+    prev = None
+    for q in iter_primes(L, R):
+        if prev is not None:
+            g = q - prev
+            if best is None or g > best[0]:
+                best = (g, prev, q)
+        prev = q
+    return best
+
+
+def _self_test():
+    assert list_primes(1, 30) == [2, 3, 5, 7, 11, 13, 17, 19, 23, 29]
+    assert list_primes(10, 10) == []
+    assert list_primes(-5, 2) == [2]
+    assert largest_prime_gap(1, 2) is None
+    assert largest_prime_gap(1, 30) == (6, 23, 29)
+    assert largest_prime_gap(90, 100) is None          # only 97 in range
+    assert largest_prime_gap(1, 1000) == (20, 887, 907)
+
+    def brute(L, R):
+        return [n for n in range(max(L, 2), R + 1)
+                if all(n % d for d in range(2, isqrt(n) + 1))]
+
+    for L, R in [(2, 500), (100, 3000), (1000, 1200)]:
+        assert list(iter_primes(L, R, block_size=37)) == brute(L, R)
+
+    assert largest_prime_gap(31000, 32000) == (72, 31397, 31469)
+
+
+def main(argv):
+    if len(argv) == 3:
+        print(largest_prime_gap(int(argv[1]), int(argv[2])))
+    else:
+        _self_test()
+        print("All tests passed.")
+        print("largest_prime_gap(1, 1000) =", largest_prime_gap(1, 1000))
+
+
+if __name__ == "__main__":
+    main(sys.argv)
+```
+
+Save it as `prime_gap.py` and run it as described in the docstring.

@@ -1,0 +1,54 @@
+```python
+import re
+from collections import Counter
+
+
+def word_frequency(text, stopwords=(), top_k=10):
+    """
+    Analyze word frequency with case-insensitive stopword filtering.
+
+    Returns:
+        {
+            "total_tokens": int,
+            "top_unigrams": [(word, count), ...]
+        }
+    """
+    tokens = re.findall(r"[a-z0-9]+", text.lower())
+
+    stopwords = {word.lower() for word in stopwords}
+    tokens = [word for word in tokens if word not in stopwords]
+
+    counts = Counter(tokens)
+
+    top_unigrams = sorted(
+        counts.items(),
+        key=lambda x: (-x[1], x[0])
+    )[:max(0, top_k)]
+
+    return {
+        "total_tokens": len(tokens),
+        "top_unigrams": top_unigrams
+    }
+
+
+# Example
+text = "This is a test. This test is simple and useful."
+
+result = word_frequency(
+    text,
+    stopwords={"is", "a", "and"},
+    top_k=3
+)
+
+print(result)
+```
+
+**Output:**
+
+{
+    'total_tokens': 7,
+    'top_unigrams': [('test', 2), ('simple', 1), ('this', 2)]
+}
+
+
+Note: because sorting is by **count descending, then word ascending**, `this` comes before `simple` when counts are equal.

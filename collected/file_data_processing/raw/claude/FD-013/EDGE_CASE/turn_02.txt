@@ -1,0 +1,235 @@
+```python
+#!/usr/bin/env python3
+"""
+csv_stats.py - Per-column CSV statistics utility.
+
+Reports count, minimum, maximum, mean, and median for each column, in the same
+order the columns appear in the input. Missing values are handled
+independently per column: a missing cell in one column never removes any other
+column's value from its own statistics.
+
+Edge cases handled without crashing:
+  * Entirely missing columns   -> count 0, other statistics reported as NA/null
+  * Negative values and zeros  -> treated as ordinary numbers ("-5" is a number,
+                                  a lone "-" is a missing-value marker)
+  * Short rows, blank lines, header-only files, non-numeric text, inf/nan,
+    float overflow, and negative zero
+
+Usage:
+    python csv_stats.py data.csv
+    python csv_stats.py data.csv --delimiter ";" --missing "x" "unknown" --format json
+    cat data.csv | python csv_stats.py -
+"""
+
+import argparse
+import csv
+import json
+import math
+import statistics
+import sys
+from typing import Dict, List, Optional, Sequence
+
+DEFAULT_MISSING = {"", "na", "n/a", "nan", "null", "none", "nil", "-", "--", "?"}
+
+
+def is_missing(cell: Optional[str], missing: set) -> bool:
+    """True if the cell is absent (short row) or matches a missing-value token."""
+    return cell is None or cell.strip().lower() in missing
+
+
+def parse_number(text: str) -> Optional[float]:
+    """Parse a numeric cell. Returns None for non-numeric or non-finite values.
+
+    Accepts negatives ("-3.5"), zero ("0", "-0"), explicit plus signs ("+2"),
+    thousands separators ("1,234.5"), and accounting negatives ("(12.5)").
+    """
+    s = text.strip()
+    if len(s) > 2 and s.startswith("(") and s.endswith(")"):
+        s = "-" + s[1:-1].strip()
+    if "," in s and "." in s:
+        s = s.replace(",", "")
+    try:
+        value = float(s)
+    except ValueError:
+        return None
+    if not math.isfinite(value):
+        return None
+    return value + 0.0  # normalises -0.0 to 0.0
+
+
+def safe_stat(func, data: List[float]) -> Optional[float]:
+    """Run a statistic on data; return None for empty input or numeric overflow."""
+    if not data:
+        return None
+    try:
+        result = func(data)
+    except (OverflowError, ValueError, statistics.StatisticsError):
+        return None
+    if result is None or not math.isfinite(result):
+        return None
+    return result + 0.0
+
+
+def compute_stats(path: str, delimiter: str, missing: set, has_header: bool) -> List[Dict]:
+    """Stream the CSV once and return per-column stats in input-column order."""
+    handle = sys.stdin if path == "-" else open(path, newline="", encoding="utf-8-sig")
+    try:
+        reader = csv.reader(handle, delimiter=delimiter)
+
+        first: Optional[List[str]] = None
+        for row in reader:  # skip leading blank lines
+            if row:
+                first = row
+                break
+        if first is None:
+            return []
+
+        if has_header:
+            names = [n.strip() or f"column_{i + 1}" for i, n in enumerate(first)]
+            pending: List[List[str]] = []
+        else:
+            names = [f"column_{i + 1}" for i in range(len(first))]
+            pending = [first]
+
+        n_cols = len(names)
+        values: List[List[float]] = [[] for _ in range(n_cols)]
+        missing_counts = [0] * n_cols
+        non_numeric = [0] * n_cols
+
+        def consume(row: Sequence[str]) -> None:
+            if not row:  # truly blank line: not a record
+                return
+            for i in range(n_cols):
+                cell = row[i] if i < len(row) else None  # short row => missing
+                if is_missing(cell, missing):
+                    missing_counts[i] += 1
+                    continue
+                num = parse_number(cell)
+                if num is None:
+                    non_numeric[i] += 1
+                else:
+                    values[i].append(num)
+
+        for row in pending:
+            consume(row)
+        for row in reader:
+            consume(row)
+    finally:
+        if handle is not sys.stdin:
+            handle.close()
+
+    results = []
+    for i, name in enumerate(names):  # input-column order preserved
+        col = values[i]
+        results.append({
+            "column": name,
+            "count": len(col),
+            "min": min(col) if col else None,
+            "max": max(col) if col else None,
+            "mean": safe_stat(statistics.fmean, col),
+            "median": safe_stat(statistics.median, col),
+            "missing": missing_counts[i],
+            "non_numeric": non_numeric[i],
+        })
+    return results
+
+
+def fmt(value: Optional[float], precision: int) -> str:
+    """Format a value for table output; None becomes NA."""
+    if value is None:
+        return "NA"
+    if float(value).is_integer() and abs(value) < 1e15:
+        return str(int(value))
+    text = f"{value:.{precision}f}"
+    # Avoid printing "-0.0000" for tiny negative numbers that round to zero.
+    if text.startswith("-") and float(text) == 0:
+        text = text[1:]
+    return text
+
+
+def render_table(results: List[Dict], precision: int) -> str:
+    headers = ["column", "count", "min", "max", "mean", "median"]
+    rows = [
+        [
+            r["column"],
+            str(r["count"]),
+            fmt(r["min"], precision),
+            fmt(r["max"], precision),
+            fmt(r["mean"], precision),
+            fmt(r["median"], precision),
+        ]
+        for r in results
+    ]
+    widths = [max([len(h)] + [len(row[i]) for row in rows]) for i, h in enumerate(headers)]
+
+    def line(cells: List[str]) -> str:
+        return "  ".join(
+            c.ljust(widths[i]) if i == 0 else c.rjust(widths[i]) for i, c in enumerate(cells)
+        )
+
+    return "\n".join([line(headers), line(["-" * w for w in widths])] + [line(r) for r in rows])
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    p = argparse.ArgumentParser(description="Per-column CSV statistics.")
+    p.add_argument("file", help="CSV file path, or '-' for stdin")
+    p.add_argument("-d", "--delimiter", default=",", help="field delimiter (default: ,)")
+    p.add_argument("--no-header", action="store_true", help="first row is data, not a header")
+    p.add_argument("--missing", nargs="*", default=None,
+                   help="extra tokens to treat as missing (case-insensitive)")
+    p.add_argument("--format", choices=["table", "json", "csv"], default="table")
+    p.add_argument("--precision", type=int, default=4, help="decimal places (default: 4)")
+    args = p.parse_args(argv)
+
+    if len(args.delimiter) != 1:
+        print("error: delimiter must be a single character", file=sys.stderr)
+        return 2
+
+    missing = set(DEFAULT_MISSING)
+    if args.missing:
+        missing |= {m.strip().lower() for m in args.missing}
+
+    try:
+        results = compute_stats(args.file, args.delimiter, missing, not args.no_header)
+    except FileNotFoundError:
+        print(f"error: file not found: {args.file}", file=sys.stderr)
+        return 2
+    except (OSError, csv.Error, UnicodeDecodeError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    if not results:
+        print("error: input is empty", file=sys.stderr)
+        return 1
+
+    if args.format == "json":
+        print(json.dumps(results, indent=2))  # None -> null
+    elif args.format == "csv":
+        w = csv.writer(sys.stdout)
+        w.writerow(["column", "count", "min", "max", "mean", "median"])
+        for r in results:
+            w.writerow([r["column"], r["count"], r["min"], r["max"], r["mean"], r["median"]])
+    else:
+        print(render_table(results, args.precision))
+
+    # Diagnostics go to stderr so they never corrupt piped output.
+    for r in results:
+        if r["count"] == 0 and r["non_numeric"] == 0:
+            print(f"note: column '{r['column']}' is entirely missing", file=sys.stderr)
+        elif r["count"] == 0:
+            print(f"note: column '{r['column']}' has no numeric values", file=sys.stderr)
+        elif r["non_numeric"]:
+            print(f"note: column '{r['column']}' skipped {r['non_numeric']} non-numeric cell(s)",
+                  file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+**What changed**
+
+- **Entirely missing columns:** these report `count` 0 and `NA` for min, max, mean, and median (`null` in JSON, empty in CSV). Nothing is computed on an empty list, and stderr gets a note saying the column is entirely missing.
+- **Negative and zero values:** these are ordinary numbers. `-5` parses as a number, while a lone `-` is still a missing marker. Accounting-style `(12.5)` is read as `-12.5`, and `-0` is normalized to `0`. Tiny negative means that round to zero print as `0.0000` instead of `-0.0000`.
+- **Other hardening:** blank lines are skipped, and leading blank lines no longer break header detection. Float overflow and inf/nan values are guarded, and the delimiter is validated.

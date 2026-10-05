@@ -1,0 +1,60 @@
+import json
+import sys
+
+
+def main():
+    if len(sys.argv) != 3:
+        print("Usage: python filter.py input.jsonl threshold")
+        return
+
+    input_file = sys.argv[1]
+    threshold = float(sys.argv[2])
+
+    retained = []
+    skipped = 0
+
+    with open(input_file, "r", encoding="utf-8") as file:
+        for line in file:
+            try:
+                record = json.loads(line)
+
+                if not isinstance(record, dict):
+                    raise ValueError
+
+                required = ("id", "category", "score", "status")
+                if not all(key in record for key in required):
+                    raise ValueError
+
+                if not isinstance(record["category"], str):
+                    raise ValueError
+
+                if not isinstance(record["status"], str):
+                    raise ValueError
+
+                if isinstance(record["score"], bool):
+                    raise ValueError
+
+                score = float(record["score"])
+
+                if record["status"].casefold() == "active" and score >= threshold:
+                    retained.append(record)
+
+            except (json.JSONDecodeError, ValueError, TypeError):
+                skipped += 1
+
+    retained.sort(
+        key=lambda r: (
+            r["category"],
+            -float(r["score"]),
+            str(r["id"])
+        )
+    )
+
+    for record in retained:
+        print(json.dumps(record, ensure_ascii=False))
+
+    print(f"Skipped records: {skipped}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

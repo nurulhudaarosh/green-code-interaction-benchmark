@@ -1,0 +1,111 @@
+from pathlib import Path
+from PIL import Image
+
+
+def _average_hash(image_path, hash_size=8):
+    """Compute the average hash (aHash) of an image."""
+    with Image.open(image_path) as img:
+        gray = img.convert("L").resize((hash_size, hash_size))
+        pixels = list(gray.getdata())
+        avg = sum(pixels) / len(pixels)
+        return [pixel >= avg for pixel in pixels]
+
+
+def _hamming_distance(hash1, hash2):
+    """Return the Hamming distance between two boolean hashes."""
+    return sum(a != b for a, b in zip(hash1, hash2))
+
+
+def find_fuzzy_duplicates(input_dir, hash_size=8, max_hamming=5):
+    """
+    Cluster images by average-hash Hamming distance.
+
+    Images are connected whenever their Hamming distance is <= max_hamming.
+    Union-find is used so the clustering is transitive: if A is close to B
+    and B is close to C, all three belong to the same cluster.
+
+    Returns:
+        list[list[str]]: Clusters containing at least two image paths.
+    """
+    if hash_size <= 0:
+        raise ValueError("hash_size must be positive")
+    if max_hamming < 0:
+        raise ValueError("max_hamming must be non-negative")
+
+    input_dir = Path(input_dir)
+    image_extensions = {
+        ".jpg", ".jpeg", ".png", ".bmp", ".gif",
+        ".tif", ".tiff", ".webp"
+    }
+
+    image_paths = sorted(
+        p for p in input_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in image_extensions
+    )
+
+    # A cluster requires at least two images.
+    if len(image_paths) < 2:
+        return []
+
+    hashes = []
+    valid_paths = []
+
+    for path in image_paths:
+        try:
+            hashes.append(_average_hash(path, hash_size))
+            valid_paths.append(path)
+        except (OSError, ValueError):
+            # Ignore files that cannot be opened as valid images.
+            continue
+
+    if len(valid_paths) < 2:
+        return []
+
+    # Union-find / Disjoint Set Union.
+    parent = list(range(len(valid_paths)))
+    rank = [0] * len(valid_paths)
+
+    def find(x):
+        # Path compression.
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        root_a = find(a)
+        root_b = find(b)
+
+        if root_a == root_b:
+            return
+
+        # Union by rank.
+        if rank[root_a] < rank[root_b]:
+            parent[root_a] = root_b
+        elif rank[root_a] > rank[root_b]:
+            parent[root_b] = root_a
+        else:
+            parent[root_b] = root_a
+            rank[root_a] += 1
+
+    # Connect all sufficiently similar image pairs.
+    for i in range(len(hashes)):
+        for j in range(i + 1, len(hashes)):
+            distance = _hamming_distance(hashes[i], hashes[j])
+
+            if distance <= max_hamming:
+                union(i, j)
+
+    # Build transitive clusters.
+    clusters = {}
+
+    for i, path in enumerate(valid_paths):
+        root = find(i)
+        clusters.setdefault(root, []).append(str(path))
+
+    # Only return actual duplicate/fuzzy-duplicate groups.
+    return [
+        members
+        for members in clusters.values()
+        if len(members) >= 2
+    ]

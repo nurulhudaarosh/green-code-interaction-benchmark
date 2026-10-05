@@ -1,0 +1,65 @@
+import re
+from collections import Counter
+from typing import NamedTuple, Optional
+
+# Matches the ERROR level token and captures the message that follows it.
+_ERROR_RE = re.compile(r"\bERROR\b\s*[:\-\]|]*\s*(.*)")
+
+# Any recognizable log level. A non-blank line with none of these is "malformed".
+_LEVEL_RE = re.compile(r"\b(?:TRACE|DEBUG|INFO|NOTICE|WARN(?:ING)?|ERROR|CRITICAL|FATAL)\b")
+
+# Normalization rules, applied in order (specific patterns before generic ones).
+_NORMALIZERS = [
+    (re.compile(r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b"), "<TS>"),
+    (re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"), "<UUID>"),
+    (re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b"), "<IP>"),
+    (re.compile(r"\b0x[0-9a-fA-F]+\b"), "<HEX>"),
+    (re.compile(r"\b[0-9a-fA-F]{16,}\b"), "<HASH>"),
+    (re.compile(r"(?:/[\w.\-]+){2,}"), "<PATH>"),
+    (re.compile(r"'[^']*'|\"[^\"]*\""), "<STR>"),
+    (re.compile(r"\b\d+(?:\.\d+)?\b"), "<N>"),
+    (re.compile(r"\s+"), " "),
+]
+
+
+class AnalysisResult(NamedTuple):
+    counts: dict[str, int]    # {normalized signature: count}, sorted by count desc
+    malformed_lines: int      # non-blank lines with no recognizable log level
+
+
+def normalize(message: str) -> str:
+    for pattern, repl in _NORMALIZERS:
+        message = pattern.sub(repl, message)
+    return message.strip()
+
+
+def analyze_error_log(path: str, top_n: Optional[int] = None) -> AnalysisResult:
+    """Count normalized ERROR signatures in a log file.
+
+    top_n: if given, keep only the N most frequent signatures (None = all).
+    Malformed lines are counted but never raise; blank lines are ignored.
+    """
+    if top_n is not None and top_n < 0:
+        raise ValueError("top_n must be >= 0 or None")
+
+    counts: Counter[str] = Counter()
+    malformed = 0
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            m = _ERROR_RE.search(line)
+            if m:
+                signature = normalize(m.group(1)) or "<EMPTY>"
+                counts[signature] += 1
+            elif line.strip() and not _LEVEL_RE.search(line):
+                malformed += 1
+    return AnalysisResult(dict(counts.most_common(top_n)), malformed)
+
+
+if __name__ == "__main__":
+    import sys
+
+    n = int(sys.argv[2]) if len(sys.argv) > 2 else None
+    result = analyze_error_log(sys.argv[1], top_n=n)
+    for sig, c in result.counts.items():
+        print(f"{c:6d}  {sig}")
+    print(f"\nmalformed lines skipped: {result.malformed_lines}")

@@ -1,0 +1,70 @@
+### Problem Identification & Understanding
+
+The goal is to compute the exact product of two integer polynomials, $A(x)$ and $B(x)$, given by their coefficient arrays. If $A(x) = \sum_{i=0}^{m-1} a_i x^i$ and $B(x) = \sum_{j=0}^{n-1} b_j x^j$, the resulting polynomial $C(x) = A(x) \cdot B(x) = \sum_{k=0}^{m+n-2} c_k x^k$ has coefficients defined by the discrete Cauchy convolution:
+
+$$c_k = \sum_{i=0}^{k} a_i \cdot b_{k-i}$$
+
+where coefficients $a_i$ or $b_j$ outside their respective index bounds are treated as $0$.
+
+---
+
+### Key Constraints & Required Output
+
+* **Input:** Two lists/arrays of integers representing polynomial coefficients in ascending order of degree (index $i$ corresponds to the term $x^i$).
+* **Constraints:**
+* Input coefficients are integers (can be positive, negative, or zero).
+* Inputs can be empty lists (representing the zero polynomial).
+* Small to moderate degree polynomials keep the $O(m \cdot n)$ time complexity well within practical execution limits.
+
+
+* **Output:** A list of integers representing the exact coefficient array of the product polynomial $C(x)$.
+
+---
+
+### Algorithm Description
+
+The solution uses direct coefficient convolution (standard Cauchy product):
+
+1. Handle edge cases: If either input array is empty, the product is an empty list `[]`.
+2. Determine the result array length: $m + n - 1$, where $m$ and $n$ are the lengths of the two input lists.
+3. Initialize the result array of size $m + n - 1$ with zeros.
+4. Iterate over every term $a_i$ and $b_j$ using a nested loop, adding $a_i \cdot b_j$ to the result index $i + j$.
+
+---
+
+### Python Implementation
+
+```python
+def multiply_polynomials(a: list[int], b: list[int]) -> list[int]:
+    """
+    Multiplies two integer polynomials using direct discrete convolution.
+    
+    :param a: Coefficient array of the first polynomial [a0, a1, a2, ...]
+    :param b: Coefficient array of the second polynomial [b0, b1, b2, ...]
+    :return: Coefficient array of the product polynomial [c0, c1, c2, ...]
+    """
+    if not a or not b:
+        return []
+
+    m, n = len(a), len(b)
+    result = [0] * (m + n - 1)
+
+    for i in range(m):
+        for j in range(n):
+            result[i + j] += a[i] * b[j]
+
+    return result
+
+
+# Example Usage & Verification:
+if __name__ == "__main__":
+    # P(x) = 1 + 2x - 3x^2
+    # Q(x) = -4 + 5x
+    # Product: (1 + 2x - 3x^2)(-4 + 5x) = -4 - 3x + 22x^2 - 15x^3
+    poly1 = [1, 2, -3]
+    poly2 = [-4, 5]
+    
+    product = multiply_polynomials(poly1, poly2)
+    print("Product coefficients:", product)  # Output: [-4, -3, 22, -15]
+
+```

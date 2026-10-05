@@ -1,0 +1,73 @@
+Yes. The existing implementation already produces the same dimensions, but we can explicitly handle the exact-size case so the image is copied without resizing or padding.
+
+```python id="58321"
+from pathlib import Path
+from PIL import Image
+
+
+def letterbox_resize(input_dir, output_dir, target_size, pad_color=(0, 0, 0)):
+    """
+    Resize images while preserving aspect ratio and pad to exactly target_size.
+    Images that are already exactly target_size are left unchanged.
+
+    Args:
+        input_dir (str): Directory containing input images.
+        output_dir (str): Directory where output images are saved.
+        target_size (tuple): Target size as (width, height).
+        pad_color (tuple): RGB color used for padding.
+    """
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    target_w, target_h = target_size
+
+    for file_path in input_dir.iterdir():
+        if not file_path.is_file():
+            continue
+
+        try:
+            with Image.open(file_path) as img:
+                img = img.convert("RGB")
+                src_w, src_h = img.size
+
+                # Edge case: image is already exactly target_size.
+                # Keep it unchanged — scale factor is effectively 1.0.
+                if (src_w, src_h) == (target_w, target_h):
+                    output = img.copy()
+                else:
+                    # Scale so the entire image fits inside target_size.
+                    scale = min(
+                        target_w / src_w,
+                        target_h / src_h
+                    )
+
+                    new_w = max(1, round(src_w * scale))
+                    new_h = max(1, round(src_h * scale))
+
+                    resized = img.resize(
+                        (new_w, new_h),
+                        Image.Resampling.LANCZOS
+                    )
+
+                    # Create padded canvas.
+                    output = Image.new(
+                        "RGB",
+                        (target_w, target_h),
+                        pad_color
+                    )
+
+                    # Center the resized image.
+                    x = (target_w - new_w) // 2
+                    y = (target_h - new_h) // 2
+
+                    output.paste(resized, (x, y))
+
+                output.save(output_dir / file_path.name)
+
+        except (OSError, ValueError):
+            # Skip invalid or unsupported image files.
+            continue
+```
+
+For example, a `640×640` image with `target_size=(640, 640)` now takes the direct-copy path: **no resize, no padding, and no interpolation artifacts**.

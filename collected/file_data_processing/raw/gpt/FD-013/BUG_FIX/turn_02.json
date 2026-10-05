@@ -1,0 +1,11 @@
+{
+  "task_id": "FD-013",
+  "model": "gpt",
+  "interaction": "BUG_FIX",
+  "turn": 2,
+  "saved_at": "2026-10-04T21:49:35.319991+00:00",
+  "response_sha256": "b38d910d1f6e20ccbdf005311d76dcd8ee37b3830e4e72062f5b613e450971fd",
+  "code_sha256": "96c865dce71173826176d509c6f781115bdfa398de5474539b454be481d0fafe",
+  "raw_file": ".collection/raw/gpt/FD-013/BUG_FIX/turn_02.txt",
+  "code_file": ".collection/code/gpt/FD-013/BUG_FIX/final.py"
+}

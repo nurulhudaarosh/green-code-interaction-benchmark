@@ -1,0 +1,119 @@
+from datetime import datetime
+
+
+def get_extension(filename):
+    if not isinstance(filename, str):
+        return ""
+
+    filename = filename.strip()
+
+    if not filename or "." not in filename:
+        return ""
+
+    name, extension = filename.rsplit(".", 1)
+
+    if not name.strip() or not extension.strip():
+        return ""
+
+    return extension.strip().lower()
+
+
+def parse_document(record):
+    if not isinstance(record, str) or not record.strip():
+        return None
+
+    parts = record.split("|")
+
+    if len(parts) != 3:
+        return None
+
+    name = parts[0].strip()
+    date_text = parts[1].strip()
+    size_text = parts[2].strip()
+
+    if not name:
+        return None
+
+    try:
+        date = datetime.strptime(date_text, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+    try:
+        size = float(size_text)
+    except ValueError:
+        return None
+
+    if size < 0:
+        return None
+
+    return {
+        "name": name,
+        "date": date,
+        "size": size,
+        "extension": get_extension(name),
+    }
+
+
+def classify_size(size):
+    # Exact boundaries:
+    # < 1 MB  -> small
+    # 1-10 MB -> medium
+    # > 10 MB -> large
+    if size < 1:
+        return "small"
+    elif size <= 10:
+        return "medium"
+    else:
+        return "large"
+
+
+def organize_documents(records):
+    result = {
+        "no_extension": [],
+        "extensions": {},
+        "size_buckets": {
+            "small": [],
+            "medium": [],
+            "large": []
+        }
+    }
+
+    if not isinstance(records, list):
+        return result
+
+    for record in records:
+        document = parse_document(record)
+
+        if document is None:
+            continue
+
+        name = document["name"]
+        extension = document["extension"]
+        size = document["size"]
+
+        if extension:
+            result["extensions"].setdefault(extension, []).append(name)
+        else:
+            result["no_extension"].append(name)
+
+        bucket = classify_size(size)
+        result["size_buckets"][bucket].append(name)
+
+    return result
+
+
+if __name__ == "__main__":
+    records = [
+        "report.pdf|2026-01-10|0.5",
+        "presentation.pptx|2026-02-15|1",
+        "research.docx|2026-03-01|10",
+        "largefile.pdf|2026-03-20|10.01",
+        "README|2026-04-01|2",
+        "archive.|2026-04-02|5",
+        "|2026-04-03|3",
+        "bad|record|extra|field",
+        "notes.txt|2026-05-01|0"
+    ]
+
+    print(organize_documents(records))

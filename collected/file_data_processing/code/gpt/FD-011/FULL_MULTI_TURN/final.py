@@ -1,0 +1,100 @@
+import csv
+import sys
+from datetime import datetime, timedelta
+
+
+def parse_timestamp(value):
+    return datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+
+
+def process(input_file, output_file):
+    sensors = {}
+
+    with open(input_file, "r", newline="", encoding="utf-8") as file:
+        reader = csv.DictReader(file)
+
+        for row in reader:
+            sensor = row["sensor"].strip()
+            timestamp = parse_timestamp(row["timestamp"])
+            value = float(row["value"])
+
+            sensors.setdefault(sensor, []).append({
+                "sensor": sensor,
+                "timestamp": timestamp,
+                "value": value,
+                "filled": "0"
+            })
+
+    output_rows = []
+
+    for sensor in sorted(sensors):
+        readings = sorted(
+            sensors[sensor],
+            key=lambda row: row["timestamp"]
+        )
+
+        if not readings:
+            continue
+
+        for i in range(len(readings) - 1):
+            current = readings[i]
+            next_row = readings[i + 1]
+
+            output_rows.append(current)
+
+            gap = next_row["timestamp"] - current["timestamp"]
+            missing_hours = int(gap.total_seconds() // 3600) - 1
+
+            if missing_hours > 0:
+                for step in range(1, missing_hours + 1):
+                    timestamp = current["timestamp"] + timedelta(
+                        hours=step
+                    )
+
+                    fraction = step / (missing_hours + 1)
+
+                    value = (
+                        current["value"]
+                        + (next_row["value"] - current["value"]) * fraction
+                    )
+
+                    output_rows.append({
+                        "sensor": sensor,
+                        "timestamp": timestamp,
+                        "value": value,
+                        "filled": "1"
+                    })
+
+        output_rows.append(readings[-1])
+
+    output_rows.sort(
+        key=lambda row: (row["sensor"], row["timestamp"])
+    )
+
+    with open(output_file, "w", newline="", encoding="utf-8") as file:
+        writer = csv.writer(file)
+
+        writer.writerow([
+            "sensor",
+            "timestamp",
+            "value",
+            "filled"
+        ])
+
+        for row in output_rows:
+            value = f"{row['value']:.10f}".rstrip("0").rstrip(".")
+
+            writer.writerow([
+                row["sensor"],
+                row["timestamp"].isoformat(),
+                value,
+                row["filled"]
+            ])
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: python utility.py input.csv output.csv")
+        sys.exit(1)
+
+    process(sys.argv[1], sys.argv[2])

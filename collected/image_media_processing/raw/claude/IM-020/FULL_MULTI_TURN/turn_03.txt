@@ -1,0 +1,192 @@
+`analyze_brightness` now accepts `custom_thresholds=(dark_max, bright_min)`, and `analyze_brightness.py` is updated. I haven't run it.
+
+- **Default:** with `custom_thresholds=None` it uses `(85, 170)`.
+- **Boundaries are now inclusive:** to match the names `dark_max` and `bright_min`, an image is `dark` if brightness ≤ `dark_max` and `bright` if brightness ≥ `bright_min`. Before, the comparisons were strict (`< 85`, `> 170`), so an image at exactly 85.00 or 170.00 now falls into `dark` or `bright` instead of `normal`. If you'd rather keep the strict comparisons, it's a two-character change in `classify_brightness`.
+- **Validation:** the thresholds must be a pair of numbers with `0 <= dark_max < bright_min <= 255`, otherwise it raises `ValueError`. This is checked before any files are read.
+- **Command line:** there's a new `--thresholds DARK_MAX BRIGHT_MIN` option.
+
+Full code:
+
+```python
+"""Brightness analysis for a directory of images.
+
+For every image found in `input_dir`, compute:
+  - per-channel means (R, G, B), on a 0-255 scale
+  - overall grayscale brightness (ITU-R BT.601 luma), on a 0-255 scale
+  - a "dark" / "normal" / "bright" classification (default boundaries
+    85 / 170, overridable via custom_thresholds)
+
+Requires: Pillow, numpy
+    pip install pillow numpy
+"""
+
+import argparse
+import csv
+import sys
+from pathlib import Path
+
+import numpy as np
+from PIL import Image, ImageOps, UnidentifiedImageError
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
+
+# Default classification boundaries on the 0-255 grayscale brightness,
+# as (dark_max, bright_min):
+#   brightness <= dark_max   -> "dark"
+#   brightness >= bright_min -> "bright"
+#   anything in between      -> "normal"
+DEFAULT_THRESHOLDS = (85, 170)
+
+
+def _validate_thresholds(thresholds):
+    """Check a (dark_max, bright_min) pair and return it as two floats."""
+    try:
+        dark_max, bright_min = thresholds
+        dark_max, bright_min = float(dark_max), float(bright_min)
+    except (TypeError, ValueError):
+        raise ValueError(
+            "custom_thresholds must be a (dark_max, bright_min) pair of numbers"
+        ) from None
+    if not (0 <= dark_max < bright_min <= 255):
+        raise ValueError(
+            "custom_thresholds must satisfy 0 <= dark_max < bright_min <= 255, "
+            f"got ({dark_max:g}, {bright_min:g})"
+        )
+    return dark_max, bright_min
+
+
+def classify_brightness(brightness, thresholds=DEFAULT_THRESHOLDS):
+    """Map a 0-255 brightness value to 'dark', 'normal' or 'bright'."""
+    dark_max, bright_min = thresholds
+    if brightness <= dark_max:
+        return "dark"
+    if brightness >= bright_min:
+        return "bright"
+    return "normal"
+
+
+def _load_rgb_image(path):
+    """Load an image as a fully loaded PIL image in RGB mode.
+
+    Respects EXIF orientation, flattens transparency onto a white
+    background (so fully transparent pixels don't read as black), and
+    expands grayscale / palette images to three channels.
+    """
+    with Image.open(path) as img:
+        img = ImageOps.exif_transpose(img)
+        if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+            rgba = img.convert("RGBA")
+            background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+            img = Image.alpha_composite(background, rgba)
+        return img.convert("RGB")
+
+
+def analyze_image(path, thresholds=DEFAULT_THRESHOLDS):
+    """Return a dict of brightness stats for a single image file."""
+    rgb = _load_rgb_image(path)
+
+    # Per-channel means.
+    r_mean, g_mean, b_mean = np.asarray(rgb, dtype=np.float64).reshape(-1, 3).mean(axis=0)
+
+    # Brightness: mean of the true grayscale ('L' mode) conversion, which
+    # applies Pillow's perceptual luma weighting (ITU-R BT.601).
+    gray = rgb.convert("L")
+    brightness = float(np.asarray(gray, dtype=np.float64).mean())
+
+    return {
+        "filename": Path(path).name,
+        "mean_r": round(float(r_mean), 2),
+        "mean_g": round(float(g_mean), 2),
+        "mean_b": round(float(b_mean), 2),
+        "brightness": round(brightness, 2),
+        "category": classify_brightness(brightness, thresholds),
+    }
+
+
+def analyze_brightness(input_dir, custom_thresholds=None):
+    """Analyze every image in `input_dir` (non-recursive).
+
+    custom_thresholds: optional (dark_max, bright_min) pair overriding the
+        default (85, 170). An image is "dark" if its brightness is <=
+        dark_max, "bright" if it is >= bright_min, and "normal" otherwise.
+        Requires 0 <= dark_max < bright_min <= 255.
+
+    Returns a list of dicts, sorted by filename, each with keys:
+        filename, mean_r, mean_g, mean_b, brightness, category
+
+    Files that can't be read as images are not skipped silently: they
+    appear in the result with an "error" key and no statistics.
+    """
+    thresholds = (
+        DEFAULT_THRESHOLDS
+        if custom_thresholds is None
+        else _validate_thresholds(custom_thresholds)
+    )
+
+    input_path = Path(input_dir)
+    if not input_path.is_dir():
+        raise NotADirectoryError(f"Not a directory: {input_dir}")
+
+    files = sorted(
+        p for p in input_path.iterdir()
+        if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+    )
+
+    results = []
+    for path in files:
+        try:
+            results.append(analyze_image(path, thresholds))
+        except (UnidentifiedImageError, OSError, ValueError) as exc:
+            results.append({"filename": path.name, "error": str(exc)})
+    return results
+
+
+def _print_table(results):
+    header = f"{'file':<32} {'R':>7} {'G':>7} {'B':>7} {'bright':>8}  category"
+    print(header)
+    print("-" * len(header))
+    for row in results:
+        if "error" in row:
+            print(f"{row['filename']:<32} ERROR: {row['error']}")
+        else:
+            print(
+                f"{row['filename']:<32} {row['mean_r']:>7.2f} {row['mean_g']:>7.2f} "
+                f"{row['mean_b']:>7.2f} {row['brightness']:>8.2f}  {row['category']}"
+            )
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Analyze image brightness in a directory.")
+    parser.add_argument("input_dir", help="Directory containing images")
+    parser.add_argument("--csv", metavar="PATH", help="Also write results to a CSV file")
+    parser.add_argument(
+        "--thresholds", nargs=2, type=float, metavar=("DARK_MAX", "BRIGHT_MIN"),
+        help="Override the default (85, 170) dark/bright boundaries",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        results = analyze_brightness(args.input_dir, custom_thresholds=args.thresholds)
+    except (NotADirectoryError, ValueError) as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
+    if not results:
+        print("No images found.")
+        return 0
+
+    _print_table(results)
+
+    if args.csv:
+        fields = ["filename", "mean_r", "mean_g", "mean_b", "brightness", "category", "error"]
+        with open(args.csv, "w", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(results)
+        print(f"\nWrote {args.csv}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```

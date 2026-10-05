@@ -1,0 +1,16 @@
+Looking at the code, the validation already uses `hash_size ** 2` as the upper bound:
+
+```python
+if not (0 <= max_hamming <= hash_size ** 2):
+    raise ValueError(
+        f"max_hamming must be in [0, {hash_size ** 2}]"
+    )
+```
+
+So the bug as described — a hardcoded `64` — is **not present** in the implementation above. The check correctly scales with `hash_size`:
+
+- `hash_size=8` → upper bound `64`
+- `hash_size=16` → upper bound `256`
+- `hash_size=32` → upper bound `1024`
+
+If you're seeing a `64` bound somewhere, it's likely from a different/earlier variant of the function. For reference, the buggy version would have looked like this:

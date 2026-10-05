@@ -1,0 +1,200 @@
+"""
+Offline Customer Record Matcher
+Blocking: surname-initial + postal-prefix
+Matching: exact normalized email OR phone
+
+Normalization applied to all fields before matching:
+  - Case:   lowercased (names, emails, phones via digit-only)
+  - Spaces: leading/trailing stripped; internal collapsed
+  - Phone:  all punctuation removed, digits only
+"""
+
+import re
+import unicodedata
+from collections import defaultdict
+from dataclasses import dataclass, field
+from typing import List, Dict, Tuple
+
+
+# ---------- Normalization helpers ----------
+
+def normalize_name(name: str) -> str:
+    """Lowercase, strip, collapse spaces, strip accents, keep only letters/'/-."""
+    if not name:
+        return ""
+    # Unicode normalize -> strip accents
+    name = unicodedata.normalize("NFKD", name)
+    name = "".join(c for c in name if not unicodedata.combining(c))
+    # Lowercase + strip + collapse internal whitespace
+    name = name.lower().strip()
+    name = re.sub(r"\s+", " ", name)
+    # Keep only letters, spaces, hyphens, apostrophes
+    name = re.sub(r"[^a-z\s\-']", "", name)
+    # Collapse again after removal (in case punctuation left gaps)
+    name = re.sub(r"\s+", " ", name).strip()
+    return name
+
+
+def normalize_email(email: str) -> str:
+    """Lowercase, strip, remove plus-tag, remove Gmail dots."""
+    if not email:
+        return ""
+    email = email.strip().lower()
+    # Remove internal whitespace entirely (emails never contain spaces)
+    email = re.sub(r"\s+", "", email)
+    local, sep, domain = email.partition("@")
+    if not sep:
+        return email  # malformed, but normalized
+    local = local.split("+", 1)[0]
+    if domain in ("gmail.com", "googlemail.com"):
+        local = local.replace(".", "")
+    return f"{local}@{domain}"
+
+
+def normalize_phone(phone: str, default_country: str = "1") -> str:
+    """
+    Lowercase (irrelevant but consistent), strip surrounding spaces,
+    remove all punctuation -> digits only.
+    Normalize 10-digit US numbers by prepending country code.
+    """
+    if not phone:
+        return ""
+    phone = phone.strip().lower()
+    digits = re.sub(r"\D", "", phone)  # removes punctuation AND internal spaces
+    if not digits:
+        return ""
+    if digits.startswith("00"):
+        digits = digits[2:]
+    if len(digits) == 10:
+        digits = default_country + digits
+    return digits
+
+
+def postal_prefix(postal: str, length: int = 3) -> str:
+    """Uppercase, remove all whitespace, take first `length` chars."""
+    if not postal:
+        return ""
+    p = re.sub(r"\s+", "", postal.strip().upper())
+    return p[:length]
+
+
+def surname_initial(surname: str) -> str:
+    """First letter of normalized surname, uppercased (empty if none)."""
+    s = normalize_name(surname)
+    return s[:1].upper() if s else ""
+
+
+# ---------- Record ----------
+
+@dataclass
+class CustomerRecord:
+    record_id: str
+    first_name: str = ""
+    last_name: str = ""
+    email: str = ""
+    phone: str = ""
+    postal: str = ""
+
+    # Cached normalized values (computed once at construction)
+    norm_first: str = field(init=False)
+    norm_last: str = field(init=False)
+    norm_email: str = field(init=False)
+    norm_phone: str = field(init=False)
+    block_key: str = field(init=False)
+
+    def __post_init__(self):
+        self.norm_first = normalize_name(self.first_name)
+        self.norm_last = normalize_name(self.last_name)
+        self.norm_email = normalize_email(self.email)
+        self.norm_phone = normalize_phone(self.phone)
+        self.block_key = f"{surname_initial(self.last_name)}|{postal_prefix(self.postal)}"
+
+    def display(self) -> str:
+        return (f"[{self.record_id}] {self.first_name} {self.last_name} "
+                f"<{self.email}> {self.phone} ({self.postal})")
+
+
+# ---------- Matcher ----------
+
+class CustomerMatcher:
+    def __init__(self, records: List[CustomerRecord]):
+        self.records = records
+        self.blocks: Dict[str, List[CustomerRecord]] = defaultdict(list)
+        self._build_blocks()
+
+    def _build_blocks(self):
+        for rec in self.records:
+            self.blocks[rec.block_key].append(rec)
+
+    def match(self, query: CustomerRecord) -> List[Tuple[CustomerRecord, str]]:
+        """
+        Returns list of (matched_record, match_reason) within the same block.
+        Match reason: 'email', 'phone', or 'email+phone'.
+        """
+        candidates = self.blocks.get(query.block_key, [])
+        results = []
+        for cand in candidates:
+            if cand.record_id == query.record_id:
+                continue
+            reasons = []
+            if query.norm_email and cand.norm_email and query.norm_email == cand.norm_email:
+                reasons.append("email")
+            if query.norm_phone and cand.norm_phone and query.norm_phone == cand.norm_phone:
+                reasons.append("phone")
+            if reasons:
+                results.append((cand, "+".join(reasons)))
+        return results
+
+    def match_all(self) -> List[Tuple[CustomerRecord, CustomerRecord, str]]:
+        """
+        Match every record against every other within its block.
+        Returns unique pairs (a, b) with a.record_id < b.record_id.
+        """
+        seen = set()
+        pairs = []
+        for block in self.blocks.values():
+            for i, a in enumerate(block):
+                for b in block[i + 1:]:
+                    key = tuple(sorted([a.record_id, b.record_id]))
+                    if key in seen:
+                        continue
+                    reasons = []
+                    if a.norm_email and a.norm_email == b.norm_email:
+                        reasons.append("email")
+                    if a.norm_phone and a.norm_phone == b.norm_phone:
+                        reasons.append("phone")
+                    if reasons:
+                        seen.add(key)
+                        pairs.append((a, b, "+".join(reasons)))
+        return pairs
+
+
+# ---------- Demo ----------
+
+if __name__ == "__main__":
+    # Notice deliberately messy inputs: mixed case, extra spaces, punctuation in phone
+    records = [
+        CustomerRecord("1", "  John ", "SMITH", "  John.Smith@Gmail.com ", "(555) 123-4567", "90210"),
+        CustomerRecord("2", "jon", "smith", "johnsmith@gmail.com", "555.123.4567", "90210-1234"),
+        CustomerRecord("3", "Jane", "Smith", "jane@example.com", "+1 555 999 8888", "90210"),
+        CustomerRecord("4", "Bob", "Jones", "bob@example.com", "555-111-2222", "10001"),
+        CustomerRecord("5", "ROBERT", "jones", "BOB@example.com", "555 333 4444", "10001"),
+        CustomerRecord("6", "Alice", "Brown", "alice@x.com", "555-777-6666", "90211"),
+        CustomerRecord("7", "Alicia", "brown", "Alice@X.com", "(555) 777-6666", "90211 "),
+    ]
+
+    print("=== Normalized record view ===")
+    for r in records:
+        print(f"{r.record_id}: email='{r.norm_email}'  phone='{r.norm_phone}'  block='{r.block_key}'")
+
+    matcher = CustomerMatcher(records)
+
+    print("\n=== All pairwise matches within blocks ===")
+    for a, b, reason in matcher.match_all():
+        print(f"{a.record_id} <-> {b.record_id}  ({reason})  block={a.block_key}")
+
+    print("\n=== Query: single record match ===")
+    query = CustomerRecord("Q", "  Johnny ", " SMITH ", " John.Smith+news@gmail.com ", "(555) 123.4567 ", "90210")
+    print(f"Query normalized: email='{query.norm_email}'  phone='{query.norm_phone}'  block='{query.block_key}'")
+    for cand, reason in matcher.match(query):
+        print(f"Q matched {cand.record_id} via {reason}")

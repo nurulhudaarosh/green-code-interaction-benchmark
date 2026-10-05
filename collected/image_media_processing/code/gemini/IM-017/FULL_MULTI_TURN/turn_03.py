@@ -1,0 +1,55 @@
+from PIL import Image
+from PIL.PngImagePlugin import PngInfo
+
+def embed_tags(
+    input_path: str, 
+    output_path: str, 
+    tags: dict[str, str], 
+    compress_level: int | None = None
+) -> None:
+    """
+    Embeds custom key/value string metadata into a PNG file.
+    
+    :param input_path: Path to the source image.
+    :param output_path: Path to save the new image with embedded metadata.
+    :param tags: Dictionary containing string key-value pairs to embed.
+    :param compress_level: Optional PNG compression level from 0 (no compression, fast)
+                           to 9 (maximum compression, slower). Default relies on Pillow default.
+    """
+    with Image.open(input_path) as img:
+        meta = PngInfo()
+        
+        # Preserve existing text chunks loaded in img.text
+        if hasattr(img, "text"):
+            for key, value in img.text.items():
+                meta.add_text(str(key), str(value))
+                
+        # Embed or overwrite with new tags
+        for key, value in tags.items():
+            meta.add_text(str(key), str(value))
+            
+        save_kwargs = {"pnginfo": meta}
+        if compress_level is not None:
+            if not (0 <= compress_level <= 9):
+                raise ValueError("compress_level must be an integer between 0 and 9.")
+            save_kwargs["compress_level"] = compress_level
+            
+        img.save(output_path, "PNG", **save_kwargs)
+
+
+def read_tags(image_path: str) -> dict[str, str]:
+    """
+    Reads text metadata chunks (tEXt, zTXt, iTXt) from a PNG file via img.text.
+    
+    :param image_path: Path to the PNG image.
+    :return: Dictionary containing key/value metadata strings.
+    """
+    with Image.open(image_path) as img:
+        if hasattr(img, "text") and isinstance(img.text, dict):
+            return {str(k): str(v) for k, v in img.text.items()}
+        
+        return {
+            str(k): str(v) 
+            for k, v in img.info.items() 
+            if isinstance(v, str)
+        }

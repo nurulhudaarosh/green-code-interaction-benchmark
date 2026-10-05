@@ -1,0 +1,211 @@
+```python
+#!/usr/bin/env python3
+"""
+csv_stats.py - Per-column CSV statistics utility.
+
+Reports count, min, max, mean, and median for each column, in input-column
+order. Missing values are handled independently per column: a missing cell
+in one column never causes the row to be dropped for other columns.
+
+Usage:
+    python csv_stats.py data.csv
+    python csv_stats.py data.csv --delimiter ";" --missing NA N/A -
+    cat data.csv | python csv_stats.py -
+"""
+
+import argparse
+import csv
+import math
+import sys
+
+DEFAULT_MISSING = {"", "na", "n/a", "nan", "null", "none", "nil", "-", "--", "?"}
+
+
+def parse_number(text):
+    """Return a finite float, or None if the text is not numeric."""
+    s = text.strip()
+    try:
+        value = float(s)
+    except ValueError:
+        try:
+            value = float(s.replace(",", ""))  # e.g. "1,234.5"
+        except ValueError:
+            return None
+    if math.isnan(value) or math.isinf(value):
+        return None
+    return value
+
+
+def median(values):
+    """Median of a non-empty list (average of the middle two if even)."""
+    ordered = sorted(values)
+    n = len(ordered)
+    mid = n // 2
+    if n % 2 == 1:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2
+
+
+def compute_stats(values):
+    """Return count, min, max, mean, median for a list of floats."""
+    if not values:
+        return {"count": 0, "min": None, "max": None, "mean": None, "median": None}
+    return {
+        "count": len(values),
+        "min": min(values),
+        "max": max(values),
+        "mean": sum(values) / len(values),
+        "median": median(values),
+    }
+
+
+def read_columns(stream, delimiter, missing, has_header):
+    """
+    Read the CSV and collect numeric values per column, preserving column order.
+    Returns (names, values_by_column, total_rows, non_numeric_counts, missing_counts).
+    """
+    reader = csv.reader(stream, delimiter=delimiter)
+
+    try:
+        first = next(reader)
+    except StopIteration:
+        raise ValueError("Input is empty.")
+
+    if has_header:
+        names = [n.strip() or f"column_{i + 1}" for i, n in enumerate(first)]
+        pending = []
+    else:
+        names = [f"column_{i + 1}" for i in range(len(first))]
+        pending = [first]
+
+    # Make duplicate header names unique while keeping order.
+    seen = {}
+    for i, n in enumerate(names):
+        if n in seen:
+            seen[n] += 1
+            names[i] = f"{n}_{seen[n]}"
+        else:
+            seen[n] = 1
+
+    ncols = len(names)
+    values = [[] for _ in range(ncols)]
+    missing_counts = [0] * ncols
+    non_numeric = [0] * ncols
+    total_rows = 0
+
+    def process(row):
+        for i in range(ncols):
+            cell = row[i] if i < len(row) else None  # short rows -> missing
+            if cell is None or cell.strip().lower() in missing:
+                missing_counts[i] += 1
+                continue
+            num = parse_number(cell)
+            if num is None:
+                non_numeric[i] += 1
+            else:
+                values[i].append(num)
+
+    for row in pending:
+        if row:
+            total_rows += 1
+            process(row)
+    for row in reader:
+        if not row:  # skip blank lines
+            continue
+        total_rows += 1
+        process(row)
+
+    return names, values, total_rows, non_numeric, missing_counts
+
+
+def fmt(value, precision):
+    if value is None:
+        return "-"
+    if float(value).is_integer() and abs(value) < 1e15:
+        return str(int(value))
+    return f"{value:.{precision}f}"
+
+
+def print_table(names, stats_list, precision):
+    headers = ["column", "count", "min", "max", "mean", "median"]
+    rows = [
+        [
+            name,
+            str(s["count"]),
+            fmt(s["min"], precision),
+            fmt(s["max"], precision),
+            fmt(s["mean"], precision),
+            fmt(s["median"], precision),
+        ]
+        for name, s in zip(names, stats_list)
+    ]
+    widths = [max(len(h), *(len(r[i]) for r in rows)) for i, h in enumerate(headers)]
+
+    def line(cells):
+        out = [cells[0].ljust(widths[0])]
+        out += [c.rjust(widths[i]) for i, c in enumerate(cells[1:], start=1)]
+        return "  ".join(out)
+
+    print(line(headers))
+    print("  ".join("-" * w for w in widths))
+    for r in rows:
+        print(line(r))
+
+
+def main():
+    p = argparse.ArgumentParser(description="Per-column CSV statistics.")
+    p.add_argument("file", help="CSV file path, or '-' for stdin")
+    p.add_argument("-d", "--delimiter", default=",", help="field delimiter (default ',')")
+    p.add_argument("-m", "--missing", nargs="*", default=None,
+                   help="tokens treated as missing (case-insensitive); "
+                        "replaces the defaults when given")
+    p.add_argument("--no-header", action="store_true",
+                   help="first row is data; columns named column_1, column_2, ...")
+    p.add_argument("-p", "--precision", type=int, default=4,
+                   help="decimal places (default 4)")
+    p.add_argument("--encoding", default="utf-8-sig",
+                   help="file encoding (default utf-8-sig)")
+    args = p.parse_args()
+
+    if args.missing is None:
+        missing = set(DEFAULT_MISSING)
+    else:
+        missing = {m.strip().lower() for m in args.missing}
+    missing.add("")  # empty cells are always missing
+
+    try:
+        if args.file == "-":
+            result = read_columns(sys.stdin, args.delimiter, missing, not args.no_header)
+        else:
+            with open(args.file, newline="", encoding=args.encoding) as f:
+                result = read_columns(f, args.delimiter, missing, not args.no_header)
+    except (OSError, ValueError, csv.Error) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    names, values, total_rows, non_numeric, missing_counts = result
+    stats_list = [compute_stats(v) for v in values]
+
+    print_table(names, stats_list, args.precision)
+    print(f"\nRows read: {total_rows}")
+
+    notes = [
+        f"  {n}: {missing_counts[i]} missing, {non_numeric[i]} non-numeric (ignored)"
+        for i, n in enumerate(names)
+        if missing_counts[i] or non_numeric[i]
+    ]
+    if notes:
+        print("Skipped values per column:")
+        print("\n".join(notes))
+
+    empty = [n for n, s in zip(names, stats_list) if s["count"] == 0]
+    if empty:
+        print(f"Columns with no numeric data: {', '.join(empty)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+This is the complete script. The median is computed by an explicit `median()` function, and count, min, max, and mean are unchanged. I also simplified `parse_number` so it no longer relies on the convoluted comma-handling expression from the first version.

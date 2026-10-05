@@ -1,0 +1,202 @@
+# Minimum Room Assignment — Extended Specification
+
+## Original Problem (Restated)
+
+**Problem:** Assign every interval to a room so that overlapping intervals never share a room. Reuse a room when its previous interval ends at or before the next interval's start (`prev_end <= next_start`). Minimize the number of rooms and return the room ID for every original interval.
+
+**Original Required Outputs (unchanged):**
+1. A list of room IDs aligned with the **original input order** (0-indexed).
+2. The assignment must use the **minimum** number of rooms.
+3. **Deterministic tie handling:**
+   - Sort intervals by `(start, end, original_index)`.
+   - Min-heap keyed by `(end_time, room_id)` so equal-availability ties break by smallest `room_id`.
+4. Algorithm: sort by start time, use a min-heap keyed by room availability.
+5. Complexity: O(n log n) time, O(n) space.
+6. Standard library only; no network, APIs, external services, randomness, or human interaction.
+7. Touching intervals (`prev_end == next_start`) may share a room.
+8. Empty input returns an empty list.
+
+## New Feature (Added)
+
+**Feature:** Return an additional `operation_summary` field containing a useful deterministic summary of the computation — specifically, the **number of major computational decisions/operations** made by the algorithm.
+
+**Definition of "major computational decisions":** Each interval processing step performs exactly one primary decision:
+- **REUSE** — an existing room was freed and reused (heap pop + push), or
+- **ALLOCATE** — a new room was created (heap push only).
+
+We also count the **sort** of the intervals as one major operation (the preprocessing step that determines processing order). The summary reports these counts deterministically.
+
+**Backward-compatibility rule:** When the feature is **not requested** (i.e., `include_summary=False`, the default), the function must return **exactly the original output** — a plain list of room IDs — with all original fields and requirements unchanged.
+
+## Required Output Contract
+
+| Mode | Return value |
+|---|---|
+| `include_summary=False` (default) | `List[int]` — room IDs in original order (original behavior, unchanged) |
+| `include_summary=True` | `dict` with keys: `rooms` (the original list), `operation_summary` (dict with counts) |
+
+**`operation_summary` fields (deterministic):**
+- `sort_operations`: always `1` if `n > 0`, else `0`.
+- `reuse_decisions`: number of intervals assigned by reusing a freed room.
+- `allocate_decisions`: number of intervals assigned by allocating a new room.
+- `total_decisions`: `reuse_decisions + allocate_decisions` (equals `n` for non-empty input; `0` for empty).
+- `rooms_used`: final number of distinct rooms allocated (`next_room_id` at the end).
+
+## Python Implementation
+
+```python
+from heapq import heappush, heappop
+from typing import List, Union, Dict, Any
+
+
+def assign_rooms(
+    intervals: List[List[int]],
+    include_summary: bool = False,
+) -> Union[List[int], Dict[str, Any]]:
+    """
+    Minimum Room Assignment.
+
+    Assign every interval to a room so overlapping intervals never share a
+    room. A room is reusable iff its previous interval ends at or before the
+    next interval's start (prev_end <= next_start). Minimize the number of
+    rooms and return the room ID for every original interval.
+
+    Determinism:
+      - Intervals are sorted by (start, end, original_index).
+      - The min-heap is keyed by (end_time, room_id), so ties in availability
+        are broken by smallest room_id.
+
+    Args:
+        intervals: List of [start, end] pairs (start < end).
+        include_summary: If False (default), returns the original plain list
+            of room IDs (unchanged behavior). If True, returns a dict with
+            'rooms' and a deterministic 'operation_summary'.
+
+    Returns:
+        - include_summary=False: List[int] of room IDs aligned with input order.
+        - include_summary=True: dict with keys 'rooms' and 'operation_summary'.
+    """
+    n = len(intervals)
+    if n == 0:
+        if include_summary:
+            return {
+                "rooms": [],
+                "operation_summary": {
+                    "sort_operations": 0,
+                    "reuse_decisions": 0,
+                    "allocate_decisions": 0,
+                    "total_decisions": 0,
+                    "rooms_used": 0,
+                },
+            }
+        return []
+
+    # Deterministic sort: start, then end, then original index.
+    indexed = [(s, e, i) for i, (s, e) in enumerate(intervals)]
+    indexed.sort(key=lambda x: (x[0], x[1], x[2]))
+
+    result = [0] * n
+    heap = []              # min-heap of (end_time, room_id)
+    next_room_id = 0
+
+    reuse_decisions = 0
+    allocate_decisions = 0
+
+    for start, end, orig_idx in indexed:
+        if heap and heap[0][0] <= start:
+            # Earliest-freeing room; ties broken by smallest room_id.
+            _, room_id = heappop(heap)
+            reuse_decisions += 1
+        else:
+            # No reusable room; allocate a new one.
+            room_id = next_room_id
+            next_room_id += 1
+            allocate_decisions += 1
+
+        result[orig_idx] = room_id
+        heappush(heap, (end, room_id))
+
+    if include_summary:
+        return {
+            "rooms": result,
+            "operation_summary": {
+                "sort_operations": 1,
+                "reuse_decisions": reuse_decisions,
+                "allocate_decisions": allocate_decisions,
+                "total_decisions": reuse_decisions + allocate_decisions,
+                "rooms_used": next_room_id,
+            },
+        }
+    return result
+
+
+if __name__ == "__main__":
+    # --- Original behavior (feature disabled) is unchanged ---
+    print(assign_rooms([[0, 2], [0, 2], [2, 3]]))
+    # [0, 1, 0]
+
+    print(assign_rooms([[1, 3], [1, 3], [3, 5], [3, 5]]))
+    # [0, 1, 0, 1]
+
+    print(assign_rooms([[1, 3], [3, 5], [5, 7]]))
+    # [0, 0, 0]
+
+    print(assign_rooms([[1, 10], [2, 3], [4, 5]]))
+    # [0, 1, 1]
+
+    print(assign_rooms([]))
+    # []
+
+    # --- New feature enabled ---
+    print(assign_rooms([[0, 2], [0, 2], [2, 3]], include_summary=True))
+    # {'rooms': [0, 1, 0],
+    #  'operation_summary': {'sort_operations': 1,
+    #                        'reuse_decisions': 1,
+    #                        'allocate_decisions': 2,
+    #                        'total_decisions': 3,
+    #                        'rooms_used': 2}}
+
+    print(assign_rooms([[1, 3], [1, 3], [3, 5], [3, 5]], include_summary=True))
+    # {'rooms': [0, 1, 0, 1],
+    #  'operation_summary': {'sort_operations': 1,
+    #                        'reuse_decisions': 2,
+    #                        'allocate_decisions': 2,
+    #                        'total_decisions': 4,
+    #                        'rooms_used': 2}}
+
+    print(assign_rooms([[1, 3], [3, 5], [5, 7]], include_summary=True))
+    # {'rooms': [0, 0, 0],
+    #  'operation_summary': {'sort_operations': 1,
+    #                        'reuse_decisions': 2,
+    #                        'allocate_decisions': 1,
+    #                        'total_decisions': 3,
+    #                        'rooms_used': 1}}
+
+    print(assign_rooms([], include_summary=True))
+    # {'rooms': [],
+    #  'operation_summary': {'sort_operations': 0,
+    #                        'reuse_decisions': 0,
+    #                        'allocate_decisions': 0,
+    #                        'total_decisions': 0,
+    #                        'rooms_used': 0}}
+
+    # --- Determinism checks ---
+    for _ in range(5):
+        assert assign_rooms([[0, 2], [0, 2], [2, 3]]) == [0, 1, 0]
+        assert assign_rooms([[0, 2], [0, 2], [2, 3]], include_summary=True) == {
+            "rooms": [0, 1, 0],
+            "operation_summary": {
+                "sort_operations": 1,
+                "reuse_decisions": 1,
+                "allocate_decisions": 2,
+                "total_decisions": 3,
+                "rooms_used": 2,
+            },
+        }
+```
+
+## Compatibility Guarantee
+
+- **Feature disabled (default):** `assign_rooms(intervals)` returns exactly the original `List[int]` — no wrapping, no extra keys, same ordering, same deterministic tie handling, same complexity.
+- **Feature enabled:** `assign_rooms(intervals, include_summary=True)` returns a dict that **contains** the original result under `'rooms'` plus the new `'operation_summary'` field. All original requirements (minimum rooms, deterministic ties, original-order alignment, `<=` reuse rule) are preserved.
+- **No new dependencies, no randomness, no I/O** — the summary is a deterministic function of the input.

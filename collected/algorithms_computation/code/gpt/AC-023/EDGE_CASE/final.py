@@ -1,0 +1,531 @@
+# Threshold Connectivity Tracker
+#
+# Original problem:
+# For each weight threshold q, consider only graph edges whose weight
+# satisfies weight <= q. For each query q, return:
+#   1. the number of connected components, and
+#   2. the size of the largest connected component.
+#
+# Original requirements:
+# - Vertices are numbered 0 through n - 1.
+# - Every edge has the form (u, v, weight).
+# - An edge is active exactly when weight <= q.
+# - Isolated vertices count as components of size 1.
+# - Queries can be in any order.
+# - Answers must be returned in the original query order.
+# - Results must be deterministic.
+# - Equal-weight edges are processed by original edge index.
+# - Equal-threshold queries are processed by original query index.
+# - Preserve the exact output format:
+#       [(number_of_components, largest_component_size), ...]
+#
+# Difficult valid boundary cases explicitly handled:
+# - n = 0.
+# - n = 1.
+# - No edges.
+# - No queries.
+# - Thresholds at very small / very large permitted integer values.
+# - Edge weights at very small / very large permitted integer values.
+# - Edges whose weight is exactly equal to the query threshold.
+# - Multiple edges with boundary weights.
+# - Disconnected graphs at boundary thresholds.
+#
+# Algorithm:
+# 1. Sort edges by (weight, original_edge_index).
+# 2. Sort queries by (threshold, original_query_index).
+# 3. Start with every vertex as its own component.
+# 4. Process queries from smallest to largest threshold.
+# 5. Before answering q, union every edge with weight <= q.
+# 6. Maintain:
+#       - number of connected components
+#       - largest component size
+# 7. Put every answer back at its original query index.
+#
+# Complexity:
+#   O(m log m + k log k + m * alpha(n))
+#   where n = number of vertices, m = number of edges,
+#   and k = number of queries.
+#
+# Only the Python standard library is used.
+
+
+from typing import List, Tuple
+
+
+def threshold_connectivity(
+    n: int,
+    edges: List[Tuple[int, int, int]],
+    queries: List[int],
+) -> List[Tuple[int, int]]:
+    """
+    Return (number_of_components, largest_component_size)
+    for every query threshold, preserving query order.
+
+    Vertices are numbered 0 through n - 1.
+    Each edge is represented as (u, v, weight).
+
+    The edge is active for threshold q exactly when:
+        weight <= q
+    """
+
+    if n < 0:
+        raise ValueError("n must be non-negative")
+
+    # Validate all edge endpoints.
+    for u, v, _ in edges:
+        if not (0 <= u < n and 0 <= v < n):
+            raise ValueError("edge contains an invalid vertex index")
+
+    # With zero vertices there are zero components and no largest
+    # component. Preserve the required result as (0, 0).
+    if n == 0:
+        return [(0, 0) for _ in queries]
+
+    parent = list(range(n))
+    component_size = [1] * n
+
+    def find(x: int) -> int:
+        """Find the component representative with path compression."""
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> bool:
+        """
+        Merge two different components.
+
+        Deterministic tie handling:
+        - Larger component becomes the parent.
+        - If sizes are equal, smaller root becomes the parent.
+        """
+        ra = find(a)
+        rb = find(b)
+
+        if ra == rb:
+            return False
+
+        if component_size[ra] < component_size[rb]:
+            ra, rb = rb, ra
+        elif component_size[ra] == component_size[rb] and ra > rb:
+            ra, rb = rb, ra
+
+        parent[rb] = ra
+        component_size[ra] += component_size[rb]
+
+        return True
+
+    # Sort by threshold first, then original position.
+    sorted_edges = sorted(
+        enumerate(edges),
+        key=lambda item: (item[1][2], item[0]),
+    )
+
+    sorted_queries = sorted(
+        enumerate(queries),
+        key=lambda item: (item[1], item[0]),
+    )
+
+    answers: List[Tuple[int, int]] = [None] * len(queries)
+
+    components = n
+    largest_component = 1
+    edge_pos = 0
+
+    for query_index, threshold in sorted_queries:
+
+        # Include every edge whose weight is <= threshold.
+        while (
+            edge_pos < len(sorted_edges)
+            and sorted_edges[edge_pos][1][2] <= threshold
+        ):
+            _, (u, v, _) = sorted_edges[edge_pos]
+
+            if union(u, v):
+                components -= 1
+
+                root = find(u)
+                if component_size[root] > largest_component:
+                    largest_component = component_size[root]
+
+            edge_pos += 1
+
+        answers[query_index] = (
+            components,
+            largest_component,
+        )
+
+    return answers
+
+
+# ------------------------------------------------------------
+# Tests
+# ------------------------------------------------------------
+
+def run_tests() -> None:
+
+    # --------------------------------------------------------
+    # Original basic example
+    # --------------------------------------------------------
+    result = threshold_connectivity(
+        4,
+        [
+            (0, 1, 2),
+            (1, 2, 5),
+            (2, 3, 7),
+        ],
+        [1, 5, 7],
+    )
+
+    assert result == [
+        (4, 1),
+        (2, 3),
+        (1, 4),
+    ]
+
+    # --------------------------------------------------------
+    # Original out-of-order query test
+    # --------------------------------------------------------
+    result = threshold_connectivity(
+        4,
+        [
+            (0, 1, 2),
+            (1, 2, 5),
+            (2, 3, 7),
+        ],
+        [7, 1, 5],
+    )
+
+    assert result == [
+        (1, 4),
+        (4, 1),
+        (2, 3),
+    ]
+
+    # --------------------------------------------------------
+    # Equal thresholds
+    # --------------------------------------------------------
+    result = threshold_connectivity(
+        3,
+        [
+            (0, 1, 10),
+            (1, 2, 10),
+        ],
+        [10, 0, 10, 10],
+    )
+
+    assert result == [
+        (1, 3),
+        (3, 1),
+        (1, 3),
+        (1, 3),
+    ]
+
+    # --------------------------------------------------------
+    # Disconnected graph
+    # --------------------------------------------------------
+    result = threshold_connectivity(
+        5,
+        [
+            (0, 1, 3),
+            (3, 4, 8),
+        ],
+        [0, 3, 8],
+    )
+
+    assert result == [
+        (5, 1),
+        (4, 2),
+        (3, 2),
+    ]
+
+    # --------------------------------------------------------
+    # Multiple edges
+    # --------------------------------------------------------
+    result = threshold_connectivity(
+        3,
+        [
+            (0, 1, 2),
+            (0, 1, 5),
+            (1, 2, 9),
+        ],
+        [2, 5, 9],
+    )
+
+    assert result == [
+        (2, 2),
+        (2, 2),
+        (1, 3),
+    ]
+
+    # --------------------------------------------------------
+    # Self-loop
+    # --------------------------------------------------------
+    result = threshold_connectivity(
+        2,
+        [
+            (0, 0, 1),
+            (0, 1, 2),
+        ],
+        [1, 2],
+    )
+
+    assert result == [
+        (2, 1),
+        (1, 2),
+    ]
+
+    # --------------------------------------------------------
+    # Smallest non-empty graph
+    # --------------------------------------------------------
+    result = threshold_connectivity(
+        1,
+        [],
+        [-100, 0, 100],
+    )
+
+    assert result == [
+        (1, 1),
+        (1, 1),
+        (1, 1),
+    ]
+
+    # --------------------------------------------------------
+    # Empty graph
+    # --------------------------------------------------------
+    result = threshold_connectivity(
+        0,
+        [],
+        [-1, 0, 10],
+    )
+
+    assert result == [
+        (0, 0),
+        (0, 0),
+        (0, 0),
+    ]
+
+    # --------------------------------------------------------
+    # No queries
+    # --------------------------------------------------------
+    result = threshold_connectivity(
+        3,
+        [(0, 1, 1)],
+        [],
+    )
+
+    assert result == []
+
+    # --------------------------------------------------------
+    # Negative weights
+    # --------------------------------------------------------
+    result = threshold_connectivity(
+        3,
+        [
+            (0, 1, -5),
+            (1, 2, 0),
+        ],
+        [-10, -5, 0],
+    )
+
+    assert result == [
+        (3, 1),
+        (2, 2),
+        (1, 3),
+    ]
+
+    # ========================================================
+    # NEW BOUNDARY-VALUE TESTS
+    # ========================================================
+
+    # --------------------------------------------------------
+    # Boundary integer values: minimum/maximum 64-bit signed
+    # integer values.
+    #
+    # This verifies that Python's integer handling and the
+    # <= threshold rule work correctly at extreme values.
+    # --------------------------------------------------------
+    MIN_INT64 = -(2**63)
+    MAX_INT64 = 2**63 - 1
+
+    result = threshold_connectivity(
+        3,
+        [
+            (0, 1, MIN_INT64),
+            (1, 2, MAX_INT64),
+        ],
+        [
+            MIN_INT64,
+            MIN_INT64 + 1,
+            MAX_INT64 - 1,
+            MAX_INT64,
+        ],
+    )
+
+    assert result == [
+        (2, 2),  # First edge is included exactly at MIN_INT64.
+        (2, 2),  # Nothing new.
+        (2, 2),  # MAX_INT64 edge is not included yet.
+        (1, 3),  # Second edge is included exactly at MAX_INT64.
+    ]
+
+    # --------------------------------------------------------
+    # Boundary thresholds in reverse order.
+    #
+    # Answers must still be returned in the original query
+    # order.
+    # --------------------------------------------------------
+    result = threshold_connectivity(
+        3,
+        [
+            (0, 1, MIN_INT64),
+            (1, 2, MAX_INT64),
+        ],
+        [
+            MAX_INT64,
+            MIN_INT64,
+            MAX_INT64,
+            MIN_INT64,
+        ],
+    )
+
+    assert result == [
+        (1, 3),
+        (2, 2),
+        (1, 3),
+        (2, 2),
+    ]
+
+    # --------------------------------------------------------
+    # All edges at the minimum boundary weight.
+    # --------------------------------------------------------
+    result = threshold_connectivity(
+        5,
+        [
+            (0, 1, MIN_INT64),
+            (1, 2, MIN_INT64),
+            (3, 4, MIN_INT64),
+        ],
+        [MIN_INT64 - 1, MIN_INT64],
+    )
+
+    assert result == [
+        (5, 1),
+        (2, 3),
+    ]
+
+    # --------------------------------------------------------
+    # All edges at the maximum boundary weight.
+    # --------------------------------------------------------
+    result = threshold_connectivity(
+        5,
+        [
+            (0, 1, MAX_INT64),
+            (1, 2, MAX_INT64),
+            (3, 4, MAX_INT64),
+        ],
+        [MAX_INT64 - 1, MAX_INT64],
+    )
+
+    assert result == [
+        (5, 1),
+        (2, 3),
+    ]
+
+    # --------------------------------------------------------
+    # Exact-threshold boundary checks.
+    #
+    # The <= rule is important:
+    # an edge with weight exactly q MUST be active.
+    # --------------------------------------------------------
+    result = threshold_connectivity(
+        4,
+        [
+            (0, 1, 0),
+            (1, 2, 1),
+            (2, 3, 2),
+        ],
+        [-1, 0, 1, 2],
+    )
+
+    assert result == [
+        (4, 1),
+        (3, 2),
+        (2, 3),
+        (1, 4),
+    ]
+
+    # --------------------------------------------------------
+    # Boundary values combined with disconnected components.
+    # --------------------------------------------------------
+    result = threshold_connectivity(
+        6,
+        [
+            (0, 1, MIN_INT64),
+            (1, 2, MIN_INT64),
+            (3, 4, MAX_INT64),
+        ],
+        [MIN_INT64, 0, MAX_INT64],
+    )
+
+    assert result == [
+        (4, 3),
+        (4, 3),
+        (3, 3),
+    ]
+
+    # --------------------------------------------------------
+    # Boundary values with repeated edges.
+    # Deterministic ordering is preserved by original edge
+    # index, although duplicate unions do not change the
+    # resulting component state.
+    # --------------------------------------------------------
+    result = threshold_connectivity(
+        3,
+        [
+            (0, 1, MIN_INT64),
+            (0, 1, MIN_INT64),
+            (1, 2, MAX_INT64),
+            (1, 2, MAX_INT64),
+        ],
+        [MIN_INT64, MAX_INT64],
+    )
+
+    assert result == [
+        (2, 2),
+        (1, 3),
+    ]
+
+    # --------------------------------------------------------
+    # Very large Python integers beyond signed 64-bit range.
+    #
+    # Python supports arbitrary-precision integers, so the
+    # implementation remains deterministic without overflow.
+    # --------------------------------------------------------
+    HUGE_NEGATIVE = -(10**100)
+    HUGE_POSITIVE = 10**100
+
+    result = threshold_connectivity(
+        3,
+        [
+            (0, 1, HUGE_NEGATIVE),
+            (1, 2, HUGE_POSITIVE),
+        ],
+        [
+            HUGE_NEGATIVE,
+            0,
+            HUGE_POSITIVE,
+        ],
+    )
+
+    assert result == [
+        (2, 2),
+        (2, 2),
+        (1, 3),
+    ]
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()

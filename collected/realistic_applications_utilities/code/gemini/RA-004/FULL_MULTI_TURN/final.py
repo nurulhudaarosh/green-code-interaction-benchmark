@@ -1,0 +1,351 @@
+import argparse
+import logging
+import os
+import re
+import shutil
+import unicodecontroldata  # Optional, but standard re / unicodedata handled below
+import unicodedata
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, Optional, Tuple
+
+# Extension-based mapping
+CATEGORY_MAPPING: Dict[str, set] = {
+    "Images": {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp", ".tiff"},
+    "Documents": {
+        ".pdf",
+        ".docx",
+        ".doc",
+        ".txt",
+        ".rtf",
+        ".odt",
+        ".xls",
+        ".xlsx",
+        ".ppt",
+        ".pptx",
+        ".csv",
+    },
+    "Audio": {".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a"},
+    "Videos": {".mp4", ".mkv", ".avi", ".mov", ".flv", ".wmv", ".webm"},
+    "Archives": {".zip", ".tar", ".gz", ".7z", ".rar", ".bz2"},
+    "Code_Scripts": {
+        ".py",
+        ".js",
+        ".html",
+        ".css",
+        ".java",
+        ".cpp",
+        ".c",
+        ".json",
+        ".xml",
+        ".sh",
+    },
+    "Executables": {".exe", ".msi", ".dmg", ".pkg", ".deb"},
+}
+
+# Size category exact boundary thresholds (in bytes)
+BYTES_0 = 0
+KB = 1024
+MB = 1024 * KB
+GB = 1024 * MB
+
+
+def sanitize_filename(filename: str, max_bytes: int = 255) -> str:
+    """Sanitizes file names across cross-platform OS boundaries and mitigates file path limits.
+
+    - Normalizes Unicode (NFC)
+    - Removes illegal OS boundary characters (Windows/POSIX)
+    - Truncates base stem to max byte length while keeping extension intact
+    - Trims trailing spaces or dots
+    """
+    # 1. Unicode Normalization
+    filename = unicodedata.normalize("NFC", filename)
+
+    # 2. Extract stem and extension
+    p = Path(filename)
+    stem = p.stem
+    suffix = p.suffix
+
+    # 3. Strip illegal OS boundary characters (< > : " / \ | ? *) and control chars
+    stem = re.sub(r'[\x00-\x1f\x7f-\x9f<>:"/\\|?*]', "_", stem)
+    suffix = re.sub(r'[\x00-\x1f\x7f-\x9f<>:"/\\|?*]', "_", suffix)
+
+    # 4. Remove leading/trailing dots and spaces from stem
+    stem = stem.strip(". ")
+    if not stem:
+        stem = "unnamed_file"
+
+    # 5. Handle MAX filename length (255 bytes on Ext4/NTFS/APFS)
+    suffix_bytes = suffix.encode("utf-8")
+    max_stem_bytes = max_bytes - len(suffix_bytes) - 5  # Reserve space for counter suffix
+
+    stem_bytes = stem.encode("utf-8")
+    if len(stem_bytes) > max_stem_bytes:
+        # Safely truncate byte stream without slicing unicode surrogate pairs
+        truncated_bytes = stem_bytes[:max_stem_bytes]
+        stem = truncated_bytes.decode("utf-8", errors="ignore").rstrip(". ")
+
+    return f"{stem}{suffix}"
+
+
+def validate_file_metadata(
+    file_path: Path, min_size_bytes: int = 0, max_age_days: Optional[int] = None
+) -> Tuple[bool, str]:
+    """Validates file integrity and boundary metadata attributes."""
+    try:
+        if not file_path.exists():
+            return False, "File does not exist or is a broken broken symlink"
+
+        if file_path.is_symlink():
+            return False, "Skipped symbolic link"
+
+        if not file_path.is_file():
+            return False, "Not a regular file"
+
+        stat_info = file_path.stat()
+
+        # Exact 0-byte check vs custom minimum size boundary check
+        if stat_info.st_size < min_size_bytes:
+            return (
+                False,
+                f"File size ({stat_info.st_size} B) is below minimum boundary ({min_size_bytes} B)",
+            )
+
+        if not os.access(file_path, os.R_OK):
+            return False, "File is not readable (Permission Denied)"
+
+        if max_age_days is not None:
+            mtime = datetime.fromtimestamp(stat_info.st_mtime, tz=timezone.utc)
+            now = datetime.now(timezone.utc)
+            file_age_days = (now - mtime).days
+            if file_age_days > max_age_days:
+                return (
+                    False,
+                    f"File age ({file_age_days} days) exceeds maximum boundary ({max_age_days} days)",
+                )
+
+        return True, "Valid"
+
+    except PermissionError:
+        return False, "Permission denied accessing file metadata"
+    except OSError as e:
+        return False, f"OS error retrieving metadata: {e}"
+
+
+def get_extension_category(file_path: Path) -> str:
+    """Returns matching folder category using multi-part suffix edge-case handling (e.g. .tar.gz)."""
+    # Handle multi-part extension boundary (e.g., .tar.gz, .tar.bz2)
+    name_lower = file_path.name.lower()
+    if name_lower.endswith(".tar.gz") or name_lower.endswith(".tar.bz2"):
+        return "Archives"
+
+    ext = file_path.suffix.lower()
+    if not ext:
+        return "No_Extension"
+
+    for category, extensions in CATEGORY_MAPPING.items():
+        if ext in extensions:
+            return category
+    return "Others"
+
+
+def get_size_category(size_bytes: int) -> str:
+    """Classifies file size using strict inclusive/exclusive boundary conditions.
+
+    Boundaries:
+      - 0 Bytes             -> Zero_Bytes
+      - 1 B to 100 KB       -> Tiny_Under100KB
+      - 100 KB to 10 MB     -> Small_100KB_to_10MB
+      - 10 MB to 500 MB     -> Medium_10MB_to_500MB
+      - 500 MB to 2 GB      -> Large_500MB_to_2GB
+      - >= 2 GB             -> Huge_2GB_and_Above
+    """
+    if size_bytes == 0:
+        return "Zero_Bytes"
+    elif size_bytes < 100 * KB:
+        return "Tiny_Under100KB"
+    elif size_bytes < 10 * MB:
+        return "Small_100KB_to_10MB"
+    elif size_bytes < 500 * MB:
+        return "Medium_10MB_to_500MB"
+    elif size_bytes < 2 * GB:
+        return "Large_500MB_to_2GB"
+    else:
+        return "Huge_2GB_and_Above"
+
+
+def get_target_category_path(
+    file_path: Path, organize_by: str
+) -> Tuple[str, Path]:
+    """Determines destination subfolder structure based on organization strategy."""
+    ext_category = get_extension_category(file_path)
+    size_category = get_size_category(file_path.stat().st_size)
+
+    if organize_by == "size":
+        folder_path = Path(size_category)
+    elif organize_by == "hybrid":
+        folder_path = Path(size_category) / ext_category
+    else:  # default: 'type'
+        folder_path = Path(ext_category)
+
+    return str(folder_path), folder_path
+
+
+def resolve_duplicate_path(destination_path: Path) -> Path:
+    """Handles naming collisions safely while respecting OS filename length limits."""
+    if not destination_path.exists():
+        return destination_path
+
+    stem = destination_path.stem
+    suffix = destination_path.suffix
+    parent = destination_path.parent
+    counter = 1
+
+    while True:
+        # Enforce sanitization during collision resolution to avoid boundary overflow
+        candidate_name = f"{stem}_{counter}{suffix}"
+        sanitized_candidate = sanitize_filename(candidate_name)
+        new_path = parent / sanitized_candidate
+
+        if not new_path.exists():
+            return new_path
+        counter += 1
+
+
+def organize_directory(
+    target_dir: Path,
+    dry_run: bool = False,
+    min_size_bytes: int = 0,
+    max_age_days: Optional[int] = None,
+    organize_by: str = "type",
+    allow_zero_bytes: bool = True,
+) -> None:
+    """Scans, validates, sanitizes boundary filenames/sizes, and organizes files."""
+    if not target_dir.exists() or not target_dir.is_dir():
+        logging.error(
+            f"The provided path does not exist or is not a directory: {target_dir}"
+        )
+        return
+
+    logging.info(
+        f"Starting file organization for: {target_dir.resolve()} "
+        f"[Mode: {organize_by.upper()}]"
+        + (" (DRY RUN)" if dry_run else "")
+    )
+
+    moved_count = 0
+    skipped_count = 0
+    invalid_count = 0
+
+    # Collect files upfront to prevent endless iteration on created subdirectories
+    files_to_process = [item for item in target_dir.iterdir() if item.is_file()]
+
+    for item in files_to_process:
+        # Skip hidden/system files and dotfiles (.DS_Store, .gitignore, etc.)
+        if item.name.startswith("."):
+            skipped_count += 1
+            continue
+
+        # Zero-byte threshold toggle handling
+        effective_min_size = 1 if not allow_zero_bytes else min_size_bytes
+
+        # Metadata & boundary size validation
+        is_valid, validation_reason = validate_file_metadata(
+            item, min_size_bytes=effective_min_size, max_age_days=max_age_days
+        )
+        if not is_valid:
+            logging.warning(f"Skipping '{item.name}': {validation_reason}")
+            invalid_count += 1
+            continue
+
+        # Boundary filename sanitization
+        sanitized_name = sanitize_filename(item.name)
+        rel_folder_str, rel_folder_path = get_target_category_path(
+            item, organize_by
+        )
+        category_folder = target_dir / rel_folder_path
+        destination = resolve_duplicate_path(category_folder / sanitized_name)
+
+        if dry_run:
+            logging.info(
+                f"[DRY RUN] Would move: '{item.name}' -> '{rel_folder_str}/{destination.name}'"
+            )
+        else:
+            try:
+                category_folder.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(item), str(destination))
+                logging.info(
+                    f"Moved: '{item.name}' -> '{rel_folder_str}/{destination.name}'"
+                )
+            except Exception as e:
+                logging.error(f"Failed to move '{item.name}': {e}")
+                continue
+
+        moved_count += 1
+
+    summary_prefix = "[DRY RUN] Summary" if dry_run else "Summary"
+    logging.info(
+        f"{summary_prefix}: {moved_count} file(s) processed, "
+        f"{invalid_count} failed metadata/size validation, "
+        f"{skipped_count} hidden/system file(s) skipped."
+    )
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Organize files with edge-case boundary handling for names, paths, and size limits."
+    )
+    parser.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        help="Path to target directory (defaults to current working directory).",
+    )
+    parser.add_argument(
+        "--organize-by",
+        choices=["type", "size", "hybrid"],
+        default="type",
+        help="Organization mode: 'type' (extension), 'size' (size boundary), or 'hybrid'. Default: type.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview changes without moving files.",
+    )
+    parser.add_argument(
+        "--min-size",
+        type=int,
+        default=0,
+        help="Minimum file size in bytes.",
+    )
+    parser.add_argument(
+        "--ignore-zero-byte",
+        action="store_true",
+        help="Exclude zero-byte files from being moved.",
+    )
+    parser.add_argument(
+        "--max-age",
+        type=int,
+        default=None,
+        help="Maximum file age in days based on mtime.",
+    )
+
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    )
+
+    target_path = Path(args.path)
+    organize_directory(
+        target_path,
+        dry_run=args.dry_run,
+        min_size_bytes=args.min_size,
+        max_age_days=args.max_age,
+        organize_by=args.organize_by,
+        allow_zero_bytes=not args.ignore_zero_byte,
+    )
+
+
+if __name__ == "__main__":
+    main()

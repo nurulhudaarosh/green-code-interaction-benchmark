@@ -1,0 +1,86 @@
+Here is the updated function with an optional `fill_color` parameter (defaulting to `(0, 0, 0)` for black).
+
+To ensure the fill color is applied consistently during both rotation and cropping/padding across RGB and RGBA formats, the image is pasted onto a newly constructed canvas of the requested target size filled with `fill_color`.
+
+```python
+import os
+from pathlib import Path
+from PIL import Image
+
+def rotate_and_crop(
+    input_dir: str, 
+    output_dir: str, 
+    angle_degrees: float, 
+    crop_size: tuple[int, int],
+    fill_color: tuple[int, int, int] | tuple[int, int, int, int] = (0, 0, 0)
+) -> None:
+    """
+    Rotates all images in input_dir around their center and center-crops/pads 
+    them to match crop_size using a specified fill_color for empty space.
+
+    :param input_dir: Path to directory containing original images.
+    :param output_dir: Path to directory where processed images will be saved.
+    :param angle_degrees: Counter-clockwise rotation angle in degrees.
+    :param crop_size: Target (width, height) tuple.
+    :param fill_color: RGB or RGBA tuple used for background padding (default is black).
+    """
+    target_w, target_h = crop_size
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    supported_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff"}
+
+    for img_file in input_path.iterdir():
+        if img_file.suffix.lower() not in supported_extensions:
+            continue
+
+        with Image.open(img_file) as img:
+            mode = img.mode
+            
+            # Determine appropriate fill color format based on image mode
+            current_fill = fill_color
+            if mode == "RGBA" and len(fill_color) == 3:
+                current_fill = (*fill_color, 255)  # Add full alpha opacity if RGB provided for RGBA
+
+            # 1. Rotate around the center with fill color for background areas revealed by rotation
+            rotated_img = img.rotate(
+                angle_degrees, 
+                resample=Image.BICUBIC, 
+                expand=False, 
+                fillcolor=current_fill
+            )
+            rot_w, rot_h = rotated_img.size
+
+            # 2. Calculate coordinates relative to the rotated image center
+            left = int((rot_w - target_w) / 2)
+            top = int((rot_h - target_h) / 2)
+
+            # 3. Create a canvas with target dimensions pre-filled with fill_color
+            canvas = Image.new(mode, (target_w, target_h), current_fill)
+
+            # Calculate where to paste rotated_img onto canvas
+            paste_x = -left if left < 0 else 0
+            paste_y = -top if top < 0 else 0
+
+            # Calculate the region of rotated_img to copy
+            crop_left = max(0, left)
+            crop_top = max(0, top)
+            crop_right = min(rot_w, left + target_w)
+            crop_bottom = min(rot_h, top + target_h)
+
+            cropped_part = rotated_img.crop((crop_left, crop_top, crop_right, crop_bottom))
+            canvas.paste(cropped_part, (paste_x, paste_y))
+
+            # 4. Save output image
+            out_file_path = output_path / img_file.name
+            canvas.save(out_file_path)
+
+
+```
+
+### Key Changes
+
+* **`fillcolor` Parameter in `.rotate()`:** Explicitly fills any empty corners resulting from rotation with your chosen `fill_color`.
+* **Explicit Background Canvas:** Replaces default crop padding with a custom `Image.new()` background pre-filled with `fill_color` so any canvas padding (when `crop_size` exceeds original image bounds) strictly honors the specified color.
+* **Format Flexibility:** Automatically appends full opacity alpha (`255`) if a 3-tuple RGB is supplied for an RGBA image.

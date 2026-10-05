@@ -1,0 +1,171 @@
+import os
+from pathlib import Path
+import numpy as np
+from PIL import Image
+
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".webp"}
+
+DEFAULT_THRESHOLDS = (85, 170)  # (dark_max, bright_min)
+
+
+def analyze_brightness(input_dir, custom_thresholds=None):
+    """... (docstring unchanged from previous version) ..."""
+    input_path = Path(input_dir)
+
+    if not input_path.is_dir():
+        raise NotADirectoryError(f"Not a directory: {input_dir}")
+
+    dark_max, bright_min = _resolve_thresholds(custom_thresholds)
+
+    results = []
+    for file_path in sorted(input_path.iterdir()):
+        if not file_path.is_file():
+            continue
+        if file_path.suffix.lower() not in IMAGE_EXTENSIONS:
+            continue
+
+        try:
+            record = _analyze_single_image(file_path, dark_max, bright_min)
+            if record is not None:
+                results.append(record)
+        except Exception as exc:
+            print(f"[WARN] Failed to analyze {file_path.name}: {exc}")
+
+    return results
+
+
+def _resolve_thresholds(custom_thresholds):
+    if custom_thresholds is None:
+        return DEFAULT_THRESHOLDS
+
+    try:
+        dark_max, bright_min = custom_thresholds
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "custom_thresholds must be a (dark_max, bright_min) pair, "
+            f"got {custom_thresholds!r}"
+        ) from exc
+
+    dark_max = float(dark_max)
+    bright_min = float(bright_min)
+
+    if not (0 <= dark_max < bright_min <= 255):
+        raise ValueError(
+            "custom_thresholds must satisfy 0 <= dark_max < bright_min <= 255, "
+            f"got ({dark_max}, {bright_min})"
+        )
+
+    return dark_max, bright_min
+
+
+def _analyze_single_image(file_path, dark_max, bright_min):
+    """Compute brightness metrics for a single image file."""
+    with Image.open(file_path) as img:
+        # Normalize through RGB first. This matters for mode "1" (bilevel)
+        # and mode "P" (palette) images, where convert("L") directly can
+        # produce unexpected ranges on some Pillow versions (e.g. a
+        # black/white 1-bit image yielding 0/1 instead of 0/255).
+        # Going "1"/"P"/"RGBA" -> "RGB" -> "L" is the reliable path.
+        rgb_img = img.convert("RGB")
+        rgb_arr = np.asarray(rgb_img, dtype=np.float64)  # (H, W, 3)
+
+        # True grayscale conversion from the normalized RGB image.
+        # Pillow applies BT.601 luma weights per pixel.
+        gray_img = rgb_img.convert("L")
+        gray_arr = np.asarray(gray_img, dtype=np.float64)  # (H, W)
+
+    r_mean = float(rgb_arr[:, :, 0].mean())
+    g_mean = float(rgb_arr[:, :, 1].mean())
+    b_mean = float(rgb_arr[:, :, 2].mean())
+
+    grayscale_brightness = float(gray_arr.mean())
+
+    if grayscale_brightness < dark_max:
+        classification = "dark"
+    elif grayscale_brightness > bright_min:
+        classification = "bright"
+    else:
+        classification = "normal"
+
+    return {
+        "file": file_path.name,
+        "path": str(file_path),
+        "r_mean": round(r_mean, 2),
+        "g_mean": round(g_mean, 2),
+        "b_mean": round(b_mean, 2),
+        "grayscale_brightness": round(grayscale_brightness, 2),
+        "classification": classification,
+    }
+
+
+# ----------------------------------------------------------------------
+# Tests, including the checkerboard edge case
+# ----------------------------------------------------------------------
+def _make_checkerboard_rgb(size=100):
+    """Build an RGB checkerboard: half pure black, half pure white."""
+    yy, xx = np.indices((size, size))
+    pattern = ((yy + xx) % 2).astype(np.uint8) * 255  # 0 or 255
+    rgb = np.stack([pattern, pattern, pattern], axis=-1)
+    return Image.fromarray(rgb, mode="RGB")
+
+
+def _make_checkerboard_bilevel(size=100):
+    """Build a 1-bit mode checkerboard (the trap case)."""
+    rgb = _make_checkerboard_rgb(size)
+    return rgb.convert("1")
+
+
+def _test_checkerboard_edge_case(tmpdir):
+    """Assert both RGB and bilevel checkerboards give ~127.5 -> 'normal'."""
+    for name, img in [
+        ("checker_rgb.png", _make_checkerboard_rgb()),
+        ("checker_1bit.png", _make_checkerboard_bilevel()),
+    ]:
+        path = os.path.join(tmpdir, name)
+        img.save(path)
+
+        results = analyze_brightness(tmpdir, custom_thresholds=None)
+        rec = next(r for r in results if r["file"] == name)
+
+        # Core assertions for the edge case
+        assert abs(rec["grayscale_brightness"] - 127.5) < 0.5, rec
+        assert abs(rec["r_mean"] - 127.5) < 0.5, rec
+        assert abs(rec["g_mean"] - 127.5) < 0.5, rec
+        assert abs(rec["b_mean"] - 127.5) < 0.5, rec
+        assert rec["classification"] == "normal", rec
+
+        print(f"  [PASS] {name}: gray={rec['grayscale_brightness']} "
+              f"-> {rec['classification']}")
+
+        os.remove(path)
+
+
+if __name__ == "__main__":
+    import sys
+    import tempfile
+
+    # Run the edge-case test suite first
+    print("Running checkerboard edge-case tests:")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        _test_checkerboard_edge_case(tmpdir)
+
+    # Then run on the user-provided directory (if any)
+    target = sys.argv[1] if len(sys.argv) > 1 else None
+    if target is None:
+        sys.exit(0)
+
+    thresholds = None
+    if len(sys.argv) >= 4:
+        thresholds = (float(sys.argv[2]), float(sys.argv[3]))
+
+    records = analyze_brightness(target, custom_thresholds=thresholds)
+    label = thresholds if thresholds else DEFAULT_THRESHOLDS
+    print(f"\nAnalyzed {len(records)} image(s) in '{target}' "
+          f"(dark_max={label[0]}, bright_min={label[1]}):\n")
+    for r in records:
+        print(
+            f"  {r['file']:<30} "
+            f"R={r['r_mean']:>6.2f}  G={r['g_mean']:>6.2f}  B={r['b_mean']:>6.2f}  "
+            f"gray={r['grayscale_brightness']:>6.2f}  -> {r['classification']}"
+        )

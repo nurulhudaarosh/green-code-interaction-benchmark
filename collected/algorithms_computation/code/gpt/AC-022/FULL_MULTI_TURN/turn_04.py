@@ -1,0 +1,301 @@
+"""
+Edit Distance With Adjacent Transposition
+
+Original problem:
+    Given two strings, compute the minimum number of unit-cost operations
+    required to transform source into target.
+
+Allowed operations:
+    1. Insertion
+    2. Deletion
+    3. Substitution
+    4. Adjacent transposition
+
+Each operation costs 1.
+
+Requirements:
+    - Use dynamic programming.
+    - Use an explicit adjacent-transposition transition.
+    - Return the minimum edit distance.
+    - Handle empty strings.
+    - Explicitly handle repeated characters.
+    - Explicitly handle deterministic ties.
+    - Preserve the original tie-breaking priority:
+          1. Match/substitution
+          2. Transposition
+          3. Insertion
+          4. Deletion
+    - Use only the Python standard library.
+    - No network, APIs, external services, randomness, or human interaction.
+
+Repeated values:
+    Repeated characters must not cause an invalid transposition.
+    A transposition is allowed only when the two adjacent source
+    characters correspond to the two adjacent target characters in
+    reversed order.
+
+Deterministic ties:
+    When multiple valid operations have the same minimum cost, the
+    fixed priority above is used. The numeric result is unchanged,
+    but the selected DP transition is deterministic.
+"""
+
+
+def edit_distance_with_transposition(
+    source: str,
+    target: str,
+    include_operation_summary: bool = False
+):
+    """
+    Compute the minimum edit distance using:
+        - insertion
+        - deletion
+        - substitution
+        - adjacent transposition
+
+    If include_operation_summary is False:
+        Return the original integer distance.
+
+    If include_operation_summary is True:
+        Return:
+        {
+            "distance": int,
+            "operation_summary": {
+                "major_decisions": int
+            }
+        }
+    """
+
+    n = len(source)
+    m = len(target)
+
+    # dp[i][j] = minimum cost to transform
+    # source[:i] into target[:j].
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+
+    # Original deterministic tie-breaking priorities.
+    # Lower value means higher priority.
+    SUBSTITUTION = 0
+    TRANSPOSITION = 1
+    INSERTION = 2
+    DELETION = 3
+
+    major_decisions = 0
+
+    # Base cases.
+    for i in range(1, n + 1):
+        dp[i][0] = i
+
+    for j in range(1, m + 1):
+        dp[0][j] = j
+
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            major_decisions += 1
+
+            candidates = []
+
+            # --------------------------------------------------
+            # 1. Match / substitution
+            # --------------------------------------------------
+            substitution_cost = (
+                0 if source[i - 1] == target[j - 1] else 1
+            )
+
+            candidates.append(
+                (
+                    dp[i - 1][j - 1] + substitution_cost,
+                    SUBSTITUTION
+                )
+            )
+
+            # --------------------------------------------------
+            # 2. Explicit adjacent transposition
+            # --------------------------------------------------
+            #
+            # Example:
+            #     source suffix = "ab"
+            #     target suffix = "ba"
+            #
+            # Then "ab" -> "ba" costs one transposition.
+            #
+            # The explicit character checks are important when
+            # repeated characters are present.
+            if (
+                i >= 2
+                and j >= 2
+                and source[i - 2] == target[j - 1]
+                and source[i - 1] == target[j - 2]
+                and source[i - 2] != source[i - 1]
+            ):
+                candidates.append(
+                    (
+                        dp[i - 2][j - 2] + 1,
+                        TRANSPOSITION
+                    )
+                )
+
+            # --------------------------------------------------
+            # 3. Insertion
+            # --------------------------------------------------
+            candidates.append(
+                (
+                    dp[i][j - 1] + 1,
+                    INSERTION
+                )
+            )
+
+            # --------------------------------------------------
+            # 4. Deletion
+            # --------------------------------------------------
+            candidates.append(
+                (
+                    dp[i - 1][j] + 1,
+                    DELETION
+                )
+            )
+
+            # Deterministic selection:
+            # first minimize cost, then use operation priority.
+            best_cost, _ = min(candidates)
+            dp[i][j] = best_cost
+
+    distance = dp[n][m]
+
+    # Preserve original output when the optional feature
+    # is not requested.
+    if not include_operation_summary:
+        return distance
+
+    return {
+        "distance": distance,
+        "operation_summary": {
+            "major_decisions": major_decisions
+        }
+    }
+
+
+# ------------------------------------------------------------
+# Tests
+# ------------------------------------------------------------
+
+def run_tests():
+    # --------------------------------------------------------
+    # Basic original cases
+    # --------------------------------------------------------
+
+    assert edit_distance_with_transposition("", "") == 0
+    assert edit_distance_with_transposition("", "abc") == 3
+    assert edit_distance_with_transposition("abc", "") == 3
+
+    assert edit_distance_with_transposition("abc", "abc") == 0
+    assert edit_distance_with_transposition("abc", "abcd") == 1
+    assert edit_distance_with_transposition("abcd", "abc") == 1
+    assert edit_distance_with_transposition("cat", "cut") == 1
+
+    # --------------------------------------------------------
+    # Adjacent transposition
+    # --------------------------------------------------------
+
+    assert edit_distance_with_transposition("ab", "ba") == 1
+    assert edit_distance_with_transposition("abcd", "acbd") == 1
+    assert edit_distance_with_transposition("converse", "convesre") == 1
+
+    # --------------------------------------------------------
+    # Difficult cases: repeated characters
+    # --------------------------------------------------------
+
+    # Repeated characters should still be handled correctly.
+    assert edit_distance_with_transposition("aab", "aba") == 1
+    assert edit_distance_with_transposition("aba", "aab") == 1
+
+    # No transposition should be falsely introduced for equal
+    # adjacent values such as "aa".
+    assert edit_distance_with_transposition("aa", "aa") == 0
+
+    # Repeated characters with a real adjacent transposition.
+    assert edit_distance_with_transposition("aabc", "aacb") == 1
+    assert edit_distance_with_transposition("aabb", "abab") == 1
+
+    # More repetitions.
+    assert edit_distance_with_transposition("aaab", "aaba") == 1
+    assert edit_distance_with_transposition("baa", "aab") == 1
+
+    # --------------------------------------------------------
+    # Difficult cases: deterministic ties
+    # --------------------------------------------------------
+
+    # Multiple transformations can have the same total cost.
+    # The fixed priority must make the selected DP transition
+    # deterministic while preserving the numeric distance.
+    assert edit_distance_with_transposition("ab", "bc") == 2
+    assert edit_distance_with_transposition("abc", "bca") == 2
+    assert edit_distance_with_transposition("abc", "acb") == 1
+
+    # Re-running identical inputs must always produce the
+    # identical result.
+    first = edit_distance_with_transposition("aabb", "bbaa")
+    second = edit_distance_with_transposition("aabb", "bbaa")
+
+    assert first == second
+    assert first == 2
+
+    # --------------------------------------------------------
+    # Optional operation_summary remains compatible
+    # --------------------------------------------------------
+
+    result = edit_distance_with_transposition(
+        "abc",
+        "abcd",
+        include_operation_summary=True
+    )
+
+    assert result["distance"] == 1
+    assert result["operation_summary"]["major_decisions"] == 12
+
+    result = edit_distance_with_transposition(
+        "ab",
+        "ba",
+        include_operation_summary=True
+    )
+
+    assert result["distance"] == 1
+    assert result["operation_summary"]["major_decisions"] == 4
+
+    # Empty input has no non-base DP decisions.
+    result = edit_distance_with_transposition(
+        "",
+        "",
+        include_operation_summary=True
+    )
+
+    assert result == {
+        "distance": 0,
+        "operation_summary": {
+            "major_decisions": 0
+        }
+    }
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()
+
+    # Original output
+    source = "abcd"
+    target = "acbd"
+
+    print("Source:", source)
+    print("Target:", target)
+    print("Edit distance:", edit_distance_with_transposition(source, target))
+
+    # Optional extended output
+    print("\nWith operation summary:")
+    print(
+        edit_distance_with_transposition(
+            source,
+            target,
+            include_operation_summary=True
+        )
+    )

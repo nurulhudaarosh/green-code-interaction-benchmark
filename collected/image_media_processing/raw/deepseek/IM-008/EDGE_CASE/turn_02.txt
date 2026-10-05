@@ -1,0 +1,86 @@
+```python
+import hashlib
+import os
+from collections import defaultdict
+
+
+def find_exact_duplicates(input_dir):
+    """
+    Find groups of byte-identical files in input_dir.
+
+    Files are grouped by their SHA-256 checksum. Only groups containing
+    2 or more files are returned, and each group is sorted alphabetically.
+
+    Only regular files are hashed; directories, symlinks, FIFOs, sockets,
+    and other non-file entries are skipped, even if their names collide
+    with checksum bucket keys or file names elsewhere in the tree.
+
+    Args:
+        input_dir: Directory to scan (recursively).
+
+    Returns:
+        A list of lists, where each inner list contains paths of
+        byte-identical files, sorted alphabetically.
+    """
+    # First pass: group candidate files by size to avoid hashing unique files.
+    # Only regular files are considered; anything else is skipped outright.
+    by_size = defaultdict(list)
+    for root, dirnames, filenames in os.walk(input_dir):
+        # Prune directory symlinks so we don't recurse through them and
+        # accidentally treat non-file entries as candidates.
+        dirnames[:] = [
+            d for d in dirnames
+            if not os.path.islink(os.path.join(root, d))
+        ]
+        for name in filenames:
+            path = os.path.join(root, name)
+            # stat(follow_symlinks=False) so we inspect the entry itself,
+            # not whatever it points at. This avoids treating a symlink
+            # as a duplicate of its target and avoids stat errors on
+            # broken links.
+            try:
+                st = os.stat(path, follow_symlinks=False)
+            except OSError:
+                continue
+            if not os.path.isfile(path) or os.path.islink(path):
+                continue
+            by_size[st.st_size].append(path)
+
+    # Second pass: hash only files that share a size with another file.
+    by_hash = defaultdict(list)
+    for size, paths in by_size.items():
+        if len(paths) < 2:
+            continue
+        for path in paths:
+            digest = _sha256(path)
+            if digest is not None:
+                by_hash[digest].append(path)
+
+    # Collect groups with 2+ members, sorted.
+    groups = [sorted(paths) for paths in by_hash.values() if len(paths) >= 2]
+    return groups
+
+
+def _sha256(path, chunk_size=1 << 20):
+    """Return the hex SHA-256 digest of a file, or None on read error."""
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(chunk_size), b""):
+                h.update(chunk)
+    except OSError:
+        return None
+    return h.hexdigest()
+```
+
+What changed and why it fixes the edge case:
+
+- **Explicit regular-file check before hashing.** The candidate collection loop now calls `os.stat(path, follow_symlinks=False)` and rejects anything that isn't a regular file (`os.path.isfile`) or that is a symlink. A directory whose name happens to match a hex-checksum string (or any other name) is never added to `by_size`, so it can never reach `_sha256`, which previously would have raised `IsADirectoryError` (an `OSError`) — and even though `_sha256` swallows `OSError`, the deeper issue was that a directory could be treated as a candidate and silently dropped, or, if the guard in `_sha256` were removed, crash the run. Now it's filtered at the source.
+
+- **Symlink pruning during traversal.** `dirnames[:] = [...]` skips symlinked directories so `os.walk` doesn't descend into them, and the per-file `os.path.islink` check keeps file symlinks out of the candidate list. This prevents both accidental recursion loops and false "duplicates" between a link and its target.
+
+- **`follow_symlinks=False` on `stat`.** We inspect the directory entry itself rather than its target, so a broken symlink or a symlink-to-directory can't raise during the size lookup and can't be mistaken for a real file.
+
+- **Non-regular files skipped, not errored.** FIFOs, sockets, device nodes, and directories are all filtered out before hashing, so the function only ever opens regular files. The `_sha256` `OSError` guard remains as a defensive fallback for races (e.g., a file being deleted between the size pass and the hash pass), but in normal operation it no longer needs to catch the directory case.
+
+Behavior is otherwise unchanged: still recursive, still size-prefiltered, still returns only groups of 2+ sorted paths.

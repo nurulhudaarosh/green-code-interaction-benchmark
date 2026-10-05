@@ -1,0 +1,51 @@
+import os
+import hashlib
+from collections import defaultdict
+
+def find_exact_duplicates(input_dir):
+    """
+    Finds byte-identical files in `input_dir` and its subdirectories.
+    
+    Returns:
+        List[List[str]]: A list of file path lists, where each inner list contains 
+                         2 or more byte-identical file paths sorted alphabetically.
+    """
+    size_map = defaultdict(list)
+    
+    # Step 1: Group files by size first (fast filter)
+    for root, _, files in os.walk(input_dir):
+        for filename in files:
+            filepath = os.path.join(root, filename)
+            try:
+                # Follow symlinks or skip inaccessible files if needed
+                file_size = os.path.getsize(filepath)
+                size_map[file_size].append(filepath)
+            except (OSError, IOError):
+                # Skip files that cannot be accessed
+                continue
+
+    hash_map = defaultdict(list)
+    CHUNK_SIZE = 64 * 1024  # Read in 64KB chunks to handle large files efficiently
+
+    # Step 2: Only hash files that share the exact same size with at least one other file
+    for file_size, paths in size_map.items():
+        if len(paths) < 2:
+            continue
+            
+        for path in paths:
+            try:
+                hasher = hashlib.sha256()
+                with open(path, 'rb') as f:
+                    while chunk := f.read(CHUNK_SIZE):
+                        hasher.update(chunk)
+                hash_map[hasher.hexdigest()].append(path)
+            except (OSError, IOError):
+                continue
+
+    # Step 3: Collect groups with 2+ members and sort each group alphabetically
+    duplicates = []
+    for paths in hash_map.values():
+        if len(paths) >= 2:
+            duplicates.append(sorted(paths))
+            
+    return duplicates

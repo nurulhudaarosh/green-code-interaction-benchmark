@@ -1,0 +1,92 @@
+```python
+import os
+from PIL import Image
+
+
+def rotate_and_crop(input_dir, output_dir, angle_degrees, crop_size):
+    """
+    Rotate each image in input_dir by angle_degrees and center-crop/pad
+    it to exactly crop_size.
+
+    Args:
+        input_dir (str): Directory containing input images.
+        output_dir (str): Directory where processed images are saved.
+        angle_degrees (float): Rotation angle in degrees.
+        crop_size (tuple): Desired output size as (width, height).
+
+    Returns:
+        None
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    target_width, target_height = crop_size
+
+    for filename in os.listdir(input_dir):
+        input_path = os.path.join(input_dir, filename)
+
+        if not os.path.isfile(input_path):
+            continue
+
+        try:
+            with Image.open(input_path) as img:
+                # Preserve transparency for RGBA images
+                if img.mode not in ("RGB", "RGBA"):
+                    img = img.convert("RGBA" if "A" in img.getbands() else "RGB")
+
+                # Rotate while expanding the canvas so the entire
+                # rotated image is preserved.
+                rotated = img.rotate(
+                    angle_degrees,
+                    expand=True,
+                    resample=Image.Resampling.BICUBIC
+                )
+
+                # Create an output canvas of the exact requested size.
+                if rotated.mode == "RGBA":
+                    canvas = Image.new(
+                        "RGBA",
+                        (target_width, target_height),
+                        (0, 0, 0, 0)
+                    )
+                else:
+                    canvas = Image.new(
+                        rotated.mode,
+                        (target_width, target_height),
+                        0
+                    )
+
+                # Center-crop if larger, or center-pad if smaller.
+                src_width, src_height = rotated.size
+
+                crop_left = max((src_width - target_width) // 2, 0)
+                crop_top = max((src_height - target_height) // 2, 0)
+
+                crop_right = min(
+                    crop_left + target_width,
+                    src_width
+                )
+                crop_bottom = min(
+                    crop_top + target_height,
+                    src_height
+                )
+
+                cropped = rotated.crop(
+                    (crop_left, crop_top, crop_right, crop_bottom)
+                )
+
+                # Center the cropped image on the output canvas.
+                paste_x = (target_width - cropped.width) // 2
+                paste_y = (target_height - cropped.height) // 2
+
+                if cropped.mode == "RGBA":
+                    canvas.paste(cropped, (paste_x, paste_y), cropped)
+                else:
+                    canvas.paste(cropped, (paste_x, paste_y))
+
+                output_path = os.path.join(output_dir, filename)
+                canvas.save(output_path)
+
+        except (OSError, ValueError):
+            # Skip files that are not valid images.
+            continue
+```

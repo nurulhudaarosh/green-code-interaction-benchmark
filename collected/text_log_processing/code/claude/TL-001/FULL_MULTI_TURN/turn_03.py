@@ -1,0 +1,86 @@
+import re
+from collections import Counter
+
+# Matches the ERROR level token in common formats:
+#   2026-10-04 12:00:00,123 ERROR [db] msg
+#   [ERROR] msg   |   level=ERROR msg   |   <timestamp> - ERROR - msg
+_LEVEL_RE = re.compile(r"(?:^|[\s\[(=|])ERROR(?:[\s\])|:\-]|$)")
+
+# Normalization rules, applied in order (specific patterns before generic numbers).
+_NORMALIZERS = [
+    (re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"), "<UUID>"),
+    (re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b"), "<IP>"),
+    (re.compile(r"\b0x[0-9a-fA-F]+\b"), "<HEX>"),
+    (re.compile(r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b"), "<TS>"),
+    (re.compile(r"(?<![\w/])/(?:[\w.\-]+/)+[\w.\-]*"), "<PATH>"),
+    (re.compile(r"\"[^\"]*\"|'[^']*'"), "<STR>"),
+    (re.compile(r"\b\d+(?:\.\d+)?\b"), "<N>"),
+]
+
+
+def _normalize(message: str) -> str:
+    for pattern, repl in _NORMALIZERS:
+        message = pattern.sub(repl, message)
+    return re.sub(r"\s+", " ", message).strip()
+
+
+def analyze_error_log(path, top_n=None):
+    """Return (top, malformed).
+
+    top:       list of (normalized_message, count) tuples sorted by count
+               descending (ties broken alphabetically). Limited to the first
+               top_n entries; if top_n is None, all signatures are returned.
+    malformed: number of lines skipped because they were blank, corrupted
+               (NUL bytes / undecodable characters), or failed to parse.
+    """
+    if top_n is not None and top_n < 0:
+        raise ValueError("top_n must be non-negative or None")
+
+    counts = Counter()
+    malformed = 0
+
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        while True:
+            try:
+                line = f.readline()
+            except Exception:
+                malformed += 1
+                continue
+            if line == "":  # EOF
+                break
+
+            try:
+                # Blank or corrupted line
+                if not line.strip() or "\x00" in line or "\ufffd" in line:
+                    malformed += 1
+                    continue
+
+                m = _LEVEL_RE.search(line)
+                if not m:
+                    continue  # valid line, just not ERROR level
+
+                message = line[m.end():].strip()
+                # Drop leading separators such as "- ", ": ", "| ".
+                message = re.sub(r"^[\s:\-|\]]+", "", message)
+                if not message:
+                    malformed += 1  # ERROR level but no message
+                    continue
+
+                counts[_normalize(message)] += 1
+            except Exception:
+                malformed += 1
+
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    top = ranked if top_n is None else ranked[:top_n]
+    return top, malformed
+
+
+if __name__ == "__main__":
+    import sys
+
+    path = sys.argv[1]
+    n = int(sys.argv[2]) if len(sys.argv) > 2 else None
+    top, malformed = analyze_error_log(path, top_n=n)
+    for msg, c in top:
+        print(f"{c:6d}  {msg}")
+    print(f"\nMalformed lines skipped: {malformed}")

@@ -1,0 +1,104 @@
+### Restatement of Problem & Expected Behavior
+
+**Problem:** Given a set of time intervals `[start, end]`, assign each interval to a room such that no overlapping intervals share a room. A room can be reused when its previous interval ends at or before the next interval's start time (`end <= start`). We must minimize the total number of unique rooms used and return an array/list of room IDs corresponding to the original interval order.
+
+**Expected Behavior & Tie Handling:**
+When multiple existing rooms are available (`end <= start`), tie handling must be **deterministic**:
+
+1. When popping an available room from the heap, if multiple rooms are available (i.e. their `end_time <= start`), the algorithm must deterministically pick the room that became available earliest (smallest `end_time`).
+2. If multiple available rooms share the exact same `end_time` (or when returning a room back to the pool), room selection/reuse must follow a strict, deterministic ordering (such as picking the smallest `room_id`).
+
+---
+
+### Defect Demonstration
+
+In the previous implementation:
+
+
+1. **Unpredictable Room Selection Among Available Rooms:** `heapq.heappop(heap)` only pops the room with the absolute minimum `end_time` across *all* active rooms in the heap. If there are multiple rooms in the heap that ended before `start` (e.g., Room 0 ended at 5, Room 1 ended at 8, and current `start` is 10), `heappop` forces the selection of Room 0 (ended at 5). However, if Room 0 and Room 1 ended at the same time (e.g., both ended at 5), `heapq` will break ties using the second element of the tuple, `room_id`.
+2. **Missing Free-Room Pool / Suboptimal Room Reuse:** Once multiple rooms become available at or before `start`, popping one room and pushing `(new_end, room_id)` back into the active heap immediately re-occupies that room, but leaves other already-available rooms sitting in the active heap mixed in with occupied rooms.
+
+Consider this example with ties:
+
+* `intervals = [[0, 10], [0, 10], [10, 20], [10, 20]]`
+
+**Step-by-step trace of previous implementation:**
+
+1. Interval 0 `[0, 10]` -> Room 0 allocated. Heap: `[(10, 0)]`
+2. Interval 1 `[0, 10]` -> Room 1 allocated. Heap: `[(10, 0), (10, 1)]`
+3. Interval 2 `[10, 20]` (`start=10`): Both Room 0 and Room 1 ended at 10. `heap[0][0] <= 10` is true. `heappop` pops `(10, 0)`. Room 0 assigned. Heap receives `(20, 0)`. Heap is now `[(10, 1), (20, 0)]`.
+4. Interval 3 `[10, 20]` (`start=10`): `heap[0]` is `(10, 1)`. `10 <= 10` is true. `heappop` pops `(10, 1)`. Room 1 assigned. Heap receives `(20, 1)`.
+
+Now consider when start times vary slightly or multiple rooms are free: if room free IDs are recycled into a candidate pool of free rooms sorted by `room_id` (or if all available rooms at `start` are released before picking the smallest `room_id`), we guarantee deterministic minimum room ID selection among all available rooms.
+
+---
+
+### Corrected Implementation
+
+To handle deterministic room allocation properly:
+
+1. Maintain an active min-heap of `(end_time, room_id)` for currently occupied rooms.
+2. Before processing interval `[start, end]`, pop **all** rooms from the occupied heap whose `end_time <= start`.
+3. Add their `room_id`s into an `available_rooms` min-heap (keyed by `room_id`).
+4. If `available_rooms` is non-empty, pop the smallest `room_id`.
+5. Otherwise, allocate `next_room_id`.
+6. Push `(end, room_id)` back onto the occupied rooms min-heap.
+
+```python
+import heapq
+
+def min_meeting_rooms(intervals: list[list[int]]) -> list[int]:
+    """
+    Assigns each interval to a room minimizing total rooms used.
+    Uses deterministic tie handling for available room reuse.
+    Returns a list of room IDs corresponding to the original interval order.
+    """
+    if not intervals:
+        return []
+
+    # Store original indices to preserve input order
+    # Format: (start, end, original_index)
+    indexed_intervals = sorted(
+        ((start, end, i) for i, (start, end) in enumerate(intervals)),
+        key=lambda x: (x[0], x[1], x[2])  # Deterministic sorting tie-breaker
+    )
+
+    # Min-heap of currently occupied rooms: (end_time, room_id)
+    occupied_heap = []
+    
+    # Min-heap of available room IDs (keyed by room_id for deterministic reuse)
+    available_rooms = []
+    
+    room_assignments = [0] * len(intervals)
+    next_room_id = 0
+
+    for start, end, orig_idx in indexed_intervals:
+        # Free up all rooms that have ended at or before current start time
+        while occupied_heap and occupied_heap[0][0] <= start:
+            _, freed_room_id = heapq.heappop(occupied_heap)
+            heapq.heappush(available_rooms, freed_room_id)
+
+        # Reuse the available room with the lowest ID, or create a new one
+        if available_rooms:
+            room_id = heapq.heappop(available_rooms)
+        else:
+            room_id = next_room_id
+            next_room_id += 1
+
+        # Mark room as occupied until current interval's end time
+        heapq.heappush(occupied_heap, (end, room_id))
+        
+        # Assign room ID to original interval index
+        room_assignments[orig_idx] = room_id
+
+    return room_assignments
+
+
+# Verification
+if __name__ == "__main__":
+    test_intervals = [[0, 10], [0, 10], [10, 20], [10, 20]]
+    assignments = min_meeting_rooms(test_intervals)
+    print("Intervals:  ", test_intervals)
+    print("Assignments:", assignments)  # Expected: [0, 1, 0, 1]
+
+```

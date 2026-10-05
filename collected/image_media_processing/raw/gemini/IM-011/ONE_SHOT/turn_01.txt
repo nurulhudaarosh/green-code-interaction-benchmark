@@ -1,0 +1,60 @@
+Here is a complete, self-contained Python script using the standard `Pillow` library (`PIL`) and `shutil` to sort and copy images into subfolders based on their dimensions.
+
+```python
+import os
+import shutil
+from PIL import Image
+
+def organize_by_resolution(input_dir, output_dir):
+    """
+    Copies images from input_dir into subfolders of output_dir based on dimensions:
+    - small: max(width, height) < 640
+    - medium: 640 <= max(width, height) <= 1920
+    - large: max(width, height) > 1920
+    """
+    # Create target subdirectories if they don't exist
+    categories = ['small', 'medium', 'large']
+    for cat in categories:
+        os.makedirs(os.path.join(output_dir, cat), exist_ok=True)
+
+    # Valid image extensions to check
+    valid_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp', '.tiff')
+
+    for root, _, files in os.walk(input_dir):
+        for filename in files:
+            if filename.lower().endswith(valid_extensions):
+                src_path = os.path.join(root, filename)
+                
+                try:
+                    with Image.open(src_path) as img:
+                        max_dim = max(img.width, img.height)
+
+                    if max_dim < 640:
+                        target_subfolder = 'small'
+                    elif max_dim <= 1920:
+                        target_subfolder = 'medium'
+                    else:
+                        target_subfolder = 'large'
+
+                    dest_path = os.path.join(output_dir, target_subfolder, filename)
+                    
+                    # Copy image to destination
+                    shutil.copy2(src_path, dest_path)
+
+                except (IOError, SyntaxError):
+                    # Skip corrupted or non-image files
+                    continue
+
+```
+
+### Categorization Criteria
+
+* **Small:** `max(width, height) < 640`
+* **Medium:** `640 <= max(width, height) <= 1920`
+* **Large:** `max(width, height) > 1920`
+
+### Key Highlights
+
+* **`shutil.copy2`**: Retains file metadata (creation/modification dates) when copying.
+* **Context Manager (`with Image.open(...)`)**: Opens images briefly to read metadata (`img.width` and `img.height`) without loading full pixel data into memory, ensuring memory efficiency for large batches.
+* **Error Handling**: Gracefully skips corrupted files or invalid formats without halting execution.

@@ -1,0 +1,95 @@
+"""Brightness analysis for a directory of images."""
+
+from pathlib import Path
+
+import numpy as np
+from PIL import Image, UnidentifiedImageError
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
+
+# Thresholds on the 0-255 grayscale mean.
+DARK_THRESHOLD = 85
+BRIGHT_THRESHOLD = 170
+
+
+def classify_brightness(gray_mean, dark=DARK_THRESHOLD, bright=BRIGHT_THRESHOLD):
+    """Return 'dark', 'normal' or 'bright' for a 0-255 grayscale mean."""
+    if gray_mean < dark:
+        return "dark"
+    if gray_mean > bright:
+        return "bright"
+    return "normal"
+
+
+def analyze_brightness(input_dir, recursive=False,
+                       dark=DARK_THRESHOLD, bright=BRIGHT_THRESHOLD):
+    """Analyze brightness of every image in input_dir.
+
+    For each image, computes:
+      - mean_r, mean_g, mean_b: per-channel means (0-255)
+      - brightness: overall grayscale brightness (0-255), using the ITU-R 601
+        luma formula 0.299 R + 0.587 G + 0.114 B
+      - category: 'dark' (< dark), 'bright' (> bright), otherwise 'normal'
+
+    Images with transparency are composited onto a white background before
+    analysis. Files that cannot be read as images are reported with an
+    'error' field instead of stats.
+
+    Args:
+        input_dir: directory containing images.
+        recursive: also search subdirectories.
+        dark, bright: classification thresholds on the 0-255 scale.
+
+    Returns:
+        A list of dicts, one per image, sorted by file path.
+    """
+    root = Path(input_dir)
+    if not root.is_dir():
+        raise NotADirectoryError(f"Not a directory: {input_dir}")
+
+    pattern = "**/*" if recursive else "*"
+    paths = sorted(
+        p for p in root.glob(pattern)
+        if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+    )
+
+    results = []
+    for path in paths:
+        entry = {"file": str(path.relative_to(root))}
+        try:
+            with Image.open(path) as img:
+                img.load()
+                if img.mode in ("RGBA", "LA") or "transparency" in img.info:
+                    rgba = img.convert("RGBA")
+                    background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+                    img = Image.alpha_composite(background, rgba)
+                rgb = np.asarray(img.convert("RGB"), dtype=np.float64)
+        except (UnidentifiedImageError, OSError, ValueError) as exc:
+            entry["error"] = str(exc)
+            results.append(entry)
+            continue
+
+        mean_r, mean_g, mean_b = rgb.reshape(-1, 3).mean(axis=0)
+        brightness = 0.299 * mean_r + 0.587 * mean_g + 0.114 * mean_b
+
+        entry.update(
+            mean_r=round(float(mean_r), 2),
+            mean_g=round(float(mean_g), 2),
+            mean_b=round(float(mean_b), 2),
+            brightness=round(float(brightness), 2),
+            category=classify_brightness(brightness, dark, bright),
+        )
+        results.append(entry)
+
+    return results
+
+
+if __name__ == "__main__":
+    import argparse
+    import json
+
+    parser = argparse.ArgumentParser(description="Classify image brightness.")
+    parser.add_argument("input_dir")
+    parser.add_argument("-r", "--recursive", action="store_true")
+    args = parser.parse_args()
+    print(json.dumps(analyze_brightness(args.input_dir, args.recursive), indent=2))

@@ -1,0 +1,51 @@
+import os
+from PIL import Image
+
+def rotate_and_crop(input_dir: str, output_dir: str, angle_degrees: float, crop_size: tuple[int, int]) -> None:
+    """
+    Rotates all images in input_dir and center-crops/pads them to crop_size.
+
+    :param input_dir: Path to directory containing source images.
+    :param output_dir: Path to directory where processed images will be saved.
+    :param angle_degrees: Counter-clockwise rotation angle in degrees.
+    :param crop_size: Target dimensions as a (width, height) tuple.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    crop_w, crop_h = crop_size
+    valid_extensions = ('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tiff')
+
+    for filename in os.listdir(input_dir):
+        if not filename.lower().endswith(valid_extensions):
+            continue
+
+        file_path = os.path.join(input_dir, filename)
+        
+        with Image.open(file_path) as img:
+            # Preserve original image mode/alpha channel where applicable
+            original_mode = img.mode
+            img_rgba = img.convert("RGBA")
+
+            # Expand bounds so corners aren't clipped during rotation
+            rotated = img_rgba.rotate(angle_degrees, expand=True, resample=Image.BICUBIC)
+            rot_w, rot_h = rotated.size
+
+            # Compute bounding box for center crop
+            left = (rot_w - crop_w) / 2
+            top = (rot_h - crop_h) / 2
+            right = left + crop_w
+            bottom = top + crop_h
+
+            # PIL crop accepts negative bounds/bounds beyond size and automatically pads with transparency
+            cropped = rotated.crop((left, top, right, bottom))
+
+            # Convert back to original mode (e.g., RGB for JPEGs)
+            if original_mode in ("RGB", "L"):
+                # Create a solid background (white or black) for transparency if saving to RGB/JPEG
+                background = Image.new("RGB", (crop_w, crop_h), (255, 255, 255))
+                background.paste(cropped, mask=cropped.split()[3])
+                final_img = background if original_mode == "RGB" else background.convert("L")
+            else:
+                final_img = cropped
+
+            save_path = os.path.join(output_dir, filename)
+            final_img.save(save_path)

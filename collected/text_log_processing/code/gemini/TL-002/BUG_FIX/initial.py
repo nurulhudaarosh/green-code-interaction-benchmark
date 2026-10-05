@@ -1,0 +1,95 @@
+import csv
+import re
+from typing import Dict, Iterable
+
+
+def convert_access_log(
+    in_path: str,
+    out_path: str,
+    methods: Iterable[str],
+    status_classes: Iterable[str],
+) -> Dict[str, int]:
+    """Parse an Apache-style access log, filter rows, and stream matching records to CSV.
+
+    Args:
+        in_path: Path to the source log file.
+        out_path: Path to the target CSV file.
+        methods: Collection of HTTP methods to include (e.g., {'GET', 'POST'}).
+        status_classes: Collection of status classes to include (e.g., {'2xx',
+          '4xx'}).
+
+    Returns:
+        Dict with counts of 'written' and 'skipped' rows.
+    """
+    # Normalize filters for case-insensitive matching
+    allowed_methods = {m.strip().upper() for m in methods}
+    allowed_status_classes = {sc.strip().lower() for sc in status_classes}
+
+    # Matches standard Apache Combined/Common log formats:
+    # IP, ident, user, [timestamp], "METHOD URL HTTP/x.x", status, size
+    log_pattern = re.compile(
+        r"^(\S+)\s+\S+\s+\S+\s+\[([^\]]+)\]\s+\"([A-Za-z]+)\s+(\S+)(?:\s+[^\"]+)?\"\s+(\d{3})\s+(\d+|-)"
+    )
+
+    fieldnames = [
+        "ip",
+        "timestamp",
+        "method",
+        "url",
+        "status",
+        "statusClass",
+        "size",
+    ]
+
+    written_count = 0
+    skipped_count = 0
+
+    with open(in_path, "r", encoding="utf-8", errors="replace") as infile, open(
+        out_path, "w", newline="", encoding="utf-8"
+    ) as outfile:
+
+        writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for line in infile:
+            line = line.strip()
+            if not line:
+                skipped_count += 1
+                continue
+
+            match = log_pattern.match(line)
+            if not match:
+                skipped_count += 1
+                continue
+
+            ip, timestamp, method, url, status, raw_size = match.groups()
+
+            # Normalize values
+            method = method.upper()
+            status_class = f"{status[0]}xx".lower()
+
+            # Apply filters
+            if (
+                method not in allowed_methods
+                or status_class not in allowed_status_classes
+            ):
+                skipped_count += 1
+                continue
+
+            # Convert Apache size '-' (e.g. 304 or redirects) to 0
+            size = 0 if raw_size == "-" else int(raw_size)
+
+            writer.writerow(
+                {
+                    "ip": ip,
+                    "timestamp": timestamp,
+                    "method": method,
+                    "url": url,
+                    "status": status,
+                    "statusClass": status_class,
+                    "size": size,
+                }
+            )
+            written_count += 1
+
+    return {"written": written_count, "skipped": skipped_count}

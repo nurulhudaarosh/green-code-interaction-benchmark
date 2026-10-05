@@ -1,0 +1,148 @@
+```python
+from collections import Counter
+from datetime import datetime
+
+VALID_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+def parse_log_line(line):
+    """Parse a valid log line and safely reject malformed lines."""
+    if not isinstance(line, str):
+        return None
+
+    line = line.strip()
+    if not line:
+        return None
+
+    # Split only on the expected separators.
+    parts = [part.strip() for part in line.split("|")]
+
+    # A valid line must have exactly timestamp, level, and message.
+    if len(parts) != 3:
+        return None
+
+    timestamp_text, level, message = parts
+
+    if not timestamp_text or not level or not message:
+        return None
+
+    try:
+        timestamp = datetime.strptime(timestamp_text, TIMESTAMP_FORMAT)
+    except ValueError:
+        return None
+
+    level = level.upper()
+
+    if level not in VALID_LEVELS:
+        return None
+
+    return {
+        "timestamp": timestamp,
+        "level": level,
+        "message": message
+    }
+
+
+def summarize_logs(logs):
+    """Build a summary while ignoring malformed log lines."""
+    if logs is None:
+        logs = []
+
+    valid_logs = []
+    malformed_count = 0
+
+    for line in logs:
+        record = parse_log_line(line)
+
+        if record is None:
+            malformed_count += 1
+        else:
+            valid_logs.append(record)
+
+    level_counts = Counter(record["level"] for record in valid_logs)
+    message_counts = Counter(record["message"] for record in valid_logs)
+
+    if valid_logs:
+        first_timestamp = min(record["timestamp"] for record in valid_logs)
+        last_timestamp = max(record["timestamp"] for record in valid_logs)
+    else:
+        first_timestamp = None
+        last_timestamp = None
+
+    return {
+        "total": len(valid_logs),
+        "malformed": malformed_count,
+        "by_level": {
+            "DEBUG": level_counts["DEBUG"],
+            "INFO": level_counts["INFO"],
+            "WARNING": level_counts["WARNING"],
+            "ERROR": level_counts["ERROR"],
+            "CRITICAL": level_counts["CRITICAL"]
+        },
+        "first_timestamp": first_timestamp,
+        "last_timestamp": last_timestamp,
+        "messages": dict(message_counts)
+    }
+
+
+def format_summary(summary):
+    """Return a readable summary report."""
+    first = summary["first_timestamp"]
+    last = summary["last_timestamp"]
+
+    first_text = first.strftime(TIMESTAMP_FORMAT) if first else "N/A"
+    last_text = last.strftime(TIMESTAMP_FORMAT) if last else "N/A"
+
+    lines = [
+        "Log Summary",
+        "-----------",
+        f"Total valid entries: {summary['total']}",
+        f"Malformed entries: {summary['malformed']}",
+        f"First timestamp: {first_text}",
+        f"Last timestamp: {last_text}",
+        "",
+        "Entries by level:"
+    ]
+
+    for level, count in summary["by_level"].items():
+        lines.append(f"  {level}: {count}")
+
+    lines.append("")
+    lines.append("Message frequencies:")
+
+    if summary["messages"]:
+        for message, count in sorted(
+            summary["messages"].items(),
+            key=lambda item: (-item[1], item[0])
+        ):
+            lines.append(f"  {count}x - {message}")
+    else:
+        lines.append("  N/A")
+
+    return "\n".join(lines)
+
+
+def analyze_logs(logs):
+    """Complete log summarizer."""
+    return format_summary(summarize_logs(logs))
+
+
+if __name__ == "__main__":
+    logs = [
+        "2026-10-04 09:15:00 | INFO | Application started",
+        "2026-10-04 09:16:00 | INFO | User logged in",
+        "2026-10-04 09:17:00 | WARNING | Slow response detected",
+        "2026-10-04 09:18:00 | ERROR | Database connection failed",
+        "malformed line",
+        "2026-10-04 09:19:00 | ERROR | Database connection failed",
+        "2026-99-99 09:20:00 | ERROR | Invalid timestamp",
+        "2026-10-04 09:21:00 | UNKNOWN | Unsupported level",
+        "2026-10-04 09:22:00 | CRITICAL | Service unavailable",
+        "",
+        "2026-10-04 09:23:00 | INFO",
+        "2026-10-04 09:24:00 | INFO |"
+    ]
+
+    print(analyze_logs(logs))
+```

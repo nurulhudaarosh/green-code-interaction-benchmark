@@ -1,0 +1,181 @@
+"""
+split_channels.py
+
+Utilities to:
+  - split_channels(input_dir, output_dir):  Decompose every image in a
+    directory into three grayscale R/G/B files.
+  - merge_channels(r_path, g_path, b_path, output_path): Recombine three
+    single-channel images into one RGB image.
+
+Requires: Pillow  (pip install Pillow)
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Iterable
+
+from PIL import Image, UnidentifiedImageError
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+#: Extensions Pillow can be expected to open.
+_SUPPORTED_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+
+
+def _iter_image_files(input_dir: Path) -> Iterable[Path]:
+    """Yield every file in *input_dir* whose suffix looks like an image."""
+    for path in sorted(input_dir.iterdir()):
+        if path.is_file() and path.suffix.lower() in _SUPPORTED_EXTS:
+            yield path
+
+
+def _ensure_rgb(img: Image.Image) -> Image.Image:
+    """Convert *img* to RGB, flattening alpha onto a black background if needed."""
+    if img.mode == "RGB":
+        return img
+    if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+        rgba = img.convert("RGBA")
+        background = Image.new("RGB", rgba.size, (0, 0, 0))
+        background.paste(rgba, mask=rgba.split()[-1])
+        return background
+    return img.convert("RGB")
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def split_channels(input_dir: str | os.PathLike,
+                   output_dir: str | os.PathLike) -> list[tuple[str, str, str]]:
+    """
+    Split every image found in *input_dir* into three single-channel PNGs.
+
+    For an input named ``photo.png`` the outputs are::
+
+        <output_dir>/photo_R.png
+        <output_dir>/photo_G.png
+        <output_dir>/photo_B.png
+
+    Parameters
+    ----------
+    input_dir : path-like
+        Directory containing the source images.
+    output_dir : path-like
+        Directory to receive the grayscale channel images. Created if missing.
+
+    Returns
+    -------
+    list of tuples
+        One ``(r_path, g_path, b_path)`` tuple per successfully processed image.
+    """
+    in_dir = Path(input_dir)
+    out_dir = Path(output_dir)
+
+    if not in_dir.is_dir():
+        raise NotADirectoryError(f"Input directory does not exist: {in_dir}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    written: list[tuple[str, str, str]] = []
+
+    for src in _iter_image_files(in_dir):
+        try:
+            with Image.open(src) as img:
+                rgb = _ensure_rgb(img)
+                r, g, b = rgb.split()          # three "L" mode images
+                stem = src.stem
+
+                r_path = out_dir / f"{stem}_R.png"
+                g_path = out_dir / f"{stem}_G.png"
+                b_path = out_dir / f"{stem}_B.png"
+
+                r.save(r_path, format="PNG")
+                g.save(g_path, format="PNG")
+                b.save(b_path, format="PNG")
+
+                written.append((str(r_path), str(g_path), str(b_path)))
+                print(f"[split] {src.name} -> {stem}_R/G/B.png")
+        except (UnidentifiedImageError, OSError) as exc:
+            print(f"[split] skipping {src.name}: {exc}")
+
+    return written
+
+
+def merge_channels(r_path: str | os.PathLike,
+                   g_path: str | os.PathLike,
+                   b_path: str | os.PathLike,
+                   output_path: str | os.PathLike) -> str:
+    """
+    Recombine three single-channel images into one RGB image.
+
+    Each input may be in any mode Pillow understands; non-"L" images are
+    converted to grayscale first. All three must share the same dimensions.
+
+    Parameters
+    ----------
+    r_path, g_path, b_path : path-like
+        Paths to the red, green and blue channel images.
+    output_path : path-like
+        Destination file. The format is inferred from its suffix.
+
+    Returns
+    -------
+    str
+        The path that was written.
+    """
+    r_path, g_path, b_path = Path(r_path), Path(g_path), Path(b_path)
+    out_path = Path(output_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with Image.open(r_path) as r_img, \
+         Image.open(g_path) as g_img, \
+         Image.open(b_path) as b_img:
+
+        r = r_img.convert("L")
+        g = g_img.convert("L")
+        b = b_img.convert("L")
+
+        if not (r.size == g.size == b.size):
+            raise ValueError(
+                "Channel images must share the same dimensions: "
+                f"R={r.size}, G={g.size}, B={b.size}"
+            )
+
+        merged = Image.merge("RGB", (r, g, b))
+
+        # Infer format from suffix; default to PNG.
+        fmt = Image.registered_extensions().get(out_path.suffix.lower(), "PNG")
+        merged.save(out_path, format=fmt)
+
+    print(f"[merge] R+G+B -> {out_path}")
+    return str(out_path)
+
+
+# ---------------------------------------------------------------------------
+# Demo / CLI
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Split and merge image channels.")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_split = sub.add_parser("split", help="Split images into R/G/B files")
+    p_split.add_argument("input_dir")
+    p_split.add_argument("output_dir")
+
+    p_merge = sub.add_parser("merge", help="Merge R/G/B files into one image")
+    p_merge.add_argument("r"); p_merge.add_argument("g"); p_merge.add_argument("b")
+    p_merge.add_argument("output")
+
+    args = parser.parse_args()
+
+    if args.cmd == "split":
+        split_channels(args.input_dir, args.output_dir)
+    else:
+        merge_channels(args.r, args.g, args.b, args.output)

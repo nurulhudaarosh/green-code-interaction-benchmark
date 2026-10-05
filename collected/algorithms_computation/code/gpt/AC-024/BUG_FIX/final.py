@@ -1,0 +1,368 @@
+"""
+Minimum Room Assignment
+========================
+
+Problem:
+Assign every interval to a room so that overlapping intervals never
+share the same room. A room can be reused when its previous interval
+ends at or before the next interval starts. The number of rooms must
+be minimized, and the room ID assigned to every original interval
+must be returned.
+
+Expected behavior:
+- Sort intervals by start time.
+- Use a min-heap keyed by room availability.
+- A heap entry is (end_time, room_id).
+- Before assigning an interval, reuse the room that became available
+  earliest, provided end_time <= start_time.
+- If multiple rooms have the same availability time, use the smaller
+  room ID for deterministic tie handling.
+- If no room is available, create a new room.
+- Return assignments in the ORIGINAL input order.
+- Room IDs start at 0.
+- Intervals are treated as [start, end), so end == next start allows
+  room reuse.
+- The result must use the minimum possible number of rooms.
+- Use only the Python standard library.
+
+
+BUG DEMONSTRATION
+-----------------
+
+The previous implementation moved every reusable room from the
+availability heap into a separate heap containing only room IDs:
+
+    available = []
+
+    while occupied and occupied[0][0] <= start:
+        end_time, room_id = heappop(occupied)
+        heappush(available, room_id)
+
+    room_id = heappop(available)
+
+This loses the availability time.
+
+Example:
+
+    intervals = [
+        (0, 2),   # room 0
+        (0, 1),   # room 1
+        (3, 4),   # should reuse room 1 first
+    ]
+
+After the first two intervals:
+    room 1 becomes available at time 1
+    room 0 becomes available at time 2
+
+At time 3 both rooms are available.
+
+The required deterministic rule is to use the min-heap keyed by
+availability, so room 1 (available at time 1) must be selected before
+room 0 (available at time 2).
+
+The defective implementation instead stores only [0, 1] and chooses
+the smallest room ID, producing:
+
+    [0, 1, 0]
+
+The corrected implementation produces:
+
+    [0, 1, 1]
+
+Both use two rooms, but only the second assignment follows the required
+availability-based deterministic tie handling.
+
+
+CORRECT ALGORITHM
+-----------------
+
+1. Attach each interval's original index.
+2. Sort intervals by:
+       (start_time, end_time, original_index)
+3. Maintain a min-heap:
+       (end_time, room_id)
+   representing rooms currently occupied.
+4. For each interval:
+   - If the earliest-ending room has end_time <= start_time, reuse it.
+   - Otherwise create a new room.
+5. Put the selected room back into the heap with its new end time.
+6. Store the room ID at the interval's original index.
+7. Return the minimum room count and the assignments.
+
+Why this minimizes rooms:
+At each interval, if the earliest available room is still occupied,
+then every existing room is occupied. Therefore a new room is
+necessary. Otherwise, reusing the earliest available room is optimal.
+
+Complexity:
+- Sorting: O(n log n)
+- Heap operations: O(n log n)
+- Total: O(n log n)
+- Extra space: O(n)
+
+
+IMPLEMENTATION
+--------------
+
+from heapq import heappush, heappop
+from typing import List, Tuple, Dict, Any
+
+
+def assign_rooms(intervals: List[Tuple[int, int]]) -> Dict[str, Any]:
+    """
+    Assign every interval to a minimum number of rooms.
+
+    Returns:
+        {
+            "room_count": minimum number of rooms,
+            "assignments": room ID for each interval in original order
+        }
+    """
+
+    n = len(intervals)
+
+    if n == 0:
+        return {
+            "room_count": 0,
+            "assignments": []
+        }
+
+    # Sort by start time, then end time, then original index.
+    ordered = sorted(
+        (
+            (start, end, index)
+            for index, (start, end) in enumerate(intervals)
+        ),
+        key=lambda item: (item[0], item[1], item[2])
+    )
+
+    # Min-heap keyed by:
+    #   1. earliest room availability (end time)
+    #   2. smallest room ID for deterministic ties
+    occupied = []
+
+    assignments = [-1] * n
+    next_room_id = 0
+
+    for start, end, original_index in ordered:
+
+        # Reuse the earliest-available room if it is free.
+        if occupied and occupied[0][0] <= start:
+            previous_end, room_id = heappop(occupied)
+        else:
+            # Every existing room overlaps this interval.
+            room_id = next_room_id
+            next_room_id += 1
+
+        assignments[original_index] = room_id
+
+        # The selected room is now occupied until this interval ends.
+        heappush(occupied, (end, room_id))
+
+    return {
+        "room_count": next_room_id,
+        "assignments": assignments
+    }
+
+
+# ---------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------
+
+def validate_assignment(
+    intervals: List[Tuple[int, int]],
+    result: Dict[str, Any]
+) -> None:
+    """Check that the result is valid and uses the minimum rooms."""
+
+    room_count = result["room_count"]
+    assignments = result["assignments"]
+
+    assert len(assignments) == len(intervals)
+
+    if not intervals:
+        assert room_count == 0
+        assert assignments == []
+        return
+
+    assert room_count >= 1
+    assert all(0 <= room < room_count for room in assignments)
+
+    # Check that no overlapping intervals share a room.
+    rooms = {}
+
+    for index, room_id in enumerate(assignments):
+        rooms.setdefault(room_id, []).append(index)
+
+    for indices in rooms.values():
+        indices.sort(key=lambda i: (intervals[i][0], intervals[i][1], i))
+
+        for first, second in zip(indices, indices[1:]):
+            assert intervals[first][1] <= intervals[second][0]
+
+    # Verify minimum room count using maximum simultaneous overlap.
+    events = []
+
+    for start, end in intervals:
+        # End events (-1) are processed before start events (+1)
+        # at the same time because intervals are [start, end).
+        events.append((start, 1))
+        events.append((end, -1))
+
+    events.sort(key=lambda event: (event[0], event[1]))
+
+    active = 0
+    maximum_overlap = 0
+
+    for _, change in events:
+        active += change
+        maximum_overlap = max(maximum_overlap, active)
+
+    assert room_count == maximum_overlap
+
+
+def run_tests() -> None:
+
+    # ---------------------------------------------------------------
+    # Bug demonstration / regression test
+    # ---------------------------------------------------------------
+    #
+    # Room 1 becomes available at time 1.
+    # Room 0 becomes available at time 2.
+    # At time 3 both are available.
+    # The availability heap must choose room 1 first.
+    #
+    intervals = [
+        (0, 2),
+        (0, 1),
+        (3, 4),
+    ]
+
+    result = assign_rooms(intervals)
+
+    assert result == {
+        "room_count": 2,
+        "assignments": [0, 1, 1],
+    }
+
+    validate_assignment(intervals, result)
+
+    # ---------------------------------------------------------------
+    # Test 2: Back-to-back intervals reuse one room.
+    # ---------------------------------------------------------------
+    intervals = [
+        (1, 3),
+        (3, 5),
+        (5, 8),
+    ]
+
+    result = assign_rooms(intervals)
+
+    assert result == {
+        "room_count": 1,
+        "assignments": [0, 0, 0],
+    }
+
+    validate_assignment(intervals, result)
+
+    # ---------------------------------------------------------------
+    # Test 3: Three simultaneous overlaps require three rooms.
+    # ---------------------------------------------------------------
+    intervals = [
+        (1, 5),
+        (2, 6),
+        (3, 4),
+    ]
+
+    result = assign_rooms(intervals)
+
+    assert result["room_count"] == 3
+
+    validate_assignment(intervals, result)
+
+    # ---------------------------------------------------------------
+    # Test 4: Original input order must be preserved.
+    # ---------------------------------------------------------------
+    intervals = [
+        (5, 7),
+        (1, 3),
+        (2, 4),
+        (3, 5),
+    ]
+
+    result = assign_rooms(intervals)
+
+    assert result == {
+        "room_count": 2,
+        "assignments": [0, 0, 1, 0],
+    }
+
+    validate_assignment(intervals, result)
+
+    # ---------------------------------------------------------------
+    # Test 5: Same availability time -> smaller room ID wins.
+    # ---------------------------------------------------------------
+    intervals = [
+        (0, 2),
+        (0, 2),
+        (2, 4),
+    ]
+
+    result = assign_rooms(intervals)
+
+    assert result == {
+        "room_count": 2,
+        "assignments": [0, 1, 0],
+    }
+
+    validate_assignment(intervals, result)
+
+    # ---------------------------------------------------------------
+    # Test 6: All intervals overlap.
+    # ---------------------------------------------------------------
+    intervals = [
+        (0, 10),
+        (1, 9),
+        (2, 8),
+        (3, 7),
+    ]
+
+    result = assign_rooms(intervals)
+
+    assert result["room_count"] == 4
+
+    validate_assignment(intervals, result)
+
+    # ---------------------------------------------------------------
+    # Test 7: Single interval.
+    # ---------------------------------------------------------------
+    intervals = [(10, 20)]
+
+    result = assign_rooms(intervals)
+
+    assert result == {
+        "room_count": 1,
+        "assignments": [0],
+    }
+
+    validate_assignment(intervals, result)
+
+    # ---------------------------------------------------------------
+    # Test 8: Empty input.
+    # ---------------------------------------------------------------
+    intervals = []
+
+    result = assign_rooms(intervals)
+
+    assert result == {
+        "room_count": 0,
+        "assignments": [],
+    }
+
+    validate_assignment(intervals, result)
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()

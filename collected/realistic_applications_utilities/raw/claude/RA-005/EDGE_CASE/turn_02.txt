@@ -1,0 +1,99 @@
+```python
+def summarize_logs(lines, repeat_threshold=2):
+    """
+    Summarize log entries and detect repeated errors.
+
+    Handles:
+    - Empty logs
+    - Malformed lines
+    - Extra separators in messages
+    - Case differences
+    - Exact repetition thresholds
+    """
+
+    result = {
+        "info": 0,
+        "warning": 0,
+        "error": 0,
+        "errors": [],
+        "repeated_errors": []
+    }
+
+    # Empty or invalid log input
+    if not isinstance(lines, list) or len(lines) == 0:
+        return result
+
+    # A repeated error requires at least two occurrences.
+    if not isinstance(repeat_threshold, int) or repeat_threshold < 2:
+        repeat_threshold = 2
+
+    error_counts = {}
+    original_messages = {}
+
+    for line in lines:
+        # Ignore invalid, empty, or whitespace-only lines
+        if not isinstance(line, str) or not line.strip():
+            continue
+
+        # Split only at the first separator.
+        # Extra ':' characters remain part of the message.
+        parts = line.split(":", 1)
+
+        if len(parts) != 2:
+            continue
+
+        level = parts[0].strip().lower()
+        message = parts[1].strip()
+
+        # Ignore malformed entries
+        if not level or not message:
+            continue
+
+        if level == "info":
+            result["info"] += 1
+
+        elif level == "warning":
+            result["warning"] += 1
+
+        elif level == "error":
+            result["error"] += 1
+            result["errors"].append(message)
+
+            # Normalize case and whitespace for comparison.
+            normalized = " ".join(message.lower().split())
+
+            error_counts[normalized] = error_counts.get(normalized, 0) + 1
+
+            if normalized not in original_messages:
+                original_messages[normalized] = message
+
+    # Exact threshold is included: count == threshold is repeated.
+    for normalized, count in error_counts.items():
+        if count >= repeat_threshold:
+            result["repeated_errors"].append(original_messages[normalized])
+
+    return result
+
+
+if __name__ == "__main__":
+    logs = [
+        "INFO: Application started",
+        "ERROR: Database connection failed",
+        "error: database connection failed",
+        "ERROR: Database connection failed: timeout",
+        "WARNING: Low disk space",
+        "Info: User logged in",
+        "ERROR: DATABASE CONNECTION FAILED",
+        "WARNING: Low disk space: 10% remaining",
+        "",
+        "   ",
+        "MALFORMED LINE",
+        "ERROR:",
+        ": Missing level"
+    ]
+
+    # The database error appears exactly 3 times.
+    result = summarize_logs(logs, repeat_threshold=3)
+
+    print(result)
+```

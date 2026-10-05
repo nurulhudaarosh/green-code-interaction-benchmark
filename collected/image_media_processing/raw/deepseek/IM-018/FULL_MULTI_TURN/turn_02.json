@@ -1,0 +1,11 @@
+{
+  "task_id": "IM-018",
+  "model": "deepseek",
+  "interaction": "FULL_MULTI_TURN",
+  "turn": 2,
+  "saved_at": "2026-10-05T00:54:45.657572+00:00",
+  "response_sha256": "044f1149ac57adfe6218b614278040e43485e040dca19ca1b0a81b844b79fe28",
+  "code_sha256": "759ebb98b54a995e606d1111aa9e74db210bee1be5c511c456f9afc16c6c1ceb",
+  "raw_file": ".collection/raw/deepseek/IM-018/FULL_MULTI_TURN/turn_02.txt",
+  "code_file": ".collection/code/deepseek/IM-018/FULL_MULTI_TURN/turn_02.py"
+}

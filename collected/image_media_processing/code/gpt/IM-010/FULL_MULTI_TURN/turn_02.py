@@ -1,0 +1,82 @@
+import os
+from PIL import Image
+
+
+def rotate_and_crop(input_dir, output_dir, angle_degrees, crop_size):
+    """
+    Rotate each image with expand=True, then center-crop or pad it
+    to exactly crop_size.
+
+    Args:
+        input_dir (str): Directory containing input images.
+        output_dir (str): Directory to save processed images.
+        angle_degrees (float): Rotation angle in degrees.
+        crop_size (tuple): Target size as (width, height).
+
+    Returns:
+        None
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    target_width, target_height = crop_size
+
+    if target_width <= 0 or target_height <= 0:
+        raise ValueError("crop_size must contain positive dimensions.")
+
+    valid_extensions = (
+        ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"
+    )
+
+    for filename in os.listdir(input_dir):
+        if not filename.lower().endswith(valid_extensions):
+            continue
+
+        input_path = os.path.join(input_dir, filename)
+        output_path = os.path.join(output_dir, filename)
+
+        try:
+            with Image.open(input_path) as img:
+                # IMPORTANT: expand=True prevents clipping of the
+                # rotated image before cropping/padding.
+                rotated = img.rotate(
+                    angle_degrees,
+                    expand=True,
+                    fillcolor="black"
+                )
+
+                rotated_width, rotated_height = rotated.size
+
+                # Create the final canvas with the exact target size.
+                canvas = Image.new(
+                    rotated.mode,
+                    (target_width, target_height),
+                    "black"
+                )
+
+                # Center-crop if the rotated image is larger.
+                left = max((rotated_width - target_width) // 2, 0)
+                top = max((rotated_height - target_height) // 2, 0)
+
+                right = min(
+                    left + target_width,
+                    rotated_width
+                )
+                bottom = min(
+                    top + target_height,
+                    rotated_height
+                )
+
+                cropped = rotated.crop(
+                    (left, top, right, bottom)
+                )
+
+                # Center the cropped image on the final canvas.
+                paste_x = (target_width - cropped.width) // 2
+                paste_y = (target_height - cropped.height) // 2
+
+                canvas.paste(cropped, (paste_x, paste_y))
+
+                canvas.save(output_path)
+
+        except Exception as e:
+            print(f"Error processing {filename}: {e}")

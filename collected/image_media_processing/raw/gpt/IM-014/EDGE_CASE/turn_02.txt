@@ -1,0 +1,49 @@
+The 1×1 image itself doesn't require special resizing; the important part is safely handling the resulting JPEG size so the ratio never divides by zero.
+
+```python
+from pathlib import Path
+from PIL import Image
+
+
+def bulk_reencode(input_dir, output_dir, quality):
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    results = {}
+
+    for path in input_dir.iterdir():
+        if not path.is_file():
+            continue
+
+        try:
+            original_bytes = path.stat().st_size
+
+            with Image.open(path) as img:
+                # Convert all images to RGB for JPEG compatibility.
+                img = img.convert("RGB")
+
+                output_path = output_dir / f"{path.stem}.jpg"
+                img.save(output_path, "JPEG", quality=quality)
+
+            reencoded_bytes = output_path.stat().st_size
+
+            # Avoid division by zero, including for unusual/empty outputs.
+            if reencoded_bytes > 0:
+                ratio = original_bytes / reencoded_bytes
+            else:
+                ratio = float("inf")
+
+            results[path.name] = {
+                "original_bytes": original_bytes,
+                "reencoded_bytes": reencoded_bytes,
+                "compression_ratio": ratio,
+            }
+
+        except (OSError, ValueError):
+            continue
+
+    return results
+```
+
+A **1×1 pixel image** will now be processed normally, saved as JPEG, and included in `results` with its original size, JPEG size, and safely computed compression ratio.

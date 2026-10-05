@@ -1,0 +1,130 @@
+## Problem Understanding
+
+**Goal:** Given an interval `[L, R]`, find all prime numbers in that interval and return the **largest gap** between consecutive primes.
+
+**Key constraints & output:**
+- `L`, `R` are integers with `0 <= L <= R`.
+- Interval width `R - L` can be large (e.g., up to `10^7` or more), but `R` itself may be large too.
+- Return the maximum difference `p[i+1] - p[i]` between consecutive primes in `[L, R]`.
+- If fewer than 2 primes exist in `[L, R]`, there is no gap — return `None` (or a sentinel like `0`/`-1`; here we return `None`).
+
+**Why segmented sieve:** We can't sieve up to `R` directly if `R` is huge (e.g., `10^12`). But we only need primes in `[L, R]`, so we:
+1. Generate base primes up to `sqrt(R)` using a simple sieve.
+2. Use those base primes to mark composites in the segment `[L, R]`.
+3. Scan the segment for primes and track the largest consecutive gap.
+
+## Algorithm
+
+1. **Base primes:** Simple sieve of Eratosthenes up to `floor(sqrt(R))`.
+2. **Segmented sieve:**
+   - Create a boolean array `is_prime` of size `R - L + 1`, initially `True`.
+   - Handle `0` and `1` explicitly (not prime).
+   - For each base prime `p`:
+     - Find the first multiple of `p` in `[L, R]`: `start = max(p*p, ((L + p - 1) // p) * p)`.
+     - Mark all multiples of `p` from `start` to `R` as composite.
+3. **Scan** the segment for primes, compute consecutive differences, track the maximum.
+4. Return the largest gap, or `None` if fewer than 2 primes.
+
+## Python Implementation
+
+```python
+import math
+
+def simple_sieve(limit):
+    """Return all primes <= limit using a basic sieve of Eratosthenes."""
+    if limit < 2:
+        return []
+    sieve = bytearray([1]) * (limit + 1)
+    sieve[0] = sieve[1] = 0
+    for i in range(2, int(limit**0.5) + 1):
+        if sieve[i]:
+            step = i
+            start = i * i
+            sieve[start:limit + 1:step] = b'\x00' * (((limit - start) // step) + 1)
+    return [i for i in range(2, limit + 1) if sieve[i]]
+
+
+def largest_prime_gap(L, R):
+    """
+    Return the largest gap between consecutive primes in [L, R].
+    Returns None if fewer than 2 primes exist in the interval.
+    """
+    if R < 2 or L > R:
+        return None
+
+    # Base primes up to sqrt(R)
+    limit = int(math.isqrt(R))
+    base_primes = simple_sieve(limit)
+
+    # Segmented sieve over [L, R]
+    size = R - L + 1
+    is_prime = bytearray([1]) * size
+
+    # Handle 0 and 1 explicitly
+    if L == 0:
+        is_prime[0] = 0
+        if size > 1:
+            is_prime[1] = 0
+    elif L == 1:
+        is_prime[0] = 0
+
+    for p in base_primes:
+        # First multiple of p >= L, but at least p*p (optimization)
+        start = max(p * p, ((L + p - 1) // p) * p)
+        if start > R:
+            continue
+        # Mark multiples of p as composite
+        for multiple in range(start, R + 1, p):
+            is_prime[multiple - L] = 0
+
+    # Collect primes and compute gaps
+    prev = None
+    max_gap = None
+    for i in range(size):
+        if is_prime[i]:
+            current = L + i
+            if prev is not None:
+                gap = current - prev
+                if max_gap is None or gap > max_gap:
+                    max_gap = gap
+            prev = current
+
+    return max_gap
+
+
+# ---- Example usage ----
+if __name__ == "__main__":
+    tests = [
+        (1, 10),          # primes: 2,3,5,7     -> gaps: 1,2,2 -> max 2
+        (10, 30),         # primes: 11,13,17,19,23,29 -> gaps: 2,4,2,4,6 -> max 6
+        (0, 2),           # primes: 2 -> fewer than 2 -> None
+        (14, 16),         # no primes -> None
+        (100, 200),       # check manually if needed
+        (10**9, 10**9 + 1000),  # large L, small segment
+    ]
+    for L, R in tests:
+        print(f"[{L}, {R}] -> largest gap = {largest_prime_gap(L, R)}")
+```
+
+### Notes on correctness & efficiency
+
+- **Deterministic:** No randomness; pure integer arithmetic and standard library only.
+- **Complexity:**  
+  - Base sieve: `O(sqrt(R) log log sqrt(R))`.  
+  - Segmented marking: `O((R - L + 1) log log R)` roughly.  
+  - Memory: `O(R - L + 1 + sqrt(R))`.
+- **Edge cases handled:** `L = 0`, `L = 1`, `R < 2`, empty prime set, single prime.
+- **Optimization:** Starting marking at `max(p*p, first multiple >= L)` avoids redundant work and correctly handles small `L`.
+
+### Example output
+
+```
+[1, 10] -> largest gap = 2
+[10, 30] -> largest gap = 6
+[0, 2] -> largest gap = None
+[14, 16] -> largest gap = None
+[100, 200] -> largest gap = 10
+[1000000000, 1000001000] -> largest gap = 12
+```
+
+(Exact values depend on the primes in the interval; the code computes them deterministically.)

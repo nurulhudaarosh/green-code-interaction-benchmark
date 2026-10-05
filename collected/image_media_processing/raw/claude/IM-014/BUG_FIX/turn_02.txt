@@ -1,0 +1,148 @@
+Here is the full code, the same as `bulk_reencode.py`:
+
+```python
+"""Bulk re-encode images as JPEG and report size savings. Requires Pillow."""
+
+from pathlib import Path
+
+from PIL import Image, ImageOps, UnidentifiedImageError
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
+
+
+def _to_rgb(img: Image.Image) -> Image.Image:
+    """Convert to a JPEG-compatible mode, flattening transparency onto white."""
+    if img.mode in ("RGB", "L", "CMYK"):
+        return img
+    if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+        rgba = img.convert("RGBA")
+        background = Image.new("RGB", rgba.size, (255, 255, 255))
+        background.paste(rgba, mask=rgba.getchannel("A"))
+        return background
+    return img.convert("RGB")
+
+
+def _fmt_size(n: float) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+
+
+def bulk_reencode(input_dir, output_dir, quality=80, recursive=True):
+    """Re-encode every image in input_dir as JPEG into output_dir.
+
+    Args:
+        input_dir:  Directory containing source images.
+        output_dir: Directory for the re-encoded .jpg files (created if needed).
+                    Subfolder structure is preserved when recursive=True.
+        quality:    JPEG quality, 1-95 (Pillow advises against going above 95).
+        recursive:  Also process images in subdirectories.
+
+    Returns:
+        List of dicts: {"source", "output", "original_bytes", "reencoded_bytes",
+        "ratio"} for each success, or {"source", "error"} for each failure.
+    """
+    input_dir = Path(input_dir).resolve()
+    output_dir = Path(output_dir).resolve()
+
+    if not input_dir.is_dir():
+        raise NotADirectoryError(f"Input directory not found: {input_dir}")
+    if not 1 <= quality <= 95:
+        raise ValueError("quality must be between 1 and 95")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    pattern = input_dir.rglob("*") if recursive else input_dir.glob("*")
+    files = sorted(
+        p for p in pattern
+        if p.is_file()
+        and p.suffix.lower() in IMAGE_EXTS
+        and output_dir not in p.resolve().parents  # don't reprocess our own output
+    )
+
+    results, used_outputs = [], set()
+    for src in files:
+        rel = src.relative_to(input_dir)
+        dest = (output_dir / rel).with_suffix(".jpg")
+
+        # Avoid collisions such as photo.png and photo.webp both -> photo.jpg
+        n = 1
+        while dest in used_outputs:
+            dest = (output_dir / rel).with_name(f"{rel.stem}_{n}.jpg")
+            n += 1
+        used_outputs.add(dest)
+
+        try:
+            with Image.open(src) as img:
+                img = ImageOps.exif_transpose(img)  # honor camera rotation
+                icc = img.info.get("icc_profile")
+                img = _to_rgb(img)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                save_kwargs = {"format": "JPEG", "quality": quality, "optimize": True}
+                if icc:
+                    save_kwargs["icc_profile"] = icc
+                img.save(dest, **save_kwargs)
+
+            orig = src.stat().st_size
+            new = dest.stat().st_size
+            results.append({
+                "source": str(src),
+                "output": str(dest),
+                "original_bytes": orig,
+                "reencoded_bytes": new,
+                "ratio": orig / new if new else float("inf"),
+            })
+        except (UnidentifiedImageError, OSError, ValueError) as exc:
+            results.append({"source": str(src), "error": str(exc)})
+
+    _print_report(results, input_dir)
+    return results
+
+
+def _print_report(results, base: Path):
+    ok = [r for r in results if "error" not in r]
+    bad = [r for r in results if "error" in r]
+
+    if not results:
+        print("No images found.")
+        return
+
+    rows = [(str(Path(r["source"]).relative_to(base)),
+             _fmt_size(r["original_bytes"]),
+             _fmt_size(r["reencoded_bytes"]),
+             f"{r['ratio']:.2f}x") for r in ok]
+    name_w = max([len("File")] + [len(r[0]) for r in rows])
+    header = f"{'File':<{name_w}}  {'Original':>10}  {'Re-encoded':>10}  {'Ratio':>7}"
+    print(header)
+    print("-" * len(header))
+    for name, o, n, ratio in rows:
+        print(f"{name:<{name_w}}  {o:>10}  {n:>10}  {ratio:>7}")
+
+    if ok:
+        total_o = sum(r["original_bytes"] for r in ok)
+        total_n = sum(r["reencoded_bytes"] for r in ok)
+        print("-" * len(header))
+        print(f"{'TOTAL (' + str(len(ok)) + ' files)':<{name_w}}  "
+              f"{_fmt_size(total_o):>10}  {_fmt_size(total_n):>10}  "
+              f"{total_o / total_n:>6.2f}x")
+
+    for r in bad:
+        print(f"FAILED: {Path(r['source']).relative_to(base)} -> {r['error']}")
+
+
+if __name__ == "__main__":
+    import argparse
+
+    ap = argparse.ArgumentParser(description="Bulk re-encode images as JPEG.")
+    ap.add_argument("input_dir")
+    ap.add_argument("output_dir")
+    ap.add_argument("-q", "--quality", type=int, default=80)
+    ap.add_argument("--no-recursive", action="store_true")
+    args = ap.parse_args()
+    bulk_reencode(args.input_dir, args.output_dir, args.quality,
+                  recursive=not args.no_recursive)
+```
+
+
+
+Or from the command line: `python bulk_reencode.py photos photos_jpeg -q 80`

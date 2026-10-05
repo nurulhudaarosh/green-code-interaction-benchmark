@@ -1,0 +1,79 @@
+Sure — here is the extended version. It keeps the per-file results and adds a `__summary__` entry containing the totals and overall compression ratio.
+
+```python
+from PIL import Image
+import os
+
+
+def bulk_reencode(input_dir, output_dir, quality):
+    os.makedirs(output_dir, exist_ok=True)
+
+    results = {}
+    total_original = 0
+    total_reencoded = 0
+
+    valid_extensions = (
+        ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"
+    )
+
+    for filename in os.listdir(input_dir):
+        if not filename.lower().endswith(valid_extensions):
+            continue
+
+        input_path = os.path.join(input_dir, filename)
+        output_name = os.path.splitext(filename)[0] + ".jpg"
+        output_path = os.path.join(output_dir, output_name)
+
+        try:
+            original_size = os.path.getsize(input_path)
+
+            with Image.open(input_path) as img:
+                # JPEG requires RGB-compatible image data.
+                img = img.convert("RGB")
+                img.save(output_path, "JPEG", quality=quality)
+
+            reencoded_size = os.path.getsize(output_path)
+
+            ratio = (
+                original_size / reencoded_size
+                if reencoded_size > 0
+                else float("inf")
+            )
+
+            results[filename] = {
+                "original_bytes": original_size,
+                "reencoded_bytes": reencoded_size,
+                "ratio": ratio
+            }
+
+            total_original += original_size
+            total_reencoded += reencoded_size
+
+            print(
+                f"{filename}: "
+                f"{original_size} -> {reencoded_size} bytes, "
+                f"ratio = {ratio:.2f}"
+            )
+
+        except Exception as e:
+            print(f"Skipping {filename}: {e}")
+
+    # Overall summary
+    overall_ratio = (
+        total_original / total_reencoded
+        if total_reencoded > 0
+        else float("inf")
+    )
+
+    results["__summary__"] = {
+        "total_original_bytes": total_original,
+        "total_reencoded_bytes": total_reencoded,
+        "overall_ratio": overall_ratio
+    }
+
+    return results
+```
+
+
+
+The **overall ratio is calculated from the totals**, rather than averaging the individual file ratios:

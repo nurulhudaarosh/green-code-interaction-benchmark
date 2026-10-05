@@ -1,0 +1,101 @@
+```python
+import re
+from collections import defaultdict
+from datetime import datetime
+
+
+def normalize_text(text: str) -> str:
+    """Normalize a title/description for comparison."""
+    if text is None:
+        return ""
+    text = str(text).strip().lower()
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
+def parse_date(value):
+    """Parse a date value into a comparable date. Returns None on failure."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if hasattr(value, "year") and hasattr(value, "month") and hasattr(value, "day"):
+        return value
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return datetime.strptime(str(value), fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def detect_duplicates(records, title_key="title", desc_key="description", date_key="date", id_key="id"):
+    """
+    Group records by (normalized_title, normalized_description, date).
+    Returns a deterministic list of duplicate groups.
+
+    Each group: {"key": {...}, "ids": [...], "count": int}
+    """
+    groups = defaultdict(list)
+
+    for record in records:
+        title = normalize_text(record.get(title_key))
+        desc = normalize_text(record.get(desc_key))
+        date = parse_date(record.get(date_key))
+        rec_id = record.get(id_key)
+
+        if title == "" and desc == "":
+            continue
+
+        key = (title, desc, date)
+        groups[key].append(rec_id)
+
+    duplicates = []
+    for key in sorted(groups.keys(), key=lambda k: (k[0], k[1], str(k[2] or ""))):
+        ids = groups[key]
+        if len(ids) > 1:
+            title, desc, date = key
+            duplicates.append({
+                "key": {
+                    "title": title,
+                    "description": desc,
+                    "date": date.isoformat() if date else None,
+                },
+                "ids": sorted(ids, key=lambda x: (str(type(x)), str(x))),
+                "count": len(ids),
+            })
+
+    return duplicates
+
+
+def report_duplicates(records, **kwargs):
+    """Print a deterministic report and return the duplicate groups."""
+    duplicates = detect_duplicates(records, **kwargs)
+    if not duplicates:
+        print("No duplicate records found.")
+        return duplicates
+
+    print(f"Found {len(duplicates)} duplicate group(s):\n")
+    for i, group in enumerate(duplicates, 1):
+        k = group["key"]
+        print(f"Group {i} (count={group['count']})")
+        print(f"  Title:       {k['title']!r}")
+        print(f"  Description: {k['description']!r}")
+        print(f"  Date:        {k['date']}")
+        print(f"  IDs:         {group['ids']}")
+        print()
+    return duplicates
+
+
+if __name__ == "__main__":
+    sample = [
+        {"id": 1, "title": "  Hello World ", "description": "First  Post", "date": "2024-01-01"},
+        {"id": 2, "title": "hello world", "description": "first post", "date": "2024-01-01"},
+        {"id": 3, "title": "HELLO   WORLD", "description": "First Post", "date": "2024-01-01"},
+        {"id": 4, "title": "Different", "description": "Other", "date": "2024-02-02"},
+        {"id": 5, "title": "Different", "description": "Other", "date": "2024-02-03"},
+        {"id": 6, "title": "", "description": "", "date": "2024-02-03"},
+    ]
+
+    report_duplicates(sample)
+```

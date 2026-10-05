@@ -1,0 +1,63 @@
+import pandas as pd
+
+
+def aggregate_customer_transactions(
+    customers_df: pd.DataFrame, transactions_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Aggregates transactions by customer and merges with customer master.
+
+    Parameters:
+        customers_df (pd.DataFrame): Customer master data with at least
+          'customer_id'.
+        transactions_df (pd.DataFrame): Transactions data with 'transaction_id',
+          'customer_id', and 'amount'.
+
+    Returns:
+        pd.DataFrame: Merged dataset sorted by 'customer_id' with
+        transaction summary metrics.
+    """
+    # 1. Ignore rows with unknown/null transaction IDs
+    valid_tx = transactions_df.dropna(subset=["transaction_id"]).copy()
+
+    # 2. Aggregate transactions by customer_id
+    tx_summary = (
+        valid_tx.groupby("customer_id", as_index=False)
+        .agg(
+            total_amount=("amount", "sum"), transaction_count=("amount", "count")
+        )
+    )
+
+    # 3. Join aggregated results to customer master (left join to include zero-transaction customers)
+    result = pd.merge(customers_df, tx_summary, on="customer_id", how="left")
+
+    # 4. Fill missing values for customers with zero transactions
+    result["total_amount"] = result["total_amount"].fillna(0.0)
+    result["transaction_count"] = (
+        result["transaction_count"].fillna(0).astype(int)
+    )
+
+    # 5. Sort final dataset by customer_id
+    result = result.sort_values(by="customer_id").reset_index(drop=True)
+
+    return result
+
+
+# --- Example Usage ---
+if __name__ == "__main__":
+    customers = pd.DataFrame(
+        {
+            "customer_id": [101, 102, 103, 104],
+            "customer_name": ["Alice", "Bob", "Charlie", "Diana"],
+        }
+    )
+
+    transactions = pd.DataFrame(
+        {
+            "transaction_id": ["TX101", None, "TX102", "TX103", "TX104"],
+            "customer_id": [101, 101, 102, 101, 999],  # 999 is unknown customer
+            "amount": [50.0, 100.0, 75.5, 25.0, 200.0],
+        }
+    )
+
+    summary = aggregate_customer_transactions(customers, transactions)
+    print(summary)

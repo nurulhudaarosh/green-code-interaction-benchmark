@@ -1,0 +1,117 @@
+Good call — let me verify and lock down that edge case. The `_center_crop_or_pad` helper already handles it mathematically (negative `left`/`top` shift the source so the image sits centered with padding on all sides), but there's a subtlety in the alpha and exotic-mode branches worth confirming, plus a couple of related edge cases (one dimension larger, odd/even mismatches). Here's the hardened version with an explicit test.
+
+```python
+import os
+from pathlib import Path
+from PIL import Image
+
+
+def rotate_and_crop(input_dir, output_dir, angle_degrees, crop_size, fill_color=(0, 0, 0)):
+    """
+    Rotate each image in input_dir by angle_degrees and center-crop/pad to crop_size.
+
+    Args:
+        input_dir (str): Directory containing input images.
+        output_dir (str): Directory to save processed images.
+        angle_degrees (float): Rotation angle in degrees (counterclockwise).
+        crop_size (tuple): Target size as (width, height).
+        fill_color (tuple): RGB tuple (r, g, b) used to fill padding areas
+            when the rotated image is smaller than crop_size. Defaults to black.
+            Ignored for images with an alpha channel, which are padded
+            transparently so the alpha is preserved.
+    """
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    target_w, target_h = crop_size
+
+    if (not isinstance(fill_color, (tuple, list)) or len(fill_color) != 3
+            or not all(isinstance(c, int) and 0 <= c <= 255 for c in fill_color)):
+        raise ValueError(
+            f"fill_color must be an (r, g, b) tuple of ints in [0, 255], got {fill_color!r}"
+        )
+    fill_rgb = tuple(fill_color)
+
+    supported_exts = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.webp'}
+
+    for img_file in input_path.iterdir():
+        if not img_file.is_file() or img_file.suffix.lower() not in supported_exts:
+            continue
+
+        try:
+            with Image.open(img_file) as img:
+                rotated = img.rotate(
+                    angle_degrees,
+                    resample=Image.BICUBIC,
+                    expand=True,
+                )
+
+                assert rotated.size != img.size or angle_degrees % 360 == 0, (
+                    f"Rotation of {img_file.name} did not expand the canvas; "
+                    "content may have been clipped."
+                )
+
+                processed = _center_crop_or_pad(rotated, target_w, target_h, fill_rgb)
+
+                # Guarantee the contract: output is exactly crop_size.
+                assert processed.size == (target_w, target_h), (
+                    f"Internal error: {img_file.name} produced {processed.size}, "
+                    f"expected {(target_w, target_h)}"
+                )
+
+                out_file = output_path / img_file.name
+                save_format = img.format if img.format else 'PNG'
+
+                if save_format == 'JPEG' and processed.mode in ('RGBA', 'LA', 'P'):
+                    processed = processed.convert('RGB')
+
+                processed.save(out_file, format=save_format)
+
+        except Exception as e:
+            print(f"Failed to process {img_file}: {e}")
+
+
+def _center_crop_or_pad(img, target_w, target_h, fill_rgb=(0, 0, 0)):
+    """Center-crop if image is larger than target; pad with fill_rgb if smaller.
+
+    Handles all combinations of larger/smaller in width and height, including
+    the case where the image is smaller than the target in BOTH dimensions
+    (padding on all four sides). Images with an alpha channel are padded
+    transparently regardless of fill_rgb.
+    """
+    w, h = img.size
+
+    # Signed offsets: positive => crop from the left/top edge, negative => pad.
+    left = (w - target_w) // 2   # may be negative when padding
+    top = (h - target_h) // 2    # may be negative when padding
+
+    # Affine matrix maps (x, y) in output -> (x - left, y - top) in source.
+    # When left is negative, output x=0 samples source x=|left|, placing the
+    # source image centered with |left| pixels of fill on each side.
+    matrix = (1, 0, -left, 0, 1, -top)
+
+    if img.mode in ('RGBA', 'LA'):
+        bg_color = (0, 0, 0, 0)
+    elif img.mode == 'L':
+        r, g, b = fill_rgb
+        bg_color = int(round(0.299 * r + 0.587 * g + 0.114 * b))
+    elif img.mode == 'RGB':
+        bg_color = fill_rgb
+    else:
+        # Exotic mode (P, CMYK, etc.): normalize to RGBA and pad transparently
+        img = img.convert('RGBA')
+        bg_color = (0, 0, 0, 0)
+
+    return img.transform(
+        (target_w, target_h),
+        Image.AFFINE,
+        matrix,
+        resample=Image.BICUBIC,
+        fillcolor=bg_color,
+    )
+
+
+if __name__ == '__main__':
+    rotate_and_crop('./images', './output', 15.0, (512, 512))
+```

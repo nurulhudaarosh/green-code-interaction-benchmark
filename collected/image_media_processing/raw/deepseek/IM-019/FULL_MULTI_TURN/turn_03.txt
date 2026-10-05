@@ -1,0 +1,170 @@
+Here's the extended version. The key design choice is **what to key `hash_map` by**: since your original code already used full paths internally, I'll key by full path too and keep it consistent — that avoids ambiguity if two subdirectories ever contain the same basename.
+
+```python
+import os
+from collections import defaultdict
+from PIL import Image
+
+try:
+    from tqdm import tqdm
+except ImportError:
+    def tqdm(x, **kwargs):
+        return x
+
+
+def _average_hash(path, hash_size=8):
+    """Compute average hash of an image as an integer bit pattern."""
+    with Image.open(path) as img:
+        img = img.convert("L").resize((hash_size, hash_size), Image.LANCZOS)
+        pixels = list(img.getdata())
+    avg = sum(pixels) / len(pixels)
+    bits = 0
+    for i, p in enumerate(pixels):
+        if p >= avg:
+            bits |= (1 << i)
+    return bits
+
+
+def _hamming(a, b):
+    return bin(a ^ b).count("1")
+
+
+class _UnionFind:
+    def __init__(self):
+        self.parent = {}
+
+    def find(self, x):
+        root = x
+        while self.parent.get(root, root) != root:
+            root = self.parent[root]
+        while self.parent.get(x, x) != root:
+            self.parent[x], x = root, self.parent[x]
+        return root
+
+    def union(self, a, b):
+        ra, rb = self.find(a), self.find(b)
+        if ra != rb:
+            self.parent[rb] = ra
+
+    def add(self, x):
+        if x not in self.parent:
+            self.parent[x] = x
+
+
+def find_fuzzy_duplicates(input_dir, hash_size=8, max_hamming=5,
+                          return_hashes=False):
+    """
+    Cluster images in input_dir by average-hash Hamming distance.
+
+    Two images are considered "similar" if their aHash Hamming distance is
+    <= max_hamming. Clusters are formed via transitive closure using a
+    union-find structure.
+
+    Args:
+        input_dir: Directory containing image files.
+        hash_size: Side length of the square aHash (default 8 -> 64 bits).
+        max_hamming: Max Hamming distance to consider two hashes similar.
+            Must be in [0, hash_size * hash_size].
+        return_hashes: If True, also return a dict mapping each successfully
+            hashed file path to its integer hash.
+
+    Returns:
+        If return_hashes is False:
+            List of clusters (each a list of file paths). Only clusters with
+            >= 2 members are returned. Clusters sorted by descending size.
+        If return_hashes is True:
+            Tuple (clusters, hash_map) where hash_map maps file path ->
+            integer aHash.
+    """
+    if hash_size < 1:
+        raise ValueError("hash_size must be >= 1")
+
+    total_bits = hash_size * hash_size
+    if max_hamming < 0 or max_hamming > total_bits:
+        raise ValueError(
+            f"max_hamming must be between 0 and {total_bits} "
+            f"(hash_size={hash_size} produces {total_bits}-bit hashes)"
+        )
+
+    extensions = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff"}
+
+    hashes = {}   # path -> hash int
+    failures = [] # (path, error)
+    paths = []
+
+    for name in sorted(os.listdir(input_dir)):
+        path = os.path.join(input_dir, name)
+        if not os.path.isfile(path):
+            continue
+        if os.path.splitext(name)[1].lower() not in extensions:
+            continue
+        try:
+            hashes[path] = _average_hash(path, hash_size=hash_size)
+            paths.append(path)
+        except Exception as e:
+            failures.append((path, str(e)))
+
+    uf = _UnionFind()
+    for p in paths:
+        uf.add(p)
+
+    n = len(paths)
+    iterator = tqdm(range(n), desc="Comparing hashes", disable=(n < 200))
+    for i in iterator:
+        hi = hashes[paths[i]]
+        for j in range(i + 1, n):
+            if _hamming(hi, hashes[paths[j]]) <= max_hamming:
+                uf.union(paths[i], paths[j])
+
+    clusters_map = defaultdict(list)
+    for p in paths:
+        clusters_map[uf.find(p)].append(p)
+
+    clusters = [sorted(group) for group in clusters_map.values() if len(group) >= 2]
+    clusters.sort(key=len, reverse=True)
+
+    if failures:
+        import warnings
+        warnings.warn(
+            f"Skipped {len(failures)} unreadable file(s); "
+            f"first: {failures[0][0]} ({failures[0][1]})"
+        )
+
+    if return_hashes:
+        # Return a copy so callers can't mutate our internal state.
+        return clusters, dict(hashes)
+    return clusters
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) < 2:
+        print("Usage: python fuzzhash.py <input_dir> [hash_size] [max_hamming]")
+        sys.exit(1)
+    directory = sys.argv[1]
+    hs = int(sys.argv[2]) if len(sys.argv) > 2 else 8
+    mh = int(sys.argv[3]) if len(sys.argv) > 3 else 5
+
+    groups, hmap = find_fuzzy_duplicates(
+        directory, hash_size=hs, max_hamming=mh, return_hashes=True
+    )
+    print(f"\nFound {len(groups)} fuzzy-duplicate cluster(s).")
+    for idx, group in enumerate(groups, 1):
+        print(f"\nCluster {idx} ({len(group)} images):")
+        for p in group:
+            # Show the hash in hex (fixed width based on hash_size) and binary
+            width = hs * hs // 4
+            print(f"  {p}  [{hmap[p]:0{width}x}]")
+```
+
+**Design notes:**
+
+1. **Return shape** — `return_hashes=False` (default) preserves the original single-value return, so all existing callers keep working. `return_hashes=True` returns `(clusters, hash_map)`.
+
+2. **Copy on return** — `dict(hashes)` is returned instead of the internal `hashes` dict. Callers can mutate it freely without disturbing anything internal, and it documents that `hash_map` is a snapshot.
+
+3. **Scope of `hash_map`** — it contains *every* successfully hashed file, not just files that ended up in a cluster. That's usually what you want (e.g., for building a hash index or debugging why something *didn't* cluster). Unreadable files are still excluded and reported via the warning.
+
+4. **Keys are full paths**, matching the strings inside `clusters`. If you'd rather key by basename, change the two spots where paths are constructed — but be aware that basenames collide across nested directories.
+
+5. **`__main__` demo** now formats hashes as fixed-width hex for readability (`hash_size=8` → 16 hex chars, `hash_size=16` → 64 hex chars).

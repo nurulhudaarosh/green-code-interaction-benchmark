@@ -1,0 +1,221 @@
+"""
+event_pivot.py
+
+Validates event records, aggregates counts by (date, region), pivots EVERY
+observed event type into its own column, fills absent combinations with 0,
+and sorts rows.
+
+Malformed records (bad date, bad count, missing/blank fields, non-mapping
+rows) are skipped and reported in `PivotResult.rejected`; processing never
+terminates because of a bad record.
+"""
+
+from __future__ import annotations
+
+import csv
+import io
+import logging
+import math
+from collections import Counter
+from dataclasses import dataclass
+from datetime import date, datetime
+from typing import Any, Iterable, Mapping
+
+log = logging.getLogger(__name__)
+
+INDEX_COLUMNS = ("date", "region")
+
+
+class ValidationError(ValueError):
+    """Raised internally when a single record fails validation."""
+
+
+@dataclass(frozen=True)
+class Event:
+    date: date
+    region: str
+    event_type: str
+    count: int
+
+
+@dataclass
+class PivotResult:
+    columns: list[str]                 # ["date", "region", <one per event type>]
+    rows: list[list[Any]]              # sorted, zero-filled
+    rejected: list[tuple[int, str]]    # (record index, reason) for skipped records
+
+    def to_dicts(self) -> list[dict[str, Any]]:
+        return [dict(zip(self.columns, row)) for row in self.rows]
+
+    def to_csv(self) -> str:
+        buf = io.StringIO()
+        writer = csv.writer(buf, lineterminator="\n")
+        writer.writerow(self.columns)
+        writer.writerows(self.rows)
+        return buf.getvalue()
+
+    def to_table(self) -> str:
+        """Plain-text aligned table for quick inspection."""
+        cells = [self.columns] + [[str(v) for v in r] for r in self.rows]
+        widths = [max(len(r[i]) for r in cells) for i in range(len(self.columns))]
+        lines = ["  ".join(c.ljust(w) for c, w in zip(r, widths)) for r in cells]
+        lines.insert(1, "  ".join("-" * w for w in widths))
+        return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------
+# Validation
+# --------------------------------------------------------------------------
+
+_DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y")
+
+
+def _parse_date(value: Any) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        for fmt in _DATE_FORMATS:
+            try:
+                return datetime.strptime(text, fmt).date()
+            except ValueError:
+                continue
+        try:  # ISO timestamps such as 2024-03-05T10:15:00
+            return datetime.fromisoformat(text).date()
+        except ValueError:
+            pass
+    raise ValidationError(f"invalid date: {value!r}")
+
+
+def _parse_count(value: Any) -> int:
+    """Accept non-negative whole numbers (int, integral float, numeric string)."""
+    bad = ValidationError(f"invalid count: {value!r}")
+    if isinstance(value, bool):  # bool is an int subclass; reject explicitly
+        raise bad
+    if isinstance(value, (int, float)):
+        number: float | int = value
+    elif isinstance(value, str):
+        text = value.strip()
+        try:
+            number = int(text)
+        except ValueError:
+            try:
+                number = float(text)
+            except ValueError:
+                raise bad from None
+    else:
+        raise bad
+
+    if isinstance(number, float):
+        if not math.isfinite(number) or not number.is_integer():
+            raise bad
+        number = int(number)
+    if number < 0:
+        raise bad
+    return number
+
+
+def _clean_text(value: Any, field: str, *, lower: bool) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValidationError(f"missing or invalid {field}: {value!r}")
+    text = " ".join(value.split())  # collapse internal whitespace
+    return text.lower() if lower else text
+
+
+def validate_record(record: Mapping[str, Any]) -> Event:
+    """Validate and normalise one record into an Event (raises ValidationError)."""
+    if not isinstance(record, Mapping):
+        raise ValidationError(f"record is not a mapping: {record!r}")
+    for key in ("date", "region", "event_type"):
+        if key not in record:
+            raise ValidationError(f"missing field: {key}")
+    return Event(
+        date=_parse_date(record["date"]),
+        region=_clean_text(record["region"], "region", lower=False).title(),
+        event_type=_clean_text(record["event_type"], "event_type", lower=True),
+        # Absent count means one occurrence; a present-but-malformed one is rejected.
+        count=_parse_count(record["count"]) if "count" in record else 1,
+    )
+
+
+# --------------------------------------------------------------------------
+# Pivot
+# --------------------------------------------------------------------------
+
+def _column_label(event_type: str) -> str:
+    """Prefix types that would collide with the index column names."""
+    return f"type_{event_type}" if event_type in INDEX_COLUMNS else event_type
+
+
+def pivot_events(
+    records: Iterable[Mapping[str, Any]],
+    *,
+    descending_dates: bool = False,
+) -> PivotResult:
+    """
+    Build a (date, region) x event_type count table.
+
+    - Every event type observed in a VALID record gets its own column
+      (sorted alphabetically, so the layout is deterministic).
+    - Every (date, region) pair that appears gets a row; any combination
+      with no events is filled with 0.
+    - Invalid records are skipped and listed in `PivotResult.rejected`;
+      they never create rows or columns.
+
+    descending_dates: sort newest date first (region still ascending).
+    """
+    counts: Counter[tuple[date, str, str]] = Counter()
+    seen_types: set[str] = set()
+    seen_keys: set[tuple[date, str]] = set()
+    rejected: list[tuple[int, str]] = []
+
+    for idx, rec in enumerate(records):
+        try:
+            ev = validate_record(rec)
+        except ValidationError as exc:
+            rejected.append((idx, str(exc)))
+            log.warning("skipping record %d: %s", idx, exc)
+            continue
+
+        counts[(ev.date, ev.region, ev.event_type)] += ev.count
+        seen_types.add(ev.event_type)
+        seen_keys.add((ev.date, ev.region))
+
+    type_columns = sorted(seen_types)
+
+    sign = -1 if descending_dates else 1
+    ordered_keys = sorted(seen_keys, key=lambda k: (sign * k[0].toordinal(), k[1]))
+
+    rows = [
+        [d.isoformat(), r] + [counts.get((d, r, t), 0) for t in type_columns]
+        for d, r in ordered_keys
+    ]
+    columns = list(INDEX_COLUMNS) + [_column_label(t) for t in type_columns]
+    return PivotResult(columns, rows, rejected)
+
+
+# --------------------------------------------------------------------------
+# Demo
+# --------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    sample = [
+        {"date": "2024-03-01", "region": "north", "event_type": "Login"},
+        {"date": "2024-03-01", "region": "North ", "event_type": "login", "count": "3"},
+        {"date": "2024-03-01", "region": "south", "event_type": "purchase", "count": 2},
+        {"date": "2024/03/02", "region": "south", "event_type": "login"},
+        {"date": "03/02/2024", "region": "north", "event_type": "error", "count": 1.0},
+        {"date": "not-a-date", "region": "east", "event_type": "login"},      # bad date
+        {"date": "2024-03-03", "region": "", "event_type": "login"},          # blank region
+        {"date": "2024-03-03", "region": "west", "event_type": "signup", "count": "abc"},
+        {"date": "2024-03-03", "region": "west", "event_type": "signup", "count": -2},
+        "not even a dict",
+    ]
+
+    result = pivot_events(sample)
+    print(result.to_table())
+    print("\nRejected:")
+    for idx, reason in result.rejected:
+        print(f"  record {idx}: {reason}")

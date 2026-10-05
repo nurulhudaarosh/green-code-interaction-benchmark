@@ -1,0 +1,39 @@
+import re
+from collections import Counter
+
+
+def keyword_freq(paths, stopwords=(), top_k=20, include_bigrams=False):
+    token_re = re.compile(r"[a-z0-9]+")
+    stop = {word.lower() for word in stopwords}
+
+    unigrams = Counter()
+    bigrams = Counter()
+    total_tokens = 0
+    previous = None
+
+    for path in paths:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                for token in token_re.findall(line.lower()):
+                    if token in stop:
+                        continue
+
+                    unigrams[token] += 1
+                    total_tokens += 1
+
+                    if include_bigrams and previous is not None:
+                        bigrams[(previous, token)] += 1
+
+                    previous = token
+
+    def top_items(counter):
+        return sorted(
+            counter.items(),
+            key=lambda x: (-x[1], x[0])
+        )[:top_k]
+
+    return {
+        "unigrams": top_items(unigrams),
+        "bigrams": top_items(bigrams) if include_bigrams else [],
+        "total_tokens": total_tokens,
+    }

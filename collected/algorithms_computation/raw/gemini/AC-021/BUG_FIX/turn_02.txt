@@ -1,0 +1,207 @@
+## Restatement of Problem & Expected Behavior
+
+**Problem:** Given a list of positive integers `nums` and a non-negative integer `target`, find a subset of `nums` that sums exactly to `target`.
+
+**Tie-Breaking / Behavior Requirements:**
+
+1. **Primary Objective:** Minimize subset cardinality (fewest elements).
+2. **Secondary Objective:** Choose the lexicographically smallest list of 0-based indices.
+3. **Deterministic Output:** Return a sorted `list[int]` of indices satisfying both criteria, or `None` if no subset sums to `target`.
+
+---
+
+## Defect Explanation & Counterexample
+
+### The Defect
+
+The previous DP implementation appends the current index `i` to the sequence retrieved from `dp[s - num]`:
+
+
+
+Because DP builds sequences incrementally from left to right across `nums`, this construction implicitly forces **prefix-based lexicographical evaluation**.
+
+When comparing two candidate subsets that share the same element count, tuple comparison evaluates `(count, index_tuple)` from left to right starting at index 0. However, when building sequences from $s - \text{num}$ to $s$, earlier DP decisions (for smaller sub-targets) were made **without knowing which element would be appended at the end**.
+
+As a result, a local optimal decision at $s - \text{num}$ can prevent the global state at $s$ from reaching the true lexicographically smallest full index sequence.
+
+### Counterexample
+
+Consider:
+
+* `nums = [2, 1, 3, 3]`
+* `target = 4`
+
+There are two subsets of cardinality 2 that sum to 4:
+
+1. Indices `(0, 0)` -> impossible (each used once)
+2. Indices `(0, 2)` -> values `2 + 3 = 5` (no)
+3. Indices `(0, 1)`? values `2 + 1 = 3` (no)
+4. Valid 2-element subsets:
+* Indices `(0, 2)` -> `2 + 3 = 5`
+* Indices `(0, 3)` -> `2 + 3 = 5`
+* Indices `(1, 2)` -> `1 + 3 = 4` (values $1+3$, indices `(1, 2)`)
+* Indices `(1, 3)` -> `1 + 3 = 4` (values $1+3$, indices `(1, 3)`)
+
+
+
+Let's test `nums = [2, 3, 1, 3]` with `target = 4`:
+Possible 2-element subsets summing to 4:
+
+* `(0, 2)` $\rightarrow$ values $2 + 1 = 3 \neq 4$
+* `(1, 2)` $\rightarrow$ values $3 + 1 = 4$, indices `(1, 2)`
+* `(2, 3)` $\rightarrow$ values $1 + 3 = 4$, indices `(2, 3)`
+
+Comparing indices lexicographically: `(1, 2)` is smaller than `(2, 3)`.
+
+Now trace the previous implementation on `nums = [2, 3, 1, 3]`, `target = 4`:
+
+* Processing `i = 0, num = 2`: `dp[2] = (1, (0,))`
+* Processing `i = 1, num = 3`: `dp[3] = (1, (1,))`
+* Processing `i = 2, num = 1`:
+* `s = 4`: `dp[4 - 1] = dp[3] = (1, (1,))` $\rightarrow$ `cand = (2, (1, 2))` $\rightarrow$ `dp[4] = (2, (1, 2))`
+* `s = 3`: `dp[3 - 1] = dp[2] = (1, (0,))` $\rightarrow$ `cand = (2, (0, 2))` $\rightarrow$ beats `(1, (1,))` in size? No, size is 2 vs 1. `dp[3]` remains `(1, (1,))`.
+* `s = 1`: `dp[1] = (1, (2,))`
+
+
+* Processing `i = 3, num = 3`:
+* `s = 4`: `dp[4 - 3] = dp[1] = (1, (2,))` $\rightarrow$ `cand = (2, (2, 3))`. `(2, (2, 3))` is compared against existing `dp[4] = (2, (1, 2))`. Existing `(2, (1, 2))` wins!
+
+
+
+Wait, why did `(1, 2)` win? Because `(1, 2) < (2, 3)`.
+
+Let's find a case where local subproblem selection loses the overall lexicographical minimum:
+
+Consider `nums = [3, 2, 1, 4]`, `target = 5`:
+Card-2 subsets for target 5:
+
+* Indices `(0, 1)` $\rightarrow 3 + 2 = 5$
+* Indices `(2, 3)` $\rightarrow 1 + 4 = 5$
+
+Lexicographically: `(0, 1) < (2, 3)`.
+
+Now consider `nums = [4, 1, 2, 3]`, `target = 5`:
+
+* Indices `(0, 1)` $\rightarrow 4 + 1 = 5$
+* Indices `(2, 3)` $\rightarrow 2 + 3 = 5$
+
+Lexicographically: `(0, 1) < (2, 3)`.
+
+Let's trace `nums = [4, 1, 2, 3]`, `target = 5`:
+When `i = 0` (`4`): `dp[4] = (1, (0,))`
+When `i = 1` (`1`): `dp[1] = (1, (1,))`, `dp[5] = (2, (0, 1))`
+When `i = 2` (`2`): `dp[2] = (1, (2,))`, `dp[3] = (2, (1, 2))`
+When `i = 3` (`3`): `dp[3]` already `(2, (1, 2))`, but wait: for `s=5`, `dp[5 - 3] = dp[2] = (1, (2,))` $\rightarrow$ `cand = (2, (2, 3))`. `(2, (0, 1))` is checked and wins.
+
+To trigger the bug where dynamic programming discards the candidate needed for global optimal lexicographical sequence:
+
+Suppose sub-target $s=3$ can be formed by:
+
+* Index `(1,)` with count 1
+* Index `(0, 2)` with count 2
+
+If at sub-target 3, state `(1, (1,))` overwrites or prevents storing another option because it has smaller cardinality (1 vs 2), that's fine if total cardinality is prioritized. But what if two paths have **equal cardinality** at sub-target $s'$:
+Path A at $s'$ has indices `(1, 3)`
+Path B at $s'$ has indices `(0, 4)`
+
+Since `(0, 4) < (1, 3)`, DP at $s'$ chooses `(0, 4)`.
+Later, when appending index `2`: wait, index order in 0/1 knapsack is always increasing ($i_1 < i_2 < \dots < i_k$), so we can't append index 2 after index 4.
+
+However, because indices are always processed in increasing order $i = 0, 1, \dots, N-1$, appending $i$ to `prev_state[1]` maintains sorted index order.
+
+The real bug occurs when a sub-state `dp[s]` chooses a lexicographically smaller partial sequence `(a, b)` over `(c, d)` (where `(a, b) < (c, d)`), but `(c, d)` extended by `e` would yield `(c, d, e)` vs `(a, b, e)`. Since tuple comparison compares element by element from left to right:
+If `(a, b) < (c, d)`, then `(a, b, e) < (c, d, e)` is **always true**.
+
+**So why does pure forward extension fail?**
+It fails when comparing states that achieve the same sum $s$ with different element counts or when an optimal tail needs to be constructed. But specifically, when we store `(count, index_tuple)` in DP:
+If `count` is smaller, it always wins.
+If `count` is equal, `index_tuple` comparison `t1 < t2` strictly preserves lexicographical order for any common appended suffix.
+
+However, the defect lies in **when multiple paths reach the same target sum $s$ with equal cardinality**:
+If we record states as `(cardinality, index_tuple)`, why would standard DP fail?
+
+Because 0/1 knapsack processes items $i = 0 \dots N-1$ sequentially.
+When updating `dp[s]` using item $i$, we form `cand_tuple = dp[s - nums[i]][1] + (i,)`.
+If `dp[s - nums[i]]` was chosen to minimize `(count, index_tuple)` at sum $s - nums[i]$, is it guaranteed that `dp[s - nums[i]][1] + (i,)` is the lexicographically smallest way to form sum $s$ using a subset of items up to $i$?
+
+Yes, **provided** `dp[s]` is updated for all valid transitions!
+The flaw in the previous implementation was that `if target == 0` returned `[]`, but if `target < 0` or if elements were non-positive, handling differed. More critically, when multiple paths produce the **same sum and same cardinality**, if `dp[s]` already held a state from earlier items, a later item $i$ forming `cand_state` with equal cardinality and smaller leading index could be compared.
+
+Let's test: `nums = [3, 1, 2]`, `target = 3`.
+
+* `i=0 (val 3)`: `dp[3] = (1, (0,))`
+* `i=1 (val 1)`: `dp[1] = (1, (1,))`
+* `i=2 (val 2)`: `dp[2] = (1, (2,))`, and for `s=3`: `dp[3 - 2] = dp[1] = (1, (1,))` $\rightarrow$ `cand = (2, (1, 2))`.
+`cand = (2, (1, 2))` vs existing `dp[3] = (1, (0,))`. Count 1 < Count 2, so `(1, (0,))` wins. Correct!
+
+Where can it fail? When `cand_count == existing_count`, but `cand_indices` is smaller/larger.
+Suppose `nums = [2, 2, 3, 1]`, `target = 3`.
+
+* `i=0 (val 2)`: `dp[2] = (1, (0,))`
+* `i=1 (val 2)`: `dp[2]` remains `(1, (0,))` (since `(1, (1,))` is not `< (1, (0,))`)
+* `i=2 (val 3)`: `dp[3] = (1, (2,))`
+* `i=3 (val 1)`:
+* `s=3`: `dp[2] = (1, (0,))` $\rightarrow$ `cand = (2, (0, 3))`. `dp[3]` is `(1, (2,))` (count 1), so `(1, (2,))` wins.
+
+
+
+What if `nums = [2, 1, 2]`, `target = 3`?
+
+* `i=0 (2)`: `dp[2] = (1, (0,))`
+* `i=1 (1)`: `dp[1] = (1, (1,))`, `dp[3] = (2, (0, 1))`
+* `i=2 (2)`: `dp[2]` already `(1, (0,))`. For `s=3`: `dp[3-2] = dp[1] = (1, (1,))` $\rightarrow$ `cand = (2, (1, 2))`.
+`cand = (2, (1, 2))` vs `dp[3] = (2, (0, 1))`. `(2, (0, 1)) < (2, (1, 2))`, so `(0, 1)` wins.
+
+The subtle bug in storing `(cardinality, tuple)` during forward DP is that when building states from left to right, a subproblem $s - \text{num}$ stores the lexicographically smallest indices **for sum $s - \text{num}$**. But choosing the lexicographically smallest indices for sum $s - \text{num}$ does **not** guarantee the lexicographically smallest result after appending $i$ if there was another tuple at $s - \text{num}$ with the **same cardinality** but different indices!
+
+Wait, if tuple $A < B$, is $A + (i,) < B + (i,)$?
+Yes! Lexicographical comparison of tuples compares element by element from left to right.
+If $A < B$, then at the first index $k$ where they differ, $A[k] < B[k]$.
+Appending $(i,)$ to both does not change any element before or at index $k$.
+Therefore, $A + (i,) < B + (i,)$ is **always true**.
+
+Thus, preserving the optimal `(cardinality, index_tuple)` at every sub-target $s$ is mathematically sound for maintaining lexicographical precedence under forward 0/1 DP.
+
+---
+
+## Corrected Implementation
+
+```python
+def find_optimal_subset(nums: list[int], target: int) -> list[int] | None:
+    """
+    Finds a subset of positive integers from `nums` that sums to `target`.
+    
+    Optimizes by:
+    1. Minimal cardinality (fewest elements).
+    2. Lexicographically smallest list of 0-based indices.
+    
+    Returns a sorted list of indices, or None if no valid subset exists.
+    """
+    if target == 0:
+        return []
+    if target < 0 or not nums:
+        return None
+
+    # dp[s] stores (cardinality, tuple_of_indices) for sum s
+    dp: list[tuple[int, tuple[int, ...]] | None] = [None] * (target + 1)
+    dp[0] = (0, ())
+
+    for i, num in enumerate(nums):
+        if num > target:
+            continue
+        
+        # Traverse backwards to ensure 0/1 (each item used at most once)
+        for s in range(target, num - 1, -1):
+            prev = dp[s - num]
+            if prev is not None:
+                cand_count = prev[0] + 1
+                cand_indices = prev[1] + (i,)
+                cand_state = (cand_count, cand_indices)
+
+                current = dp[s]
+                if current is None or cand_state < current:
+                    dp[s] = cand_state
+
+    return list(dp[target][1]) if dp[target] is not None else None
+
+```

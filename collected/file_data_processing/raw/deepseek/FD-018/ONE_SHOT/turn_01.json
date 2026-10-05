@@ -1,0 +1,11 @@
+{
+  "task_id": "FD-018",
+  "model": "deepseek",
+  "interaction": "ONE_SHOT",
+  "turn": 1,
+  "saved_at": "2026-10-05T08:41:37.449754+00:00",
+  "response_sha256": "171b961b81b9a7206793620c3c07d075d7ee28d1a5a5bd54f695b9686677be67",
+  "code_sha256": "ff53063e5bb89b5cfba0ad35c5631ce2beba44aea36ee22b6887a5698cee3af8",
+  "raw_file": ".collection/raw/deepseek/FD-018/ONE_SHOT/turn_01.txt",
+  "code_file": ".collection/code/deepseek/FD-018/ONE_SHOT/code.py"
+}

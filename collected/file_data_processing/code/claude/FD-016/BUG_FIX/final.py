@@ -1,0 +1,124 @@
+"""
+Customer transaction aggregation utility.
+
+Rules:
+  * Output is driven strictly by the customer master: one row per master
+    customer, so nothing in the transactions can create a new output row.
+  * Transactions with unknown transaction IDs (missing/blank, or not in
+    `known_transaction_ids` when supplied) are ignored entirely.
+  * Transactions whose customer is not in the master are ignored too.
+  * Duplicate transaction IDs are counted once (first occurrence wins).
+  * Customers with no valid transactions appear with count 0 and total 0.
+  * Results are sorted by customer ID.
+"""
+
+from decimal import Decimal, InvalidOperation
+from typing import Any, Dict, Iterable, List, Optional, Set
+
+
+def _to_decimal(value: Any) -> Optional[Decimal]:
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _is_known_txn_id(txn_id: Any, known_ids: Optional[Set[Any]]) -> bool:
+    if txn_id is None:
+        return False
+    if isinstance(txn_id, str) and not txn_id.strip():
+        return False
+    if known_ids is not None and txn_id not in known_ids:
+        return False
+    return True
+
+
+def aggregate_transactions(
+    customers: Iterable[Dict[str, Any]],
+    transactions: Iterable[Dict[str, Any]],
+    known_transaction_ids: Optional[Set[Any]] = None,
+    customer_key: str = "customer_id",
+    txn_key: str = "transaction_id",
+    amount_key: str = "amount",
+) -> List[Dict[str, Any]]:
+    """
+    Return one row per master customer: all master fields plus `txn_count`
+    and `total_amount`, sorted by customer ID.
+    """
+    # 1. Build the master index first. Accumulators are pre-seeded from the
+    #    master only, so unknown IDs can never introduce a new key/row.
+    master: Dict[Any, Dict[str, Any]] = {}
+    for cust in customers:
+        cust_id = cust.get(customer_key)
+        if cust_id is None or cust_id in master:
+            continue  # skip rows without an ID and duplicate master entries
+        master[cust_id] = dict(cust)
+
+    counts: Dict[Any, int] = {cid: 0 for cid in master}
+    totals: Dict[Any, Decimal] = {cid: Decimal("0") for cid in master}
+
+    # 2. Aggregate valid transactions
+    seen_ids: Set[Any] = set()
+    for txn in transactions:
+        txn_id = txn.get(txn_key)
+
+        # Unknown transaction ID -> ignore completely (no row, no side effects)
+        if not _is_known_txn_id(txn_id, known_transaction_ids):
+            continue
+
+        # Customer not in master -> ignore (cannot create an output row)
+        cust_id = txn.get(customer_key)
+        if cust_id not in master:
+            continue
+
+        amount = _to_decimal(txn.get(amount_key))
+        if amount is None:
+            continue
+
+        # Count each transaction ID once; mark seen only after validation
+        if txn_id in seen_ids:
+            continue
+        seen_ids.add(txn_id)
+
+        counts[cust_id] += 1
+        totals[cust_id] += amount
+
+    # 3. Join to master (every master customer is present, including zeros)
+    result: List[Dict[str, Any]] = []
+    for cust_id, row in master.items():
+        row["txn_count"] = counts[cust_id]
+        row["total_amount"] = totals[cust_id]
+        result.append(row)
+
+    # 4. Sort by customer ID
+    result.sort(key=lambda r: r[customer_key])
+    return result
+
+
+if __name__ == "__main__":
+    customer_master = [
+        {"customer_id": "C003", "name": "Carol"},
+        {"customer_id": "C001", "name": "Alice"},
+        {"customer_id": "C002", "name": "Bob"},      # no transactions
+    ]
+
+    txns = [
+        {"transaction_id": "T1", "customer_id": "C001", "amount": "100.50"},
+        {"transaction_id": "T2", "customer_id": "C001", "amount": "20.00"},
+        {"transaction_id": "T3", "customer_id": "C003", "amount": "75.25"},
+        {"transaction_id": "T9", "customer_id": "C003", "amount": "999"},    # unknown txn ID
+        {"transaction_id": "T8", "customer_id": "C777", "amount": "999"},    # unknown txn ID + unknown customer
+        {"transaction_id": "",   "customer_id": "C001", "amount": "50"},     # blank txn ID
+        {"transaction_id": "T1", "customer_id": "C001", "amount": "100.50"}, # duplicate
+        {"transaction_id": "T4", "customer_id": "C999", "amount": "10"},     # customer not in master
+    ]
+
+    valid_ids = {"T1", "T2", "T3", "T4"}
+
+    for row in aggregate_transactions(customer_master, txns, known_transaction_ids=valid_ids):
+        print(row)
+
+    # Output (exactly 3 rows, one per master customer):
+    # {'customer_id': 'C001', 'name': 'Alice', 'txn_count': 2, 'total_amount': Decimal('120.50')}
+    # {'customer_id': 'C002', 'name': 'Bob', 'txn_count': 0, 'total_amount': Decimal('0')}
+    # {'customer_id': 'C003', 'name': 'Carol', 'txn_count': 1, 'total_amount': Decimal('75.25')}

@@ -1,0 +1,74 @@
+```python
+import json
+import sys
+
+def filter_jsonl(input_file, output_file, threshold):
+    records = []
+    skipped = 0
+
+    with open(input_file, "r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                record = json.loads(line)
+
+                if not isinstance(record, dict):
+                    skipped += 1
+                    continue
+
+                required = ["id", "category", "score", "active"]
+
+                if any(field not in record for field in required):
+                    skipped += 1
+                    continue
+
+                if not isinstance(record["id"], (str, int)):
+                    skipped += 1
+                    continue
+
+                if not isinstance(record["category"], str):
+                    skipped += 1
+                    continue
+
+                if isinstance(record["score"], bool) or not isinstance(record["score"], (int, float)):
+                    skipped += 1
+                    continue
+
+                if not isinstance(record["active"], bool):
+                    skipped += 1
+                    continue
+
+                if record["active"] and record["score"] >= threshold:
+                    records.append(record)
+
+            except (json.JSONDecodeError, TypeError, ValueError):
+                skipped += 1
+
+    records.sort(
+        key=lambda r: (
+            r["category"],
+            -r["score"],
+            str(r["id"])
+        )
+    )
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        for record in records:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    print(f"Retained: {len(records)}")
+    print(f"Skipped: {skipped}")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 4:
+        print("Usage: python filter.py input.jsonl output.jsonl threshold")
+        sys.exit(1)
+
+    try:
+        threshold = float(sys.argv[3])
+    except ValueError:
+        print("Threshold must be a number.")
+        sys.exit(1)
+
+    filter_jsonl(sys.argv[1], sys.argv[2], threshold)
+```

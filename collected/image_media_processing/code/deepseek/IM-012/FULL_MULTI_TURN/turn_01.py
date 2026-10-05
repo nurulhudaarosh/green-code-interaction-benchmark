@@ -1,0 +1,79 @@
+import os
+from pathlib import Path
+from PIL import Image
+
+def letterbox_resize(input_dir, output_dir, target_size, pad_color=(0, 0, 0)):
+    """
+    Resize all images in input_dir preserving aspect ratio, padding to target_size.
+    Content is centered, padding uses pad_color.
+    
+    Args:
+        input_dir (str): Directory containing input images.
+        output_dir (str): Directory to save processed images.
+        target_size (tuple): (width, height) of the output images.
+        pad_color (tuple): RGB tuple for padding color. Default (0,0,0).
+    """
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    target_w, target_h = target_size
+    if target_w <= 0 or target_h <= 0:
+        raise ValueError("target_size must be positive (width, height)")
+
+    # Supported extensions (PIL can open most common formats)
+    valid_ext = {'.jpg', '.jpeg', '.png', '.bmp', '.webp', '.tif', '.tiff', '.gif'}
+
+    for img_path in input_dir.iterdir():
+        if not img_path.is_file() or img_path.suffix.lower() not in valid_ext:
+            continue
+
+        try:
+            with Image.open(img_path) as img:
+                # Convert to RGB (drop alpha) or handle palette/grayscale
+                if img.mode in ('RGBA', 'LA', 'P'):
+                    # Composite over a background if has transparency? 
+                    # For simplicity, convert to RGB; transparent areas become black.
+                    # To preserve transparency, keep RGBA and pad with RGBA pad_color.
+                    img = img.convert('RGB')
+                elif img.mode not in ('RGB', 'L'):
+                    img = img.convert('RGB')
+
+                orig_w, orig_h = img.size
+
+                # Compute scale factor preserving aspect ratio
+                scale = min(target_w / orig_w, target_h / orig_h)
+                new_w = max(1, int(round(orig_w * scale)))
+                new_h = max(1, int(round(orig_h * scale)))
+
+                # Resize with high-quality filter
+                resized = img.resize((new_w, new_h), Image.LANCZOS)
+
+                # Create new image with pad color and paste centered
+                if resized.mode == 'L':
+                    # Grayscale: pad_color should be a single int or tuple of length 1
+                    if isinstance(pad_color, (tuple, list)):
+                        pad_val = pad_color[0] if len(pad_color) == 1 else sum(pad_color) // 3
+                    else:
+                        pad_val = pad_color
+                    canvas = Image.new('L', (target_w, target_h), pad_val)
+                else:
+                    canvas = Image.new('RGB', (target_w, target_h), pad_color)
+
+                paste_x = (target_w - new_w) // 2
+                paste_y = (target_h - new_h) // 2
+                canvas.paste(resized, (paste_x, paste_y))
+
+                # Save with original filename (or change extension if needed)
+                out_path = output_dir / img_path.name
+                # Preserve format based on extension; for JPEG ensure quality
+                save_kwargs = {}
+                if out_path.suffix.lower() in ('.jpg', '.jpeg'):
+                    save_kwargs['quality'] = 95
+                    save_kwargs['subsampling'] = 0  # 4:4:4 for better quality
+                canvas.save(out_path, **save_kwargs)
+
+        except Exception as e:
+            print(f"Failed to process {img_path}: {e}")
+
+    print(f"Done. Processed images saved to {output_dir}")

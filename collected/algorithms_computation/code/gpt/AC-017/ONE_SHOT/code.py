@@ -1,0 +1,146 @@
+# Problem Restatement:
+# Given an integer interval [L, R], list all prime numbers in that interval
+# and return the largest gap between two consecutive primes.
+#
+# Key Constraints:
+# - L and R are integers with L <= R.
+# - The interval width is bounded, so a segmented sieve is practical.
+# - Only primes in [L, R] are required.
+# - The solution must be deterministic.
+# - Use only Python's standard library.
+# - No network access, APIs, external services, randomness, or human interaction.
+#
+# Required Output:
+# Return a dictionary containing:
+#   "primes": all primes in [L, R] in increasing order.
+#   "largest_gap": the largest difference between consecutive primes.
+#                    If fewer than two primes exist, return 0.
+#
+# Algorithm:
+# 1. Generate all base primes up to sqrt(R) using the ordinary Sieve of Eratosthenes.
+# 2. Create a boolean segmented array representing [L, R].
+# 3. For every base prime p, mark its multiples in [L, R] as composite.
+#    Start marking from max(p*p, ceil(L/p)*p).
+# 4. Handle values below 2 because 0 and 1 are not prime.
+# 5. Collect the remaining prime values in increasing order.
+# 6. Compute the largest gap between consecutive primes.
+#
+# Time Complexity:
+# - Base sieve: O(sqrt(R) log log R)
+# - Segmented sieve: approximately O((R-L+1) log log R)
+# - Space: O(R-L+1 + sqrt(R))
+
+
+from math import isqrt
+
+
+def list_primes_and_largest_gap(L, R):
+    """
+    Return all primes in [L, R] and the largest gap between
+    consecutive primes.
+
+    Returns:
+        {
+            "primes": [...],
+            "largest_gap": int
+        }
+    """
+
+    if L > R:
+        raise ValueError("L must be less than or equal to R.")
+
+    # No primes can exist below 2.
+    if R < 2:
+        return {
+            "primes": [],
+            "largest_gap": 0
+        }
+
+    # Generate base primes up to sqrt(R).
+    limit = isqrt(R)
+    base_is_prime = [True] * (limit + 1)
+
+    if limit >= 0:
+        base_is_prime[0] = False
+    if limit >= 1:
+        base_is_prime[1] = False
+
+    for p in range(2, isqrt(limit) + 1):
+        if base_is_prime[p]:
+            start = p * p
+            for multiple in range(start, limit + 1, p):
+                base_is_prime[multiple] = False
+
+    base_primes = [
+        p for p in range(2, limit + 1)
+        if base_is_prime[p]
+    ]
+
+    # Segmented sieve for [L, R].
+    start = max(L, 2)
+    size = R - start + 1
+    is_prime = [True] * size
+
+    for p in base_primes:
+        # First multiple of p >= start.
+        first_multiple = max(
+            p * p,
+            ((start + p - 1) // p) * p
+        )
+
+        for multiple in range(first_multiple, R + 1, p):
+            is_prime[multiple - start] = False
+
+    primes = [
+        start + i
+        for i, prime in enumerate(is_prime)
+        if prime
+    ]
+
+    # Largest gap between consecutive primes.
+    largest_gap = 0
+
+    for i in range(1, len(primes)):
+        gap = primes[i] - primes[i - 1]
+        if gap > largest_gap:
+            largest_gap = gap
+
+    return {
+        "primes": primes,
+        "largest_gap": largest_gap
+    }
+
+
+# Example tests
+if __name__ == "__main__":
+    # Normal interval
+    assert list_primes_and_largest_gap(10, 30) == {
+        "primes": [11, 13, 17, 19, 23, 29],
+        "largest_gap": 6
+    }
+
+    # Interval containing 0 and 1
+    assert list_primes_and_largest_gap(0, 10) == {
+        "primes": [2, 3, 5, 7],
+        "largest_gap": 2
+    }
+
+    # Exactly one prime
+    assert list_primes_and_largest_gap(14, 17) == {
+        "primes": [17],
+        "largest_gap": 0
+    }
+
+    # No primes
+    assert list_primes_and_largest_gap(20, 22) == {
+        "primes": [],
+        "largest_gap": 0
+    }
+
+    # Negative lower bound
+    assert list_primes_and_largest_gap(-10, 5) == {
+        "primes": [2, 3, 5],
+        "largest_gap": 2
+    }
+
+    print(list_primes_and_largest_gap(10, 30))

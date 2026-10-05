@@ -1,0 +1,133 @@
+import statistics
+from collections import defaultdict
+
+class StudentAnalyzer:
+    def __init__(self):
+        self.students = {}
+    
+    def add_student(self, student_id, name, grades):
+        """Add a student with their grades."""
+        self.students[student_id] = {
+            'name': name,
+            'grades': grades
+        }
+    
+    def calculate_average(self, student_id):
+        """Calculate average grade for a student."""
+        if student_id not in self.students:
+            return None
+        grades = self.students[student_id]['grades']
+        return sum(grades) / len(grades) if grades else 0
+    
+    def get_letter_grade(self, average):
+        """Convert numerical average to letter grade."""
+        if average >= 90: return 'A'
+        elif average >= 80: return 'B'
+        elif average >= 70: return 'C'
+        elif average >= 60: return 'D'
+        else: return 'F'
+    
+    def analyze_student(self, student_id):
+        """Perform detailed analysis for a single student."""
+        if student_id not in self.students:
+            return f"Student {student_id} not found."
+        
+        student = self.students[student_id]
+        grades = student['grades']
+        
+        if not grades:
+            return f"{student['name']}: No grades available"
+        
+        avg = self.calculate_average(student_id)
+        analysis = {
+            'name': student['name'],
+            'average': round(avg, 2),
+            'letter_grade': self.get_letter_grade(avg),
+            'highest': max(grades),
+            'lowest': min(grades),
+            'std_dev': round(statistics.stdev(grades), 2) if len(grades) > 1 else 0,
+            'num_grades': len(grades)
+        }
+        return analysis
+    
+    def class_statistics(self):
+        """Calculate statistics for the entire class."""
+        if not self.students:
+            return "No students in the system."
+        
+        all_averages = [self.calculate_average(sid) for sid in self.students]
+        all_grades = [g for s in self.students.values() for g in s['grades']]
+        
+        if not all_grades:
+            return "No grades available."
+        
+        # Grade distribution
+        distribution = defaultdict(int)
+        for sid in self.students:
+            avg = self.calculate_average(sid)
+            distribution[self.get_letter_grade(avg)] += 1
+        
+        return {
+            'total_students': len(self.students),
+            'class_average': round(sum(all_averages) / len(all_averages), 2),
+            'highest_average': round(max(all_averages), 2),
+            'lowest_average': round(min(all_averages), 2),
+            'grade_distribution': dict(sorted(distribution.items())),
+            'total_grades_recorded': len(all_grades),
+            'overall_std_dev': round(statistics.stdev(all_grades), 2) if len(all_grades) > 1 else 0
+        }
+    
+    def rank_students(self):
+        """Rank students by their average grade."""
+        rankings = []
+        for sid, data in self.students.items():
+            avg = self.calculate_average(sid)
+            rankings.append((sid, data['name'], round(avg, 2), self.get_letter_grade(avg)))
+        
+        rankings.sort(key=lambda x: x[2], reverse=True)
+        return rankings
+    
+    def generate_report(self):
+        """Generate a full analysis report."""
+        print("=" * 60)
+        print("STUDENT ANALYSIS REPORT")
+        print("=" * 60)
+        
+        # Individual student analysis
+        print("\n--- Individual Student Performance ---")
+        for sid in self.students:
+            analysis = self.analyze_student(sid)
+            if isinstance(analysis, dict):
+                print(f"\nID: {sid} | {analysis['name']}")
+                print(f"  Average: {analysis['average']} ({analysis['letter_grade']})")
+                print(f"  Highest: {analysis['highest']} | Lowest: {analysis['lowest']}")
+                print(f"  Std Dev: {analysis['std_dev']} | Grades: {analysis['num_grades']}")
+        
+        # Class statistics
+        print("\n--- Class Statistics ---")
+        stats = self.class_statistics()
+        if isinstance(stats, dict):
+            for key, value in stats.items():
+                print(f"  {key.replace('_', ' ').title()}: {value}")
+        
+        # Rankings
+        print("\n--- Student Rankings ---")
+        for rank, (sid, name, avg, letter) in enumerate(self.rank_students(), 1):
+            print(f"  {rank}. {name} (ID: {sid}) - {avg} [{letter}]")
+        
+        print("\n" + "=" * 60)
+
+
+# ---- Demo / Test Run ----
+if __name__ == "__main__":
+    analyzer = StudentAnalyzer()
+    
+    # Add sample students
+    analyzer.add_student(101, "Alice Johnson", [92, 88, 95, 90, 87])
+    analyzer.add_student(102, "Bob Smith", [75, 82, 68, 79, 71])
+    analyzer.add_student(103, "Carol Davis", [85, 90, 88, 92, 86])
+    analyzer.add_student(104, "David Lee", [55, 62, 58, 60, 65])
+    analyzer.add_student(105, "Emma Wilson", [98, 95, 97, 99, 96])
+    
+    # Generate the full report
+    analyzer.generate_report()

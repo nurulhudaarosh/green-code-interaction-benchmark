@@ -1,0 +1,47 @@
+import sys
+import csv
+import re
+from collections import defaultdict
+
+
+def normalize(text):
+    text = "" if text is None else str(text)
+    text = text.casefold()
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def main():
+    reader = csv.DictReader(sys.stdin)
+    groups = defaultdict(list)
+
+    for row in reader:
+        record_id = row.get("id", "").strip()
+        date = row.get("date", "").strip()
+        title = normalize(row.get("title", ""))
+        description = normalize(row.get("description", ""))
+
+        if not record_id or not date:
+            continue
+
+        key = (date, title, description)
+        groups[key].append(record_id)
+
+    duplicate_groups = []
+
+    for ids in groups.values():
+        if len(ids) > 1:
+            sorted_ids = sorted(ids)
+            duplicate_groups.append(sorted_ids)
+
+    duplicate_groups.sort(key=lambda ids: tuple(ids))
+
+    writer = csv.writer(sys.stdout)
+    writer.writerow(["duplicate_ids"])
+
+    for ids in duplicate_groups:
+        writer.writerow(["|".join(ids)])
+
+
+if __name__ == "__main__":
+    main()

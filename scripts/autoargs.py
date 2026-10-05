@@ -123,7 +123,11 @@ def serve_aliases(work, prog_text):
         src = pick_source(work, name, used=used | {dst.name})
         if src is None:
             continue
-        shutil.copy2(src, dst)
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+        except OSError:
+            continue
         used.add(src.name)
         touched.append(name)
     return touched
@@ -257,18 +261,22 @@ def infer_arg_candidates(work, src):
     if upos:
         cands.append([_value_for(u, inputs, "dir" if "dir" in u.lower() else "file")
                       for u in upos])
-    # generic positional combos over the available input files
-    for f in inputs:
+    # generic positional combos over the available input files. Bounded: an
+    # image task materialises many sample files at the run root, which would
+    # otherwise explode into thousands of candidates and stall the search.
+    head = inputs[:8]
+    pairs = inputs[:5]
+    for f in head:
         cands.append([f])
-    for f in inputs:
+    for f in head:
         cands.append([f, "out.csv"])
-    for i, a in enumerate(inputs):
-        for b in inputs[i + 1:]:
+    for i, a in enumerate(pairs):
+        for b in pairs[i + 1:]:
             cands.append([a, b])
             cands.append([a, b, "out.csv"])
             cands.append([a, b, "report.csv"])
     # generic flag forms
-    for f in inputs:
+    for f in head:
         cands.append(["--input", f, "--output", "out.csv"])
         cands.append(["-i", f, "-o", "out.csv"])
     # de-duplicate, preserve order

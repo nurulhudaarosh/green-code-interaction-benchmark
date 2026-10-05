@@ -1,0 +1,152 @@
+Here is the hardened version, including edge-case verification for empty inputs, single-line inputs, all-identical inputs, and handling actual file paths or file-like objects safely (e.g. handling trailing newline stripping appropriately).
+
+### Updated Implementation
+
+```python
+from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass
+import os
+from typing import Literal, Union
+
+
+@dataclass(slots=True)
+class LineEntry:
+    line: str
+    count: int = 1
+
+
+def _default_normalizer(line: str) -> str:
+    """Case-insensitive and whitespace-stripped normalization."""
+    return line.strip().lower()
+
+
+def dedup_lines(
+    source: Union[Iterable[str], str, os.PathLike],
+    *,
+    mode: Literal["exact", "normalized"] = "exact",
+    with_counts: bool = False,
+    normalizer: Callable[[str], str] | None = None,
+    keepends: bool = False,
+    encoding: str = "utf-8",
+) -> Iterator[str | tuple[str, int]]:
+    """Deduplicate lines while preserving the order of their first appearance.
+
+    Correctly handles:
+      - Empty iterables / empty files (yields nothing).
+      - Single-line inputs (yields single item or count of 1).
+      - Identical repeated lines (yields single line with total count).
+
+    Args:
+        source: A file path, an iterable of strings, or a file-like object.
+        mode: 'exact' or 'normalized'.
+        with_counts: If True, yields `(line, count)`. If False, yields `line`.
+        normalizer: Custom normalization callable for `mode='normalized'`.
+        keepends: If True, retains newline characters (`\\n`, `\\r\\n`).
+                  Defaults to False to prevent false duplicates across EOF.
+        encoding: File encoding used when `source` is a path string/PathLike.
+
+    Yields:
+        Unique lines (or `(line, count)` tuples) in order of first appearance.
+    """
+    if mode == "exact":
+        key_fn = lambda s: s
+    elif mode == "normalized":
+        key_fn = normalizer or _default_normalizer
+    else:
+        raise ValueError(f"Unknown mode: {mode!r}. Expected 'exact' or 'normalized'.")
+
+    def _line_stream() -> Iterator[str]:
+        """Normalize line generation across file paths, file objects, and sequences."""
+        if isinstance(source, (str, os.PathLike)):
+            if os.path.exists(source):
+                with open(source, mode="r", encoding=encoding) as f:
+                    for raw_line in f:
+                        yield raw_line if keepends else raw_line.rstrip("\r\n")
+                return
+            else:
+                # If it's a raw string that isn't an existing file path,
+                # split lines instead of iterating character-by-character
+                for raw_line in source.splitlines(keepends=keepends):
+                    yield raw_line
+                return
+
+        for raw_line in source:
+            yield raw_line if keepends else raw_line.rstrip("\r\n")
+
+    lines = _line_stream()
+
+    if with_counts:
+        # Full aggregation pass
+        seen: dict[str, LineEntry] = {}
+        for line in lines:
+            key = key_fn(line)
+            if key not in seen:
+                seen[key] = LineEntry(line=line, count=1)
+            else:
+                seen[key].count += 1
+
+        for entry in seen.values():
+            yield entry.line, entry.count
+    else:
+        # Lazy streaming pass
+        seen_keys: set[str] = set()
+        for line in lines:
+            key = key_fn(line)
+            if key not in seen_keys:
+                seen_keys.add(key)
+                yield line
+
+```
+
+---
+
+### Verification Against All Target Edge Cases
+
+# -------------------------------------------------------------
+# 1. Empty Inputs (Empty list, empty generator, empty file)
+# -------------------------------------------------------------
+assert list(dedup_lines([])) == []
+assert list(dedup_lines([], with_counts=True)) == []
+assert list(dedup_lines("", mode="normalized")) == []
+
+# -------------------------------------------------------------
+# 2. Single-line Inputs
+# -------------------------------------------------------------
+single = ["Alpha\n"]
+# Exact / counts=False
+assert list(dedup_lines(single)) == ["Alpha"]
+# Normalized / counts=False
+assert list(dedup_lines(single, mode="normalized")) == ["Alpha"]
+# Exact / counts=True
+assert list(dedup_lines(single, with_counts=True)) == [("Alpha", 1)]
+# Normalized / counts=True
+assert list(dedup_lines(single, mode="normalized", with_counts=True)) == [("Alpha", 1)]
+
+# -------------------------------------------------------------
+# 3. All Lines Identical
+# -------------------------------------------------------------
+identical_exact = ["omega\n", "omega\n", "omega\n", "omega\n"]
+assert list(dedup_lines(identical_exact)) == ["omega"]
+assert list(dedup_lines(identical_exact, with_counts=True)) == [("omega", 4)]
+
+identical_normalized = ["  item \n", "ITEM", "Item\r\n", "item   "]
+# Exact treats them distinct except where identical
+assert list(dedup_lines(identical_normalized, mode="exact")) == [
+    "  item ",
+    "ITEM",
+    "Item",
+    "item   ",
+]
+# Normalized collapses all to the first seen representation
+assert list(dedup_lines(identical_normalized, mode="normalized")) == ["  item "]
+assert list(
+    dedup_lines(identical_normalized, mode="normalized", with_counts=True)
+) == [("  item ", 4)]
+
+```
+
+### Why These Edge Cases Often Break and How This Solves Them:
+
+1. **Trailing Newlines on Last Line (`\n` mismatch):** In many text files, the final line lacks a trailing newline (`\n`), causing `"foo\n"` and `"foo"` to be counted as distinct in `mode="exact"`. The `keepends=False` default normalizes terminal line breaks via `.rstrip("\r\n")`.
+2. **String vs Iterable-of-Strings Ambiguity:** Passing a single string `dedup_lines("hello")` in Python normally iterates character-by-character (`['h', 'e', 'l', 'l', 'o']`). The stream generator detects raw string arguments and applies `.splitlines()` safely.
+3. **Empty Generator Exhaustion:** Both the streaming loop and the dictionary generator terminate immediately on empty iterators without throwing `StopIteration` or unhandled index/slice exceptions.

@@ -1,0 +1,73 @@
+import os
+import re
+import unicodedata
+
+
+def normalize_corpus(input_dir, output_dir, lowercase=False):
+    """
+    Normalize all .txt files recursively.
+
+    - NFC-normalize text
+    - Collapse all whitespace to a single space
+    - Optionally lowercase
+    - Mirror the input directory structure in output_dir
+
+    Returns:
+        {
+            "files": int,
+            "total_chars_in": int,
+            "total_chars_out": int,
+            "per_file": [...]
+        }
+    """
+    files = 0
+    total_chars_in = 0
+    total_chars_out = 0
+    per_file = []
+
+    for root, _, filenames in os.walk(input_dir):
+        for filename in filenames:
+            if not filename.lower().endswith(".txt"):
+                continue
+
+            input_path = os.path.join(root, filename)
+            rel_path = os.path.relpath(input_path, input_dir)
+            output_path = os.path.join(output_dir, rel_path)
+
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+            with open(input_path, "r", encoding="utf-8") as f:
+                text = f.read()
+
+            chars_in = len(text)
+
+            # NFC normalization, then collapse all whitespace.
+            normalized = unicodedata.normalize("NFC", text)
+            normalized = re.sub(r"\s+", " ", normalized).strip()
+
+            if lowercase:
+                normalized = normalized.lower()
+
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(normalized)
+
+            chars_out = len(normalized)
+
+            files += 1
+            total_chars_in += chars_in
+            total_chars_out += chars_out
+
+            per_file.append({
+                "path": rel_path,
+                "chars_in": chars_in,
+                "chars_out": chars_out,
+            })
+
+    per_file.sort(key=lambda x: x["path"])
+
+    return {
+        "files": files,
+        "total_chars_in": total_chars_in,
+        "total_chars_out": total_chars_out,
+        "per_file": per_file,
+    }

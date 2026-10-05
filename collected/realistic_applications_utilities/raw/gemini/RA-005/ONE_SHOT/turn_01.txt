@@ -1,72 +1,112 @@
 ```python
-import json
-import traceback
-from pathlib import Path
+def summarize_logs(logs, repeated_error_threshold=2):
+    """
+    Complete robust log summarizer.
 
-DATASET_PATH = "dataset.json"
+    Requirements:
+    - Summarize INFO, WARNING, and ERROR logs.
+    - Ignore empty, blank, non-string, and malformed lines.
+    - Handle extra whitespace and case differences.
+    - Allow additional ':' characters inside messages.
+    - Detect repeated ERROR messages.
+    - Treat the repetition threshold as inclusive (count >= threshold).
+    - Handle invalid threshold values safely.
+    """
 
-def load_dataset(path):
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"'{path}' not found. Check the path.")
-    with open(p, "r", encoding="utf-8") as f:
-        return json.load(f)
+    summary = {
+        "INFO": 0,
+        "WARNING": 0,
+        "ERROR": 0,
+        "repeated_errors": {}
+    }
 
-def safe_get(lst, index, default=None, label="list"):
-    """Access list[index] safely, logging instead of crashing."""
-    try:
-        return lst[index]
-    except IndexError:
-        print(f"IndexError: {label} has length {len(lst)}, but index {index} was requested.")
-        return default
+    # Validate the threshold.
+    if isinstance(repeated_error_threshold, bool):
+        repeated_error_threshold = 2
+    elif not isinstance(repeated_error_threshold, (int, float)):
+        repeated_error_threshold = 2
 
-def diagnose_index_errors(data):
-    issues = []
-    interactions = data.get("interactions", []) if isinstance(data, dict) else []
+    if repeated_error_threshold < 1:
+        repeated_error_threshold = 1
 
-    if not interactions:
-        issues.append("'interactions' list is empty — nothing to advance through.")
-        return issues
+    if not logs:
+        return summary
 
-    for i, interaction in enumerate(interactions):
-        try:
-            # Example of the kind of indexing that typically throws this error:
-            # accessing a sub-list/messages array without checking length first
-            messages = interaction.get("messages", []) if isinstance(interaction, dict) else []
-            if not messages:
-                issues.append(f"Interaction {i}: 'messages' is empty — indexing into it would fail.")
-                continue
+    error_counts = {}
 
-            first_msg = safe_get(messages, 0, label=f"interaction[{i}].messages")
-            last_msg = safe_get(messages, len(messages) - 1, label=f"interaction[{i}].messages")
+    for line in logs:
+        # Ignore non-string records.
+        if not isinstance(line, str):
+            continue
 
-            if first_msg is None or last_msg is None:
-                issues.append(f"Interaction {i}: could not safely access first/last message.")
+        line = line.strip()
 
-        except Exception:
-            issues.append(f"Interaction {i}: unexpected error:\n{traceback.format_exc()}")
+        # Ignore empty or whitespace-only records.
+        if not line:
+            continue
 
-    return issues
+        # Split only once so messages can contain additional ':' characters.
+        parts = line.split(":", 1)
 
-def main():
-    try:
-        data = load_dataset(DATASET_PATH)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"Failed to load dataset: {e}")
-        return
+        # Missing separator or malformed structure.
+        if len(parts) != 2:
+            continue
 
-    issues = diagnose_index_errors(data)
+        level = parts[0].strip().upper()
+        message = parts[1].strip()
 
-    if issues:
-        print("Issues found (likely causes of 'list index out of range'):")
-        for issue in issues:
-            print(f"  - {issue}")
-    else:
-        print("No obvious index issues found — the error may be occurring elsewhere in your pipeline.")
-        print("Check any loop like `data[i]` or `list[-1]` where the list could be shorter than expected.")
+        # Both level and message are required.
+        if not level or not message:
+            continue
+
+        # Only recognize supported log levels.
+        if level not in ("INFO", "WARNING", "ERROR"):
+            continue
+
+        summary[level] += 1
+
+        if level == "ERROR":
+            # Normalize case and whitespace for repeated-error detection.
+            normalized_message = " ".join(message.split()).casefold()
+
+            error_counts[normalized_message] = (
+                error_counts.get(normalized_message, 0) + 1
+            )
+
+    # Threshold is inclusive:
+    # exactly threshold occurrences count as repeated.
+    summary["repeated_errors"] = {
+        message: count
+        for message, count in error_counts.items()
+        if count >= repeated_error_threshold
+    }
+
+    return summary
+
 
 if __name__ == "__main__":
-    main()
-```
+    logs = [
+        "INFO: Server started",
+        " error : Database connection failed ",
+        "WARNING: High memory usage",
+        "INFO: User logged in",
+        "ERROR: Database connection failed",
+        "ERROR: database connection failed",
+        "ERROR: Database connection failed",
+        "ERROR: Request failed: timeout",
+        "MALFORMED LINE",
+        "ERROR",
+        ": Missing level",
+        "ERROR:",
+        "ERROR:   ",
+        "DEBUG: Debug message",
+        "INFO: Message: with: separators",
+        "",
+        "   ",
+        None,
+        123
+    ]
 
-This assumes a `messages` list nested inside each interaction — swap that key/structure for whatever your actual pipeline indexes into. If you can share the traceback with a line number, I can point at the exact line instead of guessing at the shape.
+    result = summarize_logs(logs, repeated_error_threshold=3)
+    print(result)
+```

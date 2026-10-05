@@ -1,0 +1,95 @@
+import os
+from PIL import Image
+import numpy as np
+
+
+def find_near_duplicates(input_dir, threshold):
+    """
+    Cluster images by normalized grayscale histogram L1 distance.
+
+    Two images are considered similar when their normalized grayscale
+    histogram L1 distance is <= threshold. Similarity is transitive:
+    if A~B and B~C, all three images belong to the same cluster.
+
+    Args:
+        input_dir (str): Directory containing image files.
+        threshold (float): Maximum allowed L1 histogram distance.
+
+    Returns:
+        list[list[str]]: Clusters containing at least two image paths.
+    """
+
+    image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
+
+    image_paths = [
+        os.path.join(input_dir, name)
+        for name in os.listdir(input_dir)
+        if os.path.splitext(name)[1].lower() in image_extensions
+    ]
+
+    # Sort for deterministic output.
+    image_paths.sort()
+
+    # A cluster requires at least two images.
+    if len(image_paths) < 2:
+        return []
+
+    def histogram(path):
+        with Image.open(path) as img:
+            gray = img.convert("L")
+            hist = np.asarray(gray.histogram(), dtype=np.float64)
+
+        total = hist.sum()
+        if total > 0:
+            hist /= total
+
+        return hist
+
+    histograms = [histogram(path) for path in image_paths]
+
+    # Union-Find / Disjoint Set Union.
+    parent = list(range(len(image_paths)))
+    rank = [0] * len(image_paths)
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        root_a = find(a)
+        root_b = find(b)
+
+        if root_a == root_b:
+            return
+
+        if rank[root_a] < rank[root_b]:
+            root_a, root_b = root_b, root_a
+
+        parent[root_b] = root_a
+
+        if rank[root_a] == rank[root_b]:
+            rank[root_a] += 1
+
+    # Build connected components using pairwise histogram distances.
+    for i in range(len(image_paths)):
+        for j in range(i + 1, len(image_paths)):
+            distance = np.sum(np.abs(histograms[i] - histograms[j]))
+
+            if distance <= threshold:
+                union(i, j)
+
+    # Collect transitive clusters.
+    clusters = {}
+
+    for i, path in enumerate(image_paths):
+        root = find(i)
+        clusters.setdefault(root, []).append(path)
+
+    # Only return actual duplicate groups (2+ members).
+    return [
+        members
+        for members in clusters.values()
+        if len(members) >= 2
+    ]

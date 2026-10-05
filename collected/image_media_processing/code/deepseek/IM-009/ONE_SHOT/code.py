@@ -1,0 +1,64 @@
+import os
+import numpy as np
+from PIL import Image
+from typing import Dict, Tuple
+
+def compute_statistics(input_dir: str) -> Dict[str, Dict[str, np.ndarray]]:
+    """
+    Compute per-image 256-bin grayscale histograms plus mean and standard deviation
+    of pixel intensity for all images in a directory.
+    
+    Args:
+        input_dir: Path to directory containing images.
+        
+    Returns:
+        Dictionary mapping each filename to a dict with keys:
+            - 'histogram': np.ndarray of shape (256,), counts per gray level
+            - 'mean': float, mean pixel intensity
+            - 'std': float, standard deviation of pixel intensity
+    """
+    supported_exts = {'.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.gif'}
+    statistics = {}
+    
+    if not os.path.isdir(input_dir):
+        raise ValueError(f"Not a directory: {input_dir}")
+    
+    for filename in sorted(os.listdir(input_dir)):
+        filepath = os.path.join(input_dir, filename)
+        if not os.path.isfile(filepath):
+            continue
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in supported_exts:
+            continue
+        
+        try:
+            with Image.open(filepath) as img:
+                # Convert to 8-bit grayscale
+                gray = img.convert('L')
+                pixels = np.asarray(gray, dtype=np.uint8)
+        except Exception as e:
+            print(f"Skipping {filename}: {e}")
+            continue
+        
+        # 256-bin histogram (counts)
+        histogram = np.bincount(pixels.ravel(), minlength=256).astype(np.int64)
+        
+        # Mean and standard deviation of pixel intensity
+        mean = float(pixels.mean())
+        std = float(pixels.std())
+        
+        statistics[filename] = {
+            'histogram': histogram,
+            'mean': mean,
+            'std': std,
+        }
+    
+    return statistics
+
+
+# Example usage
+if __name__ == '__main__':
+    stats = compute_statistics('./images')
+    for name, s in stats.items():
+        print(f"{name}: mean={s['mean']:.2f}, std={s['std']:.2f}, "
+              f"hist_sum={s['histogram'].sum()}")

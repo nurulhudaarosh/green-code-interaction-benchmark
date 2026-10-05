@@ -1,0 +1,96 @@
+```python
+import json
+from typing import Any
+
+
+REQUIRED_PRODUCT_FIELDS = ("id", "name", "warehouses")
+REQUIRED_WAREHOUSE_FIELDS = ("warehouse", "stock")
+
+
+def is_valid_product(product: Any) -> bool:
+    if not isinstance(product, dict):
+        return False
+    if not all(field in product for field in REQUIRED_PRODUCT_FIELDS):
+        return False
+    return isinstance(product["warehouses"], list)
+
+
+def is_valid_warehouse(warehouse: Any) -> bool:
+    if not isinstance(warehouse, dict):
+        return False
+    if not all(field in warehouse for field in REQUIRED_WAREHOUSE_FIELDS):
+        return False
+    stock = warehouse["stock"]
+    return isinstance(stock, (int, float)) and not isinstance(stock, bool)
+
+
+def flatten_products(products: Any) -> tuple[list[dict], int]:
+    rows: list[dict] = []
+    invalid_count = 0
+
+    if not isinstance(products, list):
+        return rows, invalid_count
+
+    for product in products:
+        if not is_valid_product(product):
+            invalid_count += 1
+            continue
+
+        for warehouse in product["warehouses"]:
+            if not is_valid_warehouse(warehouse):
+                continue
+            try:
+                rows.append(
+                    {
+                        "id": product["id"],
+                        "name": product["name"],
+                        "warehouse": warehouse["warehouse"],
+                        "stock": warehouse["stock"],
+                    }
+                )
+            except (KeyError, TypeError):
+                invalid_count += 1
+                continue
+
+    return rows, invalid_count
+
+
+def sort_rows(rows: list[dict]) -> list[dict]:
+    return sorted(
+        rows,
+        key=lambda r: (
+            str(r["name"]).lower(),
+            str(r["warehouse"]).lower(),
+            str(r["id"]),
+        ),
+    )
+
+
+def process_products(products: Any) -> tuple[list[dict], int]:
+    if isinstance(products, dict):
+        items = products.get("products", [])
+    elif isinstance(products, list):
+        items = products
+    else:
+        items = []
+
+    rows, invalid_count = flatten_products(items)
+    return sort_rows(rows), invalid_count
+
+
+if __name__ == "__main__":
+    products = {
+        "products": [
+            {"id": 1, "name": "A", "warehouses": []},
+            {"id": 2, "name": "B", "warehouses": [{"warehouse": "W1", "stock": 0}]},
+            {"id": 3, "name": "C", "warehouses": [{"warehouse": "W2", "stock": 0.0}]},
+            {"id": 4, "name": "D"},
+        ]
+    }
+
+    rows, invalid = process_products(products)
+
+    print(f"Valid rows: {len(rows)}")
+    print(f"Invalid products: {invalid}")
+    print(json.dumps(rows, indent=2))
+```

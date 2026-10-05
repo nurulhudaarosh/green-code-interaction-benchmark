@@ -1,0 +1,144 @@
+def find_min_cost_path(cost_matrix):
+    """
+    Find minimum cost path from top-left to bottom-right in a cost matrix.
+    Movement allowed: only right or down.
+    
+    Args:
+        cost_matrix: 2D list of non-negative integers
+        
+    Returns:
+        tuple: (minimum_cost, optimal_path)
+        where optimal_path is a list of (row, col) tuples
+    """
+    if not cost_matrix or not cost_matrix[0]:
+        return 0, []
+    
+    rows = len(cost_matrix)
+    cols = len(cost_matrix[0])
+    
+    # Handle single cell case
+    if rows == 1 and cols == 1:
+        return cost_matrix[0][0], [(0, 0)]
+    
+    # Initialize DP table and predecessor tracking
+    dp = [[0] * cols for _ in range(rows)]
+    # predecessor[i][j] stores (prev_row, prev_col) or None for start
+    predecessor = [[None] * cols for _ in range(rows)]
+    
+    # Base case: starting position
+    dp[0][0] = cost_matrix[0][0]
+    
+    # Initialize first row (can only come from left)
+    for j in range(1, cols):
+        dp[0][j] = dp[0][j-1] + cost_matrix[0][j]
+        predecessor[0][j] = (0, j-1)
+    
+    # Initialize first column (can only come from above)
+    for i in range(1, rows):
+        dp[i][0] = dp[i-1][0] + cost_matrix[i][0]
+        predecessor[i][0] = (i-1, 0)
+    
+    # Fill the rest of the DP table
+    for i in range(1, rows):
+        for j in range(1, cols):
+            cost_from_above = dp[i-1][j]
+            cost_from_left = dp[i][j-1]
+            
+            # Deterministic tie handling: prefer coming from above (up)
+            if cost_from_above <= cost_from_left:
+                dp[i][j] = cost_from_above + cost_matrix[i][j]
+                predecessor[i][j] = (i-1, j)
+            else:
+                dp[i][j] = cost_from_left + cost_matrix[i][j]
+                predecessor[i][j] = (i, j-1)
+    
+    # Reconstruct path by backtracking
+    path = []
+    current = (rows - 1, cols - 1)
+    
+    while current is not None:
+        path.append(current)
+        current = predecessor[current[0]][current[1]]
+    
+    # Reverse path to get from start to end
+    path.reverse()
+    
+    return dp[rows-1][cols-1], path
+
+
+def print_matrix_and_path(cost_matrix, min_cost, path):
+    """Helper function to visualize the result."""
+    print("Cost Matrix:")
+    for row in cost_matrix:
+        print("  ", row)
+    
+    print(f"\nMinimum Cost: {min_cost}")
+    print(f"Path: {' -> '.join(f'({r},{c})' for r, c in path)}")
+    
+    # Show path values
+    path_values = [cost_matrix[r][c] for r, c in path]
+    print(f"Path values: {' + '.join(map(str, path_values))} = {sum(path_values)}")
+
+
+# Test cases
+if __name__ == "__main__":
+    # Test case 1: Standard case
+    print("=" * 60)
+    print("Test Case 1: Standard 3x3 matrix")
+    print("=" * 60)
+    matrix1 = [
+        [1, 3, 1],
+        [1, 5, 1],
+        [4, 2, 1]
+    ]
+    cost1, path1 = find_min_cost_path(matrix1)
+    print_matrix_and_path(matrix1, cost1, path1)
+    
+    # Test case 2: Tie-breaking scenario
+    print("\n" + "=" * 60)
+    print("Test Case 2: Matrix with ties (prefers 'up' on tie)")
+    print("=" * 60)
+    matrix2 = [
+        [1, 1, 1],
+        [1, 1, 1],
+        [1, 1, 1]
+    ]
+    cost2, path2 = find_min_cost_path(matrix2)
+    print_matrix_and_path(matrix2, cost2, path2)
+    
+    # Test case 3: Single row
+    print("\n" + "=" * 60)
+    print("Test Case 3: Single row")
+    print("=" * 60)
+    matrix3 = [[1, 2, 3, 4]]
+    cost3, path3 = find_min_cost_path(matrix3)
+    print_matrix_and_path(matrix3, cost3, path3)
+    
+    # Test case 4: Single column
+    print("\n" + "=" * 60)
+    print("Test Case 4: Single column")
+    print("=" * 60)
+    matrix4 = [[1], [2], [3], [4]]
+    cost4, path4 = find_min_cost_path(matrix4)
+    print_matrix_and_path(matrix4, cost4, path4)
+    
+    # Test case 5: Single cell
+    print("\n" + "=" * 60)
+    print("Test Case 5: Single cell")
+    print("=" * 60)
+    matrix5 = [[7]]
+    cost5, path5 = find_min_cost_path(matrix5)
+    print_matrix_and_path(matrix5, cost5, path5)
+    
+    # Test case 6: Larger matrix with varying costs
+    print("\n" + "=" * 60)
+    print("Test Case 6: 4x4 matrix with varying costs")
+    print("=" * 60)
+    matrix6 = [
+        [2, 5, 1, 3],
+        [3, 1, 4, 2],
+        [6, 2, 1, 5],
+        [1, 4, 2, 1]
+    ]
+    cost6, path6 = find_min_cost_path(matrix6)
+    print_matrix_and_path(matrix6, cost6, path6)

@@ -1,0 +1,117 @@
+# PNG Text Chunk Metadata: `embed_tags` and `read_tags`
+
+PNG files store text metadata in `tEXt` chunks (for Latin-1 text) or `iTXt` chunks (for UTF-8). Each chunk contains a keyword (1–79 bytes) and a text value.
+
+Here's a complete, dependency-free implementation:
+
+```python
+import struct
+import zlib
+from pathlib import Path
+
+
+PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
+
+
+def _read_chunks(data: bytes):
+    """Yield (offset, length, chunk_type, chunk_data, crc) for each PNG chunk."""
+    if data[:8] != PNG_SIGNATURE:
+        raise ValueError("Not a PNG file")
+    pos = 8
+    while pos < len(data):
+        (length,) = struct.unpack('>I', data[pos:pos + 4])
+        ctype = data[pos + 4:pos + 8]
+        chunk_data = data[pos + 8:pos + 8 + length]
+        crc = data[pos + 8 + length:pos + 12 + length]
+        yield pos, length, ctype, chunk_data, crc
+        pos += 12 + length
+
+
+def _make_text_chunk(keyword: str, value: str) -> bytes:
+    """Build a tEXt chunk (Latin-1). Falls back to iTXt if non-Latin-1."""
+    kw = keyword.encode('latin-1')
+    if not (1 <= len(kw) <= 79):
+        raise ValueError("keyword must be 1..79 bytes")
+    try:
+        val = value.encode('latin-1')
+        body = kw + b'\x00' + val
+        ctype = b'tEXt'
+    except UnicodeEncodeError:
+        # iTXt: keyword\0 compression_flag compression_method language\0 translated\0 text
+        val = value.encode('utf-8')
+        kw = keyword.encode('utf-8')
+        body = kw + b'\x00' + b'\x00' + b'\x00' + b'\x00' + b'\x00' + val
+        ctype = b'iTXt'
+    crc = zlib.crc32(ctype + body) & 0xffffffff
+    return struct.pack('>I', len(body)) + ctype + body + struct.pack('>I', crc)
+
+
+def _parse_text_chunk(ctype: bytes, body: bytes):
+    """Return (keyword, value) or None if malformed."""
+    if ctype == b'tEXt':
+        if b'\x00' not in body:
+            return None
+        kw, _, val = body.partition(b'\x00')
+        return kw.decode('latin-1'), val.decode('latin-1')
+    if ctype == b'iTXt':
+        # keyword\0 comp_flag comp_method language\0 translated\0 text
+        if b'\x00' not in body:
+            return None
+        kw, rest = body.split(b'\x00', 1)
+        if len(rest) < 2:
+            return None
+        comp_flag, comp_method = rest[0], rest[1]
+        rest = rest[2:]
+        # skip language tag
+        _, _, rest = rest.partition(b'\x00')
+        # skip translated keyword
+        _, _, text = rest.partition(b'\x00')
+        if comp_flag == 0:
+            return kw.decode('utf-8'), text.decode('utf-8')
+        try:
+            return kw.decode('utf-8'), zlib.decompress(text).decode('utf-8')
+        except zlib.error:
+            return None
+    return None
+
+
+def embed_tags(input_path, output_path, tags: dict):
+    """Write key/value string tags into PNG text chunks, replacing any existing
+    chunk with the same keyword. Inserts chunks just before IEND."""
+    data = Path(input_path).read_bytes()
+    if data[:8] != PNG_SIGNATURE:
+        raise ValueError("Not a PNG file")
+
+    tags = {str(k): str(v) for k, v in tags.items()}
+    seen = set()
+
+    out = bytearray(PNG_SIGNATURE)
+    for pos, length, ctype, chunk_data, crc in _read_chunks(data):
+        if ctype in (b'tEXt', b'iTXt'):
+            parsed = _parse_text_chunk(ctype, chunk_data)
+            if parsed and parsed[0] in tags:
+                # Skip this chunk; we'll write the new one at IEND.
+                seen.add(parsed[0])
+                continue
+        if ctype == b'IEND':
+            # Inject any remaining new tags before IEND.
+            for k, v in tags.items():
+                if k not in seen:
+                    out += _make_text_chunk(k, v)
+                    seen.add(k)
+        out += struct.pack('>I', length) + ctype + chunk_data + crc
+
+    Path(output_path).write_bytes(bytes(out))
+
+
+def read_tags(image_path) -> dict:
+    """Return {keyword: value} for all tEXt/iTXt chunks in a PNG."""
+    data = Path(image_path).read_bytes()
+    result = {}
+    for _, _, ctype, chunk_data, _ in _read_chunks(data):
+        if ctype in (b'tEXt', b'iTXt'):
+            parsed = _parse_text_chunk(ctype, chunk_data)
+            if parsed:
+                result[parsed[0]] = parsed[1]
+    return result
+```

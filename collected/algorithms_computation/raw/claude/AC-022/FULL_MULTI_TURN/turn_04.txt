@@ -1,0 +1,264 @@
+# Restatement of the original problem
+
+Given strings `a` and `b`, return the minimum number of operations that turn `a` into `b`. The operations are insertion, deletion, substitution, and swapping two adjacent characters, each costing 1.
+
+**Requirements preserved without change:**
+- With `summary=False` (default), the output is a plain non-negative `int`.
+- With `summary=True`, the output is `{"distance", "operation_summary"}` with the same seven fields and formulas as before.
+- `restricted=False` (default) gives the unrestricted Damerau-Levenshtein distance. `restricted=True` gives OSA.
+- It is a DP with an explicit transposition transition, standard library only, deterministic, O(n·m).
+- **Tie rule:** only the minimum value is returned, so ties among equal candidates can't change the result. The counter `transposition_improvements` counts a transposition only when it is strictly less than the best of the other three candidates. A tie does not count as an improvement.
+
+# Repeated values and ties
+
+The algorithm already handles these cases, so I made no changes to the implementation. I only added tests.
+
+- **Repeated characters:** the transposition transition depends on `last_row[c]` (the most recent row where `c` appeared in `a`) and `last_match_col` (the most recent matching column in the current row). With repeats, the correct choice is the *latest* occurrence. This is why `last_row` is overwritten on every row and `last_match_col` is read *before* it is updated for the current cell. Both orderings are preserved.
+- **Deterministic ties:** `min` over equal values yields the same number regardless of which candidate "wins". The dictionary is used only for keyed lookups, never iterated, so hash ordering cannot matter.
+
+**Hand-verified cases:**
+
+| Case | Expected | Reason |
+|---|---|---|
+| `"aab"` → `"aba"` | 1 | swap the last two |
+| `"abab"` → `"baba"` | 2 | two swaps (or delete and insert) |
+| `"aab"` → `"baa"` | 2 | two overlapping swaps, or insert plus delete |
+| `"aaaa"` → `"aaa"` | 1 | one deletion among identical characters |
+| `"ab"` → `"ba"` at cell (2,2) | 1 | delete, insert, and substitute candidates are all 2 (a three-way tie), and the transposition's 1 wins strictly |
+| `"aa"` → `"aa"` | 0 | transposition is eligible once but 1 > 0, so it is a candidate and not an improvement |
+
+For `"aa"` → `"aa"`, the summary is: `base_cells` 5, `cells_computed` 4, `matches` 4, `standard_candidates` 12, `transposition_candidates` 1, `transposition_improvements` 0, `total_decisions` 18. This holds in both modes.
+
+# Code (implementation unchanged, tests extended)
+
+```python
+from collections import deque
+from itertools import product
+from typing import Dict, List, Union
+
+
+def edit_distance_with_transposition(
+    a: str,
+    b: str,
+    restricted: bool = False,
+    summary: bool = False,
+) -> Union[int, Dict[str, object]]:
+    """
+    Minimum number of insertions, deletions, substitutions and adjacent
+    transpositions (each cost 1) turning `a` into `b`.
+
+    restricted=False (default): unrestricted minimum (true Damerau-Levenshtein).
+    restricted=True: optimal string alignment (local d[i-2][j-2] + 1 transition).
+
+    summary=False (default): returns the int distance.
+    summary=True: returns {"distance": int, "operation_summary": {...}}.
+
+    Ties: only the minimum value is returned; equal candidates cannot change it.
+    A transposition counts as an "improvement" only if strictly smaller.
+    Deterministic, standard library only.
+    """
+    n, m = len(a), len(b)
+    d: List[List[int]] = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(n + 1):
+        d[i][0] = i
+    for j in range(m + 1):
+        d[0][j] = j
+
+    matches = 0
+    transposition_candidates = 0
+    transposition_improvements = 0
+
+    last_row: Dict[str, int] = {}  # latest 1-based row where each char occurred in a
+
+    for i in range(1, n + 1):
+        ai = a[i - 1]
+        last_match_col = 0
+        for j in range(1, m + 1):
+            bj = b[j - 1]
+            cost = 0 if ai == bj else 1
+
+            best = min(
+                d[i - 1][j] + 1,         # deletion
+                d[i][j - 1] + 1,         # insertion
+                d[i - 1][j - 1] + cost,  # substitution / match
+            )
+
+            trans = None
+            if restricted:
+                if i > 1 and j > 1 and ai == b[j - 2] and a[i - 2] == bj:
+                    trans = d[i - 2][j - 2] + 1
+            else:
+                k = last_row.get(bj, 0)
+                l = last_match_col
+                if k > 0 and l > 0:
+                    trans = d[k - 1][l - 1] + (i - k - 1) + 1 + (j - l - 1)
+
+            if trans is not None:
+                transposition_candidates += 1
+                if trans < best:          # strict: ties are not improvements
+                    transposition_improvements += 1
+                    best = trans
+
+            if cost == 0:
+                matches += 1
+                last_match_col = j        # updated after the cell, so later cells see it
+            d[i][j] = best
+        last_row[ai] = i                  # overwrite: always the latest occurrence
+
+    distance = d[n][m]
+    if not summary:
+        return distance
+
+    base_cells = n + m + 1
+    cells_computed = n * m
+    standard_candidates = 3 * cells_computed
+    return {
+        "distance": distance,
+        "operation_summary": {
+            "base_cells": base_cells,
+            "cells_computed": cells_computed,
+            "matches": matches,
+            "standard_candidates": standard_candidates,
+            "transposition_candidates": transposition_candidates,
+            "transposition_improvements": transposition_improvements,
+            "total_decisions": base_cells + standard_candidates + transposition_candidates,
+        },
+    }
+
+
+def _bfs_reference(a: str, b: str) -> int:
+    """Independent check: shortest path over single edits, including swaps anywhere."""
+    if a == b:
+        return 0
+    alphabet = sorted(set(a) | set(b))
+    cap = max(len(a), len(b)) + 2
+    seen = {a}
+    q = deque([(a, 0)])
+    while q:
+        s, dist = q.popleft()
+        nxt = []
+        for i in range(len(s)):
+            nxt.append(s[:i] + s[i + 1:])
+            for c in alphabet:
+                if c != s[i]:
+                    nxt.append(s[:i] + c + s[i + 1:])
+        if len(s) < cap:
+            for i in range(len(s) + 1):
+                for c in alphabet:
+                    nxt.append(s[:i] + c + s[i:])
+        for i in range(len(s) - 1):
+            nxt.append(s[:i] + s[i + 1] + s[i] + s[i + 2:])
+        for t in nxt:
+            if t not in seen:
+                if t == b:
+                    return dist + 1
+                seen.add(t)
+                q.append((t, dist + 1))
+    raise AssertionError("unreachable")
+
+
+def _words(alphabet: str, max_len: int) -> List[str]:
+    out = [""]
+    for n in range(1, max_len + 1):
+        out += ["".join(p) for p in product(alphabet, repeat=n)]
+    return out
+
+
+def _self_test() -> None:
+    f = edit_distance_with_transposition
+
+    # --- Original behaviour (feature disabled): plain ints, both modes ---
+    fixed = [
+        ("", "", 0, 0), ("", "abc", 3, 3), ("abc", "", 3, 3),
+        ("ab", "ba", 1, 1), ("teh", "the", 1, 1),
+        ("kitten", "sitting", 3, 3), ("ca", "abc", 2, 3),
+    ]
+    for x, y, free, restr in fixed:
+        r1, r2 = f(x, y), f(x, y, restricted=True)
+        assert type(r1) is int and r1 == free, (x, y)
+        assert type(r2) is int and r2 == restr, (x, y)
+
+    # --- Repeated values: hand-verified (unrestricted, restricted) ---
+    repeated = [
+        ("aab", "aba", 1, 1),
+        ("abab", "baba", 2, 2),
+        ("aab", "baa", 2, 2),
+        ("aaaa", "aaa", 1, 1),
+        ("aaa", "", 3, 3),
+        ("aa", "aa", 0, 0),
+        ("aaaa", "aaaa", 0, 0),
+    ]
+    for x, y, free, restr in repeated:
+        assert f(x, y) == free, (x, y, f(x, y))
+        assert f(x, y, restricted=True) == restr, (x, y)
+        assert f(y, x) == free, ("symmetry", x, y)
+
+    # --- Exhaustive brute-force check, heavy on repeats (alphabet "ab", len<=5) ---
+    for x in _words("ab", 5):
+        for y in _words("ab", 5):
+            assert f(x, y) == _bfs_reference(x, y), (x, y)
+
+    # --- Original small three-letter exhaustive check ---
+    words3 = _words("abc", 3)
+    for x in words3:
+        for y in words3:
+            assert f(x, y) == _bfs_reference(x, y), (x, y)
+
+    # --- Deterministic ties ---
+    # "ab" -> "ba": delete, insert, substitute candidates tie at cell (2,2); swap wins.
+    r = f("ab", "ba", summary=True)
+    assert r["distance"] == 1
+    assert r["operation_summary"]["transposition_improvements"] == 1
+    # "aa" -> "aa": transposition eligible but not strictly better -> not an improvement.
+    for mode in (False, True):
+        assert f("aa", "aa", restricted=mode, summary=True) == {
+            "distance": 0,
+            "operation_summary": {
+                "base_cells": 5, "cells_computed": 4, "matches": 4,
+                "standard_candidates": 12, "transposition_candidates": 1,
+                "transposition_improvements": 0, "total_decisions": 18,
+            },
+        }
+
+    # --- Feature enabled: distance identical, summary consistent and repeatable ---
+    for x in words3 + _words("ab", 4):
+        for y in words3 + _words("ab", 4):
+            for mode in (False, True):
+                plain = f(x, y, restricted=mode)
+                res = f(x, y, restricted=mode, summary=True)
+                assert res["distance"] == plain
+                s = res["operation_summary"]
+                assert s["cells_computed"] == len(x) * len(y)
+                assert s["standard_candidates"] == 3 * len(x) * len(y)
+                assert s["transposition_improvements"] <= s["transposition_candidates"]
+                assert s["total_decisions"] == (
+                    s["base_cells"] + s["standard_candidates"] + s["transposition_candidates"]
+                )
+                assert res == f(x, y, restricted=mode, summary=True)
+                # Restricted distance is never smaller than unrestricted.
+                assert f(x, y, restricted=True) >= f(x, y)
+
+    # --- Original hand-verified summary example ---
+    assert f("ab", "ba", summary=True) == {
+        "distance": 1,
+        "operation_summary": {
+            "base_cells": 5, "cells_computed": 4, "matches": 2,
+            "standard_candidates": 12, "transposition_candidates": 1,
+            "transposition_improvements": 1, "total_decisions": 18,
+        },
+    }
+    assert f("", "abc", summary=True)["operation_summary"]["total_decisions"] == 4
+
+
+if __name__ == "__main__":
+    _self_test()
+    print(edit_distance_with_transposition("abab", "baba"))  # 2
+    print(edit_distance_with_transposition("aa", "aa", summary=True))
+    print("All tests passed.")
+```
+
+# Notes
+
+- **Not executed:** I haven't run this code. The asserts are designed to catch any mistake in my hand calculations when you run the file.
+- **Independent check:** the exhaustive `{a,b}` test (all strings up to length 5) runs the default mode against BFS. That is where repeated characters most stress the `last_row` and `last_match_col` logic.
+- **Restricted mode:** it is checked only against the fixed cases and the invariant `restricted ≥ unrestricted`. BFS only models the unrestricted distance, so it isn't a valid reference for OSA.

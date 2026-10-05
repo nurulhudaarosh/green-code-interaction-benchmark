@@ -1,0 +1,54 @@
+import os
+import hashlib
+from collections import defaultdict
+
+
+def find_exact_duplicates(input_dir, recursive=True):
+    """
+    Find byte-identical files using full-file SHA-256 hashes.
+
+    Args:
+        input_dir: Directory containing files to check.
+        recursive: If True, search all subdirectories recursively.
+                   If False, search only input_dir.
+
+    Returns:
+        A list of duplicate groups. Each group contains 2+ relative
+        file paths sorted alphabetically.
+    """
+    hashes = defaultdict(list)
+
+    if recursive:
+        file_paths = []
+        for root, _, files in os.walk(input_dir):
+            for filename in files:
+                file_paths.append(os.path.join(root, filename))
+    else:
+        file_paths = [
+            os.path.join(input_dir, filename)
+            for filename in os.listdir(input_dir)
+            if os.path.isfile(os.path.join(input_dir, filename))
+        ]
+
+    for path in file_paths:
+        sha256 = hashlib.sha256()
+
+        # Hash the entire file.
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                sha256.update(chunk)
+
+        # Report paths relative to input_dir.
+        relative_path = os.path.relpath(path, input_dir)
+        hashes[sha256.hexdigest()].append(relative_path)
+
+    duplicates = [
+        sorted(paths)
+        for paths in hashes.values()
+        if len(paths) >= 2
+    ]
+
+    # Deterministic ordering of groups.
+    duplicates.sort(key=lambda group: group[0])
+
+    return duplicates

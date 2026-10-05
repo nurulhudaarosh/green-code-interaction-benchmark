@@ -1,0 +1,210 @@
+### Problem & Requirements Restatement
+
+**Problem Statement:**
+In the Multi-Stage Resource Allocation problem (2D Multiple-Choice Knapsack Problem), we are given $N$ stages, where each stage requires choosing **exactly one** option. Each option in stage $i$ has an associated budget cost $b$, memory cost $m$, and score $s$. Given maximum global limits for budget capacity $B_{\max}$ and memory capacity $M_{\max}$, we must find a selection vector of option indices (one per stage) that maximizes total score while strictly satisfying total budget $\le B_{\max}$ and total memory $\le M_{\max}$.
+
+**Original Required Outputs:**
+
+1. **Total Score:** Maximum achievable score across all stages.
+2. **Budget Used:** Total budget consumed by the selected choices.
+3. **Memory Used:** Total memory consumed by the selected choices.
+4. **Choice Vector:** The list of option indices chosen for stages $0 \dots N-1$, using lexicographically smallest tie-breaking among optimal total scoring solutions.
+
+**New Feature (`include_summary` flag):**
+
+* Add an optional parameter `include_summary: bool = False` to the solver function.
+* When `include_summary=False`, return the original 4-tuple: `(max_score, used_budget, used_memory, choice_indices)`.
+* When `include_summary=True`, return a dictionary or extended structure containing all original fields plus an `operation_summary` dictionary.
+* `operation_summary` reports deterministic performance metrics: `dp_transitions_evaluated` (number of state transitions attempted during the forward pass) and `reconstruction_steps` (number of option checks during deterministic reconstruction).
+
+---
+
+### Python Implementation with `operation_summary` Feature
+
+```python
+from typing import List, Tuple, Optional, Dict, Any, Union
+
+class Option:
+    def __init__(self, budget: int, memory: int, score: int):
+        self.budget = budget
+        self.memory = memory
+        self.score = score
+
+def solve_mckp_2d(
+    stages: List[List[Option]], 
+    max_budget: int, 
+    max_memory: int,
+    include_summary: bool = False
+) -> Optional[Union[Tuple[int, int, int, List[int]], Dict[str, Any]]]:
+    """
+    Solves 2D Multiple-Choice Knapsack Problem using layered 2D dynamic programming
+    and deterministic reconstruction with lexicographical tie-breaking.
+    
+    Args:
+        stages: List of stages, each containing a list of Option objects.
+        max_budget: Maximum available budget B_max.
+        max_memory: Maximum available memory M_max.
+        include_summary: If True, returns a dict including operation_summary.
+        
+    Returns:
+        If include_summary is False:
+            (max_score, used_budget, used_memory, choice_indices) or None
+        If include_summary is True:
+            {
+                "max_score": int,
+                "used_budget": int,
+                "used_memory": int,
+                "choices": List[int],
+                "operation_summary": Dict[str, int]
+            } or None
+    """
+    N = len(stages)
+    if N == 0:
+        if include_summary:
+            return {
+                "max_score": 0,
+                "used_budget": 0,
+                "used_memory": 0,
+                "choices": [],
+                "operation_summary": {
+                    "dp_transitions_evaluated": 0,
+                    "reconstruction_steps": 0,
+                    "total_operations": 0
+                }
+            }
+        return 0, 0, 0, []
+
+    # Counters for operation summary
+    dp_transitions_evaluated = 0
+    reconstruction_steps = 0
+
+    # dp[i][b][m] stores max score achievable at stage i using exactly b budget and m memory
+    dp = [[[-1] * (max_memory + 1) for _ in range(max_budget + 1)] for _ in range(N)]
+
+    # Stage 0 initialization
+    for opt_idx, opt in enumerate(stages[0]):
+        dp_transitions_evaluated += 1
+        if opt.budget <= max_budget and opt.memory <= max_memory:
+            if opt.score > dp[0][opt.budget][opt.memory]:
+                dp[0][opt.budget][opt.memory] = opt.score
+
+    # Forward DP Pass for Stages 1 to N-1
+    for i in range(1, N):
+        for b in range(max_budget + 1):
+            for m in range(max_memory + 1):
+                prev_score = dp[i - 1][b][m]
+                if prev_score == -1:
+                    continue
+
+                for opt in stages[i]:
+                    dp_transitions_evaluated += 1
+                    nb = b + opt.budget
+                    nm = m + opt.memory
+                    if nb <= max_budget and nm <= max_memory:
+                        new_score = prev_score + opt.score
+                        if new_score > dp[i][nb][nm]:
+                            dp[i][nb][nm] = new_score
+
+    # Find global maximum score at final stage N-1
+    max_score = -1
+    for b in range(max_budget + 1):
+        for m in range(max_memory + 1):
+            if dp[N - 1][b][m] > max_score:
+                max_score = dp[N - 1][b][m]
+
+    if max_score == -1:
+        return None  # Infeasible
+
+    # Deterministic Reconstruction
+    def reconstruct(stage_idx: int, rem_b: int, rem_m: int) -> Tuple[Optional[List[int]], int]:
+        nonlocal reconstruction_steps
+        local_steps = 0
+        choices = []
+        curr_b, curr_m = rem_b, rem_m
+        
+        for i in range(stage_idx, 0, -1):
+            target_score = dp[i][curr_b][curr_m]
+            found = False
+            
+            for opt_idx, opt in enumerate(stages[i]):
+                local_steps += 1
+                prev_b = curr_b - opt.budget
+                prev_m = curr_m - opt.memory
+                
+                if prev_b >= 0 and prev_m >= 0:
+                    if dp[i - 1][prev_b][prev_m] != -1:
+                        if dp[i - 1][prev_b][prev_m] + opt.score == target_score:
+                            choices.append(opt_idx)
+                            curr_b, curr_m = prev_b, prev_m
+                            found = True
+                            break
+            if not found:
+                return None, local_steps
+        
+        # Stage 0 choice
+        target_score = dp[0][curr_b][curr_m]
+        found_stage_0 = False
+        for opt_idx, opt in enumerate(stages[0]):
+            local_steps += 1
+            if opt.budget == curr_b and opt.memory == curr_m and opt.score == target_score:
+                choices.append(opt_idx)
+                found_stage_0 = True
+                break
+                
+        if not found_stage_0:
+            return None, local_steps
+            
+        choices.reverse()
+        return choices, local_steps
+
+    # Search across all optimal (budget, memory) endpoints for lexicographically smallest choices
+    best_choices: Optional[List[int]] = None
+    best_b, best_m = 0, 0
+
+    for b in range(max_budget + 1):
+        for m in range(max_memory + 1):
+            if dp[N - 1][b][m] == max_score:
+                candidate_choices, steps_taken = reconstruct(N - 1, b, m)
+                reconstruction_steps += steps_taken
+                if candidate_choices is not None:
+                    if best_choices is None or candidate_choices < best_choices:
+                        best_choices = candidate_choices
+                        best_b, best_m = b, m
+
+    # Construct Return Payload
+    if include_summary:
+        return {
+            "max_score": max_score,
+            "used_budget": best_b,
+            "used_memory": best_m,
+            "choices": best_choices,
+            "operation_summary": {
+                "dp_transitions_evaluated": dp_transitions_evaluated,
+                "reconstruction_steps": reconstruction_steps,
+                "total_operations": dp_transitions_evaluated + reconstruction_steps
+            }
+        }
+
+    # Original signature behavior
+    return max_score, best_b, best_m, best_choices
+
+
+# Demonstration
+if __name__ == "__main__":
+    stage_0 = [
+        Option(budget=2, memory=2, score=10),
+        Option(budget=1, memory=1, score=10),
+    ]
+    stage_1 = [
+        Option(budget=1, memory=1, score=10),
+    ]
+
+    # Standard Call (Original required output preserved)
+    res_orig = solve_mckp_2d([stage_0, stage_1], max_budget=10, max_memory=10, include_summary=False)
+    print("Original Format Output:", res_orig)
+
+    # Feature-Enabled Call (With operation_summary)
+    res_summary = solve_mckp_2d([stage_0, stage_1], max_budget=10, max_memory=10, include_summary=True)
+    print("Feature-Enabled Output:", res_summary)
+
+```

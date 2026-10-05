@@ -1,0 +1,68 @@
+```python
+import csv
+import sys
+import statistics
+
+
+def is_missing(value):
+    return value.strip() == ""
+
+
+def main():
+    if len(sys.argv) != 2:
+        print("Usage: python csv_stats.py input.csv")
+        return
+
+    input_file = sys.argv[1]
+
+    try:
+        with open(input_file, "r", newline="", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+
+            if not reader.fieldnames:
+                print("No columns found.")
+                return
+
+            columns = reader.fieldnames
+            values = {column: [] for column in columns}
+
+            for row in reader:
+                for column in columns:
+                    value = row.get(column, "")
+
+                    if is_missing(value):
+                        continue
+
+                    try:
+                        values[column].append(float(value.strip()))
+                    except ValueError:
+                        continue
+
+            print("column,count,min,max,mean,median")
+
+            for column in columns:
+                data = values[column]
+
+                if not data:
+                    print(f"{column},0,,,,")
+                    continue
+
+                count = len(data)
+                minimum = min(data)
+                maximum = max(data)
+                mean = statistics.mean(data)
+                median = statistics.median(data)
+
+                print(
+                    f"{column},{count},{minimum},{maximum},{mean},{median}"
+                )
+
+    except FileNotFoundError:
+        print(f"File not found: {input_file}")
+    except OSError as e:
+        print(f"Error reading file: {e}")
+
+
+if __name__ == "__main__":
+    main()
+```

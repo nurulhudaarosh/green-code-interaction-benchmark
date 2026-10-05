@@ -1,0 +1,164 @@
+## Original problem (unchanged)
+
+**Multi-Stage Resource Allocation.** There are `n` stages. You must pick exactly one option in every stage. Each option has a budget cost, a memory cost, and a score. The total budget used must be ≤ `B` and the total memory used must be ≤ `M`. Maximize the total score. If several selections tie, return the lexicographically smallest choice vector.
+
+**Existing required outputs (unchanged):**
+1. Line 1 is the maximum total score.
+2. Line 2 is the 0-based choice vector, one option index per stage.
+3. If no feasible selection exists, print `-1`.
+
+**Input:** `n B M`, then for each stage `k` followed by `k` triples `cost memory score`.
+
+## New feature: `operation_summary`
+
+It is **off by default**. With it off, the output is identical to before. With `--summary` on the command line (or `with_summary=True` in `solve`), one extra field is returned. It is printed as a final line `operation_summary: {...}` in JSON with sorted keys. The counts are deterministic functions of the input.
+
+| Field | Meaning |
+|---|---|
+| `dp_options_skipped_over_limit` | Options whose cost or memory alone exceeds B or M, so they are skipped |
+| `dp_cells_evaluated` | DP transitions examined across all stages, options and capacities |
+| `dp_feasible_transitions` | Evaluated transitions whose next-stage state was feasible |
+| `dp_score_updates` | Times a DP cell's best score was improved |
+| `reconstruction_option_checks` | Options tested while rebuilding the choice vector |
+| `reconstruction_decisions` | Stages decided during reconstruction (n if feasible, else 0) |
+| `total_operations` | Sum of the evaluated, feasible, update, check and decision counts above |
+
+```python
+#!/usr/bin/env python3
+"""
+Multi-Stage Resource Allocation
+-------------------------------
+n stages, exactly one option per stage. Each option has (cost, memory, score).
+Total cost <= B and total memory <= M. Maximize total score; ties ->
+lexicographically smallest choice vector.
+
+Input (stdin, whitespace separated integers):
+    n B M
+    then for each stage: k, followed by k triples "cost memory score"
+
+Output (default, unchanged):
+    line 1: best total score
+    line 2: 0-based choice vector
+    or -1 if no feasible selection exists.
+
+Optional feature (off by default): --summary
+    Appends a final line  "operation_summary: {json}"  with deterministic
+    counts of the algorithm's major operations. Without the flag, output is
+    exactly the original output.
+
+Algorithm: layered suffix DP over (stage, budget, memory), then forward
+deterministic reconstruction choosing the smallest option index that still
+attains the optimum (yields the lexicographically smallest optimal vector).
+Time O(sum(k_i) * B * M), memory O(n * B * M).
+"""
+import json
+import sys
+
+NEG = float("-inf")
+
+
+def solve(B, M, stages, with_summary=False):
+    """Returns (best, choice) or None when with_summary is False.
+    When with_summary is True, returns (result, operation_summary) where
+    result is (best, choice) or None."""
+    n = len(stages)
+    ops = {
+        "dp_options_skipped_over_limit": 0,
+        "dp_cells_evaluated": 0,
+        "dp_feasible_transitions": 0,
+        "dp_score_updates": 0,
+        "reconstruction_option_checks": 0,
+        "reconstruction_decisions": 0,
+    }
+
+    layers = [None] * (n + 1)
+    layers[n] = [[0] * (M + 1) for _ in range(B + 1)]
+
+    for i in range(n - 1, -1, -1):
+        nxt = layers[i + 1]
+        cur = [[NEG] * (M + 1) for _ in range(B + 1)]
+        for c, w, s in stages[i]:
+            if c > B or w > M:
+                ops["dp_options_skipped_over_limit"] += 1
+                continue
+            ops["dp_cells_evaluated"] += (B - c + 1) * (M - w + 1)
+            for b in range(c, B + 1):
+                src = nxt[b - c]
+                row = cur[b]
+                for m in range(w, M + 1):
+                    v = src[m - w]
+                    if v != NEG:
+                        ops["dp_feasible_transitions"] += 1
+                        v += s
+                        if v > row[m]:
+                            row[m] = v
+                            ops["dp_score_updates"] += 1
+        layers[i] = cur
+
+    best = layers[0][B][M]
+    result = None
+    if best != NEG:
+        b, m, choice = B, M, []
+        for i in range(n):
+            target = layers[i][b][m]
+            for j, (c, w, s) in enumerate(stages[i]):
+                ops["reconstruction_option_checks"] += 1
+                if c <= b and w <= m:
+                    v = layers[i + 1][b - c][m - w]
+                    if v != NEG and v + s == target:
+                        choice.append(j)
+                        b -= c
+                        m -= w
+                        ops["reconstruction_decisions"] += 1
+                        break
+        result = (best, choice)
+
+    if not with_summary:
+        return result
+
+    ops["total_operations"] = (
+        ops["dp_cells_evaluated"]
+        + ops["dp_feasible_transitions"]
+        + ops["dp_score_updates"]
+        + ops["reconstruction_option_checks"]
+        + ops["reconstruction_decisions"]
+    )
+    return result, ops
+
+
+def main():
+    with_summary = "--summary" in sys.argv[1:]
+    data = sys.stdin.read().split()
+    n, B, M = int(data[0]), int(data[1]), int(data[2])
+    pos = 3
+    stages = []
+    for _ in range(n):
+        k = int(data[pos]); pos += 1
+        opts = []
+        for _ in range(k):
+            opts.append((int(data[pos]), int(data[pos + 1]), int(data[pos + 2])))
+            pos += 3
+        stages.append(opts)
+
+    out = solve(B, M, stages, with_summary)
+    summary = None
+    if with_summary:
+        res, summary = out
+    else:
+        res = out
+
+    if res is None:
+        print(-1)
+    else:
+        print(res[0])
+        print(" ".join(map(str, res[1])))
+
+    if with_summary:
+        print("operation_summary: " + json.dumps(summary, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+I did not run this updated version. The DP and reconstruction logic is the same as the earlier version that passed the brute-force check. The only changes are the counters and the optional flag.

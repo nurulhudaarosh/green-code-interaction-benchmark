@@ -1,0 +1,55 @@
+In the original snippet, the condition evaluated `elif max_dim <= 1920:`, which already classified images with `max_dim == 1920` as **`medium`**. However, if you are working with a version where `max_dim < 1920` was used, here is the corrected implementation explicitly ensuring that **640 to 1920 (inclusive)** maps to `medium`:
+
+```python
+import os
+import shutil
+from PIL import Image, UnidentifiedImageError
+
+def organize_by_resolution(input_dir, output_dir):
+    """
+    Copies images from input_dir into 'small', 'medium', or 'large' 
+    subfolders inside output_dir based on their maximum dimension:
+    - small:  max(width, height) < 640
+    - medium: 640 <= max(width, height) <= 1920  (inclusive of 1920)
+    - large:  max(width, height) > 1920
+    """
+    categories = ['small', 'medium', 'large']
+    
+    # Ensure destination subdirectories exist
+    for category in categories:
+        os.makedirs(os.path.join(output_dir, category), exist_ok=True)
+
+    valid_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp', '.tiff')
+
+    for filename in os.listdir(input_dir):
+        if not filename.lower().endswith(valid_extensions):
+            continue
+
+        src_path = os.path.join(input_dir, filename)
+
+        try:
+            with Image.open(src_path) as img:
+                max_dim = max(img.width, img.height)
+
+            if max_dim < 640:
+                subfolder = 'small'
+            elif max_dim <= 1920:  # <= 1920 ensures exact 1920px falls in medium
+                subfolder = 'medium'
+            else:
+                subfolder = 'large'
+
+            dest_path = os.path.join(output_dir, subfolder, filename)
+            shutil.copy2(src_path, dest_path)
+
+        except (UnidentifiedImageError, OSError):
+            # Skip invalid or corrupted image files
+            continue
+
+```
+
+### Boundary Logic Summary
+
+* **`max_dim = 639`** → `small`
+* **`max_dim = 640`** → `medium`
+* **`max_dim = 1920`** → `medium`
+* **`max_dim = 1921`** → `large`

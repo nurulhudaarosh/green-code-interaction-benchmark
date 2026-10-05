@@ -1,0 +1,320 @@
+from typing import List, Dict, Any
+
+
+def traveling_salesperson(
+    dist: List[List[float]],
+    include_operation_summary: bool = False
+) -> Dict[str, Any]:
+    """
+    Traveling Salesperson Solver using Held-Karp subset DP.
+
+    Problem:
+        Given a complete symmetric distance matrix with n <= 14 cities,
+        find the minimum-cost Hamiltonian cycle starting and ending at
+        city 0.
+
+    Tie-breaking:
+        For equal-cost DP transitions, prefer the smaller predecessor city.
+
+    Original output:
+        {
+            "cost": minimum Hamiltonian cycle cost,
+            "cycle": [0, ..., 0]
+        }
+
+    Optional output:
+        If include_operation_summary=True:
+        {
+            "cost": ...,
+            "cycle": [...],
+            "operation_summary": {
+                "major_operations": <number of DP transition decisions>
+            }
+        }
+
+    The operation count is deterministic and counts every valid
+    predecessor transition considered by the Held-Karp DP.
+    """
+
+    n = len(dist)
+
+    # ---------------------------------------------------------
+    # Input validation
+    # ---------------------------------------------------------
+    if not 1 <= n <= 14:
+        raise ValueError("Number of cities must be between 1 and 14.")
+
+    if any(len(row) != n for row in dist):
+        raise ValueError("Distance matrix must be square.")
+
+    for i in range(n):
+        if dist[i][i] != 0:
+            raise ValueError("Diagonal distances must be 0.")
+
+        for j in range(n):
+            if dist[i][j] < 0:
+                raise ValueError("Distances must be non-negative.")
+
+            if dist[i][j] != dist[j][i]:
+                raise ValueError("Distance matrix must be symmetric.")
+
+    # ---------------------------------------------------------
+    # Single-city case
+    # ---------------------------------------------------------
+    if n == 1:
+        result = {
+            "cost": 0,
+            "cycle": [0, 0]
+        }
+
+        if include_operation_summary:
+            result["operation_summary"] = {
+                "major_operations": 0
+            }
+
+        return result
+
+    # ---------------------------------------------------------
+    # Held-Karp setup
+    # ---------------------------------------------------------
+    #
+    # Cities 1..n-1 are represented using bits 0..n-2.
+    #
+    city_count = n - 1
+    state_count = 1 << city_count
+    full_mask = state_count - 1
+
+    INF = float("inf")
+
+    # dp[mask][city]:
+    # Minimum cost to start at 0, visit exactly the cities
+    # represented by mask, and finish at city.
+    dp = [[INF] * n for _ in range(state_count)]
+
+    # parent[mask][city]:
+    # Predecessor city producing the selected DP state.
+    parent = [[-1] * n for _ in range(state_count)]
+
+    # Counts valid predecessor transitions considered by the
+    # major Held-Karp DP computation.
+    major_operations = 0
+
+    # ---------------------------------------------------------
+    # Base cases
+    # ---------------------------------------------------------
+    for city in range(1, n):
+        mask = 1 << (city - 1)
+
+        dp[mask][city] = dist[0][city]
+        parent[mask][city] = 0
+
+    # ---------------------------------------------------------
+    # Held-Karp subset dynamic programming
+    # ---------------------------------------------------------
+    for mask in range(1, state_count):
+
+        for current in range(1, n):
+
+            current_bit = 1 << (current - 1)
+
+            # Current city must belong to the subset.
+            if not (mask & current_bit):
+                continue
+
+            previous_mask = mask ^ current_bit
+
+            # Base state: 0 -> current.
+            if previous_mask == 0:
+                continue
+
+            best_cost = INF
+            best_predecessor = -1
+
+            # Try every possible predecessor.
+            for predecessor in range(1, n):
+
+                predecessor_bit = 1 << (predecessor - 1)
+
+                if not (previous_mask & predecessor_bit):
+                    continue
+
+                # This is one major DP transition/decision.
+                major_operations += 1
+
+                previous_cost = dp[previous_mask][predecessor]
+
+                candidate_cost = (
+                    previous_cost + dist[predecessor][current]
+                )
+
+                # Primary criterion: minimum cost.
+                if candidate_cost < best_cost:
+                    best_cost = candidate_cost
+                    best_predecessor = predecessor
+
+                # Deterministic tie-breaking:
+                # smaller predecessor wins.
+                elif (
+                    candidate_cost == best_cost
+                    and (
+                        best_predecessor == -1
+                        or predecessor < best_predecessor
+                    )
+                ):
+                    best_predecessor = predecessor
+
+            dp[mask][current] = best_cost
+            parent[mask][current] = best_predecessor
+
+    # ---------------------------------------------------------
+    # Close the Hamiltonian cycle
+    # ---------------------------------------------------------
+    best_cost = INF
+    best_last_city = -1
+
+    for last_city in range(1, n):
+
+        candidate_cost = (
+            dp[full_mask][last_city] + dist[last_city][0]
+        )
+
+        if candidate_cost < best_cost:
+            best_cost = candidate_cost
+            best_last_city = last_city
+
+        elif (
+            candidate_cost == best_cost
+            and (
+                best_last_city == -1
+                or last_city < best_last_city
+            )
+        ):
+            best_last_city = last_city
+
+    # ---------------------------------------------------------
+    # Reconstruct optimal cycle
+    # ---------------------------------------------------------
+    reversed_path = []
+
+    mask = full_mask
+    current = best_last_city
+
+    while current != 0:
+        reversed_path.append(current)
+
+        predecessor = parent[mask][current]
+
+        if predecessor == -1:
+            raise RuntimeError("Failed to reconstruct optimal tour.")
+
+        mask ^= 1 << (current - 1)
+        current = predecessor
+
+    cycle = [0] + list(reversed(reversed_path)) + [0]
+
+    # ---------------------------------------------------------
+    # Preserve original output unless the new feature is used.
+    # ---------------------------------------------------------
+    result = {
+        "cost": best_cost,
+        "cycle": cycle
+    }
+
+    if include_operation_summary:
+        result["operation_summary"] = {
+            "major_operations": major_operations
+        }
+
+    return result
+
+
+# =============================================================
+# Tests
+# =============================================================
+
+if __name__ == "__main__":
+
+    # ---------------------------------------------------------
+    # Test 1: Original behavior remains unchanged
+    # ---------------------------------------------------------
+    distance_matrix = [
+        [0, 10, 15, 20],
+        [10, 0, 35, 25],
+        [15, 35, 0, 30],
+        [20, 25, 30, 0],
+    ]
+
+    result = traveling_salesperson(distance_matrix)
+
+    assert result == {
+        "cost": 80,
+        "cycle": [0, 1, 3, 2, 0]
+    }
+
+    # ---------------------------------------------------------
+    # Test 2: New feature enabled
+    # ---------------------------------------------------------
+    result_with_summary = traveling_salesperson(
+        distance_matrix,
+        include_operation_summary=True
+    )
+
+    assert result_with_summary["cost"] == 80
+    assert result_with_summary["cycle"] == [0, 1, 3, 2, 0]
+
+    assert "operation_summary" in result_with_summary
+    assert "major_operations" in result_with_summary["operation_summary"]
+
+    assert (
+        result_with_summary["operation_summary"]["major_operations"] > 0
+    )
+
+    # ---------------------------------------------------------
+    # Test 3: Deterministic tie handling
+    # ---------------------------------------------------------
+    tie_matrix = [
+        [0, 1, 1, 1],
+        [1, 0, 1, 1],
+        [1, 1, 0, 1],
+        [1, 1, 1, 0],
+    ]
+
+    tie_result = traveling_salesperson(
+        tie_matrix,
+        include_operation_summary=True
+    )
+
+    assert tie_result["cost"] == 4
+    assert tie_result["cycle"] == [0, 1, 3, 2, 0]
+
+    # Running the same computation again must produce exactly
+    # the same result and operation count.
+    tie_result_again = traveling_salesperson(
+        tie_matrix,
+        include_operation_summary=True
+    )
+
+    assert tie_result_again == tie_result
+
+    # ---------------------------------------------------------
+    # Test 4: Single city
+    # ---------------------------------------------------------
+    single_city = [[0]]
+
+    assert traveling_salesperson(single_city) == {
+        "cost": 0,
+        "cycle": [0, 0]
+    }
+
+    assert traveling_salesperson(
+        single_city,
+        include_operation_summary=True
+    ) == {
+        "cost": 0,
+        "cycle": [0, 0],
+        "operation_summary": {
+            "major_operations": 0
+        }
+    }
+
+    print("All tests passed.")

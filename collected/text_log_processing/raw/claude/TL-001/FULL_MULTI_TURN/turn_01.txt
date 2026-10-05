@@ -1,0 +1,51 @@
+```python
+import re
+from collections import Counter
+
+# Matches the ERROR level token in common formats:
+#   2026-10-04 12:00:00,123 ERROR [db] msg
+#   [ERROR] msg   |   level=ERROR msg   |   <timestamp> - ERROR - msg
+_LEVEL_RE = re.compile(r"(?:^|[\s\[(=|])ERROR(?:[\s\])|:\-]|$)")
+
+# Normalization rules, applied in order (specific patterns before generic numbers).
+_NORMALIZERS = [
+    (re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"), "<UUID>"),
+    (re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b"), "<IP>"),
+    (re.compile(r"\b0x[0-9a-fA-F]+\b"), "<HEX>"),
+    (re.compile(r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b"), "<TS>"),
+    (re.compile(r"(?<![\w/])/(?:[\w.\-]+/)+[\w.\-]*"), "<PATH>"),
+    (re.compile(r"\"[^\"]*\"|'[^']*'"), "<STR>"),
+    (re.compile(r"\b\d+(?:\.\d+)?\b"), "<N>"),
+]
+
+
+def _normalize(message: str) -> str:
+    for pattern, repl in _NORMALIZERS:
+        message = pattern.sub(repl, message)
+    return re.sub(r"\s+", " ", message).strip()
+
+
+def analyze_error_log(path):
+    """Return a Counter mapping normalized ERROR messages to their counts,
+    ordered by most common first via Counter.most_common()."""
+    counts = Counter()
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            m = _LEVEL_RE.search(line)
+            if not m:
+                continue
+            message = line[m.end():].strip()
+            # Drop leading separators such as "- ", ": ", "| ".
+            message = re.sub(r"^[\s:\-|\]]+", "", message)
+            if not message:
+                continue
+            counts[_normalize(message)] += 1
+    return counts
+
+
+if __name__ == "__main__":
+    import sys
+
+    for msg, n in analyze_error_log(sys.argv[1]).most_common():
+        print(f"{n:6d}  {msg}")
+```

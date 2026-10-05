@@ -1,0 +1,122 @@
+import re
+from collections import defaultdict
+from typing import Dict, List, Set, Tuple
+
+# Sample Input Records
+RECORDS = [
+    {"id": "REC_001", "surname": "Smith", "postal_code": "90210", "email": "j.smith@example.com", "phone": "(555) 019-2831"},
+    {"id": "REC_002", "surname": "Smyth", "postal_code": "90211", "email": "J.SMITH@example.com", "phone": "555-019-2831"},
+    {"id": "REC_003", "surname": "Smith", "postal_code": "90210", "email": "john.s@test.com", "phone": "+1 555-019-2831"},
+    {"id": "REC_004", "surname": "Johnson", "postal_code": "10001", "email": "alice@domain.org", "phone": "555.000.1111"},
+    {"id": "REC_005", "surname": "JOHNS", "postal_code": "10002-1234", "email": "alice@domain.org", "phone": ""},
+    {"id": "REC_006", "surname": "Williams", "postal_code": "30301", "email": "williams@test.com", "phone": "555-999-8888"},
+]
+
+def normalize_email(email: str) -> str:
+    """Normalizes email by lowercasing and stripping whitespace."""
+    if not email:
+        return ""
+    return email.strip().lower()
+
+def normalize_phone(phone: str) -> str:
+    """Extracts digits from phone number (strips country code prefix if 11 digits starting with 1)."""
+    if not phone:
+        return ""
+    digits = re.sub(r"\D", "", phone)
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    return digits
+
+def get_block_key(surname: str, postal_code: str, prefix_len: int = 3) -> str:
+    """
+    Generates blocking key using:
+    - 1st letter of surname (lowercased)
+    - First N characters/digits of postal code
+    """
+    clean_surname = re.sub(r"[^a-zA-Z]", "", surname).lower()
+    clean_postal = re.sub(r"[^a-zA-Z0-9]", "", postal_code)
+    
+    surname_initial = clean_surname[0] if clean_surname else "?"
+    postal_prefix = clean_postal[:prefix_len].lower() if clean_postal else "000"
+    
+    return f"{surname_initial}:{postal_prefix}"
+
+def find_duplicate_clusters(records: List[Dict]) -> List[Set[str]]:
+    """
+    Performs candidate blocking and exact matching on normalized fields.
+    Returns connected components of matching record IDs.
+    """
+    # 1. Preprocess and normalize records
+    processed_records = {}
+    blocks = defaultdict(list)
+    
+    for rec in records:
+        rec_id = rec["id"]
+        norm_email = normalize_email(rec.get("email", ""))
+        norm_phone = normalize_phone(rec.get("phone", ""))
+        block_key = get_block_key(rec.get("surname", ""), rec.get("postal_code", ""))
+        
+        processed_records[rec_id] = {
+            "email": norm_email,
+            "phone": norm_phone,
+            "block_key": block_key
+        }
+        
+        blocks[block_key].append(rec_id)
+
+    # 2. Compare candidate pairs within the same block
+    adjacency_list = defaultdict(set)
+    
+    for block_key, candidate_ids in blocks.items():
+        n = len(candidate_ids)
+        if n < 2:
+            continue
+            
+        for i in range(n):
+            id_a = candidate_ids[i]
+            rec_a = processed_records[id_a]
+            
+            for j in range(i + 1, n):
+                id_b = candidate_ids[j]
+                rec_b = processed_records[id_b]
+                
+                # Match condition: exact email match OR exact phone match (if non-empty)
+                match_email = rec_a["email"] and rec_a["email"] == rec_b["email"]
+                match_phone = rec_a["phone"] and rec_a["phone"] == rec_b["phone"]
+                
+                if match_email or match_phone:
+                    adjacency_list[id_a].add(id_b)
+                    adjacency_list[id_b].add(id_a)
+
+    # 3. Graph traversal (BFS/DFS) to form duplicate clusters
+    visited = set()
+    clusters = []
+    
+    for rec_id in processed_records:
+        if rec_id not in visited:
+            cluster = set()
+            queue = [rec_id]
+            visited.add(rec_id)
+            
+            while queue:
+                curr = queue.pop(0)
+                cluster.add(curr)
+                for neighbor in adjacency_list[curr]:
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        queue.append(neighbor)
+                        
+            clusters.append(cluster)
+            
+    return clusters
+
+if __name__ == "__main__":
+    clusters = find_duplicate_clusters(RECORDS)
+    
+    print("--- Matching Results ---")
+    for i, cluster in enumerate(clusters, 1):
+        ids = ", ".join(sorted(cluster))
+        if len(cluster) > 1:
+            print(f"Group {i} (Match Cluster): [{ids}]")
+        else:
+            print(f"Group {i} (Unique Record): [{ids}]")

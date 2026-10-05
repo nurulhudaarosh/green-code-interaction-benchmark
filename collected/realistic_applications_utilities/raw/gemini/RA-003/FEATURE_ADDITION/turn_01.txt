@@ -1,0 +1,336 @@
+```python
+import csv
+import io
+import math
+from typing import List, Dict, Any, Optional
+
+
+class Student:
+    """Represents an individual student and computes their academic metrics."""
+
+    def __init__(
+        self,
+        student_id: str,
+        name: str,
+        scores: Dict[str, float],
+        weights: Optional[Dict[str, float]] = None
+    ):
+        self.student_id = student_id
+        self.name = name
+        self.scores = scores
+        self.weights = weights or {subj: 1.0 for subj in scores}
+        self.average = self._calculate_weighted_average()
+        self.grade = self._assign_grade()
+
+    def _calculate_weighted_average(self) -> float:
+        if not self.scores:
+            return 0.0
+
+        total_weighted_score = 0.0
+        total_weight = 0.0
+
+        for subj, score in self.scores.items():
+            w = self.weights.get(subj, 1.0)
+            total_weighted_score += score * w
+            total_weight += w
+
+        return total_weighted_score / total_weight if total_weight > 0 else 0.0
+
+    def _assign_grade(self) -> str:
+        avg = self.average
+        if avg >= 90:
+            return 'A'
+        elif avg >= 80:
+            return 'B'
+        elif avg >= 70:
+            return 'C'
+        elif avg >= 60:
+            return 'D'
+        else:
+            return 'F'
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.student_id,
+            "name": self.name,
+            "scores": self.scores,
+            "weighted_average": round(self.average, 2),
+            "grade": self.grade
+        }
+
+
+class SubjectAnalytics:
+    """Calculates summary statistics for a subject based on valid scores."""
+
+    def __init__(self, subject_name: str, scores: List[float]):
+        self.subject_name = subject_name
+        self.scores = scores
+        self.count = len(scores)
+        self.mean = sum(scores) / self.count if self.count > 0 else 0.0
+        self.median = self._calculate_median()
+        self.std_dev = self._calculate_std_dev()
+        self.min_score = min(scores) if scores else 0.0
+        self.max_score = max(scores) if scores else 0.0
+
+    def _calculate_median(self) -> float:
+        if not self.scores:
+            return 0.0
+        sorted_scores = sorted(self.scores)
+        n = len(sorted_scores)
+        mid = n // 2
+        if n % 2 == 0:
+            return (sorted_scores[mid - 1] + sorted_scores[mid]) / 2.0
+        return float(sorted_scores[mid])
+
+    def _calculate_std_dev(self) -> float:
+        if self.count <= 1:
+            return 0.0
+        variance = sum((x - self.mean) ** 2 for x in self.scores) / (self.count - 1)
+        return math.sqrt(variance)
+
+    def summary(self) -> Dict[str, Any]:
+        return {
+            "subject": self.subject_name,
+            "count": self.count,
+            "mean": round(self.mean, 2),
+            "median": round(self.median, 2),
+            "std_dev": round(self.std_dev, 2),
+            "min": round(self.min_score, 2),
+            "max": round(self.max_score, 2)
+        }
+
+
+class StudentPerformanceAnalyzer:
+    """Core analysis engine with integrated score/weight validation and deterministic ranking."""
+
+    def __init__(
+        self,
+        min_score: float = 0.0,
+        max_score: float = 100.0,
+        weights: Optional[Dict[str, float]] = None
+    ):
+        self.min_score = min_score
+        self.max_score = max_score
+        self.students: List[Student] = []
+        self.subjects: List[str] = []
+        self.weights: Dict[str, float] = {}
+        self.validation_errors: List[str] = []
+
+        if weights:
+            self.set_weights(weights)
+
+    def set_weights(self, weights: Dict[str, float]) -> None:
+        """Validates and updates subject weights."""
+        valid_weights = {}
+        for subj, weight in weights.items():
+            if not isinstance(weight, (int, float)) or math.isnan(weight):
+                self.validation_errors.append(f"Weight Error: Weight for '{subj}' must be numeric.")
+                continue
+            if weight <= 0:
+                self.validation_errors.append(
+                    f"Weight Error: Weight for '{subj}' must be strictly positive (got {weight}). Defaulting to 1.0."
+                )
+                continue
+            valid_weights[subj] = float(weight)
+
+        self.weights = valid_weights
+
+    def _validate_score(self, raw_score: Any, student_id: str, subject: str) -> Optional[float]:
+        """Validates numeric bounds and completeness of a score entry."""
+        if raw_score is None or str(raw_score).strip() == "":
+            self.validation_errors.append(
+                f"Missing Score: Student '{student_id}' has missing value in subject '{subject}'."
+            )
+            return None
+
+        try:
+            score = float(raw_score)
+            if math.isnan(score) or math.isinf(score):
+                raise ValueError("Non-finite numeric score.")
+        except (ValueError, TypeError):
+            self.validation_errors.append(
+                f"Invalid Score: Student '{student_id}' has non-numeric score '{raw_score}' in '{subject}'."
+            )
+            return None
+
+        if score < self.min_score or score > self.max_score:
+            self.validation_errors.append(
+                f"Out-of-Bounds Score: Student '{student_id}' has score {score} in '{subject}' "
+                f"(Allowed range: [{self.min_score}, {self.max_score}])."
+            )
+            return None
+
+        return score
+
+    def load_csv_data(self, csv_data: str) -> None:
+        """Parses CSV input, enforcing validation rules across fields."""
+        reader = csv.DictReader(io.StringIO(csv_data.strip()))
+        headers = reader.fieldnames or []
+        non_subject_cols = {'id', 'student_id', 'name', 'student_name'}
+        
+        self.subjects = [col for col in headers if col.lower() not in non_subject_cols]
+        self.students.clear()
+
+        # Ensure all detected subjects have a default weight of 1.0 if not specified
+        active_weights = {subj: self.weights.get(subj, 1.0) for subj in self.subjects}
+
+        for row_num, row in enumerate(reader, start=2):
+            student_id = row.get('id') or row.get('student_id') or f"ROW-{row_num}"
+            name = row.get('name') or row.get('student_name') or f"Student-{student_id}"
+
+            valid_scores = {}
+            for subj in self.subjects:
+                score_val = self._validate_score(row.get(subj), student_id, subj)
+                if score_val is not None:
+                    valid_scores[subj] = score_val
+
+            if valid_scores:
+                self.students.append(Student(student_id, name, valid_scores, active_weights))
+            else:
+                self.validation_errors.append(
+                    f"Record Dropped: Student '{student_id}' ({name}) contains no valid scores."
+                )
+
+    def get_ranked_students(self) -> List[Student]:
+        """
+        Returns students sorted deterministically:
+        1. Primary key: Weighted average (descending)
+        2. Secondary key: Number of valid scores completed (descending)
+        3. Tertiary key: Case-insensitive student name (ascending)
+        4. Quaternary key: Student ID (ascending)
+        """
+        return sorted(
+            self.students,
+            key=lambda s: (-s.average, -len(s.scores), s.name.lower(), s.student_id)
+        )
+
+    def get_class_average(self) -> float:
+        if not self.students:
+            return 0.0
+        return sum(s.average for s in self.students) / len(self.students)
+
+    def get_subject_analytics(self) -> Dict[str, Dict[str, Any]]:
+        analytics = {}
+        for subj in self.subjects:
+            scores = [s.scores[subj] for s in self.students if subj in s.scores]
+            subject_stat = SubjectAnalytics(subj, scores)
+            analytics[subj] = subject_stat.summary()
+        return analytics
+
+    def get_top_performers(self, count: int = 3) -> List[Student]:
+        return self.get_ranked_students()[:count]
+
+    def get_grade_distribution(self) -> Dict[str, int]:
+        distribution = {'A': 0, 'B': 0, 'C': 0, 'D': 0, 'F': 0}
+        for student in self.students:
+            distribution[student.grade] += 1
+        return distribution
+
+    def generate_report(self) -> str:
+        """Renders an analytical report including validation errors and deterministic rankings."""
+        lines = []
+        lines.append("=" * 65)
+        lines.append("        STUDENT PERFORMANCE & DATA AUDIT REPORT")
+        lines.append("=" * 65)
+
+        # Audit Section
+        if self.validation_errors:
+            lines.append("\n" + "-" * 40)
+            lines.append("DATA INTEGRITY AUDIT")
+            lines.append("-" * 40)
+            for err in self.validation_errors:
+                lines.append(f" [!] {err}")
+        else:
+            lines.append("\n Data Integrity: All records validated successfully.")
+
+        if not self.students:
+            lines.append("\nNo valid records processed.")
+            return "\n".join(lines)
+
+        # Class Overview
+        lines.append("\n" + "-" * 40)
+        lines.append("CLASS METRICS")
+        lines.append("-" * 40)
+        lines.append(f"Valid Records Analyzed : {len(self.students)}")
+        lines.append(f"Overall Class Average  : {self.get_class_average():.2f}%")
+
+        # Grade Distribution
+        lines.append("\n" + "-" * 40)
+        lines.append("GRADE DISTRIBUTION (Weighted)")
+        lines.append("-" * 40)
+        dist = self.get_grade_distribution()
+        for grade, num in dist.items():
+            pct = (num / len(self.students)) * 100
+            bar = "█" * int(pct // 5)
+            lines.append(f" Grade {grade} : {num:2d} students ({pct:5.1f}%) | {bar}")
+
+        # Subject Breakdown
+        lines.append("\n" + "-" * 65)
+        lines.append("SUBJECT STATISTICAL ANALYSIS")
+        lines.append("-" * 65)
+        lines.append(f"{'Subject':<12} {'Weight':<8} {'Count':<6} {'Mean':<7} {'Median':<7} {'StdDev':<7} {'Min':<5} {'Max':<5}")
+        lines.append("-" * 65)
+
+        subj_stats = self.get_subject_analytics()
+        for subj, stats in subj_stats.items():
+            weight = self.weights.get(subj, 1.0)
+            lines.append(
+                f"{stats['subject']:<12} "
+                f"{weight:<8.2f} "
+                f"{stats['count']:<6d} "
+                f"{stats['mean']:<7.1f} "
+                f"{stats['median']:<7.1f} "
+                f"{stats['std_dev']:<7.1f} "
+                f"{stats['min']:<5.1f} "
+                f"{stats['max']:<5.1f}"
+            )
+
+        # Deterministic Ranking Table
+        lines.append("\n" + "-" * 65)
+        lines.append("FULL CLASS RANKINGS (Deterministic)")
+        lines.append("-" * 65)
+        lines.append(f"{'Rank':<6} {'ID':<8} {'Name':<20} {'Average':<10} {'Grade':<6}")
+        lines.append("-" * 65)
+
+        ranked_students = self.get_ranked_students()
+        for rank, s in enumerate(ranked_students, 1):
+            lines.append(
+                f"{rank:<6} {s.student_id:<8} {s.name:<20} {s.average:<10.2f} {s.grade:<6}"
+            )
+
+        lines.append("=" * 65)
+        return "\n".join(lines)
+
+
+# =====================================================================
+# DEMONSTRATION & VERIFICATION
+# =====================================================================
+if __name__ == "__main__":
+    # Test dataset containing out-of-bound scores, non-numeric strings, missing fields,
+    # and intentional ties to demonstrate deterministic tie-breaking.
+    raw_csv = """id,name,Math,Science,English,History
+101,Alice Smith,95,92,88,91
+102,Bob Jones,-15,85,72,69
+103,Charlie Brown,62,ABSENT,65,70
+104,Diana Prince,105,96,94,99
+105,Evan Wright,85,89,,88
+106,Fiona Gallagher,52,45,60,50
+107,George Clark,73,76,70,75
+108,Aaron Adams,95,92,88,91
+109,Aaron Baker,95,92,88,91
+"""
+
+    analyzer = StudentPerformanceAnalyzer(min_score=0.0, max_score=100.0)
+
+    # Supply subject weights with one invalid weight (-0.5) to test validation handling
+    analyzer.set_weights({
+        "Math": 2.0,
+        "Science": 1.5,
+        "English": 1.0,
+        "History": -0.5  # Triggers weight error log
+    })
+
+    analyzer.load_csv_data(raw_csv)
+    print(analyzer.generate_report())
+
+```

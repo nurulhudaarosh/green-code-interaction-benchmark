@@ -1,0 +1,201 @@
+Here is the updated script. It fixes the empty file edge cases (preventing phantom newline injection and indexing bugs), eliminates unintended multi-line flattening (allowing true horizontal vs. vertical whitespace separation or indentation preservation), and mirrors nested directory trees cleanly to an output destination.
+
+### `normalize_text.py`
+
+```python
+import argparse
+import re
+import unicodedata
+from pathlib import Path
+
+
+def clean_unicode_and_whitespace(
+    text: str,
+    form: str = "NFKC",
+    standardize_quotes: bool = True,
+    preserve_paragraphs: bool = True,
+    keep_indentation: bool = False,
+) -> str:
+    """
+    Cleans and standardizes raw text:
+    - Fixes empty file bug (avoids returning '\n' on empty/whitespace-only input).
+    - Prevents horizontal regexes from swallowing newlines and flattening text.
+    - Normalizes Unicode representations via unicodedata.
+    - Strips zero-width and invisible control characters.
+    - Standardizes typographic quotes and dashes.
+    """
+    # Empty check: immediately return empty string without injecting phantom newlines
+    if not text:
+        return ""
+
+    # 1. Unicode Normalization
+    text = unicodedata.normalize(form, text)
+
+    # 2. Strip Byte Order Marks (BOM) and non-printing/zero-width characters
+    zero_width_pattern = re.compile(
+        r"[\u200B-\u200D\uFEFF\u200E\u200F\u202A-\u202E]"
+    )
+    text = zero_width_pattern.sub("", text)
+
+    # 3. Standardize typographical quotes, primes, and dashes
+    if standardize_quotes:
+        quote_map = {
+            "\u2018": "'", "\u2019": "'", "\u201A": "'", "\u201B": "'", "\u2032": "'", "`": "'",
+            "\u201C": '"', "\u201D": '"', "\u201E": '"', "\u201F": '"', "\u2033": '"', "\u00AB": '"', "\u00BB": '"',
+            "\u2013": "-", "\u2014": "--", "\u2015": "--",
+            "\u2026": "...",
+        }
+        for orig, replacement in quote_map.items():
+            text = text.replace(orig, replacement)
+
+    # Standardize line endings early to prevent mixed-delimiter bugs
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    # 4. Standardize horizontal whitespace per line (prevents cross-line flattening)
+    # Replaces non-breaking spaces, em/en spaces, and multiple tabs/spaces with standard spaces
+    lines = text.split("\n")
+    processed_lines = []
+    
+    # Matches horizontal whitespace characters only
+    h_space_pattern = re.compile(r"[^\S\n\r]+")
+
+    for line in lines:
+        if keep_indentation:
+            # Preserve leading indentation width, normalize internal spacing
+            l_stripped = line.lstrip(" \t")
+            indent = line[: len(line) - len(l_stripped)]
+            # Clean internal spacing and trailing whitespace
+            internal_cleaned = h_space_pattern.sub(" ", l_stripped).rstrip()
+            processed_lines.append(f"{indent}{internal_cleaned}" if internal_cleaned else "")
+        else:
+            cleaned = h_space_pattern.sub(" ", line).strip()
+            processed_lines.append(cleaned)
+
+    # 5. Condense vertical whitespace
+    reconstructed = "\n".join(processed_lines)
+    if preserve_paragraphs:
+        # Collapse 3 or more consecutive newlines into 2 (one blank line)
+        reconstructed = re.sub(r"\n{3,}", "\n\n", reconstructed)
+    else:
+        # Collapse multi-newlines into a single line break
+        reconstructed = re.sub(r"\n{2,}", "\n", reconstructed)
+
+    # If the file had only spaces/empty lines, return empty rather than a stray newline
+    reconstructed = reconstructed.strip()
+    return f"{reconstructed}\n" if reconstructed else ""
+
+
+def process_file(
+    file_path: Path,
+    target_dest: Path,
+    encoding: str = "utf-8",
+    keep_indentation: bool = False,
+) -> None:
+    """Reads, normalizes, and writes out the file preserving structure."""
+    try:
+        content = file_path.read_text(encoding=encoding, errors="replace")
+    except Exception as e:
+        print(f"[ERROR] Reading {file_path}: {e}")
+        return
+
+    normalized = clean_unicode_and_whitespace(
+        content, keep_indentation=keep_indentation
+    )
+
+    try:
+        target_dest.parent.mkdir(parents=True, exist_ok=True)
+        target_dest.write_text(normalized, encoding="utf-8")
+        print(f"[OK] {file_path} -> {target_dest}")
+    except Exception as e:
+        print(f"[ERROR] Writing {target_dest}: {e}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Normalize text files with directory tree mirroring and whitespace/Unicode cleanup."
+    )
+    parser.add_argument("path", type=str, help="Source target file or directory")
+    parser.add_argument(
+        "-o", "--output", type=str, help="Destination file or output root directory (mirrors source tree)"
+    )
+    parser.add_argument(
+        "-i", "--in-place", action="store_true", help="Overwrite the original files in-place"
+    )
+    parser.add_argument(
+        "--keep-indent", action="store_true", help="Preserve line indentation while normalizing internal whitespace"
+    )
+    parser.add_argument(
+        "--encoding", default="utf-8", help="Input file encoding (default: utf-8)"
+    )
+
+    args = parser.parse_args()
+    source_path = Path(args.path).resolve()
+
+    if not source_path.exists():
+        print(f"Source path does not exist: {source_path}")
+        return
+
+    if not args.in_place and not args.output:
+        print("Specify either --in-place (-i) or an --output (-o) destination directory/file.")
+        return
+
+    # Single-file mode
+    if source_path.is_file():
+        target_dest = source_path if args.in_place else Path(args.output).resolve()
+        process_file(
+            source_path,
+            target_dest,
+            encoding=args.encoding,
+            keep_indentation=args.keep_indent,
+        )
+        return
+
+    # Directory mirroring mode
+    output_root = source_path if args.in_place else Path(args.output).resolve()
+
+    for file_path in source_path.rglob("*.txt"):
+        if not file_path.is_file():
+            continue
+
+        if args.in_place:
+            target_dest = file_path
+        else:
+            # Mirror the relative path from the source tree into the target tree
+            rel_path = file_path.relative_to(source_path)
+            target_dest = output_root / rel_path
+
+        process_file(
+            file_path,
+            target_dest,
+            encoding=args.encoding,
+            keep_indentation=args.keep_indent,
+        )
+
+
+if __name__ == "__main__":
+    main()
+
+```
+
+---
+
+### What Was Fixed
+
+* **Empty File Bug:** Previously, `.strip() + "\n"` on an empty string produced `"\n"`, turning empty `.txt` files into 1-byte newline files. The normalizer now checks for empty inputs and whitespace-only buffers, returning a clean `""`.
+* **Accidental Flattening Bug:** Normalization of whitespace is strictly horizontal (`[^\S\n\r]+`). Line breaks are normalized prior to horizontal cleanup, preventing newline characters from being collapsed into single spaces across paragraphs.
+* **Tree Mirroring (`Path.relative_to` + `Path.rglob`):** When given a directory and an `--output` path, it crawls recursively using `rglob("*.txt")`, computes `file_path.relative_to(source_path)`, and mirrors the exact directory structure into the destination path using `target_dest.parent.mkdir(parents=True, exist_ok=True)`.
+* **Optional Indentation Preservation:** Added `--keep-indent` so code snippets, ASCII lists, or nested bullets don't have their structural leading spaces stripped.
+
+### Usage Examples
+
+```bash
+# 1. Mirror an entire nested folder structure into a clean build directory
+python normalize_text.py ./raw_corpus/ -o ./clean_corpus/
+
+# 2. Mirror and preserve nested indentation
+python normalize_text.py ./raw_docs/ -o ./clean_docs/ --keep-indent
+
+# 3. Recursively clean in-place across all nested directories
+python normalize_text.py ./raw_corpus/ -i
+
+```

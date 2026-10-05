@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""
+Access Log to CSV Converter
+
+Parses Apache/Nginx combined-format access logs and exports to CSV,
+adding a `statusClass` column derived from the HTTP status code.
+
+Supports filtering by HTTP method(s) and status class(es).
+
+Usage:
+    python log_to_csv.py input.log output.csv
+    python log_to_csv.py access.log - --methods GET,POST --classes 4xx,5xx
+    cat access.log | python log_to_csv.py - out.csv --methods GET
+"""
+
+import argparse
+import csv
+import re
+import sys
+from datetime import datetime
+
+
+# Apache/Nginx "combined" log format:
+# 127.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] "GET /apache_pb.gif HTTP/1.0" 200 2326 "http://ref/" "Mozilla/4.08 [en]"
+LOG_PATTERN = re.compile(
+    r'^(?P<ip>\S+)\s+'              # client IP
+    r'(?P<ident>\S+)\s+'            # ident (usually -)
+    r'(?P<user>\S+)\s+'             # remote user
+    r'\[(?P<time>[^\]]+)\]\s+'      # timestamp
+    r'"(?P<request>[^"]*)"\s+'      # request line
+    r'(?P<status>\d{3})\s+'         # status code
+    r'(?P<size>\S+)'                # response size
+    r'(?:\s+"(?P<referer>[^"]*)")?' # referer
+    r'(?:\s+"(?P<agent>[^"]*)")?'   # user agent
+)
+
+CSV_FIELDS = [
+    "ip", "ident", "user", "time", "method", "path", "protocol",
+    "status", "statusClass", "size", "referer", "agent"
+]
+
+VALID_STATUS_CLASSES = {"1xx", "2xx", "3xx", "4xx", "5xx", "unknown"}
+
+
+def status_class(status: int) -> str:
+    """Map HTTP status code to its class (1xx..5xx)."""
+    if 100 <= status <= 599:
+        return f"{status // 100}xx"
+    return "unknown"
+
+
+def parse_timestamp(ts: str) -> str:
+    """Convert Apache timestamp to ISO 8601. Falls back to original on error."""
+    try:
+        dt = datetime.strptime(ts, "%d/%b/%Y:%H:%M:%S %z")
+        return dt.isoformat()
+    except ValueError:
+        return ts
+
+
+def parse_line(line: str) -> dict | None:
+    """Parse a single log line into a dict, or None if it doesn't match."""
+    match = LOG_PATTERN.match(line.strip())
+    if not match:
+        return None
+
+    data = match.groupdict()
+
+    # Split the request line into method / path / protocol
+    request = data.get("request") or ""
+    parts = request.split(" ", 2)
+    method = parts[0] if len(parts) > 0 else ""
+    path = parts[1] if len(parts) > 1 else ""
+    protocol = parts[2] if len(parts) > 2 else ""
+
+    try:
+        status_int = int(data["status"])
+    except (TypeError, ValueError):
+        status_int = 0
+
+    return {
+        "ip": data["ip"],
+        "ident": data["ident"],
+        "user": data["user"],
+        "time": parse_timestamp(data["time"]),
+        "method": method,
+        "path": path,
+        "protocol": protocol,
+        "status": status_int,
+        "statusClass": status_class(status_int),
+        "size": data["size"],
+        "referer": data.get("referer") or "",
+        "agent": data.get("agent") or "",
+    }
+
+
+def _normalize(values) -> set[str] | None:
+    """Normalize a filter list to a set of uppercase strings, or None if unset."""
+    if not values:
+        return None
+    return {v.strip().upper() for v in values if v and v.strip()}
+
+
+def convert(
+    infile,
+    outfile,
+    methods=None,
+    status_classes=None,
+    skip_invalid: bool = True,
+) -> dict:
+    """
+    Convert log file to CSV with optional filtering.
+
+    Args:
+        infile: iterable of log lines.
+        outfile: writable file-like object for CSV output.
+        methods: iterable of HTTP methods to keep (e.g. ["GET", "POST"]).
+                 None or empty means keep all.
+        status_classes: iterable of status classes to keep
+                        (e.g. ["4xx", "5xx"]). None or empty means keep all.
+        skip_invalid: if False, print a warning for unparseable lines.
+
+    Returns:
+        dict with keys: 'written', 'skipped', 'filtered'.
+    """
+    method_filter = _normalize(methods)
+    class_filter = _normalize(status_classes)
+
+    written = 0
+    skipped = 0
+    filtered = 0
+
+    writer = csv.DictWriter(outfile, fieldnames=CSV_FIELDS, extrasaction="ignore")
+    writer.writeheader()
+
+    for lineno, line in enumerate(infile, 1):
+        if not line.strip():
+            continue
+        row = parse_line(line)
+        if row is None:
+            skipped += 1
+            if not skip_invalid:
+                print(f"Warning: could not parse line {lineno}: {line.rstrip()}",
+                      file=sys.stderr)
+            continue
+
+        # Apply filters
+        if method_filter is not None and row["method"].upper() not in method_filter:
+            filtered += 1
+            continue
+        if class_filter is not None and row["statusClass"].upper() not in class_filter:
+            filtered += 1
+            continue
+
+        writer.writerow(row)
+        written += 1
+
+    return {"written": written, "skipped": skipped, "filtered": filtered}
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Convert access logs to CSV with a statusClass column."
+    )
+    parser.add_argument("input", help="Input log file, or '-' for stdin")
+    parser.add_argument("output", nargs="?", default="-",
+                        help="Output CSV file, or '-' for stdout (default)")
+    parser.add_argument("--methods", default="",
+                        help="Comma-separated HTTP methods to include "
+                             "(e.g. GET,POST). Default: all.")
+    parser.add_argument("--classes", default="",
+                        help="Comma-separated status classes to include "
+                             "(e.g. 4xx,5xx). Default: all.")
+    parser.add_argument("--strict", action="store_true",
+                        help="Warn on unparseable lines")
+    args = parser.parse_args(argv)
+
+    methods = [m for m in args.methods.split(",") if m.strip()]
+    classes = [c for c in args.classes.split(",") if c.strip()]
+
+    # Validate status classes early
+    for c in classes:
+        if c.strip().lower() not in VALID_STATUS_CLASSES:
+            parser.error(
+                f"invalid status class '{c}'. "
+                f"Choose from: {', '.join(sorted(VALID_STATUS_CLASSES))}"
+            )
+
+    # Open input
+    if args.input == "-":
+        infile = sys.stdin
+        close_in = False
+    else:
+        infile = open(args.input, "r", encoding="utf-8", errors="replace")
+        close_in = True
+
+    # Open output
+    if args.output == "-":
+        outfile = sys.stdout
+        close_out = False
+    else:
+        outfile = open(args.output, "w", encoding="utf-8", newline="")
+        close_out = True
+
+    try:
+        counts = convert(
+            infile,
+            outfile,
+            methods=methods,
+            status_classes=classes,
+            skip_invalid=not args.strict,
+        )
+    finally:
+        if close_in:
+            infile.close()
+        if close_out:
+            outfile.close()
+
+    print(
+        f"Wrote {counts['written']} rows, "
+        f"skipped {counts['skipped']} unparseable lines, "
+        f"filtered out {counts['filtered']} rows.",
+        file=sys.stderr,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

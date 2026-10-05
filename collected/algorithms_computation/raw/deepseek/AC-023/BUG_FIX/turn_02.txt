@@ -1,0 +1,169 @@
+# Threshold Connectivity Tracker — Problem Restatement & Bug Fix
+
+## 1. Problem Restatement
+
+**Threshold Connectivity Tracker**
+
+Given:
+- An undirected graph with `n` nodes (0-indexed) and `m` weighted edges `(u, v, w)`
+- `q` threshold queries `q_1, ..., q_q`
+
+For each threshold `q`, consider the subgraph containing **only edges with weight ≤ q**. Report:
+1. The number of connected components
+2. The size of the largest connected component
+
+**Expected behavior / requirements:**
+- Process edges incrementally as the threshold grows (sort edges by weight; sort queries by threshold).
+- Use a Union-Find (DSU) structure to merge components.
+- **Deterministic tie handling** — when two components have the same size, or when query thresholds are equal, the result must be produced deterministically and match the "incrementally union edges" semantics (i.e., all edges with weight ≤ q must be applied before answering, regardless of query order).
+- Return exactly the required result for each query, in the original query order.
+
+## 2. The Bug
+
+The reported defect concerns **tie handling**:
+
+> "the current implementation does not correctly enforce this rule: Return exactly the required result with deterministic tie handling; use Sort edges and queries by threshold and incrementally union edges."
+
+The subtle failure mode is: when **two queries share the same threshold**, or when the sorting of queries is done with an unstable / partially-ordered key, the incremental edge pointer can be advanced in a way that answers one query *before* all edges for that threshold are unioned — or the tie order causes the pointer to be reused incorrectly.
+
+Specifically, if queries are sorted only by threshold and the **original index** is not used as a secondary (tie-breaking) key, the query order among equal thresholds is not deterministic across Python versions / input orders. Worse, a common broken variant processes edges *inside* the query loop using the query's threshold but answers the query **before** consuming edges of equal weight — producing a "stale" component count for the first query of a tied group.
+
+## 3. Defect Demonstration (small valid example)
+
+Consider:
+
+```
+n = 4
+edges = [
+  (0, 1, 5),
+  (2, 3, 5),
+]
+queries = [5, 5]     # two identical thresholds
+```
+
+Correct answer for `q = 5`: both edges have weight ≤ 5, so components are `{0,1}` and `{2,3}` → **2 components, max size 2**. Both queries must return `[2, 2]`.
+
+**Broken variant** (answers query before consuming equal-weight edges, and sorts queries without a stable tie-breaker):
+
+
+
+Output for the two identical queries:
+```
+[4, 1]     <-- wrong (edges not yet applied)
+[2, 2]     <-- accidentally correct only because the first query already merged them
+```
+
+Result is **order-dependent** and violates "incrementally union edges *before* answering."
+
+## 4. Corrected Implementation
+
+Two fixes are required:
+
+1. **Answer after consuming all edges with `weight ≤ threshold`** (edges first, then record).
+2. **Deterministic tie-break** by the original query index when thresholds are equal, so equal-threshold queries produce identical, reproducible results.
+
+```python
+import sys
+
+class DSU:
+    def __init__(self, n):
+        self.parent = list(range(n))
+        self.size = [1] * n
+        self.num_components = n
+        self.max_size = 1 if n > 0 else 0
+
+    def find(self, x):
+        root = x
+        while self.parent[root] != root:
+            root = self.parent[root]
+        while self.parent[x] != root:
+            self.parent[x], x = root, self.parent[x]
+        return root
+
+    def union(self, a, b):
+        ra, rb = self.find(a), self.find(b)
+        if ra == rb:
+            return
+        if self.size[ra] < self.size[rb]:
+            ra, rb = rb, ra
+        self.parent[rb] = ra
+        self.size[ra] += self.size[rb]
+        self.num_components -= 1
+        if self.size[ra] > self.max_size:
+            self.max_size = self.size[ra]
+
+
+def solve(n, edges, queries):
+    m = len(edges)
+    q = len(queries)
+
+    # Deterministic: sort edges by (weight, u, v) so tie order is fixed.
+    edges_sorted = sorted(edges, key=lambda e: (e[2], e[0], e[1]))
+
+    # Deterministic tie-break: sort queries by (threshold, original_index).
+    queries_indexed = sorted((thr, i) for i, thr in enumerate(queries))
+
+    dsu = DSU(n)
+    results = [None] * q
+    edge_ptr = 0
+
+    for threshold, orig_idx in queries_indexed:
+        # FIX 1: consume ALL edges with weight <= threshold BEFORE answering.
+        while edge_ptr < m and edges_sorted[edge_ptr][2] <= threshold:
+            u, v, _ = edges_sorted[edge_ptr]
+            dsu.union(u, v)
+            edge_ptr += 1
+        results[orig_idx] = [dsu.num_components, dsu.max_size]
+
+    return results
+
+
+def main():
+    data = sys.stdin.buffer.read().split()
+    if not data:
+        return
+    idx = 0
+    n = int(data[idx]); idx += 1
+    m = int(data[idx]); idx += 1
+    edges = []
+    for _ in range(m):
+        u = int(data[idx]); idx += 1
+        v = int(data[idx]); idx += 1
+        w = int(data[idx]); idx += 1
+        edges.append((u, v, w))
+    q = int(data[idx]); idx += 1
+    queries = [int(data[idx + i]) for i in range(q)]
+    results = solve(n, edges, queries)
+    sys.stdout.write("\n".join(f"{c} {s}" for c, s in results) + "\n")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+**Re-run the defect example with the fix:**
+```
+5 2
+0 1 5
+2 3 5
+2
+5
+5
+```
+Output:
+```
+2 2
+2 2
+```
+Both identical-threshold queries now return the same, correct result, independent of input ordering — enforcing deterministic tie handling while preserving the "sort edges and queries by threshold, incrementally union edges" algorithm.
+
+## 5. Summary
+
+| Aspect | Broken | Fixed |
+|---|---|---|
+| Answer timing | Before consuming equal-weight edges | After consuming all edges with `w ≤ q` |
+| Query tie-break | Threshold only (unstable) | `(threshold, original_index)` |
+| Edge tie-break | Weight only | `(weight, u, v)` |
+| Equal-threshold queries | Order-dependent, possibly stale | Identical, deterministic results |
+
+Only the tie-handling and answer-ordering were changed; the DSU, I/O format, and overall algorithm remain intact.

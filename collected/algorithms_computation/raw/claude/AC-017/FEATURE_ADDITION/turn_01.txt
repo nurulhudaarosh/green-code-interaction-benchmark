@@ -1,0 +1,71 @@
+```python
+"""Largest gap between consecutive primes in [L, R] via a segmented sieve.
+
+Standard library only; deterministic; no network, randomness, or interaction.
+
+Problem:  list primes in [L, R], return the largest gap between consecutive primes.
+Output:   (gap, p, q) with p < q consecutive primes, q - p maximal (earliest on ties);
+          (0, None, None) if [L, R] has fewer than two primes.
+Algorithm: base primes up to isqrt(R), then sieve [L, R] in fixed-size blocks,
+           streaming primes in order and tracking the best gap across blocks.
+"""
+from math import isqrt
+
+
+def base_primes(n):
+    """All primes <= n (simple sieve of Eratosthenes)."""
+    if n < 2:
+        return []
+    sieve = bytearray([1]) * (n + 1)
+    sieve[0] = sieve[1] = 0
+    for i in range(2, isqrt(n) + 1):
+        if sieve[i]:
+            sieve[i * i::i] = bytes(len(range(i * i, n + 1, i)))
+    return [i for i in range(2, n + 1) if sieve[i]]
+
+
+def primes_in_range(L, R, block=1 << 20):
+    """Yield every prime p with L <= p <= R in increasing order."""
+    L = max(L, 2)
+    if L > R:
+        return
+    small = base_primes(isqrt(R))
+    lo = L
+    while lo <= R:
+        hi = min(R, lo + block - 1)
+        size = hi - lo + 1
+        seg = bytearray([1]) * size              # seg[i] <-> number lo + i
+        for p in small:
+            if p * p > hi:
+                break
+            start = max(p * p, ((lo + p - 1) // p) * p)   # first multiple >= lo
+            if start > hi:
+                continue
+            seg[start - lo::p] = bytes(len(range(start - lo, size, p)))
+        for i, flag in enumerate(seg):
+            if flag:
+                yield lo + i
+        lo = hi + 1
+
+
+def largest_prime_gap(L, R):
+    """Return (gap, p, q) for the largest gap between consecutive primes in [L, R]."""
+    best = (0, None, None)
+    prev = None
+    for p in primes_in_range(L, R):
+        if prev is not None and p - prev > best[0]:
+            best = (p - prev, prev, p)
+        prev = p
+    return best
+
+
+if __name__ == "__main__":
+    assert list(primes_in_range(1, 30)) == [2, 3, 5, 7, 11, 13, 17, 19, 23, 29]
+    assert largest_prime_gap(1, 30) == (6, 23, 29)
+    assert largest_prime_gap(90, 100) == (0, None, None)          # only 97
+    assert largest_prime_gap(0, 1) == (0, None, None)
+    assert largest_prime_gap(1, 10**6) == (114, 492113, 492227)
+    assert list(primes_in_range(10, 10**5, block=97)) == list(primes_in_range(10, 10**5))
+    print(largest_prime_gap(10**12, 10**12 + 10**6))   # (236, 1000000494263, 1000000494499)
+    print("all checks passed")
+```

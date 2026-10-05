@@ -1,0 +1,103 @@
+# Largest Prime Gap in [L, R]
+
+## 1. The problem
+
+Given integers `L` and `R`, find every prime `p` with `L <= p <= R`, then return the largest difference between two *consecutive* primes in that list.
+
+## 2. Key constraints and required output
+
+- `R` can be large (e.g. up to ~10^12 or more), so a plain sieve from 2 to `R` is impractical.
+- The width `R - L + 1` is bounded (say ≤ ~10^7), so a sieve over just `[L, R]` is feasible.
+- Any composite `n ≤ R` has a prime factor `≤ isqrt(R)`, so base primes up to `isqrt(R)` suffice.
+- Edge cases: `L < 2` (0 and 1 aren't prime), `L > R`, and fewer than 2 primes in range.
+
+**Output:** the list of primes in `[L, R]` and the maximum gap between consecutive primes. If fewer than two primes exist, the gap is undefined; I return `0` (and the pair as `None`). I also return the gap's endpoints for verification.
+
+## 3. Algorithm
+
+1. Clamp `L` to at least 2. If `L > R`, return an empty result.
+2. **Base primes:** simple sieve of Eratosthenes up to `isqrt(R)`.
+3. **Segmented sieve:** a `bytearray` of length `R - L + 1`, initially all 1s. For each base prime `p`, start crossing off at `max(p*p, ceil(L/p)*p)` and step by `p` using slice assignment. Starting at `p*p` guarantees the base primes themselves aren't erased when they lie in `[L, R]`.
+4. Collect primes, then scan adjacent pairs for the maximum difference (first occurrence on ties).
+
+Complexity: `O(sqrt(R))` for base primes plus roughly `O(W log log R)` for the segment, where `W = R - L + 1`.
+
+## 4. Implementation
+
+```python
+from math import isqrt
+
+
+def simple_sieve(n):
+    """Return all primes <= n using a basic sieve of Eratosthenes."""
+    if n < 2:
+        return []
+    sieve = bytearray([1]) * (n + 1)
+    sieve[0] = sieve[1] = 0
+    for i in range(2, isqrt(n) + 1):
+        if sieve[i]:
+            sieve[i * i::i] = bytearray(len(range(i * i, n + 1, i)))
+    return [i for i in range(2, n + 1) if sieve[i]]
+
+
+def primes_in_range(L, R):
+    """Return the sorted list of primes p with L <= p <= R (segmented sieve)."""
+    L = max(L, 2)
+    if L > R:
+        return []
+
+    base_primes = simple_sieve(isqrt(R))
+    size = R - L + 1
+    segment = bytearray([1]) * size  # segment[i] represents the number L + i
+
+    for p in base_primes:
+        # First multiple of p that is >= L, but never below p*p
+        start = max(p * p, ((L + p - 1) // p) * p)
+        if start > R:
+            continue
+        segment[start - L::p] = bytearray(len(range(start - L, size, p)))
+
+    return [L + i for i in range(size) if segment[i]]
+
+
+def largest_prime_gap(L, R):
+    """
+    Return (max_gap, (p, q), primes) where p < q are consecutive primes in
+    [L, R] with q - p == max_gap (first such pair). If fewer than two primes
+    exist, returns (0, None, primes).
+    """
+    primes = primes_in_range(L, R)
+    if len(primes) < 2:
+        return 0, None, primes
+
+    best_gap = 0
+    best_pair = None
+    for a, b in zip(primes, primes[1:]):
+        gap = b - a
+        if gap > best_gap:
+            best_gap = gap
+            best_pair = (a, b)
+    return best_gap, best_pair, primes
+
+
+if __name__ == "__main__":
+    tests = [
+        (1, 30),        # primes: 2 3 5 7 11 13 17 19 23 29 -> gap 6 (23, 29)
+        (90, 100),      # only 97 -> gap 0
+        (14, 16),       # no primes -> gap 0
+        (2, 2),         # single prime
+        (100, 130),     # 101 103 107 109 113 127 131? (131 > 130) -> gap 14 (113, 127)
+        (10**12, 10**12 + 1000),
+    ]
+    for L, R in tests:
+        gap, pair, primes = largest_prime_gap(L, R)
+        shown = primes if len(primes) <= 12 else f"{len(primes)} primes"
+        print(f"[{L}, {R}] -> gap={gap}, pair={pair}, primes={shown}")
+```
+
+## 5. Notes on correctness
+
+- **Deterministic:** no randomness, I/O beyond printing, or external dependencies. Only `math.isqrt` from the standard library is used.
+- **Base primes preserved:** starting at `p*p` means a prime `p` inside `[L, R]` is never marked composite.
+- **Small ranges:** if `R < 4`, `isqrt(R)` is 1, so there are no base primes and every number in `[max(L,2), R]` is correctly kept (2 and 3 are prime).
+- **Memory:** the segment uses one byte per number, so a width of 10^7 costs about 10 MB, plus the list of primes. If you only need the gap and not the list, you can track the previous prime while scanning to avoid storing all primes.

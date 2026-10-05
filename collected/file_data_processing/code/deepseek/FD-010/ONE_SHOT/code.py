@@ -1,0 +1,115 @@
+import json
+from typing import Any
+
+
+REQUIRED_PRODUCT_FIELDS = ("id", "name", "warehouses")
+REQUIRED_WAREHOUSE_FIELDS = ("warehouse_id", "stock")
+
+
+def load_json(path: str) -> Any:
+    """Load JSON from a file path."""
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def is_valid_product(product: Any) -> bool:
+    """A product is valid if it's a dict containing all required fields
+    and its warehouses field is a list."""
+    if not isinstance(product, dict):
+        return False
+    if not all(field in product for field in REQUIRED_PRODUCT_FIELDS):
+        return False
+    if not isinstance(product.get("warehouses"), list):
+        return False
+    return True
+
+
+def is_valid_warehouse(warehouse: Any) -> bool:
+    """A warehouse entry is valid if it's a dict with required fields
+    and a numeric (non-bool) stock value."""
+    if not isinstance(warehouse, dict):
+        return False
+    if not all(field in warehouse for field in REQUIRED_WAREHOUSE_FIELDS):
+        return False
+    stock = warehouse.get("stock")
+    if isinstance(stock, bool) or not isinstance(stock, (int, float)):
+        return False
+    return True
+
+
+def flatten_product(product: dict) -> list[dict]:
+    """Flatten a valid product's warehouses into row dicts.
+    Zero stock entries are kept."""
+    rows = []
+    for wh in product["warehouses"]:
+        if not is_valid_warehouse(wh):
+            continue
+        rows.append({
+            "product_id": product["id"],
+            "product_name": product["name"],
+            "warehouse_id": wh["warehouse_id"],
+            "stock": wh["stock"],
+        })
+    return rows
+
+
+def process_products(data: Any) -> tuple[list[dict], int]:
+    """Return (flattened_rows, invalid_product_count).
+
+    Expects data to be either a list of products, or a dict with a
+    'products' key holding a list.
+    """
+    if isinstance(data, dict):
+        products = data.get("products", [])
+    elif isinstance(data, list):
+        products = data
+    else:
+        raise ValueError("Input JSON must be a list or an object with a 'products' list")
+
+    if not isinstance(products, list):
+        raise ValueError("'products' must be a list")
+
+    rows: list[dict] = []
+    invalid_count = 0
+
+    for product in products:
+        if not is_valid_product(product):
+            invalid_count += 1
+            continue
+        rows.extend(flatten_product(product))
+
+    # Sort by product_id, then warehouse_id (both as strings for stability)
+    rows.sort(key=lambda r: (str(r["product_id"]), str(r["warehouse_id"])))
+    return rows, invalid_count
+
+
+def run(input_path: str, output_path: str | None = None) -> tuple[list[dict], int]:
+    """Read, validate, flatten, sort, and optionally write output."""
+    data = load_json(input_path)
+    rows, invalid_count = process_products(data)
+
+    if output_path:
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {"rows": rows, "invalid_products": invalid_count},
+                f,
+                indent=2,
+            )
+    return rows, invalid_count
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) < 2:
+        print("Usage: python flatten_products.py <input.json> [output.json]")
+        sys.exit(1)
+
+    in_path = sys.argv[1]
+    out_path = sys.argv[2] if len(sys.argv) > 2 else None
+
+    rows, invalid = run(in_path, out_path)
+    print(f"Flattened rows: {len(rows)}")
+    print(f"Invalid products: {invalid}")
+    for row in rows:
+        print(row)

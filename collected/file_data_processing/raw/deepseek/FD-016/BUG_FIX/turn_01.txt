@@ -1,0 +1,98 @@
+```python
+"""
+Transaction Aggregation Utility
+
+Aggregates transactions by customer, ignores unknown transaction IDs,
+joins results to the customer master (including zero-transaction customers),
+and sorts by customer ID.
+"""
+
+from collections import defaultdict
+from typing import Any
+
+
+def aggregate_transactions(
+    customers: list[dict[str, Any]],
+    transactions: list[dict[str, Any]],
+    known_transaction_ids: set[str],
+    customer_id_key: str = "customer_id",
+    transaction_id_key: str = "transaction_id",
+    amount_key: str = "amount",
+    customer_txn_customer_key: str = "customer_id",
+) -> list[dict[str, Any]]:
+    """
+    Aggregate transactions per customer and join with the customer master.
+
+    Args:
+        customers: List of customer master records. Each must contain `customer_id_key`.
+        transactions: List of transaction records. Each must contain
+            `transaction_id_key`, `customer_txn_customer_key`, and `amount_key`.
+        known_transaction_ids: Set of valid transaction IDs. Transactions whose
+            ID is not in this set are ignored.
+        customer_id_key: Field name for customer ID in the customer master.
+        transaction_id_key: Field name for transaction ID.
+        amount_key: Field name for the transaction amount.
+        customer_txn_customer_key: Field name for customer ID in transactions.
+
+    Returns:
+        List of dicts sorted by customer ID, each containing customer fields
+        plus `transaction_count` and `total_amount`.
+    """
+    totals: dict[Any, float] = defaultdict(float)
+    counts: dict[Any, int] = defaultdict(int)
+
+    for txn in transactions:
+        txn_id = txn.get(transaction_id_key)
+
+        # Ignore unknown transaction IDs
+        if txn_id not in known_transaction_ids:
+            continue
+
+        cust_id = txn.get(customer_txn_customer_key)
+        if cust_id is None:
+            continue
+
+        amount = txn.get(amount_key, 0) or 0
+        totals[cust_id] += amount
+        counts[cust_id] += 1
+
+    # Join with customer master (includes zero-transaction customers)
+    results: list[dict[str, Any]] = []
+    for cust in customers:
+        cust_id = cust.get(customer_id_key)
+        row = dict(cust)
+        row["transaction_count"] = counts.get(cust_id, 0)
+        row["total_amount"] = round(totals.get(cust_id, 0.0), 2)
+        results.append(row)
+
+    # Sort by customer ID
+    results.sort(key=lambda r: r.get(customer_id_key))
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Example usage
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    customers = [
+        {"customer_id": 3, "name": "Carol"},
+        {"customer_id": 1, "name": "Alice"},
+        {"customer_id": 2, "name": "Bob"},
+        {"customer_id": 4, "name": "Dave"},  # zero transactions
+    ]
+
+    known_txn_ids = {"T1", "T2", "T3", "T4"}
+
+    transactions = [
+        {"transaction_id": "T1", "customer_id": 1, "amount": 100.50},
+        {"transaction_id": "T2", "customer_id": 1, "amount": 50.25},
+        {"transaction_id": "T3", "customer_id": 2, "amount": 200.00},
+        {"transaction_id": "T4", "customer_id": 3, "amount": 75.75},
+        {"transaction_id": "T999", "customer_id": 1, "amount": 999.99},  # unknown
+        {"transaction_id": "T888", "customer_id": 3, "amount": 888.88},  # unknown
+    ]
+
+    result = aggregate_transactions(customers, transactions, known_txn_ids)
+    for row in result:
+        print(row)
+```

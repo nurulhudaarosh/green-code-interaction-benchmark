@@ -1,0 +1,52 @@
+```python
+import re
+from typing import List, Dict, Any, Tuple
+
+def normalize_text(text: str) -> str:
+    """Normalizes text by converting to lowercase, stripping punctuation, and collapsing repeated whitespace."""
+    if not text:
+        return ""
+    text = str(text).lower()
+    text = re.sub(r'[^a-z0-9\s]', '', text)
+    return ' '.join(text.split())
+
+def detect_duplicates(records: List[Dict[str, Any]]) -> List[List[Any]]:
+    """
+    Groups record IDs that share exact normalized title, description, and date.
+    Omits singleton groups (groups with < 2 records) and sorts IDs within every duplicate group.
+    Returns a deterministic list of duplicate ID groups sorted by the first ID in each group.
+    """
+    grouped_records: Dict[Tuple[str, str, str], List[Any]] = {}
+
+    for record in records:
+        rec_id = record.get("id")
+        norm_title = normalize_text(record.get("title", ""))
+        norm_desc = normalize_text(record.get("description", ""))
+        date = str(record.get("date", "")).strip()
+
+        key = (norm_title, norm_desc, date)
+        grouped_records.setdefault(key, []).append(rec_id)
+
+    # Filter out singletons (len < 2) and sort IDs within each duplicate group
+    duplicate_groups = [
+        sorted(group) for group in grouped_records.values() if len(group) > 1
+    ]
+
+    # Sort groups deterministically by the lowest ID in each group
+    duplicate_groups.sort(key=lambda group: group[0])
+
+    return duplicate_groups
+
+# Example Usage
+if __name__ == "__main__":
+    sample_records = [
+        {"id": 103, "title": " Acme   Corp   Report ", "description": "Q1   Financials...", "date": "2026-03-31"},
+        {"id": 101, "title": "ACME CORP REPORT", "description": "Q1 FINANCIALS", "date": "2026-03-31"},
+        {"id": 102, "title": "acme\t\ncorp   report!", "description": "q1  financials", "date": "2026-03-31"},
+        {"id": 104, "title": "Unique Project Title", "description": "Unique Description", "date": "2026-06-30"}
+    ]
+
+    duplicates = detect_duplicates(sample_records)
+    print("Duplicate ID Groups:", duplicates)
+
+```

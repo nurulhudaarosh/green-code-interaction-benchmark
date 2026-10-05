@@ -1,0 +1,146 @@
+## Original problem (unchanged)
+
+Given a list of positive integers `nums` (items are identified by index, so duplicates are distinct items) and a target `T ≥ 0`:
+
+1. Decide whether some subset of `nums` sums exactly to `T`. Each element is used at most once.
+2. If so, choose the subset with the **fewest elements**.
+3. Among those, choose the one whose **sorted index list is lexicographically smallest**.
+
+**Original required output:** the sorted list of indices, or `None` if `T` is unreachable. For `T = 0` the output is `[]`.
+
+## Added feature
+
+The function takes a new keyword argument, `include_summary`, which defaults to `False`.
+
+- **When it is `False` or not passed**, the return value is exactly the original: a `list` or `None`. Nothing else changes.
+- **When it is `True`**, the function returns a dict with two fields:
+  - `"indices"` is the original output, unchanged.
+  - `"operation_summary"` is a deterministic dict of counters.
+
+The summary counts these operations:
+- `item_decisions`: items examined, which is always `n`.
+- `items_skipped_too_large`: items larger than `T`, skipped outright.
+- `transition_checks`: `(item, sum)` pairs examined by the DP loop.
+- `unreachable_skips`: transitions skipped because `dp[s-a]` was unreachable.
+- `candidates_built`: new candidate solutions constructed.
+- `comparisons`: candidate-versus-existing comparisons on count and index tuple.
+- `dp_updates`: cells that were set or replaced.
+- `total_major_operations`: `item_decisions + transition_checks + comparisons`.
+
+```python
+"""
+PROBLEM (Minimum-Cardinality Subset Sum)
+    Given positive integers `nums` (identified by index; duplicates are distinct
+    items) and a target T >= 0, decide whether a subset sums exactly to T.
+    If possible, choose the subset with the FEWEST elements; among those, the one
+    whose sorted index list is LEXICOGRAPHICALLY SMALLEST.
+
+ORIGINAL OUTPUT (default, unchanged)
+    Sorted list of indices, or None if T is unreachable. T == 0 -> [].
+
+NEW FEATURE (opt-in: include_summary=True)
+    Returns {"indices": <original output>, "operation_summary": {...counters...}}.
+    With include_summary False/omitted, the return value is exactly the original.
+
+ALGORITHM
+    0/1 subset-sum DP over sums 0..T. dp[s] = (count, index_tuple): best way to
+    reach sum s using items i..n-1.
+      * Process items right-to-left, so prepending index i keeps tuples sorted.
+      * Iterate s downward (T..a) so each item is used at most once.
+      * Compare (count, tuple): fewest elements first, then lexicographic order.
+    Time O(n*T*k), memory O(T*k), where k is the answer size.
+"""
+
+from itertools import combinations, product
+
+
+def min_card_lex_subset(nums, target, include_summary=False):
+    # Deterministic operation counters (only reported when requested).
+    stats = {
+        "item_decisions": 0,
+        "items_skipped_too_large": 0,
+        "transition_checks": 0,
+        "unreachable_skips": 0,
+        "candidates_built": 0,
+        "comparisons": 0,
+        "dp_updates": 0,
+    }
+
+    def finish(indices):
+        if not include_summary:
+            return indices
+        stats["total_major_operations"] = (
+            stats["item_decisions"] + stats["transition_checks"] + stats["comparisons"]
+        )
+        return {"indices": indices, "operation_summary": dict(stats)}
+
+    if target < 0:
+        return finish(None)
+
+    dp = [None] * (target + 1)
+    dp[0] = (0, ())
+
+    for i in range(len(nums) - 1, -1, -1):
+        stats["item_decisions"] += 1
+        a = nums[i]
+        if a <= 0 or a > target:
+            stats["items_skipped_too_large"] += 1
+            continue
+        for s in range(target, a - 1, -1):
+            stats["transition_checks"] += 1
+            prev = dp[s - a]
+            if prev is None:
+                stats["unreachable_skips"] += 1
+                continue
+            cand = (prev[0] + 1, (i,) + prev[1])
+            stats["candidates_built"] += 1
+            cur = dp[s]
+            if cur is None:
+                dp[s] = cand
+                stats["dp_updates"] += 1
+            else:
+                stats["comparisons"] += 1
+                if cand < cur:
+                    dp[s] = cand
+                    stats["dp_updates"] += 1
+
+    result = None if dp[target] is None else list(dp[target][1])
+    return finish(result)
+
+
+def _brute(nums, target):
+    for k in range(len(nums) + 1):
+        for c in combinations(range(len(nums)), k):  # lexicographic order
+            if sum(nums[i] for i in c) == target:
+                return list(c)
+    return None
+
+
+def _self_test():
+    for n in range(6):
+        for nums in product(range(1, 5), repeat=n):
+            nums = list(nums)
+            for t in range(15):
+                expected = _brute(nums, t)
+                # Feature disabled / not requested: original output unchanged.
+                assert min_card_lex_subset(nums, t) == expected, (nums, t)
+                assert min_card_lex_subset(nums, t, include_summary=False) == expected
+                # Feature enabled: same indices plus a deterministic summary.
+                out = min_card_lex_subset(nums, t, include_summary=True)
+                assert out["indices"] == expected, (nums, t)
+                assert out == min_card_lex_subset(nums, t, include_summary=True)
+
+
+if __name__ == "__main__":
+    _self_test()
+    print(min_card_lex_subset([3, 34, 4, 12, 5, 2], 9))
+    # -> [2, 4]
+    print(min_card_lex_subset([3, 34, 4, 12, 5, 2], 9, include_summary=True))
+    # -> {'indices': [2, 4], 'operation_summary': {...}}
+    print(min_card_lex_subset([1, 2, 3], 7))
+    # -> None
+    print(min_card_lex_subset([4, 6], 0, include_summary=True))
+    # -> {'indices': [], 'operation_summary': {...}}
+```
+
+I haven't executed this version. Its self-test asserts that the default output matches brute force and that the summary is repeatable, so running the file will check both.

@@ -1,0 +1,85 @@
+```python
+import os
+import numpy as np
+from PIL import Image
+from pathlib import Path
+from typing import Dict, List, Union
+import warnings
+
+def compute_statistics(input_dir: Union[str, Path], 
+                       image_extensions: tuple = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.gif'),
+                       recursive: bool = False) -> Dict[str, Dict[str, np.ndarray]]:
+    """
+    Compute per-image 256-bin grayscale histograms plus mean and standard deviation
+    of pixel intensity for all images in a directory.
+    
+    Args:
+        input_dir: Path to directory containing images.
+        image_extensions: Tuple of valid image file extensions (case-insensitive).
+        recursive: If True, search subdirectories recursively.
+    
+    Returns:
+        Dictionary mapping filename (relative to input_dir) to a dict with keys:
+            - 'histogram': np.ndarray of shape (256,), dtype int64
+            - 'mean': float, mean pixel intensity
+            - 'std': float, standard deviation of pixel intensity
+    """
+    input_dir = Path(input_dir)
+    if not input_dir.is_dir():
+        raise NotADirectoryError(f"Not a directory: {input_dir}")
+    
+    # Normalize extensions to lowercase for comparison
+    extensions = tuple(ext.lower() for ext in image_extensions)
+    
+    # Gather candidate files
+    if recursive:
+        candidates = (p for p in input_dir.rglob('*') if p.is_file())
+    else:
+        candidates = (p for p in input_dir.iterdir() if p.is_file())
+    
+    image_paths = sorted(
+        p for p in candidates if p.suffix.lower() in extensions
+    )
+    
+    stats: Dict[str, Dict[str, np.ndarray]] = {}
+    
+    for img_path in image_paths:
+        try:
+            # Convert to 8-bit grayscale (mode 'L' = 8-bit pixels, black and white)
+            with Image.open(img_path) as img:
+                gray = img.convert('L')
+                pixels = np.asarray(gray, dtype=np.uint8)
+        except Exception as e:
+            warnings.warn(f"Skipping {img_path}: {e}")
+            continue
+        
+        # Flatten pixel array (handle multi-frame images by flattening all frames)
+        flat = pixels.ravel()
+        
+        # 256-bin histogram (one bin per possible intensity 0..255)
+        histogram = np.bincount(flat, minlength=256).astype(np.int64)
+        if histogram.size > 256:  # safety, shouldn't happen with uint8
+            histogram = histogram[:256]
+        
+        # Mean and standard deviation of intensity
+        mean = float(np.mean(flat))
+        std = float(np.std(flat))
+        
+        # Use path relative to input_dir as key for clarity
+        rel_key = str(img_path.relative_to(input_dir))
+        stats[rel_key] = {
+            'histogram': histogram,
+            'mean': mean,
+            'std': std,
+        }
+    
+    return stats
+
+
+# Example usage
+if __name__ == "__main__":
+    results = compute_statistics("./images")
+    for name, s in results.items():
+        print(f"{name}: mean={s['mean']:.2f}, std={s['std']:.2f}, "
+              f"hist_sum={s['histogram'].sum()}")
+```

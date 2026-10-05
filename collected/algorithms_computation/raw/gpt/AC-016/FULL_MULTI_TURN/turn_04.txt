@@ -1,0 +1,552 @@
+```python
+# Priority Queue Simulator
+#
+# Original problem:
+# Simulate a non-preemptive single-server queue.
+#
+# Each job is:
+#   (job_id, arrival_time, service_time, priority)
+#
+# Rules:
+#   1. Larger priority runs first.
+#   2. If priority ties, earlier arrival runs first.
+#   3. If priority and arrival time tie, smaller job ID runs first.
+#   4. The server is non-preemptive: a running job always finishes.
+#   5. If the queue is empty, time jumps to the next job's arrival.
+#
+# Original required output:
+#   completion_times
+#   waiting_times
+#   average_waiting_time
+#
+# Optional existing feature:
+#   When include_operation_summary=True, also return:
+#       operation_summary
+#
+# Difficult case added:
+# A worst-case-like structure for the O(n log n) algorithm.
+#
+# The test creates many jobs that:
+#   - arrive at different times,
+#   - frequently enter the heap while another job is running,
+#   - have many equal priorities,
+#   - require deterministic arrival-time and job-ID tie-breaking,
+#   - cause repeated heap push/pop operations.
+#
+# This exercises both:
+#   - the initial O(n log n) sorting,
+#   - and a large number of O(log n) heap operations.
+#
+# The implementation remains O(n log n), with no change to the original
+# output or tie-breaking rules.
+
+
+from heapq import heappush, heappop
+
+
+def simulate_priority_queue(jobs, include_operation_summary=False):
+    """
+    Simulate a non-preemptive single-server priority queue.
+
+    Input:
+        jobs:
+            Iterable of:
+            (job_id, arrival_time, service_time, priority)
+
+        include_operation_summary:
+            False -> return only the original required output.
+            True  -> additionally return operation_summary.
+
+    Returns:
+        {
+            "completion_times": {job_id: completion_time, ...},
+            "waiting_times": {job_id: waiting_time, ...},
+            "average_waiting_time": float
+        }
+
+    With include_operation_summary=True:
+        {
+            ...original fields...,
+            "operation_summary": {
+                "sort_operations": int,
+                "heap_pushes": int,
+                "heap_pops": int,
+                "idle_jumps": int,
+                "total_major_operations": int
+            }
+        }
+    """
+
+    jobs = list(jobs)
+
+    sort_operations = 0
+    heap_pushes = 0
+    heap_pops = 0
+    idle_jumps = 0
+
+    if not jobs:
+        result = {
+            "completion_times": {},
+            "waiting_times": {},
+            "average_waiting_time": 0.0,
+        }
+
+        if include_operation_summary:
+            result["operation_summary"] = {
+                "sort_operations": 0,
+                "heap_pushes": 0,
+                "heap_pops": 0,
+                "idle_jumps": 0,
+                "total_major_operations": 0,
+            }
+
+        return result
+
+    # Required arrival sorting.
+    arrivals = sorted(
+        jobs,
+        key=lambda job: (job[1], job[0])
+    )
+    sort_operations = 1
+
+    completion_times = {}
+    waiting_times = {}
+
+    # Heap ordering:
+    #   -priority     -> larger priority first
+    #   arrival_time  -> earlier arrival first
+    #   job_id        -> smaller ID first
+    heap = []
+
+    current_time = 0
+    next_index = 0
+    total_waiting_time = 0
+
+    while next_index < len(arrivals) or heap:
+
+        # If no job is available, jump to the next arrival.
+        if not heap:
+            if current_time < arrivals[next_index][1]:
+                current_time = arrivals[next_index][1]
+                idle_jumps += 1
+            else:
+                current_time = max(
+                    current_time,
+                    arrivals[next_index][1]
+                )
+
+        # Add every job that has arrived.
+        while (
+            next_index < len(arrivals)
+            and arrivals[next_index][1] <= current_time
+        ):
+            job_id, arrival_time, service_time, priority = arrivals[next_index]
+
+            heappush(
+                heap,
+                (
+                    -priority,
+                    arrival_time,
+                    job_id,
+                    service_time,
+                ),
+            )
+
+            heap_pushes += 1
+            next_index += 1
+
+        # Select according to the exact priority/tie rules.
+        _, arrival_time, job_id, service_time = heappop(heap)
+        heap_pops += 1
+
+        start_time = current_time
+        waiting_time = start_time - arrival_time
+
+        # Non-preemptive execution.
+        current_time += service_time
+        completion_time = current_time
+
+        completion_times[job_id] = completion_time
+        waiting_times[job_id] = waiting_time
+        total_waiting_time += waiting_time
+
+    average_waiting_time = total_waiting_time / len(jobs)
+
+    result = {
+        "completion_times": completion_times,
+        "waiting_times": waiting_times,
+        "average_waiting_time": average_waiting_time,
+    }
+
+    if include_operation_summary:
+        result["operation_summary"] = {
+            "sort_operations": sort_operations,
+            "heap_pushes": heap_pushes,
+            "heap_pops": heap_pops,
+            "idle_jumps": idle_jumps,
+            "total_major_operations": (
+                sort_operations
+                + heap_pushes
+                + heap_pops
+                + idle_jumps
+            ),
+        }
+
+    return result
+
+
+# ============================================================
+# Original-behavior tests
+# ============================================================
+
+def test_basic_priority():
+    jobs = [
+        (1, 0, 5, 1),
+        (2, 1, 3, 5),
+        (3, 2, 2, 3),
+    ]
+
+    result = simulate_priority_queue(jobs)
+
+    assert result == {
+        "completion_times": {
+            1: 5,
+            2: 8,
+            3: 10,
+        },
+        "waiting_times": {
+            1: 0,
+            2: 4,
+            3: 6,
+        },
+        "average_waiting_time": 10 / 3,
+    }
+
+
+def test_priority_tie_uses_earlier_arrival():
+    jobs = [
+        (1, 0, 1, 1),
+        (5, 1, 1, 5),
+        (2, 2, 1, 5),
+    ]
+
+    result = simulate_priority_queue(jobs)
+
+    assert result["completion_times"] == {
+        1: 1,
+        5: 2,
+        2: 3,
+    }
+
+    assert result["waiting_times"] == {
+        1: 0,
+        5: 0,
+        2: 0,
+    }
+
+
+def test_same_arrival_and_priority_uses_smaller_id():
+    jobs = [
+        (3, 0, 1, 1),
+        (5, 1, 2, 5),
+        (2, 1, 1, 5),
+    ]
+
+    result = simulate_priority_queue(jobs)
+
+    assert result["completion_times"] == {
+        3: 1,
+        2: 2,
+        5: 4,
+    }
+
+    assert result["waiting_times"] == {
+        3: 0,
+        2: 0,
+        5: 1,
+    }
+
+
+def test_non_preemptive():
+    jobs = [
+        (1, 0, 10, 1),
+        (2, 2, 1, 100),
+    ]
+
+    result = simulate_priority_queue(jobs)
+
+    assert result["completion_times"] == {
+        1: 10,
+        2: 11,
+    }
+
+    assert result["waiting_times"] == {
+        1: 0,
+        2: 8,
+    }
+
+
+# ============================================================
+# Difficult case 1:
+# Large heap with many simultaneous arrivals
+# ============================================================
+
+def test_worst_case_like_large_heap():
+    """
+    Many jobs arrive at time 0.
+
+    This creates a large heap immediately, forcing many heap operations.
+    Priorities are deliberately repeated so the deterministic tie rules
+    are exercised heavily.
+    """
+
+    n = 2000
+
+    jobs = [
+        (
+            job_id,
+            0,                  # same arrival time
+            1,                  # same service time
+            job_id % 17,       # many repeated priorities
+        )
+        for job_id in range(1, n + 1)
+    ]
+
+    result = simulate_priority_queue(
+        jobs,
+        include_operation_summary=True,
+    )
+
+    # Every job must complete exactly one time unit after the previous job.
+    assert len(result["completion_times"]) == n
+    assert len(result["waiting_times"]) == n
+
+    assert result["completion_times"][1] >= 1
+
+    # All jobs have been inserted and removed exactly once.
+    assert result["operation_summary"]["heap_pushes"] == n
+    assert result["operation_summary"]["heap_pops"] == n
+
+    # Sorting happened once.
+    assert result["operation_summary"]["sort_operations"] == 1
+
+    # Server starts at time 0, so no idle jump is necessary.
+    assert result["operation_summary"]["idle_jumps"] == 0
+
+
+# ============================================================
+# Difficult case 2:
+# Large waiting heap + deterministic tie-breaking
+# ============================================================
+
+def test_worst_case_like_tie_breaking():
+    """
+    All jobs have the same priority and arrival time.
+
+    Therefore the heap must process every job strictly by job ID.
+    """
+
+    n = 1500
+
+    # Reverse input order to ensure that the explicit sorting and heap
+    # tie-breaking, rather than input order, determines the result.
+    jobs = [
+        (job_id, 0, 1, 100)
+        for job_id in range(n, 0, -1)
+    ]
+
+    result = simulate_priority_queue(jobs)
+
+    # Since all jobs have the same priority and arrival time,
+    # smaller job IDs must run first.
+    for job_id in range(1, n + 1):
+        assert result["completion_times"][job_id] == job_id
+        assert result["waiting_times"][job_id] == job_id - 1
+
+
+# ============================================================
+# Difficult case 3:
+# Continuous arrivals while the server is busy
+# ============================================================
+
+def test_worst_case_like_continuous_arrivals():
+    """
+    A long first job keeps the server busy while many jobs arrive.
+
+    When the first job finishes, the heap contains many waiting jobs.
+    """
+
+    n = 1000
+
+    jobs = [(1, 0, n, 1)]
+
+    for job_id in range(2, n + 2):
+        # Every later job arrives while job 1 is running.
+        jobs.append(
+            (
+                job_id,
+                job_id - 1,
+                1,
+                job_id % 11,
+            )
+        )
+
+    result = simulate_priority_queue(
+        jobs,
+        include_operation_summary=True,
+    )
+
+    total_jobs = n + 1
+
+    assert len(result["completion_times"]) == total_jobs
+    assert len(result["waiting_times"]) == total_jobs
+
+    assert result["operation_summary"]["heap_pushes"] == total_jobs
+    assert result["operation_summary"]["heap_pops"] == total_jobs
+
+    # The first job starts immediately.
+    assert result["waiting_times"][1] == 0
+    assert result["completion_times"][1] == n
+
+
+# ============================================================
+# Difficult case 4:
+# Many equal priorities with different arrival times
+# ============================================================
+
+def test_worst_case_like_equal_priority_different_arrivals():
+    """
+    Equal priority means arrival time must decide the order.
+    Job IDs are intentionally arranged so that ID order disagrees
+    with arrival order.
+    """
+
+    jobs = [
+        (100, 0, 1, 50),
+        (90, 0, 1, 1),
+
+        # These all have equal priority.
+        (500, 1, 1, 20),
+        (10, 2, 1, 20),
+        (300, 3, 1, 20),
+        (20, 4, 1, 20),
+    ]
+
+    result = simulate_priority_queue(jobs)
+
+    # At time 1, job 500 is the only priority-20 job available.
+    # Later jobs cannot be selected before their arrival.
+    assert result["completion_times"] == {
+        100: 1,
+        500: 2,
+        10: 3,
+        300: 4,
+        20: 5,
+        90: 6,
+    }
+
+    assert result["waiting_times"] == {
+        100: 0,
+        500: 0,
+        10: 1,
+        300: 1,
+        20: 1,
+        90: 5,
+    }
+
+
+# ============================================================
+# Difficult case 5:
+# Worst-case-like structure plus operation summary
+# ============================================================
+
+def test_worst_case_operation_summary():
+    """
+    Every job arrives at time 0, so the heap becomes large.
+    This is a useful deterministic stress case for O(n log n).
+    """
+
+    n = 5000
+
+    jobs = [
+        (
+            n - job_id + 1,  # reverse IDs in input
+            0,
+            1,
+            job_id % 7,
+        )
+        for job_id in range(1, n + 1)
+    ]
+
+    result = simulate_priority_queue(
+        jobs,
+        include_operation_summary=True,
+    )
+
+    summary = result["operation_summary"]
+
+    assert summary["sort_operations"] == 1
+    assert summary["heap_pushes"] == n
+    assert summary["heap_pops"] == n
+    assert summary["idle_jumps"] == 0
+
+    assert summary["total_major_operations"] == (
+        1 + n + n
+    )
+
+
+# ============================================================
+# Empty-input tests
+# ============================================================
+
+def test_empty_input():
+    result = simulate_priority_queue([])
+
+    assert result == {
+        "completion_times": {},
+        "waiting_times": {},
+        "average_waiting_time": 0.0,
+    }
+
+
+def test_empty_input_with_operation_summary():
+    result = simulate_priority_queue(
+        [],
+        include_operation_summary=True,
+    )
+
+    assert result == {
+        "completion_times": {},
+        "waiting_times": {},
+        "average_waiting_time": 0.0,
+        "operation_summary": {
+            "sort_operations": 0,
+            "heap_pushes": 0,
+            "heap_pops": 0,
+            "idle_jumps": 0,
+            "total_major_operations": 0,
+        },
+    }
+
+
+# ============================================================
+# Run all tests
+# ============================================================
+
+if __name__ == "__main__":
+    test_basic_priority()
+    test_priority_tie_uses_earlier_arrival()
+    test_same_arrival_and_priority_uses_smaller_id()
+    test_non_preemptive()
+
+    test_worst_case_like_large_heap()
+    test_worst_case_like_tie_breaking()
+    test_worst_case_like_continuous_arrivals()
+    test_worst_case_like_equal_priority_different_arrivals()
+    test_worst_case_operation_summary()
+
+    test_empty_input()
+    test_empty_input_with_operation_summary()
+
+    print("All tests passed.")
+```

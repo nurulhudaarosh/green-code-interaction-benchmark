@@ -1,0 +1,84 @@
+Here is the implementation using Python's standard library:
+
+```python
+import os
+import re
+import unicodedata
+from typing import Any, Dict
+
+
+def normalize_corpus(
+    input_dir: str, 
+    output_dir: str, 
+    lowercase: bool = False
+) -> Dict[str, Any]:
+    """Recursively process .txt files from input_dir and mirror them into output_dir.
+
+    Applies:
+      1. Unicode NFC normalization
+      2. Whitespace collapsing (sequences of whitespace replaced by a single space, stripped)
+      3. Optional lowercasing
+
+    Returns:
+      A dictionary summarizing processed file count, total characters in/out,
+      and sorted per-file statistics.
+    """
+    whitespace_pattern = re.compile(r"\s+")
+    per_file_records = []
+    total_chars_in = 0
+    total_chars_out = 0
+
+    input_dir_abs = os.path.abspath(input_dir)
+    output_dir_abs = os.path.abspath(output_dir)
+
+    for root, _, files in os.walk(input_dir_abs):
+        for file in files:
+            if not file.endswith(".txt"):
+                continue
+
+            src_path = os.path.join(root, file)
+            rel_path = os.path.relpath(src_path, start=input_dir_abs)
+            dest_path = os.path.join(output_dir_abs, rel_path)
+
+            # Read source content
+            with open(src_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+
+            in_chars = len(content)
+            total_chars_in += in_chars
+
+            # 1. NFC normalization
+            normalized = unicodedata.normalize("NFC", content)
+
+            # 2. Whitespace collapsing & trimming
+            collapsed = whitespace_pattern.sub(" ", normalized).strip()
+
+            # 3. Optional lowercasing
+            if lowercase:
+                collapsed = collapsed.lower()
+
+            out_chars = len(collapsed)
+            total_chars_out += out_chars
+
+            # Mirror directory tree and write
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+            with open(dest_path, "w", encoding="utf-8") as f:
+                f.write(collapsed)
+
+            per_file_records.append({
+                "rel_path": rel_path,
+                "chars_in": in_chars,
+                "chars_out": out_chars,
+            })
+
+    # Sort results deterministically by relative path
+    per_file_records.sort(key=lambda item: item["rel_path"])
+
+    return {
+        "files_processed": len(per_file_records),
+        "total_chars_in": total_chars_in,
+        "total_chars_out": total_chars_out,
+        "per_file": per_file_records,
+    }
+
+```

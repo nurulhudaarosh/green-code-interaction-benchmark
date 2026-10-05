@@ -1,0 +1,97 @@
+```python 
+import os
+import cv2
+import numpy as np
+from pathlib import Path
+
+
+def _median_from_histogram(histogram, total_pixels):
+    """
+    Compute the median intensity from a 256-bin histogram.
+    
+    The median is the smallest intensity m such that the cumulative count
+    up to and including m is >= ceil(total_pixels / 2).
+    """
+    if total_pixels == 0:
+        return float('nan')
+    
+    # Cumulative sum across bins
+    cumulative = np.cumsum(histogram)
+    
+    # Threshold: for even counts, numpy.median averages the two middle values,
+    # but a common discrete convention is to take the first bin reaching
+    # half the pixels. Using (total + 1) // 2 gives the lower-middle element,
+    # matching np.median's behaviour for odd counts and picking the lower of
+    # the two middle values for even counts.
+    target = (total_pixels + 1) // 2
+    
+    # np.searchsorted returns the first index where cumulative >= target
+    median_bin = int(np.searchsorted(cumulative, target, side='left'))
+    
+    return float(median_bin)
+
+
+def compute_statistics(input_dir):
+    """
+    Compute per-image 256-bin grayscale histograms, mean, standard deviation,
+    and histogram-derived median of pixel intensity for all images in a directory.
+
+    Args:
+        input_dir (str): Path to directory containing images.
+
+    Returns:
+        dict: Maps image filename -> {
+            'histogram': np.ndarray of shape (256,),
+            'mean': float,
+            'std': float,
+            'median': float   # computed from the histogram
+        }
+    """
+    valid_exts = {'.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.webp'}
+
+    results = {}
+    input_path = Path(input_dir)
+
+    if not input_path.is_dir():
+        raise ValueError(f"'{input_dir}' is not a valid directory.")
+
+    for file_path in sorted(input_path.iterdir()):
+        if file_path.suffix.lower() not in valid_exts:
+            continue
+
+        img = cv2.imread(str(file_path), cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            print(f"Warning: could not read '{file_path.name}', skipping.")
+            continue
+
+        pixels = img.ravel()
+
+        # 256-bin histogram (counts of intensity levels 0-255)
+        histogram = np.bincount(pixels, minlength=256).astype(np.int64)
+
+        total_pixels = int(histogram.sum())
+
+        # Mean and standard deviation
+        mean = float(np.mean(pixels))
+        std = float(np.std(pixels))
+
+        # Median computed from the histogram alone
+        median = _median_from_histogram(histogram, total_pixels)
+
+        results[file_path.name] = {
+            'histogram': histogram,
+            'mean': mean,
+            'std': std,
+            'median': median,
+        }
+
+    return results
+
+
+if __name__ == '__main__':
+    import sys
+    stats = compute_statistics(sys.argv[1] if len(sys.argv) > 1 else '.')
+    for name, s in stats.items():
+        print(f"{name}: mean={s['mean']:.2f}, std={s['std']:.2f}, "
+              f"median={s['median']:.1f}, hist_sum={s['histogram'].sum()}")
+```

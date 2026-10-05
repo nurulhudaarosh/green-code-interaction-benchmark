@@ -1,0 +1,90 @@
+```python
+import os
+from PIL import Image, ImageOps
+
+
+def rotate_and_crop(input_dir, output_dir, angle_degrees, crop_size):
+    """
+    Rotate each image by angle_degrees using expand=True, then
+    center-crop or pad it to exactly crop_size.
+
+    Args:
+        input_dir (str): Directory containing input images.
+        output_dir (str): Directory for processed images.
+        angle_degrees (float): Rotation angle in degrees.
+        crop_size (tuple): Target size as (width, height).
+
+    Returns:
+        None
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    valid_extensions = {
+        ".jpg", ".jpeg", ".png", ".bmp",
+        ".tif", ".tiff", ".webp"
+    }
+
+    target_width, target_height = crop_size
+
+    for filename in os.listdir(input_dir):
+        input_path = os.path.join(input_dir, filename)
+
+        # Skip directories and unsupported files
+        if not os.path.isfile(input_path):
+            continue
+
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in valid_extensions:
+            continue
+
+        try:
+            with Image.open(input_path) as img:
+                # Preserve transparency when present
+                if img.mode in ("RGBA", "LA"):
+                    fill_color = (0, 0, 0, 0)
+                else:
+                    img = img.convert("RGB")
+                    fill_color = (0, 0, 0)
+
+                # IMPORTANT: expand=True prevents clipping of
+                # corners/content during rotation.
+                rotated = img.rotate(
+                    angle_degrees,
+                    resample=Image.Resampling.BICUBIC,
+                    expand=True,
+                    fillcolor=fill_color
+                )
+
+                # Center-crop if the rotated image is larger
+                # than the target size.
+                if rotated.width >= target_width and rotated.height >= target_height:
+                    result = ImageOps.fit(
+                        rotated,
+                        (target_width, target_height),
+                        method=Image.Resampling.BICUBIC,
+                        centering=(0.5, 0.5)
+                    )
+
+                else:
+                    # Create target-sized canvas for padding.
+                    result = Image.new(
+                        rotated.mode,
+                        (target_width, target_height),
+                        fill_color
+                    )
+
+                    # Center the rotated image on the canvas.
+                    x = (target_width - rotated.width) // 2
+                    y = (target_height - rotated.height) // 2
+
+                    if rotated.mode == "RGBA":
+                        result.paste(rotated, (x, y), rotated)
+                    else:
+                        result.paste(rotated, (x, y))
+
+                output_path = os.path.join(output_dir, filename)
+                result.save(output_path)
+
+        except Exception as e:
+            print(f"Skipping {filename}: {e}")
+```

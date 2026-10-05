@@ -1,0 +1,11 @@
+{
+  "task_id": "IM-012",
+  "model": "gpt",
+  "interaction": "FEATURE_ADDITION",
+  "turn": 1,
+  "saved_at": "2026-10-04T20:43:19.534067+00:00",
+  "response_sha256": "508ce5e1209f0b28756fcd28dbc475fd5b23f6128a75bcf4d3d036428bba24b1",
+  "code_sha256": "56e5d27d5ec23f5d6ad64548bc0f421458580a55b10dbd799d401bf3d833b7f4",
+  "raw_file": ".collection/raw/gpt/IM-012/FEATURE_ADDITION/turn_01.txt",
+  "code_file": ".collection/code/gpt/IM-012/FEATURE_ADDITION/initial.py"
+}

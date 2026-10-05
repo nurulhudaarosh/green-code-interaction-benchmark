@@ -1,0 +1,65 @@
+```python
+from PIL import Image
+import os
+import math
+
+
+def build_contact_sheet(input_dir, output_path, thumb_size, columns):
+    """
+    Tile all images from input_dir into a grid contact sheet.
+
+    Args:
+        input_dir (str): Directory containing input images.
+        output_path (str): Path for the output contact sheet.
+        thumb_size (tuple): Thumbnail size as (width, height).
+        columns (int): Number of columns in the grid.
+    """
+    valid_exts = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff"}
+
+    image_files = sorted(
+        f for f in os.listdir(input_dir)
+        if os.path.splitext(f)[1].lower() in valid_exts
+    )
+
+    if not image_files:
+        raise ValueError("No images found in input_dir.")
+
+    if columns <= 0:
+        raise ValueError("columns must be greater than 0.")
+
+    thumb_w, thumb_h = thumb_size
+
+    # Ceiling division so the final partial row is included.
+    rows = math.ceil(len(image_files) / columns)
+
+    sheet_w = columns * thumb_w
+    sheet_h = rows * thumb_h
+
+    # White background.
+    sheet = Image.new("RGB", (sheet_w, sheet_h), "white")
+
+    for index, filename in enumerate(image_files):
+        path = os.path.join(input_dir, filename)
+
+        with Image.open(path) as img:
+            img = img.convert("RGB")
+            img.thumbnail((thumb_w, thumb_h))
+
+            # Center the thumbnail inside its cell.
+            x = (index % columns) * thumb_w
+            y = (index // columns) * thumb_h
+
+            offset_x = (thumb_w - img.width) // 2
+            offset_y = (thumb_h - img.height) // 2
+
+            sheet.paste(img, (x + offset_x, y + offset_y))
+
+    # Create output directory if needed.
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+
+    sheet.save(output_path)
+```
+
+This keeps a fixed number of columns, automatically calculates the required number of rows, and includes any final partial row.

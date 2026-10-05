@@ -1,0 +1,245 @@
+# Restated problem
+
+**Traveling Salesperson Solver.** Given a complete, symmetric distance matrix for at most 14 cities, find the minimum-cost Hamiltonian cycle that starts and ends at city 0 and visits every other city exactly once. When several predecessors give the same cost, prefer the smaller predecessor.
+
+**Output:** the minimum cost, then the tour as a city sequence starting and ending at 0. The solver uses Held-Karp subset DP, is deterministic, and uses only the standard library.
+
+**Correction to my earlier example:** for the 4-city matrix, the code actually returns `80` with tour `[0, 2, 3, 1, 0]`, not `[0, 1, 3, 2, 0]`. Both tours cost 80. Closing the cycle picks the smallest final city `j`, and `j=1` beats `j=2`. The algorithm is unchanged, and the tests below assert the correct tour.
+
+# Difficult cases handled
+
+- **Worst-case structure for the complexity:** Held-Karp does the same work for every n = 14 input (about 8192 × 13 × 13 inner steps). The tests run n = 14 directly.
+- **Maximal ties:** an all-equal matrix (every tour is optimal) and an all-zero matrix, where every comparison is a tie.
+- **Ring metric at n = 14:** exactly two optimal tours, so the tie-break at closing is decisive.
+- **Tie-heavy pseudo-random matrices:** a deterministic LCG with values in 1..3, checked against brute force for cost and for the closing-city rule.
+- **Edge cases:** n = 0, 1, 2, 3, plus input validation (non-square, asymmetric, or more than 14 cities).
+
+```python
+import sys
+import time
+import unittest
+from itertools import permutations
+from typing import List, Tuple
+
+# ---------------------------------------------------------------------------
+# Traveling Salesperson Solver (Held-Karp)
+#
+# Problem: complete symmetric distance matrix, n <= 14 cities. Find the
+# minimum Hamiltonian cycle starting and ending at city 0. Ties prefer the
+# smaller predecessor.
+# Output: (minimum cost, tour) with tour like [0, 2, 3, 1, 0].
+#
+# dp[mask][j] = min cost of a path from 0 visiting exactly the cities in
+# `mask` (bit j-1 <-> city j) and ending at city j.
+#   Base:       dp[{j}][j] = dist[0][j]
+#   Transition: dp[mask][j] = min_i dp[mask\{j}][i] + dist[i][j]
+#   Answer:     min_j dp[full][j] + dist[j][0]
+# Ascending i / j with strict "<" keeps the smallest predecessor on ties.
+# Time O(2^(n-1) * n^2), memory O(2^(n-1) * n). Work is data-independent,
+# so every n = 14 input is a worst case.
+# ---------------------------------------------------------------------------
+
+MAX_CITIES = 14
+
+
+def validate(dist: List[List[float]]) -> None:
+    n = len(dist)
+    if n > MAX_CITIES:
+        raise ValueError("at most %d cities are supported" % MAX_CITIES)
+    for row in dist:
+        if len(row) != n:
+            raise ValueError("distance matrix must be square")
+    for i in range(n):
+        for j in range(i + 1, n):
+            if dist[i][j] != dist[j][i]:
+                raise ValueError("distance matrix must be symmetric")
+
+
+def held_karp(dist: List[List[float]]) -> Tuple[float, List[int]]:
+    validate(dist)
+    n = len(dist)
+    if n == 0:
+        return 0, []
+    if n == 1:
+        return 0, [0, 0]
+    if n == 2:
+        return dist[0][1] + dist[1][0], [0, 1, 0]
+
+    m = n - 1
+    full = (1 << m) - 1
+    INF = float("inf")
+
+    dp = [[INF] * n for _ in range(1 << m)]
+    parent = [[-1] * n for _ in range(1 << m)]
+
+    for j in range(1, n):
+        dp[1 << (j - 1)][j] = dist[0][j]
+        parent[1 << (j - 1)][j] = 0
+
+    for mask in range(1, full + 1):
+        row = dp[mask]
+        for j in range(1, n):
+            bit_j = 1 << (j - 1)
+            if not (mask & bit_j):
+                continue
+            prev_mask = mask ^ bit_j
+            if prev_mask == 0:
+                continue
+            prev_row = dp[prev_mask]
+            best, best_i = INF, -1
+            for i in range(1, n):          # ascending: smaller i wins ties
+                if not (prev_mask & (1 << (i - 1))):
+                    continue
+                cand = prev_row[i] + dist[i][j]
+                if cand < best:            # strict: keep first (smallest) i
+                    best, best_i = cand, i
+            row[j] = best
+            parent[mask][j] = best_i
+
+    best_cost, last = INF, -1
+    for j in range(1, n):                  # ascending: smaller j wins ties
+        cand = dp[full][j] + dist[j][0]
+        if cand < best_cost:
+            best_cost, last = cand, j
+
+    path = []
+    mask, cur = full, last
+    while cur != 0:
+        path.append(cur)
+        prev = parent[mask][cur]
+        mask ^= 1 << (cur - 1)
+        cur = prev
+    path.reverse()
+    return best_cost, [0] + path + [0]
+
+
+# ------------------------------- tests -------------------------------------
+
+def tour_cost(dist, tour):
+    return sum(dist[a][b] for a, b in zip(tour, tour[1:]))
+
+
+def all_tours(dist):
+    n = len(dist)
+    for p in permutations(range(1, n)):
+        t = [0] + list(p) + [0]
+        yield tour_cost(dist, t), t
+
+
+def lcg_matrix(n, seed, lo, hi):
+    """Deterministic symmetric matrix from a linear congruential generator."""
+    state = seed
+    d = [[0] * n for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1, n):
+            state = (state * 1103515245 + 12345) % (2 ** 31)
+            d[i][j] = d[j][i] = lo + (state >> 8) % (hi - lo + 1)
+    return d
+
+
+class TestHeldKarp(unittest.TestCase):
+    def check_valid(self, dist, cost, tour):
+        n = len(dist)
+        self.assertEqual(tour[0], 0)
+        self.assertEqual(tour[-1], 0)
+        self.assertEqual(sorted(tour[:-1]), list(range(n)))
+        self.assertEqual(tour_cost(dist, tour), cost)
+
+    def test_edge_cases(self):
+        self.assertEqual(held_karp([]), (0, []))
+        self.assertEqual(held_karp([[0]]), (0, [0, 0]))
+        self.assertEqual(held_karp([[0, 7], [7, 0]]), (14, [0, 1, 0]))
+        # n = 3: both tours cost 6; smaller closing city (1) wins -> 0 2 1 0
+        d3 = [[0, 1, 2], [1, 0, 3], [2, 3, 0]]
+        self.assertEqual(held_karp(d3), (6, [0, 2, 1, 0]))
+
+    def test_known_example(self):
+        d = [[0, 10, 15, 20], [10, 0, 35, 25],
+             [15, 35, 0, 30], [20, 25, 30, 0]]
+        self.assertEqual(held_karp(d), (80, [0, 2, 3, 1, 0]))
+
+    def test_validation(self):
+        with self.assertRaises(ValueError):
+            held_karp([[0, 1], [2, 0]])                    # asymmetric
+        with self.assertRaises(ValueError):
+            held_karp([[0, 1, 2], [1, 0]])                 # not square
+        with self.assertRaises(ValueError):
+            n = MAX_CITIES + 1
+            held_karp([[0] * n for _ in range(n)])         # too many cities
+
+    def test_worst_case_all_equal_n14(self):
+        # Every tour is optimal; every DP comparison is a tie.
+        n = MAX_CITIES
+        d = [[0 if i == j else 5 for j in range(n)] for i in range(n)]
+        t0 = time.time()
+        cost, tour = held_karp(d)
+        elapsed = time.time() - t0
+        self.assertEqual(cost, 5 * n)
+        # Smallest-predecessor rule at every state gives 0,13,12,...,1,0.
+        self.assertEqual(tour, [0] + list(range(n - 1, 0, -1)) + [0])
+        self.check_valid(d, cost, tour)
+        print("n=14 all-equal solved in %.2fs" % elapsed)
+
+    def test_worst_case_all_zero_n14(self):
+        n = MAX_CITIES
+        d = [[0] * n for _ in range(n)]
+        cost, tour = held_karp(d)
+        self.assertEqual(cost, 0)
+        self.assertEqual(tour, [0] + list(range(n - 1, 0, -1)) + [0])
+
+    def test_ring_metric_n14(self):
+        # Only two optimal tours (cost 14); smaller closing city 1 is chosen.
+        n = MAX_CITIES
+        d = [[min(abs(i - j), n - abs(i - j)) for j in range(n)]
+             for i in range(n)]
+        cost, tour = held_karp(d)
+        self.assertEqual(cost, n)
+        self.assertEqual(tour, [0] + list(range(n - 1, 0, -1)) + [0])
+
+    def test_tie_heavy_matrices_vs_bruteforce(self):
+        for n in range(3, 9):
+            for seed in range(1, 6):
+                d = lcg_matrix(n, seed * 7919 + n, 1, 3)   # many ties
+                cost, tour = held_karp(d)
+                self.check_valid(d, cost, tour)
+                tours = list(all_tours(d))
+                best = min(c for c, _ in tours)
+                self.assertEqual(cost, best)
+                # Closing rule: last city before returning to 0 is the
+                # smallest possible among all optimal tours.
+                min_last = min(t[-2] for c, t in tours if c == best)
+                self.assertEqual(tour[-2], min_last)
+
+    def test_n14_dense_structure_runs(self):
+        d = lcg_matrix(MAX_CITIES, 12345, 1, 100)
+        cost, tour = held_karp(d)
+        self.check_valid(d, cost, tour)
+        # Determinism: repeated runs give identical output.
+        self.assertEqual((cost, tour), held_karp(d))
+
+
+def main() -> None:
+    # Input (stdin): n, followed by n*n distances.
+    # Output: minimum cost on line 1, tour on line 2.
+    data = sys.stdin.read().split()
+    if not data:
+        return
+    n = int(data[0])
+    vals = [float(x) if ("." in x or "e" in x.lower()) else int(x)
+            for x in data[1:1 + n * n]]
+    dist = [vals[i * n:(i + 1) * n] for i in range(n)]
+    cost, tour = held_karp(dist)
+    print(cost)
+    print(" ".join(map(str, tour)))
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "--test":
+        unittest.main(argv=[sys.argv[0]], verbosity=2)
+    else:
+        main()
+```
+
+Run the tests with `python tsp.py --test`, or solve an instance by piping input to `python tsp.py`.
+
+I haven't executed this here, so the expected tours for the all-equal and ring cases come from tracing the tie-break rules by hand. If any test disagrees when you run it, tell me which one and I'll recheck the trace.

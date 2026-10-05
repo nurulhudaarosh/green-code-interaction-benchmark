@@ -1,0 +1,89 @@
+```python
+def summarize_logs(logs, repeated_error_threshold=2):
+    """
+    Summarize logs and detect repeated ERROR messages.
+
+    Expected format:
+        LEVEL: message
+
+    Returns:
+        {
+            "INFO": count,
+            "WARNING": count,
+            "ERROR": count,
+            "repeated_errors": {
+                "error message": count
+            }
+        }
+    """
+    summary = {
+        "INFO": 0,
+        "WARNING": 0,
+        "ERROR": 0,
+        "repeated_errors": {}
+    }
+
+    if not logs:
+        return summary
+
+    error_messages = {}
+
+    for line in logs:
+        if not isinstance(line, str):
+            continue
+
+        line = line.strip()
+        if not line:
+            continue
+
+        # Split only at the first colon so messages may contain colons.
+        parts = line.split(":", 1)
+
+        if len(parts) != 2:
+            continue
+
+        level = parts[0].strip().upper()
+        message = parts[1].strip()
+
+        if not level or not message:
+            continue
+
+        if level not in ("INFO", "WARNING", "ERROR"):
+            continue
+
+        summary[level] += 1
+
+        if level == "ERROR":
+            # Normalize whitespace and case for repeated-error detection.
+            normalized_message = " ".join(message.split()).casefold()
+            error_messages[normalized_message] = (
+                error_messages.get(normalized_message, 0) + 1
+            )
+
+    # Only include errors that meet the repetition threshold.
+    if repeated_error_threshold > 0:
+        summary["repeated_errors"] = {
+            message: count
+            for message, count in error_messages.items()
+            if count >= repeated_error_threshold
+        }
+
+    return summary
+
+
+if __name__ == "__main__":
+    logs = [
+        "INFO: Server started",
+        "ERROR: Database connection failed",
+        "ERROR: Database connection failed",
+        "WARNING: High memory usage",
+        "error: database connection failed",
+        "INFO: User logged in",
+        "ERROR: Request failed",
+        "MALFORMED LINE",
+        "   ",
+        None
+    ]
+
+    print(summarize_logs(logs, repeated_error_threshold=2))
+```

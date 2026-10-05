@@ -1,0 +1,91 @@
+from pathlib import Path
+import cv2
+import numpy as np
+import pandas as pd
+
+
+def analyze_brightness(
+    input_dir: str | Path,
+    dark_threshold: float = 85.0,
+    bright_threshold: float = 170.0,
+    valid_extensions: tuple[str, ...] = (
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".bmp",
+        ".tiff",
+        ".webp",
+    ),
+) -> pd.DataFrame:
+    """Analyzes all images in a directory for per-channel means, overall brightness,
+
+    and dark/normal/bright classification.
+
+    Parameters
+    ----------
+    input_dir : str or Path
+        Directory containing images to analyze.
+    dark_threshold : float
+        Upper bound for 'dark' classification (0-255 scale).
+    bright_threshold : float
+        Lower bound for 'bright' classification (0-255 scale).
+    valid_extensions : tuple of str
+        Image file extensions to search for (case-insensitive).
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with image metrics and brightness classifications.
+    """
+    dir_path = Path(input_dir)
+    if not dir_path.is_dir():
+        raise ValueError(f"Directory not found: {input_dir}")
+
+    results = []
+
+    # Find all supported image files recursively
+    image_paths = [
+        p
+        for p in dir_path.rglob("*")
+        if p.suffix.lower() in valid_extensions and p.is_file()
+    ]
+
+    for path in image_paths:
+        # Read image in BGR color space
+        img = cv2.imread(str(path))
+        if img is None:
+            continue  # Skip unreadable or corrupted image files
+
+        # cv2 loads images as BGR: Split channels
+        b_mean, g_mean, r_mean = cv2.mean(img)[:3]
+
+        # Standard ITU-R BT.601 weighted grayscale brightness formula
+        # Brightness = 0.299*R + 0.587*G + 0.114*B
+        overall_brightness = 0.299 * r_mean + 0.587 * g_mean + 0.114 * b_mean
+
+        # Classification
+        if overall_brightness < dark_threshold:
+            classification = "dark"
+        elif overall_brightness > bright_threshold:
+            classification = "bright"
+        else:
+            classification = "normal"
+
+        results.append(
+            {
+                "file_path": str(path.relative_to(dir_path)),
+                "red_mean": round(r_mean, 2),
+                "green_mean": round(g_mean, 2),
+                "blue_mean": round(b_mean, 2),
+                "brightness": round(overall_brightness, 2),
+                "classification": classification,
+            }
+        )
+
+    return pd.DataFrame(results)
+
+
+# Example Usage
+if __name__ == "__main__":
+    df = analyze_brightness("./path_to_images")
+    print(df.head())

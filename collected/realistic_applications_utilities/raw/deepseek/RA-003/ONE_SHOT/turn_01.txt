@@ -1,72 +1,218 @@
+Here's a complete student performance analyzer in one Python block:
+
 ```python
 import json
-import traceback
-from pathlib import Path
+import statistics
+from typing import Dict, List, Tuple, Optional
+from dataclasses import dataclass, field
+from enum import Enum
 
-DATASET_PATH = "dataset.json"
 
-def load_dataset(path):
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"'{path}' not found. Check the path.")
-    with open(p, "r", encoding="utf-8") as f:
-        return json.load(f)
+class GradeScale(Enum):
+    A_PLUS = 90
+    A = 85
+    B_PLUS = 80
+    B = 75
+    C_PLUS = 70
+    C = 65
+    D_PLUS = 60
+    D = 55
+    F = 0
 
-def safe_get(lst, index, default=None, label="list"):
-    """Access list[index] safely, logging instead of crashing."""
-    try:
-        return lst[index]
-    except IndexError:
-        print(f"IndexError: {label} has length {len(lst)}, but index {index} was requested.")
-        return default
 
-def diagnose_index_errors(data):
-    issues = []
-    interactions = data.get("interactions", []) if isinstance(data, dict) else []
+@dataclass
+class Student:
+    student_id: str
+    name: str
+    scores: Dict[str, float] = field(default_factory=dict)
 
-    if not interactions:
-        issues.append("'interactions' list is empty — nothing to advance through.")
-        return issues
+    def add_score(self, subject: str, score: float) -> None:
+        if not 0 <= score <= 100:
+            raise ValueError(f"Score must be between 0 and 100, got {score}")
+        self.scores[subject] = score
 
-    for i, interaction in enumerate(interactions):
-        try:
-            # Example of the kind of indexing that typically throws this error:
-            # accessing a sub-list/messages array without checking length first
-            messages = interaction.get("messages", []) if isinstance(interaction, dict) else []
-            if not messages:
-                issues.append(f"Interaction {i}: 'messages' is empty — indexing into it would fail.")
-                continue
+    def average(self) -> float:
+        return sum(self.scores.values()) / len(self.scores) if self.scores else 0.0
 
-            first_msg = safe_get(messages, 0, label=f"interaction[{i}].messages")
-            last_msg = safe_get(messages, len(messages) - 1, label=f"interaction[{i}].messages")
+    def letter_grade(self) -> str:
+        avg = self.average()
+        for grade in GradeScale:
+            if avg >= grade.value:
+                return grade.name.replace("_PLUS", "+")
+        return "F"
 
-            if first_msg is None or last_msg is None:
-                issues.append(f"Interaction {i}: could not safely access first/last message.")
 
-        except Exception:
-            issues.append(f"Interaction {i}: unexpected error:\n{traceback.format_exc()}")
+class StudentPerformanceAnalyzer:
+    def __init__(self):
+        self.students: Dict[str, Student] = {}
 
-    return issues
+    # ---------- CRUD ----------
+    def add_student(self, student_id: str, name: str) -> Student:
+        if student_id in self.students:
+            raise ValueError(f"Student {student_id} already exists")
+        student = Student(student_id, name)
+        self.students[student_id] = student
+        return student
 
-def main():
-    try:
-        data = load_dataset(DATASET_PATH)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"Failed to load dataset: {e}")
-        return
+    def remove_student(self, student_id: str) -> None:
+        if student_id not in self.students:
+            raise KeyError(f"Student {student_id} not found")
+        del self.students[student_id]
 
-    issues = diagnose_index_errors(data)
+    def get_student(self, student_id: str) -> Student:
+        if student_id not in self.students:
+            raise KeyError(f"Student {student_id} not found")
+        return self.students[student_id]
 
-    if issues:
-        print("Issues found (likely causes of 'list index out of range'):")
-        for issue in issues:
-            print(f"  - {issue}")
-    else:
-        print("No obvious index issues found — the error may be occurring elsewhere in your pipeline.")
-        print("Check any loop like `data[i]` or `list[-1]` where the list could be shorter than expected.")
+    def record_score(self, student_id: str, subject: str, score: float) -> None:
+        self.get_student(student_id).add_score(subject, score)
 
+    # ---------- Analytics ----------
+    def class_average(self, subject: Optional[str] = None) -> float:
+        if not self.students:
+            return 0.0
+        if subject:
+            vals = [s.scores[subject] for s in self.students.values() if subject in s.scores]
+            return statistics.mean(vals) if vals else 0.0
+        return statistics.mean([s.average() for s in self.students.values()])
+
+    def subject_statistics(self) -> Dict[str, Dict[str, float]]:
+        subjects = {subj for s in self.students.values() for subj in s.scores}
+        stats = {}
+        for subj in subjects:
+            vals = [s.scores[subj] for s in self.students.values() if subj in s.scores]
+            if vals:
+                stats[subj] = {
+                    "mean": statistics.mean(vals),
+                    "median": statistics.median(vals),
+                    "stdev": statistics.pstdev(vals) if len(vals) > 1 else 0.0,
+                    "min": min(vals),
+                    "max": max(vals),
+                    "count": len(vals),
+                }
+        return stats
+
+    def top_performers(self, n: int = 3) -> List[Tuple[str, float]]:
+        ranked = sorted(self.students.values(), key=lambda s: s.average(), reverse=True)
+        return [(s.name, round(s.average(), 2)) for s in ranked[:n]]
+
+    def at_risk_students(self, threshold: float = 60.0) -> List[Tuple[str, float]]:
+        return [(s.name, round(s.average(), 2))
+                for s in self.students.values() if s.average() < threshold]
+
+    def grade_distribution(self) -> Dict[str, int]:
+        dist: Dict[str, int] = {}
+        for s in self.students.values():
+            g = s.letter_grade()
+            dist[g] = dist.get(g, 0) + 1
+        return dist
+
+    def rank_students(self) -> List[Tuple[int, str, float, str]]:
+        ranked = sorted(self.students.values(), key=lambda s: s.average(), reverse=True)
+        return [(i + 1, s.name, round(s.average(), 2), s.letter_grade())
+                for i, s in enumerate(ranked)]
+
+    # ---------- Reports ----------
+    def generate_report(self) -> str:
+        lines = ["=" * 60, "STUDENT PERFORMANCE REPORT", "=" * 60]
+        lines.append(f"Total Students: {len(self.students)}\n")
+
+        lines.append("--- Rankings ---")
+        for rank, name, avg, grade in self.rank_students():
+            lines.append(f"  {rank}. {name:<20} Avg: {avg:>6.2f}  Grade: {grade}")
+
+        lines.append("\n--- Subject Statistics ---")
+        for subj, st in self.subject_statistics().items():
+            lines.append(f"  {subj}:")
+            lines.append(f"    Mean: {st['mean']:.2f} | Median: {st['median']:.2f} | "
+                         f"StDev: {st['stdev']:.2f}")
+            lines.append(f"    Min: {st['min']:.2f} | Max: {st['max']:.2f} | "
+                         f"Count: {st['count']}")
+
+        lines.append("\n--- Grade Distribution ---")
+        for grade, count in sorted(self.grade_distribution().items()):
+            lines.append(f"  {grade}: {'*' * count} ({count})")
+
+        lines.append("\n--- Top Performers ---")
+        for name, avg in self.top_performers(3):
+            lines.append(f"  {name}: {avg}")
+
+        lines.append("\n--- At-Risk Students (avg < 60) ---")
+        at_risk = self.at_risk_students()
+        if at_risk:
+            for name, avg in at_risk:
+                lines.append(f"  {name}: {avg}")
+        else:
+            lines.append("  None 🎉")
+
+        lines.append(f"\nClass Average: {self.class_average():.2f}")
+        lines.append("=" * 60)
+        return "\n".join(lines)
+
+    # ---------- Persistence ----------
+    def save(self, path: str) -> None:
+        data = {
+            sid: {"name": s.name, "scores": s.scores}
+            for sid, s in self.students.items()
+        }
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+
+    def load(self, path: str) -> None:
+        with open(path) as f:
+            data = json.load(f)
+        self.students.clear()
+        for sid, info in data.items():
+            s = Student(sid, info["name"])
+            s.scores = info["scores"]
+            self.students[sid] = s
+
+
+# ============================================================
+# DEMO
+# ============================================================
 if __name__ == "__main__":
-    main()
+    analyzer = StudentPerformanceAnalyzer()
+
+    # Sample data
+    sample = [
+        ("S001", "Alice Johnson", {"Math": 95, "Science": 92, "English": 88, "History": 90}),
+        ("S002", "Bob Smith",    {"Math": 72, "Science": 68, "English": 75, "History": 70}),
+        ("S003", "Carol White",  {"Math": 88, "Science": 91, "English": 85, "History": 89}),
+        ("S004", "David Brown",  {"Math": 55, "Science": 58, "English": 62, "History": 50}),
+        ("S005", "Eva Green",    {"Math": 78, "Science": 82, "English": 80, "History": 76}),
+        ("S006", "Frank Miller", {"Math": 45, "Science": 52, "English": 48, "History": 55}),
+    ]
+
+    for sid, name, scores in sample:
+        analyzer.add_student(sid, name)
+        for subj, sc in scores.items():
+            analyzer.record_score(sid, subj, sc)
+
+    print(analyzer.generate_report())
+
+    # Persistence demo
+    analyzer.save("students.json")
+    print("\nSaved to students.json")
+
+    new_analyzer = StudentPerformanceAnalyzer()
+    new_analyzer.load("students.json")
+    print(f"Loaded {len(new_analyzer.students)} students from file.")
+    print(f"Class average after reload: {new_analyzer.class_average():.2f}")
 ```
 
-This assumes a `messages` list nested inside each interaction — swap that key/structure for whatever your actual pipeline indexes into. If you can share the traceback with a line number, I can point at the exact line instead of guessing at the shape.
+### What's included
+
+| Feature | Description |
+|---|---|
+| **CRUD** | Add/remove students, record scores with validation (0–100) |
+| **Letter grades** | Automatic A+ through F mapping via `GradeScale` enum |
+| **Analytics** | Class average, per-subject mean/median/stdev/min/max |
+| **Rankings** | Sorted leaderboard with rank, average, letter grade |
+| **Top performers** | Configurable top-N report |
+| **At-risk detection** | Flags students below a threshold (default 60) |
+| **Grade distribution** | Histogram-style visualization |
+| **Report generator** | Formatted multi-section text report |
+| **Persistence** | JSON save/load round-trip |
+
+Run it directly and it will execute the demo with 6 sample students, print a full report, then save and reload from `students.json`.

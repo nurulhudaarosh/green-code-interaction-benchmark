@@ -1,0 +1,57 @@
+from collections import Counter
+import re
+
+
+def analyze_error_log(path: str, top_n: int = 10) -> dict:
+    """Reads a log file, extracts ERROR lines, normalizes messages by masking
+
+    IPs and numbers, and returns signature frequencies and top-N errors.
+    """
+    # Regex for standard [timestamp] LEVEL message structure
+    log_pattern = re.compile(
+        r"^\[(?P<timestamp>[^\]]+)\]\s+(?P<level>[A-Z]+)\s+(?P<message>.*)$"
+    )
+
+    # Patterns for normalization:
+    # IPv4 match must precede general number match to prevent partial masking
+    ipv4_pattern = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+    # Matches remaining numeric tokens/identifiers
+    num_pattern = re.compile(r"\b\d+\b")
+    # Collapses multiple consecutive whitespaces/tabs
+    space_pattern = re.compile(r"\s+")
+
+    counts = Counter()
+    malformed_count = 0
+
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            stripped = line.strip()
+            if not stripped:
+                malformed_count += 1
+                continue
+
+            match = log_pattern.match(stripped)
+            if not match:
+                malformed_count += 1
+                continue
+
+            level = match.group("level")
+            message = match.group("message").strip()
+
+            if level == "ERROR":
+                # Normalize: IPs -> numbers -> whitespace
+                norm_msg = ipv4_pattern.sub("<IP>", message)
+                norm_msg = num_pattern.sub("<N>", norm_msg)
+                norm_msg = space_pattern.sub(" ", norm_msg).strip()
+
+                counts[norm_msg] += 1
+
+    # Sort descending by count, then lexicographically by signature ascending
+    sorted_items = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    top_n_signatures = [[sig, count] for sig, count in sorted_items[:top_n]]
+
+    return {
+        "counts": dict(counts),
+        "malformed": malformed_count,
+        "top": top_n_signatures,
+    }

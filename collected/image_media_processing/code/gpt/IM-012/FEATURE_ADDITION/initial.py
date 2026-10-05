@@ -1,0 +1,43 @@
+from PIL import Image
+import os
+
+
+def letterbox_resize(input_dir, output_dir, target_size, pad_color=(0, 0, 0)):
+    os.makedirs(output_dir, exist_ok=True)
+
+    target_w, target_h = target_size
+
+    for filename in os.listdir(input_dir):
+        input_path = os.path.join(input_dir, filename)
+
+        if not os.path.isfile(input_path):
+            continue
+
+        try:
+            with Image.open(input_path) as img:
+                img = img.convert("RGB")
+                src_w, src_h = img.size
+
+                # Scale so the entire image fits inside target_size
+                scale = min(target_w / src_w, target_h / src_h)
+
+                new_w = max(1, int(round(src_w * scale)))
+                new_h = max(1, int(round(src_h * scale)))
+
+                # Resize while preserving aspect ratio
+                resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+                # Create target canvas
+                canvas = Image.new("RGB", (target_w, target_h), pad_color)
+
+                # Center the resized image
+                x = (target_w - new_w) // 2
+                y = (target_h - new_h) // 2
+
+                canvas.paste(resized, (x, y))
+
+                output_path = os.path.join(output_dir, filename)
+                canvas.save(output_path)
+
+        except (OSError, ValueError) as e:
+            print(f"Skipping {filename}: {e}")

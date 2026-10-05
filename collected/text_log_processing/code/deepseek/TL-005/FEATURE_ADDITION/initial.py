@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""
+Single-directory text normalizer.
+
+Reads all .txt files from an input directory, applies a series of
+normalization steps, and writes the cleaned files to an output directory
+with the same filenames.
+
+Usage:
+    python normalize.py <input_dir> <output_dir> [--encoding ENC] [--quiet]
+
+Normalization steps:
+    - Unicode NFKC normalization
+    - Normalize line endings to \n
+    - Strip trailing whitespace on each line
+    - Collapse runs of 3+ blank lines into a single blank line
+    - Strip leading/trailing whitespace from the whole document
+    - Ensure file ends with a single trailing newline
+    - Replace common "smart" punctuation with ASCII equivalents
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import unicodedata
+from pathlib import Path
+
+# Map common Unicode punctuation to ASCII equivalents.
+PUNCT_MAP = {
+    "\u2018": "'",  # ‘
+    "\u2019": "'",  # ’
+    "\u201a": "'",  # ‚
+    "\u201b": "'",  # ‛
+    "\u201c": '"',  # “
+    "\u201d": '"',  # ”
+    "\u201e": '"',  # „
+    "\u201f": '"',  # ‟
+    "\u2013": "-",  # –
+    "\u2014": "-",  # —
+    "\u2015": "-",  # ―
+    "\u2212": "-",  # −
+    "\u2026": "...",  # …
+    "\u00a0": " ",  # non-breaking space
+    "\u2007": " ",  # figure space
+    "\u202f": " ",  # narrow no-break space
+    "\u200b": "",   # zero-width space
+    "\ufeff": "",   # BOM / zero-width no-break space
+}
+
+_PUNCT_TABLE = str.maketrans(PUNCT_MAP)
+
+
+def normalize_text(text: str) -> str:
+    """Apply all normalization steps to a single string."""
+    # 1. Unicode NFKC normalization (compatibility composition).
+    text = unicodedata.normalize("NFKC", text)
+
+    # 2. Normalize all line endings to \n.
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    # 3. Replace smart punctuation with ASCII equivalents.
+    text = text.translate(_PUNCT_TABLE)
+
+    # 4. Strip trailing whitespace on each line (and collapse tabs/spaces? no).
+    lines = [line.rstrip() for line in text.split("\n")]
+
+    # 5. Collapse runs of 3+ blank lines into a single blank line.
+    collapsed: list[str] = []
+    blank_run = 0
+    for line in lines:
+        if line == "":
+            blank_run += 1
+            if blank_run <= 1:
+                collapsed.append(line)
+        else:
+            blank_run = 0
+            collapsed.append(line)
+    text = "\n".join(collapsed)
+
+    # 6. Strip leading/trailing whitespace of the whole document.
+    text = text.strip()
+
+    # 7. Ensure exactly one trailing newline (if non-empty).
+    if text:
+        text += "\n"
+
+    return text
+
+
+def normalize_file(src: Path, dst: Path, encoding: str) -> tuple[int, int]:
+    """Normalize one file. Returns (bytes_in, bytes_out)."""
+    raw = src.read_bytes()
+    try:
+        text = raw.decode(encoding)
+    except UnicodeDecodeError:
+        # Fall back to utf-8 with replacement to avoid crashing on stray bytes.
+        text = raw.decode("utf-8", errors="replace")
+
+    cleaned = normalize_text(text)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(cleaned, encoding="utf-8", newline="\n")
+    return len(raw), len(cleaned.encode("utf-8"))
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Normalize .txt files from an input dir into an output dir.",
+    )
+    parser.add_argument("input_dir", type=Path, help="Directory containing .txt files")
+    parser.add_argument("output_dir", type=Path, help="Directory for cleaned .txt files")
+    parser.add_argument(
+        "--encoding",
+        default="utf-8",
+        help="Input file encoding (default: utf-8). Output is always utf-8.",
+    )
+    parser.add_argument(
+        "--pattern",
+        default="*.txt",
+        help="Glob pattern for input files (default: *.txt)",
+    )
+    parser.add_argument("--quiet", action="store_true", help="Suppress per-file output")
+    args = parser.parse_args(argv)
+
+    in_dir: Path = args.input_dir
+    out_dir: Path = args.output_dir
+
+    if not in_dir.is_dir():
+        print(f"error: input directory not found: {in_dir}", file=sys.stderr)
+        return 2
+
+    files = sorted(p for p in in_dir.glob(args.pattern) if p.is_file())
+    if not files:
+        print(f"warning: no files matching {args.pattern!r} in {in_dir}", file=sys.stderr)
+        return 0
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    total_in = total_out = 0
+    count = 0
+    for src in files:
+        dst = out_dir / src.name
+        try:
+            n_in, n_out = normalize_file(src, dst, args.encoding)
+        except OSError as exc:
+            print(f"error: {src}: {exc}", file=sys.stderr)
+            continue
+
+        total_in += n_in
+        total_out += n_out
+        count += 1
+        if not args.quiet:
+            print(f"{src.name}: {n_in} -> {n_out} bytes")
+
+    if not args.quiet:
+        print(
+            f"\nNormalized {count} file(s): "
+            f"{total_in} bytes in, {total_out} bytes out."
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

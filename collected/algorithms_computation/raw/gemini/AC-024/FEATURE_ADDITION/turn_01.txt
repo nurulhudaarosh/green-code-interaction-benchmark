@@ -1,0 +1,93 @@
+### Problem Understanding
+
+The goal is to solve the interval scheduling / room allocation problem (often known as Meeting Rooms II with assignment tracking). Given a list of intervals represented by their start and end times, we must assign each original interval to a room ID ($0, 1, 2, \dots$) such that:
+
+1. No two overlapping intervals share the same room. An interval starting at time $S$ can reuse a room if the previous interval in that room ended at time $E \le S$.
+2. The total number of rooms used is minimized.
+3. The output preserves the exact order of the original input intervals, returning the room ID assigned to each interval.
+
+---
+
+### Key Constraints & Required Output
+
+* **Input:** A list of intervals, e.g., `intervals = [[start_i, end_i], ...]`.
+* **Overlap Condition:** Intervals $[S_1, E_1]$ and $[S_2, E_2]$ overlap if $S_1 < E_2$ and $S_2 < E_1$. Reusing a room when $E_1 \le S_2$ is valid.
+* **Minimization:** The assignment must use the minimum possible number of rooms (equal to the maximum number of overlapping intervals at any point in time).
+* **Deterministic Room Assignment:** To remain deterministic, when multiple existing rooms are available ($E_{\text{end}} \le S_{\text{next}}$), reuse the room with the smallest available room ID. If no existing room is free, assign a new room ID ($N$).
+* **Output:** An array of integers of length $N$ (matching the original input size), where `output[i]` is the room ID assigned to `intervals[i]`.
+
+---
+
+### Algorithm Description
+
+1. **Track Original Indices:** Pair each interval with its original index `(start, end, original_index)`.
+2. **Sort:** Sort the indexed intervals primarily by `start` time.
+3. **Min-Heap for Room Management:** Use a min-heap storing tuples `(end_time, room_id)` representing when each active room becomes free. In addition, maintain a min-heap of `available_room_ids` to ensure we always pick the lowest free room ID.
+4. **Process Intervals:** Iterate through the sorted intervals:
+* Pop all rooms from the active heap whose `end_time <= start_time` and push their `room_id`s into `available_room_ids`.
+* If `available_room_ids` is non-empty, pop the smallest available room ID.
+* Otherwise, allocate a new room ID equal to `total_rooms_created`.
+* Assign the room ID to the current interval at its `original_index`.
+* Push `(end_time, room_id)` back onto the active heap.
+
+
+5. **Return Result:** Return the room assignments mapped back to original interval order.
+
+---
+
+### Deterministic Python Implementation
+
+```python
+import heapq
+
+def assign_rooms(intervals: list[list[int]]) -> list[int]:
+    """
+    Assigns each interval to a room such that no overlapping intervals share a room,
+    minimizing total rooms used and preserving the original order.
+    """
+    if not intervals:
+        return []
+
+    # Attach original indices: (start, end, original_index)
+    indexed_intervals = [(start, end, i) for i, (start, end) in enumerate(intervals)]
+    
+    # Sort primarily by start time
+    indexed_intervals.sort(key=lambda x: x[0])
+
+    # Min-heap for active rooms: (end_time, room_id)
+    active_rooms = []
+    
+    # Min-heap for free room IDs to reuse the smallest available room ID
+    available_room_ids = []
+    
+    room_assignments = [0] * len(intervals)
+    next_new_room_id = 0
+
+    for start, end, original_idx in indexed_intervals:
+        # Free up rooms whose interval has ended at or before current start time
+        while active_rooms and active_rooms[0][0] <= start:
+            _, freed_room_id = heapq.heappop(active_rooms)
+            heapq.heappush(available_room_ids, freed_room_id)
+
+        # Pick the smallest available room ID or create a new one
+        if available_room_ids:
+            assigned_room_id = heapq.heappop(available_room_ids)
+        else:
+            assigned_room_id = next_new_room_id
+            next_new_room_id += 1
+
+        # Record assignment and update active rooms heap
+        room_assignments[original_idx] = assigned_room_id
+        heapq.heappush(active_rooms, (end, assigned_room_id))
+
+    return room_assignments
+
+
+# Example Usage:
+if __name__ == "__main__":
+    test_intervals = [[0, 30], [5, 10], [15, 20], [10, 30]]
+    result = assign_rooms(test_intervals)
+    print("Intervals:", test_intervals)
+    print("Room Assignments:", result)  # Output: [0, 1, 1, 1]
+
+```

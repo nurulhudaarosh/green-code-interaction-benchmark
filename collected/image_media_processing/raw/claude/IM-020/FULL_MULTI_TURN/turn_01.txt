@@ -1,0 +1,150 @@
+```python
+Here's the full code (also saved as `analyze_brightness.py`):
+
+```python
+"""Brightness analysis for a directory of images.
+
+For every image found in `input_dir`, compute:
+  - per-channel means (R, G, B), on a 0-255 scale
+  - overall grayscale brightness (ITU-R BT.601 luma), on a 0-255 scale
+  - a "dark" / "normal" / "bright" classification
+
+Requires: Pillow, numpy
+    pip install pillow numpy
+"""
+
+import argparse
+import csv
+import sys
+from pathlib import Path
+
+import numpy as np
+from PIL import Image, ImageOps, UnidentifiedImageError
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
+
+# Thresholds on the 0-255 grayscale brightness.
+DARK_THRESHOLD = 85      # brightness < 85         -> "dark"
+BRIGHT_THRESHOLD = 170   # brightness > 170        -> "bright"
+                         # otherwise               -> "normal"
+
+# ITU-R BT.601 luma weights (same ones Pillow uses for convert("L")).
+LUMA_WEIGHTS = np.array([0.299, 0.587, 0.114])
+
+
+def classify_brightness(brightness, dark=DARK_THRESHOLD, bright=BRIGHT_THRESHOLD):
+    """Map a 0-255 brightness value to 'dark', 'normal' or 'bright'."""
+    if brightness < dark:
+        return "dark"
+    if brightness > bright:
+        return "bright"
+    return "normal"
+
+
+def _load_rgb_array(path):
+    """Load an image as an (H, W, 3) float array in RGB.
+
+    Respects EXIF orientation, flattens transparency onto a white
+    background (so fully transparent pixels don't read as black), and
+    expands grayscale / palette images to three channels.
+    """
+    with Image.open(path) as img:
+        img = ImageOps.exif_transpose(img)
+        if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+            rgba = img.convert("RGBA")
+            background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+            img = Image.alpha_composite(background, rgba)
+        rgb = img.convert("RGB")
+        return np.asarray(rgb, dtype=np.float64)
+
+
+def analyze_image(path):
+    """Return a dict of brightness stats for a single image file."""
+    pixels = _load_rgb_array(path)
+    r_mean, g_mean, b_mean = pixels.reshape(-1, 3).mean(axis=0)
+    brightness = float(np.dot([r_mean, g_mean, b_mean], LUMA_WEIGHTS))
+    return {
+        "filename": Path(path).name,
+        "mean_r": round(float(r_mean), 2),
+        "mean_g": round(float(g_mean), 2),
+        "mean_b": round(float(b_mean), 2),
+        "brightness": round(brightness, 2),
+        "category": classify_brightness(brightness),
+    }
+
+
+def analyze_brightness(input_dir):
+    """Analyze every image in `input_dir` (non-recursive).
+
+    Returns a list of dicts, sorted by filename, each with keys:
+        filename, mean_r, mean_g, mean_b, brightness, category
+
+    Files that can't be read as images are not skipped silently: they
+    appear in the result with an "error" key and no statistics.
+    """
+    input_path = Path(input_dir)
+    if not input_path.is_dir():
+        raise NotADirectoryError(f"Not a directory: {input_dir}")
+
+    files = sorted(
+        p for p in input_path.iterdir()
+        if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+    )
+
+    results = []
+    for path in files:
+        try:
+            results.append(analyze_image(path))
+        except (UnidentifiedImageError, OSError, ValueError) as exc:
+            results.append({"filename": path.name, "error": str(exc)})
+    return results
+
+
+def _print_table(results):
+    header = f"{'file':<32} {'R':>7} {'G':>7} {'B':>7} {'bright':>8}  category"
+    print(header)
+    print("-" * len(header))
+    for row in results:
+        if "error" in row:
+            print(f"{row['filename']:<32} ERROR: {row['error']}")
+        else:
+            print(
+                f"{row['filename']:<32} {row['mean_r']:>7.2f} {row['mean_g']:>7.2f} "
+                f"{row['mean_b']:>7.2f} {row['brightness']:>8.2f}  {row['category']}"
+            )
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Analyze image brightness in a directory.")
+    parser.add_argument("input_dir", help="Directory containing images")
+    parser.add_argument("--csv", metavar="PATH", help="Also write results to a CSV file")
+    args = parser.parse_args(argv)
+
+    try:
+        results = analyze_brightness(args.input_dir)
+    except NotADirectoryError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
+    if not results:
+        print("No images found.")
+        return 0
+
+    _print_table(results)
+
+    if args.csv:
+        fields = ["filename", "mean_r", "mean_g", "mean_b", "brightness", "category", "error"]
+        with open(args.csv, "w", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(results)
+        print(f"\nWrote {args.csv}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+Usage: `python analyze_brightness.py ./photos --csv results.csv`, or import it and call `analyze_brightness("./photos")` to get the list of dicts.
+```

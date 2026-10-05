@@ -1,0 +1,496 @@
+from __future__ import annotations
+import json
+import math
+import operator
+import re
+from dataclasses import dataclass, field
+from typing import Any, Callable, Iterable
+
+# ───────────── Path resolution ─────────────
+
+class _Missing:
+    def __repr__(self): return "<MISSING>"
+MISSING = _Missing()
+
+
+@dataclass(frozen=True)
+class Hit:
+    path: str
+    value: Any = MISSING
+    blocked_by: str | None = None
+    blocked_type: str | None = None
+
+    @property
+    def present(self) -> bool:
+        return self.value is not MISSING and self.blocked_by is None
+
+    @property
+    def blocked(self) -> bool:
+        return self.blocked_by is not None
+
+
+def split_path(path: str) -> list[tuple[str, bool]]:
+    """'a.b\\.c.*' -> [('a',F),('b.c',F),('*',T)]. Escapes: \\. \\* \\\\"""
+    segs, cur, escaped, i = [], [], False, 0
+    while i < len(path):
+        ch = path[i]
+        if ch == "\\" and i + 1 < len(path) and path[i + 1] in ".*\\":
+            cur.append(path[i + 1]); escaped = True; i += 2; continue
+        if ch == ".":
+            s = "".join(cur); segs.append((s, s == "*" and not escaped))
+            cur, escaped = [], False
+        else:
+            cur.append(ch)
+        i += 1
+    s = "".join(cur)
+    segs.append((s, s == "*" and not escaped))
+    return segs
+
+
+def _join(prefix: str, key: Any) -> str:
+    k = str(key).replace("\\", "\\\\").replace(".", "\\.")
+    return f"{prefix}.{k}" if prefix else k
+
+
+def resolve(cfg: Any, path: str) -> list[Hit]:
+    """Non-wildcard paths always yield exactly one Hit (present, missing, or blocked)."""
+    hits = [Hit("", cfg)]
+    for seg, wild in split_path(path):
+        nxt: list[Hit] = []
+        for h in hits:
+            if h.blocked:
+                nxt.append(h); continue
+            if not h.present:
+                nxt.append(Hit(_join(h.path, seg))); continue
+            node = h.value
+            if wild:
+                if isinstance(node, dict):
+                    nxt += [Hit(_join(h.path, k), v) for k, v in node.items()]
+                elif isinstance(node, (list, tuple)):
+                    nxt += [Hit(_join(h.path, i), v) for i, v in enumerate(node)]
+                else:
+                    nxt.append(Hit(_join(h.path, "*"), MISSING, h.path or "<root>", type(node).__name__))
+            elif isinstance(node, dict):
+                p = _join(h.path, seg)
+                nxt.append(Hit(p, node[seg]) if seg in node else Hit(p))
+            elif isinstance(node, (list, tuple)):
+                p = _join(h.path, seg)
+                try:
+                    idx = int(seg)
+                except ValueError:
+                    nxt.append(Hit(p, MISSING, h.path or "<root>", "list")); continue
+                nxt.append(Hit(p, node[idx]) if -len(node) <= idx < len(node) else Hit(p))
+            else:
+                nxt.append(Hit(_join(h.path, seg), MISSING, h.path or "<root>", type(node).__name__))
+        hits = nxt
+    return hits
+
+
+def get_path(cfg: Any, path: str, default: Any = None) -> Any:
+    for h in resolve(cfg, path):
+        if h.present:
+            return h.value
+    return default
+
+
+def exists(cfg: Any, path: str) -> bool:
+    return any(h.present for h in resolve(cfg, path))
+
+
+# ───────────── Type / bool helpers ─────────────
+
+TYPES: dict[str, type] = {"int": int, "float": float, "str": str, "bool": bool,
+                          "list": list, "dict": dict, "null": type(None)}
+_TRUE, _FALSE = {"true", "yes", "on", "1"}, {"false", "no", "off", "0"}
+
+
+def type_matches(v: Any, types: Iterable[type]) -> bool:
+    for t in types:
+        if t is bool:
+            if isinstance(v, bool): return True
+        elif t is int:
+            if isinstance(v, int) and not isinstance(v, bool): return True
+        elif t is float:
+            if isinstance(v, (int, float)) and not isinstance(v, bool): return True
+        elif isinstance(v, t):
+            return True
+    return False
+
+
+def as_bool(v: Any, coerce: bool = False) -> bool | None:
+    if isinstance(v, bool): return v
+    if coerce and isinstance(v, str):
+        s = v.strip().lower()
+        if s in _TRUE: return True
+        if s in _FALSE: return False
+    return None
+
+
+def strict_eq(a: Any, b: Any) -> bool:
+    if isinstance(a, bool) or isinstance(b, bool):
+        return isinstance(a, bool) and isinstance(b, bool) and a == b
+    return a == b
+
+
+def _is_num(v: Any) -> bool:
+    return type_matches(v, (int, float)) and not (isinstance(v, float) and math.isnan(v))
+
+
+# ───────────── Single-field rules ─────────────
+
+Rule = Callable[[Any], list[str]]
+
+
+def _blocked(h: Hit) -> str:
+    return f"'{h.path}' is unreachable: '{h.blocked_by}' is {h.blocked_type}, not an object/list"
+
+
+def check_field(c: Any, spec: dict) -> list[str]:
+    errs: list[str] = []
+    raw = spec.get("type", [])
+    types = [TYPES[t] for t in ([raw] if isinstance(raw, str) else raw)]
+    for h in resolve(c, spec["path"]):
+        if h.blocked:
+            errs.append(_blocked(h)); continue
+        if not h.present:
+            if spec.get("required"): errs.append(f"'{h.path}' is required")
+            continue
+        v, p = h.value, h.path
+
+        if types:
+            ok = type_matches(v, types)
+            if not ok and spec.get("coerce_bool") and bool in types:
+                ok = as_bool(v, coerce=True) is not None
+            if not ok:
+                errs.append(f"'{p}' must be {' or '.join(t.__name__ for t in types)}, got {type(v).__name__}")
+                continue
+
+        if "min" in spec or "max" in spec:
+            if not _is_num(v):
+                errs.append(f"'{p}' must be a number for range check, got {type(v).__name__}"
+                            + (" (bool is not a number)" if isinstance(v, bool) else ""))
+                continue
+            if "min" in spec and v < spec["min"]: errs.append(f"'{p}' must be >= {spec['min']}, got {v}")
+            if "max" in spec and v > spec["max"]: errs.append(f"'{p}' must be <= {spec['max']}, got {v}")
+
+        if ("min_len" in spec or "max_len" in spec) and hasattr(v, "__len__"):
+            n = len(v)
+            if n < spec.get("min_len", 0): errs.append(f"'{p}' length must be >= {spec['min_len']}, got {n}")
+            if "max_len" in spec and n > spec["max_len"]:
+                errs.append(f"'{p}' length must be <= {spec['max_len']}, got {n}")
+
+        if "enum" in spec and not any(strict_eq(v, a) for a in spec["enum"]):
+            errs.append(f"'{p}' must be one of {spec['enum']!r}, got {v!r}")
+
+        if "pattern" in spec and not (isinstance(v, str) and re.fullmatch(spec["pattern"], v)):
+            errs.append(f"'{p}' must match {spec.get('pattern_desc', spec['pattern'])}, got {v!r}")
+
+        if "requires" in spec and ("when" not in spec or strict_eq(v, spec["when"])):
+            errs += [f"'{p}' requires '{o}'" for o in spec["requires"] if not exists(c, o)]
+    return errs
+
+
+# ───────────── Conditions (used by cross-field rules) ─────────────
+
+_CMP = {"<": operator.lt, "<=": operator.le, ">": operator.gt, ">=": operator.ge}
+
+
+def _safe_cmp(op: str, a: Any, b: Any) -> bool:
+    """Bool-strict comparison; ordering only for number/number or str/str."""
+    if op == "==": return strict_eq(a, b)
+    if op == "!=": return not strict_eq(a, b)
+    if _is_num(a) and _is_num(b): return _CMP[op](a, b)
+    if isinstance(a, str) and isinstance(b, str): return _CMP[op](a, b)
+    return False
+
+
+_COND_OPS = {"eq": "==", "ne": "!=", "gt": ">", "ge": ">=", "lt": "<", "le": "<="}
+
+
+def eval_cond(c: Any, cond: dict) -> bool:
+    if "all" in cond: return all(eval_cond(c, x) for x in cond["all"])
+    if "any" in cond: return any(eval_cond(c, x) for x in cond["any"])
+    if "not" in cond: return not eval_cond(c, cond["not"])
+    present = [h.value for h in resolve(c, cond["path"]) if h.present]
+    if "exists" in cond: return bool(present) == cond["exists"]
+
+    def one(v: Any) -> bool:
+        for k, op in _COND_OPS.items():
+            if k in cond and not _safe_cmp(op, v, cond[k]): return False
+        if "in" in cond and not any(strict_eq(v, a) for a in cond["in"]): return False
+        if "truthy" in cond and bool(v) != cond["truthy"]: return False
+        return True
+
+    return any(one(v) for v in present)   # missing path => condition is False
+
+
+def describe(cond: dict) -> str:
+    return json.dumps(cond, sort_keys=True, default=str)
+
+
+# ───────────── Cross-field rules ─────────────
+
+def _present(c: Any, paths: list[str]) -> list[str]:
+    return [p for p in paths if exists(c, p)]
+
+
+def _msg(spec: dict, default: str) -> str:
+    return spec.get("message", default)
+
+
+def _x_requires_if(c, s):
+    if not eval_cond(c, s["if"]): return []
+    return [_msg(s, f"'{p}' is required when {describe(s['if'])}")
+            for p in s["then_require"] if not exists(c, p)]
+
+
+def _x_forbids_if(c, s):
+    if not eval_cond(c, s["if"]): return []
+    return [_msg(s, f"'{p}' must not be set when {describe(s['if'])}")
+            for p in s["then_forbid"] if exists(c, p)]
+
+
+def _x_if_then(c, s):
+    if eval_cond(c, s["if"]) and not eval_cond(c, s["then"]):
+        return [_msg(s, f"when {describe(s['if'])}, expected {describe(s['then'])}")]
+    return []
+
+
+def _x_all_or_none(c, s):
+    found = _present(c, s["paths"])
+    if 0 < len(found) < len(s["paths"]):
+        missing = [p for p in s["paths"] if p not in found]
+        return [_msg(s, f"{s['paths']} must be set together; missing {missing}")]
+    return []
+
+
+def _x_at_least_one(c, s):
+    return [] if _present(c, s["paths"]) else [_msg(s, f"At least one of {s['paths']} must be set")]
+
+
+def _x_exactly_one(c, s):
+    found = _present(c, s["paths"])
+    return [] if len(found) == 1 else [_msg(s, f"Exactly one of {s['paths']} must be set, found {found}")]
+
+
+def _x_mutually_exclusive(c, s):
+    found = _present(c, s["paths"])
+    return [_msg(s, f"Only one of {s['paths']} may be set, found {found}")] if len(found) > 1 else []
+
+
+def _x_compare(c, s):
+    op = s["op"]
+    if op not in ("<", "<=", ">", ">=", "==", "!="):
+        raise ValueError(f"bad compare op {op!r}")
+    lefts = [h for h in resolve(c, s["left"]) if h.present]
+    if "right_value" in s:
+        pairs = [(h.path, h.value, "right_value", s["right_value"]) for h in lefts]
+    else:
+        rights = [h for h in resolve(c, s["right"]) if h.present]
+        if len(rights) == 1:                       # one right value vs many lefts
+            rights = rights * len(lefts)
+        elif len(rights) != len(lefts):
+            return []                              # unpaired items: field rules report absence
+        pairs = [(l.path, l.value, r.path, r.value) for l, r in zip(lefts, rights)]
+    errs = []
+    for lp, lv, rp, rv in pairs:
+        if not _safe_cmp(op, lv, rv):
+            errs.append(_msg(s, f"'{lp}' ({lv!r}) must be {op} '{rp}' ({rv!r})"
+                                if rp != "right_value" else f"'{lp}' ({lv!r}) must be {op} {rv!r}"))
+    return errs
+
+
+def _x_unique(c, s):
+    seen: dict[str, str] = {}
+    errs = []
+    for h in resolve(c, s["path"]):
+        if not h.present: continue
+        key = json.dumps([type(h.value).__name__, h.value], sort_keys=True, default=str)
+        if key in seen:
+            errs.append(_msg(s, f"'{h.path}' duplicates '{seen[key]}' (value {h.value!r})"))
+        else:
+            seen[key] = h.path
+    return errs
+
+
+CROSS_TYPES: dict[str, Callable[[Any, dict], list[str]]] = {
+    "requires_if": _x_requires_if, "forbids_if": _x_forbids_if, "if_then": _x_if_then,
+    "all_or_none": _x_all_or_none, "at_least_one": _x_at_least_one,
+    "exactly_one": _x_exactly_one, "mutually_exclusive": _x_mutually_exclusive,
+    "compare": _x_compare, "unique": _x_unique,
+}
+_REQUIRED_KEYS = {
+    "requires_if": {"if", "then_require"}, "forbids_if": {"if", "then_forbid"},
+    "if_then": {"if", "then"}, "all_or_none": {"paths"}, "at_least_one": {"paths"},
+    "exactly_one": {"paths"}, "mutually_exclusive": {"paths"},
+    "compare": {"left", "op"}, "unique": {"path"},
+}
+
+
+def custom(message: str, predicate: Callable[[Any], bool]) -> Rule:
+    def rule(c):
+        try:
+            return [] if predicate(c) else [message]
+        except Exception as e:
+            return [f"{message} (check failed: {e})"]
+    return rule
+
+
+# ───────────── Validator ─────────────
+
+@dataclass
+class ValidationResult:
+    errors: list[str] = field(default_factory=list)
+    @property
+    def ok(self) -> bool: return not self.errors
+    def __str__(self) -> str: return "OK" if self.ok else "\n".join(f"- {e}" for e in self.errors)
+
+
+class ConfigValidator:
+    def __init__(self, fields: list[dict], cross: list[dict | Rule] | None = None):
+        self.fields, self.cross = fields, cross or []
+        for s in self.cross:                       # fail fast on malformed rules
+            if callable(s): continue
+            t = s.get("type")
+            if t not in CROSS_TYPES:
+                raise ValueError(f"unknown cross rule type {t!r}")
+            if _REQUIRED_KEYS[t] - s.keys():
+                raise ValueError(f"cross rule {t!r} missing keys {sorted(_REQUIRED_KEYS[t] - s.keys())}")
+            if t == "compare" and not ({"right", "right_value"} & s.keys()):
+                raise ValueError("compare needs 'right' or 'right_value'")
+
+    def validate(self, cfg: Any) -> ValidationResult:
+        res = ValidationResult()
+        for spec in self.fields:
+            try: res.errors += check_field(cfg, spec)
+            except Exception as e: res.errors.append(f"field rule {spec.get('path')!r} crashed: {e!r}")
+        for s in self.cross:
+            try:
+                res.errors += s(cfg) if callable(s) else CROSS_TYPES[s["type"]](cfg, s)
+            except Exception as e:
+                res.errors.append(f"cross rule {s.get('type', 'callable') if isinstance(s, dict) else 'callable'} crashed: {e!r}")
+        return res
+
+
+# ───────────── Rules as data (replace with yours) ─────────────
+
+FIELDS: list[dict] = [
+    {"path": "app.name", "required": True, "type": "str", "min_len": 1, "max_len": 64},
+    {"path": "app.env", "required": True, "enum": ["dev", "staging", "prod"]},
+    {"path": "app.debug", "type": "bool"},
+    {"path": "server.host", "required": True, "type": "str"},
+    {"path": "server.port", "required": True, "type": "int", "min": 1, "max": 65535},
+    {"path": "upstreams.*.host", "required": True, "type": "str"},
+    {"path": "upstreams.*.port", "required": True, "type": "int", "min": 1, "max": 65535},
+    {"path": "upstreams.*.weight", "type": ["int", "float"], "min": 0, "max": 100},
+    {"path": "db.url", "type": "str", "pattern": r"(postgresql|mysql|sqlite)://.+", "pattern_desc": "a supported DB URL"},
+    {"path": "db.pool_size", "type": "int", "min": 1, "max": 100},
+    {"path": "db.min_pool", "type": "int", "min": 1},
+    {"path": "tls.enabled", "type": "bool"},
+    {"path": "limits.min_port", "type": "int"},
+    {"path": "limits.max_port", "type": "int"},
+]
+
+CROSS: list[dict | Rule] = [
+    # conditional requirements / prohibitions
+    {"type": "requires_if", "if": {"path": "tls.enabled", "eq": True},
+     "then_require": ["tls.cert_path", "tls.key_path"]},
+    {"type": "forbids_if", "if": {"path": "tls.enabled", "eq": False},
+     "then_forbid": ["tls.cert_path", "tls.key_path"],
+     "message": "TLS paths must be removed when tls.enabled is false"},
+    {"type": "requires_if", "if": {"any": [{"path": "app.env", "in": ["staging", "prod"]},
+                                           {"path": "db.pool_size", "gt": 50}]},
+     "then_require": ["db.url"]},
+
+    # implications
+    {"type": "if_then", "if": {"path": "app.env", "eq": "prod"}, "then": {"path": "tls.enabled", "eq": True},
+     "message": "prod requires tls.enabled = true"},
+    {"type": "if_then", "if": {"path": "app.env", "eq": "prod"},
+     "then": {"not": {"path": "app.debug", "eq": True}}, "message": "debug must be off in prod"},
+
+    # group presence
+    {"type": "all_or_none", "paths": ["tls.cert_path", "tls.key_path"]},
+    {"type": "exactly_one", "paths": ["auth.api_key", "auth.oauth"]},
+
+    # field-vs-field and field-vs-constant
+    {"type": "compare", "left": "limits.min_port", "op": "<=", "right": "limits.max_port"},
+    {"type": "compare", "left": "db.min_pool", "op": "<=", "right": "db.pool_size"},
+    {"type": "compare", "left": "upstreams.*.port", "op": "!=", "right": "server.port",
+     "message": "an upstream port must differ from server.port"},
+    {"type": "compare", "left": "server.port", "op": ">=", "right_value": 1024,
+     "message": "server.port should be unprivileged (>= 1024)"},
+
+    # uniqueness across list items
+    {"type": "unique", "path": "upstreams.*.host"},
+
+    # escape hatch for anything declarative rules can't express
+    custom("sum of upstream weights must be <= 100",
+           lambda c: sum(h.value for h in resolve(c, "upstreams.*.weight") if h.present) <= 100),
+]
+
+
+# ───────────── Self-checks ─────────────
+
+def _errs(cfg):  # helper
+    return "\n".join(ConfigValidator(FIELDS, CROSS).validate(cfg).errors)
+
+
+if __name__ == "__main__":
+    v = ConfigValidator(FIELDS, CROSS)
+
+    good = {
+        "app": {"name": "svc", "env": "prod", "debug": False},
+        "server": {"host": "0.0.0.0", "port": 8080},
+        "upstreams": [{"host": "a", "port": 9001, "weight": 40}, {"host": "b", "port": 9002, "weight": 50}],
+        "db": {"url": "postgresql://u:p@localhost/db", "pool_size": 10, "min_pool": 2},
+        "tls": {"enabled": True, "cert_path": "/c.pem", "key_path": "/k.pem"},
+        "auth": {"api_key": "abc"},
+        "limits": {"min_port": 1000, "max_port": 2000},
+    }
+    assert v.validate(good).ok, v.validate(good)
+
+    bad = {
+        "app": {"name": "svc", "env": "prod", "debug": True},
+        "server": {"host": "h", "port": 80},
+        "upstreams": [{"host": "a", "port": 80, "weight": 70}, {"host": "a", "port": 9, "weight": 60}],
+        "db": {"pool_size": 5, "min_pool": 9},
+        "tls": {"enabled": True, "cert_path": "/c.pem"},
+        "auth": {"api_key": "a", "oauth": {}},
+        "limits": {"min_port": 5000, "max_port": 100},
+    }
+    out = _errs(bad); print("bad:\n" + out)
+    for expect in [
+        "'tls.key_path' is required when",                      # requires_if
+        "['tls.cert_path', 'tls.key_path'] must be set together",  # all_or_none
+        "'db.url' is required when",                            # requires_if w/ any-condition
+        "prod requires" if False else "debug must be off in prod",
+        "Exactly one of ['auth.api_key', 'auth.oauth']",
+        "'limits.min_port' (5000) must be <= 'limits.max_port' (100)",
+        "'db.min_pool' (9) must be <= 'db.pool_size' (5)",
+        "'upstreams.0.port' (80) must be != 'server.port' (80)",
+        "server.port should be unprivileged",
+        "'upstreams.1.host' duplicates 'upstreams.0.host'",
+        "sum of upstream weights must be <= 100",
+    ]:
+        assert expect in out, f"missing: {expect}"
+
+    # forbids_if + if_then (prod without TLS)
+    o = _errs({**good, "tls": {"enabled": False, "cert_path": "/c.pem"}})
+    assert "TLS paths must be removed" in o and "prod requires tls.enabled = true" in o
+
+    # bool strictness inside conditions/compare
+    assert not eval_cond({"x": 1}, {"path": "x", "eq": True})
+    assert eval_cond({"x": True}, {"path": "x", "eq": True})
+    assert not _safe_cmp("<=", True, 5) and not _safe_cmp("<", "a", 1)
+    assert not eval_cond({}, {"path": "x", "eq": 1}) and eval_cond({}, {"path": "x", "exists": False})
+
+    # wildcard fan-out and escaped keys still work
+    cfg = {"items": [{"id": 1}, {"id": 2}], "a.b": {"c": 3}}
+    assert get_path(cfg, "items.-1.id") == 2 and get_path(cfg, r"a\.b.c") == 3
+
+    # malformed rules fail fast
+    for badrule in [{"type": "nope"}, {"type": "compare", "left": "a", "op": "<"}, {"type": "unique"}]:
+        try: ConfigValidator([], [badrule]); raise SystemExit("should have raised")
+        except ValueError: pass
+
+    print("all checks passed")

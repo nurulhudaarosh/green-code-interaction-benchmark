@@ -1,0 +1,70 @@
+def process_assessments(data: list[dict], pass_mark: float = 50.0) -> dict:
+    """Processes assessment records with validation, pass/fail grading, and ranking."""
+    if not isinstance(data, list) or not data:
+        return {"status": "empty", "results": [], "malformed": []}
+
+    valid_results, malformed = [], []
+
+    for item in data:
+        if not isinstance(item, dict):
+            malformed.append({"item": item, "reason": "Not a dictionary"})
+            continue
+
+        student_id = item.get("id") or item.get("student_id")
+        score = item.get("score")
+
+        # Validate score (numeric, non-boolean, finite) and student identifier
+        if (
+            student_id is None
+            or score is None
+            or isinstance(score, bool)
+            or not isinstance(score, (int, float))
+        ):
+            malformed.append({"item": item, "reason": "Invalid ID or non-numeric score"})
+            continue
+
+        # Exact pass mark check: scores equal to pass_mark count as passing
+        valid_results.append(
+            {
+                "student_id": student_id,
+                "score": float(score),
+                "passed": score >= pass_mark,
+            }
+        )
+
+    # Handle case where all input data was malformed
+    if not valid_results:
+        return {"status": "all_malformed", "results": [], "malformed": malformed}
+
+    # Sort descending by score to handle ranking and ties
+    valid_results.sort(key=lambda x: x["score"], reverse=True)
+
+    # Standard Competition Ranking (1224 ranking for ties)
+    current_rank = 1
+    for i, res in enumerate(valid_results):
+        if i > 0 and res["score"] < valid_results[i - 1]["score"]:
+            current_rank = i + 1
+        res["rank"] = current_rank
+
+    return {
+        "status": "success",
+        "pass_mark": pass_mark,
+        "results": valid_results,
+        "malformed": malformed,
+    }
+
+
+# --- Example Usage ---
+if __name__ == "__main__":
+    sample_data = [
+        {"student_id": "A101", "score": 85},
+        {"student_id": "A102", "score": 50},  # Exact pass mark test
+        {"student_id": "A103", "score": 85},  # Tie test
+        {"student_id": "A104", "score": 42},  # Fail test
+        {"student_id": "A105", "score": "ninety"},  # Malformed: string score
+        "bad_entry",  # Malformed: non-dict
+        {"score": 75},  # Malformed: missing ID
+    ]
+
+    import pprint
+    pprint.pprint(process_assessments(sample_data, pass_mark=50))

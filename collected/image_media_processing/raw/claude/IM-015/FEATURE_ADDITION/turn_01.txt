@@ -1,0 +1,82 @@
+```python
+"""Split images into R/G/B grayscale files and merge them back together.
+
+Requires: Pillow  (pip install pillow)
+"""
+
+from pathlib import Path
+
+from PIL import Image
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+
+
+def split_channels(input_dir, output_dir):
+    """Split every image in input_dir into three grayscale channel images.
+
+    For an input named "photo.jpg", writes to output_dir:
+        photo_R.png, photo_G.png, photo_B.png
+    Each output is a single-channel ("L" mode) image where pixel brightness
+    equals the intensity of that color channel. PNG is used so the channel
+    data is saved losslessly.
+
+    Returns a list of (r_path, g_path, b_path) tuples, one per input image.
+    """
+    input_dir, output_dir = Path(input_dir), Path(output_dir)
+    if not input_dir.is_dir():
+        raise NotADirectoryError(f"Input directory not found: {input_dir}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    results = []
+    for path in sorted(input_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS:
+            continue
+
+        with Image.open(path) as img:
+            # Normalize any mode (RGBA, P, L, CMYK, ...) to plain RGB.
+            # Note: alpha is discarded; grayscale inputs yield identical channels.
+            r, g, b = img.convert("RGB").split()
+
+        out_paths = tuple(
+            output_dir / f"{path.stem}_{name}.png" for name in ("R", "G", "B")
+        )
+        for channel, out_path in zip((r, g, b), out_paths):
+            channel.save(out_path)
+        results.append(out_paths)
+
+    return results
+
+
+def merge_channels(r_path, g_path, b_path, output_path):
+    """Combine three grayscale images into one RGB image.
+
+    The files at r_path, g_path and b_path supply the red, green and blue
+    channels respectively. All three must have identical dimensions.
+    Use a lossless format (e.g. .png) for output_path to preserve exact values.
+
+    Returns the output Path.
+    """
+    channels = []
+    for p in (r_path, g_path, b_path):
+        with Image.open(p) as img:
+            channels.append(img.convert("L"))  # force single-channel
+
+    if not (channels[0].size == channels[1].size == channels[2].size):
+        sizes = [c.size for c in channels]
+        raise ValueError(f"Channel images must be the same size, got {sizes}")
+
+    merged = Image.merge("RGB", channels)
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    merged.save(output_path)
+    return output_path
+
+
+if __name__ == "__main__":
+    # Example round trip:
+    #   triples = split_channels("images", "channels")
+    #   r, g, b = triples[0]
+    #   merge_channels(r, g, b, "restored.png")
+    pass
+```

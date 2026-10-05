@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""Text normalizer for .txt files: whitespace + unicode cleanup, optional lowercase, stats."""
+import argparse
+import re
+import sys
+import unicodedata
+from collections import Counter
+from pathlib import Path
+
+PUNCT_MAP = {
+    "\u2018": "'", "\u2019": "'", "\u201A": "'", "\u201B": "'",
+    "\u201C": '"', "\u201D": '"', "\u201E": '"', "\u201F": '"',
+    "\u2013": "-", "\u2014": "-", "\u2212": "-", "\u2010": "-", "\u2011": "-",
+    "\u2026": "...",
+    "\u2022": "*",
+}
+ZW_CHARS = "\u200b\u200c\u200d\u2060\ufeff\u00ad"
+ZERO_WIDTH = dict.fromkeys(map(ord, ZW_CHARS), None)
+SPACES = re.compile(r"[\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000\t\f\v]")
+CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+LINE_BREAKS = re.compile(r"\r\n|\r|\u2028|\u2029")
+BLANK_RUNS = re.compile(r"\n{3,}")
+
+
+def normalize(text, ascii_punct=False, form="NFC", lower=False):
+    """Return (cleaned_text, Counter of changes made)."""
+    c = Counter()
+    nfx = unicodedata.normalize(form, text)
+    c["unicode_normalized"] = int(nfx != text)
+    text = nfx
+
+    c["zero_width_removed"] = sum(text.count(ch) for ch in ZW_CHARS)
+    text = text.translate(ZERO_WIDTH)
+
+    c["line_breaks_unified"] = len([m for m in LINE_BREAKS.findall(text) if m != "\n"])
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = text.replace("\u2028", "\n").replace("\u2029", "\n\n")
+
+    c["control_removed"] = len(CONTROL.findall(text))
+    text = CONTROL.sub("", text)
+
+    if ascii_punct:
+        c["punct_converted"] = sum(text.count(ch) for ch in PUNCT_MAP)
+        text = text.translate(str.maketrans(PUNCT_MAP))
+
+    c["odd_spaces_converted"] = len(SPACES.findall(text))
+    text = SPACES.sub(" ", text)
+
+    c["space_runs_collapsed"] = len(re.findall(r" {2,}", text))
+    text = re.sub(r" {2,}", " ", text)
+
+    lines = text.split("\n")
+    c["lines_trimmed"] = sum(1 for ln in lines if ln != ln.strip())
+    text = "\n".join(ln.strip() for ln in lines)
+
+    c["blank_runs_collapsed"] = len(BLANK_RUNS.findall(text))
+    text = BLANK_RUNS.sub("\n\n", text).strip()
+
+    if lower:
+        c["chars_lowercased"] = sum(1 for ch in text if ch.lower() != ch)
+        text = text.lower()
+
+    return (text + "\n" if text else ""), c
+
+
+def decode(raw: bytes) -> str:
+    if not raw:
+        return ""
+    for enc in ("utf-8-sig", "utf-16", "cp1252", "latin-1"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
+def collect(paths, out_dir):
+    skip_root = out_dir.resolve() if out_dir else None
+    for p in map(Path, paths):
+        if p.is_dir():
+            for f in sorted(p.rglob("*.txt")):
+                if f.name.endswith(".clean.txt"):
+                    continue
+                if skip_root and skip_root in f.resolve().parents:
+                    continue
+                yield f, f.relative_to(p)
+        elif p.is_file():
+            yield p, Path(p.name)
+        else:
+            print(f"skip {p}: not found", file=sys.stderr)
+
+
+def print_report(t: Counter, details: Counter):
+    w = 24
+    print("\n=== Stats ===")
+    for key, label in [
+        ("files", "Files processed"), ("changed", "Changed"),
+        ("unchanged", "Already clean"), ("empty", "Empty output"),
+        ("errors", "Errors/skipped"),
+    ]:
+        print(f"{label:<{w}}{t[key]}")
+    print(f"{'Bytes in -> out':<{w}}{t['bytes_in']} -> {t['bytes_out']} "
+          f"({t['bytes_in'] - t['bytes_out']:+d} saved)")
+    print(f"{'Chars in -> out':<{w}}{t['chars_in']} -> {t['chars_out']}")
+    shown = {k: v for k, v in details.items() if v}
+    if shown:
+        print("--- Changes ---")
+        for k, v in sorted(shown.items(), key=lambda kv: -kv[1]):
+            print(f"{k.replace('_', ' '):<{w}}{v}")
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Normalize .txt files")
+    ap.add_argument("paths", nargs="+", help="files or directories")
+    ap.add_argument("-i", "--in-place", action="store_true", help="overwrite originals")
+    ap.add_argument("-o", "--out-dir", help="mirror results here (default: <name>.clean.txt beside source)")
+    ap.add_argument("--ascii", action="store_true", help="convert smart quotes/dashes to ASCII")
+    ap.add_argument("--lower", action="store_true", help="lowercase all text")
+    ap.add_argument("--form", default="NFC", choices=["NFC", "NFD", "NFKC", "NFKD"])
+    ap.add_argument("--stats", action="store_true", help="print summary report")
+    ap.add_argument("-q", "--quiet", action="store_true", help="don't print per-file lines")
+    args = ap.parse_args()
+
+    out_dir = Path(args.out_dir) if args.out_dir else None
+    seen = set()
+    totals, details = Counter(), Counter()
+
+    for src, rel in collect(args.paths, out_dir):
+        if args.in_place:
+            dest = src
+        elif out_dir:
+            dest = out_dir / rel
+        else:
+            dest = src.with_name(src.stem + ".clean.txt")
+
+        key = dest.resolve()
+        if key in seen:
+            print(f"skip {src}: output collision at {dest}", file=sys.stderr)
+            totals["errors"] += 1
+            continue
+        seen.add(key)
+
+        try:
+            raw = src.read_bytes()
+            text = decode(raw)
+            cleaned, counts = normalize(text, args.ascii, args.form, args.lower)
+            out_bytes = cleaned.encode("utf-8")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(out_bytes)
+        except OSError as e:
+            print(f"skip {src}: {e}", file=sys.stderr)
+            totals["errors"] += 1
+            continue
+
+        totals["files"] += 1
+        totals["bytes_in"] += len(raw)
+        totals["bytes_out"] += len(out_bytes)
+        totals["chars_in"] += len(text)
+        totals["chars_out"] += len(cleaned)
+        totals["changed" if out_bytes != raw else "unchanged"] += 1
+        totals["empty"] += int(not cleaned)
+        details.update(counts)
+
+        if not args.quiet:
+            print(f"{src} -> {dest}")
+
+    if args.stats:
+        print_report(totals, details)
+
+
+if __name__ == "__main__":
+    main()

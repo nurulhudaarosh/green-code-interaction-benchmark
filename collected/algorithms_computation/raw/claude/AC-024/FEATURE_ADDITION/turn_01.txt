@@ -1,0 +1,86 @@
+## Problem
+
+Given a list of intervals `[start, end)`, assign each one a room ID so that no two overlapping intervals share a room. Minimize the number of rooms, and return the room ID for each interval in its **original input order**.
+
+## Key constraints
+
+- **Half-open intervals**: an interval ending at time `t` does not conflict with one starting at `t`, so the room can be reused when `prev_end <= next_start`.
+- **Minimality**: the number of rooms must equal the maximum number of simultaneously active intervals.
+- **Output order**: results must align with the original indices, not the sorted order.
+- **Determinism**: ties must be broken by fixed rules so the output is always identical for the same input.
+- **Edge cases**: empty input; zero-length intervals (`start == end`) occupy no time and never conflict, but still get a valid room.
+
+## Output
+
+A list `rooms` where `rooms[i]` is the room ID (0-based) for `intervals[i]`.
+
+## Algorithm
+
+1. Sort interval indices by `(start, end, original_index)`. The index tiebreak makes the order fully deterministic.
+2. Keep a min-heap of `(end_time, room_id)` for rooms in use.
+3. For each interval in sorted order:
+   - If the heap's top has `end_time <= start`, that room is free. Pop it and reuse it. Because the heap is keyed by `(end_time, room_id)`, the earliest-freed room, with the smallest ID on ties, is chosen.
+   - Otherwise open a new room with the next unused ID.
+   - Push `(end, room_id)` and record the room for the original index.
+4. Rooms are only added when every existing room is busy, so the total equals the peak overlap, which is optimal.
+
+Complexity: O(n log n) time, O(n) space.
+
+## Implementation
+
+```python
+import heapq
+from typing import List, Sequence, Tuple
+
+
+def assign_rooms(intervals: Sequence[Tuple[int, int]]) -> List[int]:
+    """Return rooms[i] = room ID for intervals[i], using the minimum number of rooms.
+
+    Intervals are half-open [start, end): an interval may reuse a room whose
+    previous interval ends at or before the new start.
+    """
+    n = len(intervals)
+    for i, (s, e) in enumerate(intervals):
+        if e < s:
+            raise ValueError(f"Interval {i} has end < start: {(s, e)}")
+
+    # Deterministic processing order: start, then end, then original index.
+    order = sorted(range(n), key=lambda i: (intervals[i][0], intervals[i][1], i))
+
+    rooms: List[int] = [0] * n
+    heap: List[Tuple[int, int]] = []  # (end_time, room_id)
+    next_room = 0
+
+    for i in order:
+        start, end = intervals[i]
+        if heap and heap[0][0] <= start:
+            _, room = heapq.heappop(heap)   # reuse earliest-freed room
+        else:
+            room = next_room                # all rooms busy: open a new one
+            next_room += 1
+        rooms[i] = room
+        heapq.heappush(heap, (end, room))
+
+    return rooms
+
+
+if __name__ == "__main__":
+    tests = [
+        [],
+        [(0, 30), (5, 10), (15, 20)],
+        [(1, 3), (3, 5), (5, 7)],           # touching endpoints reuse one room
+        [(5, 8), (1, 4), (2, 6), (4, 7)],   # unsorted input
+        [(2, 2), (2, 2), (2, 5)],           # zero-length intervals
+    ]
+    for t in tests:
+        r = assign_rooms(t)
+        print(t, "->", r, "rooms:", (max(r) + 1) if r else 0)
+```
+
+## Example outputs
+
+- `[(0,30),(5,10),(15,20)]` → `[0, 1, 1]` (2 rooms)
+- `[(1,3),(3,5),(5,7)]` → `[0, 0, 0]` (1 room)
+- `[(5,8),(1,4),(2,6),(4,7)]` → `[0, 1, 0, 1]`... let me verify by tracing: sorted order is `(1,4)`, `(2,6)`, `(4,7)`, `(5,8)`. `(1,4)` gets room 0; `(2,6)` overlaps, so room 1; `(4,7)` starts at 4 and room 0 frees at 4, so it reuses room 0; `(5,8)` finds room 1 free at 6 > 5 and room 0 busy until 7, so it opens room 2. The result is `[2, 0, 1, 0]` indexed by original position (3 rooms, matching a peak overlap of 3 at time 5).
+
+Correct traced output for that last case: `[2, 0, 1, 0]`.

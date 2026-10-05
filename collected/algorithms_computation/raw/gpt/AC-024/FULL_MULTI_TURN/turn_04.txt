@@ -1,0 +1,429 @@
+```python
+"""
+Minimum Room Assignment
+
+Problem:
+Assign every interval to a room so that overlapping intervals never share
+the same room. A room can be reused when its previous interval ends at or
+before the next interval starts. Minimize the number of rooms and return the
+room ID for every original interval.
+
+Original output:
+    (room_count, room_ids)
+
+Optional output:
+When operation_summary=True, return:
+    (room_count, room_ids, operation_summary)
+
+The optional summary contains deterministic counts of major operations.
+
+Rules:
+- Intervals use half-open semantics [start, end).
+- An interval ending at time t can share a room with one starting at t.
+- Every interval receives exactly one room.
+- Overlapping intervals never share a room.
+- The number of rooms is minimal.
+- Process intervals sorted by (start, end, original_index).
+- Use a min-heap keyed by (availability_time, room_id).
+- If several rooms are available at the same earliest time, choose the
+  smallest room ID.
+- Return room IDs in the original input order.
+- Invalid intervals with start > end raise ValueError.
+- Standard library only.
+- No randomness, network access, APIs, external services, or interaction.
+
+Difficult worst-case-like cases:
+1. Many intervals with highly overlapping ranges. This keeps many rooms in
+   the heap and exercises the O(n log n) heap operations.
+2. Many intervals with staggered start/end times. This repeatedly causes
+   room reuse while the heap still contains many occupied rooms.
+3. A large number of intervals with equal start times. This forces many
+   rooms to be created and exercises deterministic room-ID ordering.
+4. A large number of intervals whose end times become equal. This exercises
+   the heap's secondary room-ID tie-breaking.
+5. A large number of intervals already in reverse order. This exercises the
+   sorting step, which is part of the O(n log n) complexity.
+
+For all these cases, the implementation keeps the same algorithm:
+sort once, then process every interval with a min-heap. Therefore the
+overall complexity remains O(n log n), with O(n) auxiliary space.
+"""
+
+from heapq import heappop, heappush
+from typing import Dict, List, Sequence, Tuple, Union
+
+
+def minimum_room_assignment(
+    intervals: Sequence[Tuple[int, int]],
+    operation_summary: bool = False,
+) -> Union[
+    Tuple[int, List[int]],
+    Tuple[int, List[int], Dict[str, int]],
+]:
+    """
+    Assign all intervals to the minimum number of rooms.
+
+    Default output:
+        (room_count, room_ids)
+
+    With operation_summary=True:
+        (room_count, room_ids, summary)
+    """
+
+    n = len(intervals)
+
+    if n == 0:
+        if operation_summary:
+            return (
+                0,
+                [],
+                {
+                    "intervals_processed": 0,
+                    "rooms_created": 0,
+                    "rooms_reused": 0,
+                    "heap_pushes": 0,
+                    "heap_pops": 0,
+                    "sort_operations": 0,
+                },
+            )
+        return 0, []
+
+    for start, end in intervals:
+        if start > end:
+            raise ValueError(
+                "Interval start cannot be greater than its end."
+            )
+
+    # Sorting is intentionally part of the algorithm so that all difficult
+    # input arrangements are normalized deterministically.
+    ordered = sorted(
+        (start, end, index)
+        for index, (start, end) in enumerate(intervals)
+    )
+
+    # Heap key:
+    #   1. earliest availability time
+    #   2. smallest room ID
+    #
+    # This gives deterministic tie handling.
+    room_heap: List[Tuple[int, int]] = []
+
+    room_ids = [-1] * n
+    next_room_id = 0
+
+    intervals_processed = 0
+    rooms_created = 0
+    rooms_reused = 0
+    heap_pushes = 0
+    heap_pops = 0
+
+    for start, end, original_index in ordered:
+        intervals_processed += 1
+
+        # Reuse the earliest available room.
+        if room_heap and room_heap[0][0] <= start:
+            _, room_id = heappop(room_heap)
+            heap_pops += 1
+            rooms_reused += 1
+        else:
+            # Every existing room overlaps this interval, so a new room is
+            # necessary and the greedy choice is optimal.
+            room_id = next_room_id
+            next_room_id += 1
+            rooms_created += 1
+
+        room_ids[original_index] = room_id
+
+        heappush(room_heap, (end, room_id))
+        heap_pushes += 1
+
+    room_count = next_room_id
+
+    if not operation_summary:
+        return room_count, room_ids
+
+    summary = {
+        "intervals_processed": intervals_processed,
+        "rooms_created": rooms_created,
+        "rooms_reused": rooms_reused,
+        "heap_pushes": heap_pushes,
+        "heap_pops": heap_pops,
+        "sort_operations": 1,
+    }
+
+    return room_count, room_ids, summary
+
+
+# ----------------------------------------------------------------------
+# Tests
+# ----------------------------------------------------------------------
+
+def run_tests() -> None:
+
+    # ------------------------------------------------------------------
+    # 1. Basic behavior.
+    # ------------------------------------------------------------------
+    intervals = [
+        (0, 5),
+        (0, 10),
+        (5, 6),
+    ]
+
+    rooms, assignments = minimum_room_assignment(intervals)
+
+    assert rooms == 2
+    assert assignments == [0, 1, 0]
+
+    # ------------------------------------------------------------------
+    # 2. Exact deterministic tie-breaking.
+    # ------------------------------------------------------------------
+    intervals = [
+        (0, 5),   # room 0
+        (0, 5),   # room 1
+        (5, 6),   # both rooms available; choose room 0
+        (5, 7),   # room 1
+    ]
+
+    rooms, assignments = minimum_room_assignment(intervals)
+
+    assert rooms == 2
+    assert assignments == [0, 1, 0, 1]
+
+    # ------------------------------------------------------------------
+    # 3. Worst-case-like: every interval overlaps every other interval.
+    #
+    # This produces a heap containing O(n) rooms and exercises repeated
+    # O(log n) insertions without allowing any reuse.
+    # ------------------------------------------------------------------
+    n = 2000
+    intervals = [(0, 10**9) for _ in range(n)]
+
+    rooms, assignments, summary = minimum_room_assignment(
+        intervals,
+        operation_summary=True,
+    )
+
+    assert rooms == n
+    assert assignments == list(range(n))
+
+    assert summary["intervals_processed"] == n
+    assert summary["rooms_created"] == n
+    assert summary["rooms_reused"] == 0
+    assert summary["heap_pushes"] == n
+    assert summary["heap_pops"] == 0
+    assert summary["sort_operations"] == 1
+
+    # ------------------------------------------------------------------
+    # 4. Worst-case-like staggered intervals.
+    #
+    # Many rooms remain occupied while new intervals are introduced.
+    # This keeps the heap large while repeatedly performing reuse/new-room
+    # decisions.
+    # ------------------------------------------------------------------
+    n = 3000
+    intervals = []
+
+    for i in range(n):
+        # Every interval lasts long enough that several later intervals
+        # coexist, while some earlier rooms eventually become reusable.
+        start = i
+        end = i + 1000
+        intervals.append((start, end))
+
+    rooms, assignments, summary = minimum_room_assignment(
+        intervals,
+        operation_summary=True,
+    )
+
+    # At most 1000 intervals overlap at any one point.
+    assert rooms == 1000
+    assert len(assignments) == n
+    assert summary["intervals_processed"] == n
+    assert summary["heap_pushes"] == n
+    assert summary["rooms_created"] == 1000
+    assert summary["rooms_reused"] == n - 1000
+
+    # ------------------------------------------------------------------
+    # 5. Worst-case-like equal-start structure.
+    #
+    # All intervals start together, so every interval overlaps every
+    # other positive-length interval. Deterministic room IDs must follow
+    # the deterministic sorted order.
+    # ------------------------------------------------------------------
+    n = 1500
+    intervals = [(100, 200 + i) for i in range(n)]
+
+    rooms, assignments = minimum_room_assignment(intervals)
+
+    assert rooms == n
+    assert assignments == list(range(n))
+
+    # ------------------------------------------------------------------
+    # 6. Many equal availability times.
+    #
+    # Every first-stage interval ends at the same time. The next intervals
+    # must select rooms by the smallest room ID.
+    # ------------------------------------------------------------------
+    first_batch = [(0, 50) for _ in range(1000)]
+    second_batch = [(50, 51) for _ in range(1000)]
+
+    intervals = first_batch + second_batch
+
+    rooms, assignments, summary = minimum_room_assignment(
+        intervals,
+        operation_summary=True,
+    )
+
+    assert rooms == 1000
+
+    # The first batch gets rooms 0..999.
+    assert assignments[:1000] == list(range(1000))
+
+    # Every second-batch interval should reuse a room, and because all
+    # rooms have the same availability, the smallest room IDs are selected
+    # in order.
+    assert assignments[1000:] == list(range(1000))
+
+    assert summary["rooms_created"] == 1000
+    assert summary["rooms_reused"] == 1000
+
+    # ------------------------------------------------------------------
+    # 7. Reverse-sorted input.
+    #
+    # This specifically stresses the O(n log n) sorting stage while the
+    # assignment itself remains deterministic.
+    # ------------------------------------------------------------------
+    n = 2500
+    intervals = [(n - i, n - i + 2) for i in range(n)]
+
+    rooms, assignments, summary = minimum_room_assignment(
+        intervals,
+        operation_summary=True,
+    )
+
+    assert rooms == 2
+    assert len(assignments) == n
+    assert summary["intervals_processed"] == n
+    assert summary["sort_operations"] == 1
+
+    # ------------------------------------------------------------------
+    # 8. Reverse order with maximum overlap.
+    #
+    # Sorting must recover the correct chronological processing order.
+    # ------------------------------------------------------------------
+    n = 1200
+    intervals = [(i, n + i) for i in range(n)]
+    intervals.reverse()
+
+    rooms, assignments = minimum_room_assignment(intervals)
+
+    assert rooms == n
+
+    # Every pair overlaps because each interval starts before the previous
+    # group has ended.
+    assert sorted(assignments) == list(range(n))
+
+    # ------------------------------------------------------------------
+    # 9. Boundary reuse: end == start.
+    # ------------------------------------------------------------------
+    n = 500
+    intervals = [(i, i + 1) for i in range(n)]
+
+    rooms, assignments, summary = minimum_room_assignment(
+        intervals,
+        operation_summary=True,
+    )
+
+    assert rooms == 1
+    assert assignments == [0] * n
+    assert summary["rooms_created"] == 1
+    assert summary["rooms_reused"] == n - 1
+
+    # ------------------------------------------------------------------
+    # 10. Empty input preserves original behavior.
+    # ------------------------------------------------------------------
+    assert minimum_room_assignment([]) == (0, [])
+
+    rooms, assignments, summary = minimum_room_assignment(
+        [],
+        operation_summary=True,
+    )
+
+    assert rooms == 0
+    assert assignments == []
+    assert summary == {
+        "intervals_processed": 0,
+        "rooms_created": 0,
+        "rooms_reused": 0,
+        "heap_pushes": 0,
+        "heap_pops": 0,
+        "sort_operations": 0,
+    }
+
+    # ------------------------------------------------------------------
+    # 11. Verify the core validity rule on a difficult mixed case.
+    # ------------------------------------------------------------------
+    intervals = [
+        (20, 40),
+        (0, 100),
+        (10, 30),
+        (30, 50),
+        (40, 60),
+        (5, 25),
+        (50, 70),
+        (25, 35),
+    ]
+
+    rooms, assignments = minimum_room_assignment(intervals)
+
+    assert len(assignments) == len(intervals)
+
+    for i in range(len(intervals)):
+        for j in range(i + 1, len(intervals)):
+            s1, e1 = intervals[i]
+            s2, e2 = intervals[j]
+
+            # Half-open intervals overlap exactly when this is true.
+            overlap = max(s1, s2) < min(e1, e2)
+
+            if overlap:
+                assert assignments[i] != assignments[j]
+
+    # ------------------------------------------------------------------
+    # 12. Invalid input remains invalid.
+    # ------------------------------------------------------------------
+    try:
+        minimum_room_assignment([(5, 2)])
+        assert False, "Expected ValueError"
+    except ValueError:
+        pass
+
+    # ------------------------------------------------------------------
+    # 13. Deterministic repeated execution.
+    # ------------------------------------------------------------------
+    intervals = [
+        (4, 12),
+        (1, 5),
+        (7, 10),
+        (1, 4),
+        (5, 9),
+        (10, 15),
+    ]
+
+    result1 = minimum_room_assignment(
+        intervals,
+        operation_summary=True,
+    )
+    result2 = minimum_room_assignment(
+        intervals,
+        operation_summary=True,
+    )
+
+    assert result1 == result2
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()
+```

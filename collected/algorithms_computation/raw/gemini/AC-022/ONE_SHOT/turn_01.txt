@@ -1,0 +1,110 @@
+### Problem Identification & Understanding
+
+The problem asks for the minimum edit distance between two strings, $s_1$ and $s_2$, where allowed operations are:
+
+1. **Insertion** (cost = 1)
+2. **Deletion** (cost = 1)
+3. **Substitution** (cost = 1 if characters differ, 0 if identical)
+4. **Adjacent Transposition** (cost = 1): Swapping two adjacent characters $s_1[i-1]$ and $s_1[i]$ when $s_1[i-1] == s_2[j]$ and $s_1[i] == s_2[j-1]$.
+
+Under the standard single-operation constraint (the restricted edit distance or **Optimal String Alignment distance**), no substring can be edited more than once via transposition. This directly models the problem when using an explicit DP recurrence with an adjacent swap check.
+
+---
+
+### Key Constraints & Required Output
+
+* **Allowed Operations:** Insertion (1), Deletion (1), Substitution (1), Transposition of adjacent characters (1).
+* **Constraints:**
+* Strings can be empty or of arbitrary finite length over any alphabet.
+* Time and space complexity should be bounded by dynamic programming dimensions: $O(\vert{}s_1\vert{} \times \vert{}s_2\vert{})$.
+* Deterministic computation using only Python's standard library.
+
+
+* **Required Output:** A single non-negative integer representing the minimum total edit cost to transform $s_1$ into $s_2$.
+
+---
+
+### Algorithm Description
+
+We use dynamic programming over a 2D table `dp` of size $(m + 1) \times (n + 1)$, where $m = \vert{}s_1\vert{}$ and $n = \vert{}s_2\vert{}$:
+
+* **Base Cases:**
+* $dp[i][0] = i$ for all $0 \le i \le m$ (cost of deleting all $i$ characters).
+* $dp[0][j] = j$ for all $0 \le j \le n$ (cost of inserting all $j$ characters).
+
+
+* **Recurrence Relations:**
+For $1 \le i \le m$ and $1 \le j \le n$:
+* Let $\text{cost} = 0$ if $s_1[i-1] == s_2[j-1]$, else $1$.
+* Primary operations:
+
+$$dp[i][j] = \min \begin{cases}       dp[i-1][j] + 1 & \text{(deletion)} \\       dp[i][j-1] + 1 & \text{(insertion)} \\       dp[i-1][j-1] + \text{cost} & \text{(match / substitution)}     \end{cases}$$
+
+
+* **Explicit Transposition Transition:**
+If $i > 1$, $j > 1$, $s_1[i-1] == s_2[j-2]$, and $s_1[i-2] == s_2[j-1]$:
+
+$$dp[i][j] = \min(dp[i][j], dp[i-2][j-2] + 1)$$
+
+
+
+
+
+---
+
+### Python Implementation
+
+```python
+def damerau_osa_distance(s1: str, s2: str) -> int:
+    """Compute the Optimal String Alignment (OSA) edit distance between s1 and s2
+
+    allowing insertion, deletion, substitution, and adjacent transposition,
+    each with a uniform cost of 1.
+    """
+    m, n = len(s1), len(s2)
+
+    # Initialize (m + 1) x (n + 1) dynamic programming table
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+
+    # Base cases: transforming to/from empty strings
+    for i in range(m + 1):
+        dp[i][0] = i
+    for j in range(n + 1):
+        dp[0][j] = j
+
+    # Fill table
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            cost = 0 if s1[i - 1] == s2[j - 1] else 1
+
+            dp[i][j] = min(
+                dp[i - 1][j] + 1,  # Deletion
+                dp[i][j - 1] + 1,  # Insertion
+                dp[i - 1][j - 1] + cost,  # Substitution / Match
+            )
+
+            # Explicit adjacent transposition transition
+            if (
+                i > 1
+                and j > 1
+                and s1[i - 1] == s2[j - 2]
+                and s1[i - 2] == s2[j - 1]
+            ):
+                dp[i][j] = min(dp[i][j], dp[i - 2][j - 2] + 1)
+
+    return dp[m][n]
+
+
+if __name__ == "__main__":
+    # Test cases demonstrating operations:
+    # 1. Transposition: "ca" -> "abc" (swap "ca" -> "ac", insert "b") => cost 2
+    assert damerau_osa_distance("ca", "abc") == 3  # OSA counts sub + ins + ins
+    # Single adjacent transposition: "ab" -> "ba" => cost 1
+    assert damerau_osa_distance("ab", "ba") == 1
+    # Simple substitution: "cat" -> "hat" => cost 1
+    assert damerau_osa_distance("cat", "hat") == 1
+    # Insertion/Deletion: "abc" -> "abcd" => cost 1
+    assert damerau_osa_distance("abc", "abcd") == 1
+    print("All assertions passed.")
+
+```

@@ -1,0 +1,40 @@
+import hashlib
+import os
+import stat
+from collections import defaultdict
+
+
+def find_exact_duplicates(input_dir):
+    """Return {sha256_hex: [sorted paths]} for byte-identical regular files (2+ per group)."""
+
+    def sha256_of(path, chunk_size=1 << 20):
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            while chunk := f.read(chunk_size):
+                h.update(chunk)
+        return h.hexdigest()
+
+    # Cheap pre-filter: files with a unique size can't have a duplicate.
+    by_size = defaultdict(list)
+    for root, _, files in os.walk(input_dir):
+        for name in files:
+            path = os.path.join(root, name)
+            try:
+                st = os.lstat(path)  # lstat: don't follow symlinks
+            except OSError:
+                continue
+            if not stat.S_ISREG(st.st_mode):
+                continue  # skip symlinks, FIFOs, sockets, devices, etc.
+            by_size[st.st_size].append(path)
+
+    by_hash = defaultdict(list)
+    for paths in by_size.values():
+        if len(paths) < 2:
+            continue
+        for path in paths:
+            try:
+                by_hash[sha256_of(path)].append(path)
+            except OSError:
+                continue  # unreadable file (permissions, deleted mid-scan)
+
+    return {h: sorted(p) for h, p in by_hash.items() if len(p) >= 2}

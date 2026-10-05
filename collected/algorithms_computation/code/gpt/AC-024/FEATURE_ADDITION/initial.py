@@ -1,0 +1,223 @@
+"""
+Minimum Room Assignment
+
+Problem:
+Assign every interval to a room so that overlapping intervals never share
+the same room. A room can be reused when its previous interval ends at or
+before the next interval's start.
+
+Goal:
+- Minimize the total number of rooms.
+- Return the assigned room ID for every interval in its original input order.
+- Make all choices deterministic.
+
+Key constraints / behavior:
+- Each interval is represented as (start, end).
+- Intervals are half-open: [start, end).
+- Therefore, an interval ending at time t can share a room with an
+  interval starting at time t.
+- Every interval must receive exactly one room.
+- Overlapping intervals cannot use the same room.
+- The number of rooms must be minimal.
+- Room IDs are deterministic and start from 0.
+- For deterministic ties:
+    1. Process intervals by (start, end, original_index).
+    2. Among currently available rooms, reuse the room with the smallest ID.
+    3. If no room is available, create the next room ID.
+
+Required output:
+A list of room IDs where result[i] is the room assigned to the original
+interval intervals[i].
+
+Algorithm:
+1. Sort intervals by (start, end, original_index).
+2. Maintain a min-heap of occupied rooms:
+       (end_time, room_id)
+   The room at the top is the room that becomes available earliest.
+3. Before assigning an interval, repeatedly release every room whose
+   end_time <= the current interval's start.
+4. If at least one room is available, reuse the smallest available room ID.
+5. Otherwise, create a new room.
+6. Store the assigned room ID at the original interval index.
+
+A second min-heap stores available room IDs so that when multiple rooms
+are free, the smallest room ID is selected deterministically.
+
+Complexity:
+- Sorting: O(n log n)
+- Heap operations: O(n log n)
+- Space: O(n)
+
+The number of rooms is optimal because a new room is created exactly when
+every existing room contains an interval overlapping the current interval.
+Thus, the algorithm uses exactly the maximum number of simultaneously
+overlapping intervals.
+
+Implementation uses only Python's standard library.
+"""
+
+from heapq import heappop, heappush
+
+
+def assign_rooms(intervals):
+    """
+    Assign each interval to a minimum number of rooms.
+
+    Parameters:
+        intervals: list of (start, end) pairs
+
+    Returns:
+        list[int]:
+            Room ID for each interval in the original input order.
+    """
+    n = len(intervals)
+
+    if n == 0:
+        return []
+
+    # Keep the original index so the final result matches input order.
+    ordered = [
+        (start, end, index)
+        for index, (start, end) in enumerate(intervals)
+    ]
+
+    # Deterministic processing order.
+    ordered.sort(key=lambda item: (item[0], item[1], item[2]))
+
+    # occupied:
+    #   (end_time, room_id)
+    # The earliest finishing room is always at the top.
+    occupied = []
+
+    # available contains room IDs that are currently free.
+    available = []
+
+    result = [-1] * n
+    next_room_id = 0
+
+    for start, end, original_index in ordered:
+        # Release every room whose previous interval has ended.
+        while occupied and occupied[0][0] <= start:
+            end_time, room_id = heappop(occupied)
+            heappush(available, room_id)
+
+        # Reuse the smallest available room when possible.
+        if available:
+            room_id = heappop(available)
+        else:
+            # No room is free, so a new room is necessary.
+            room_id = next_room_id
+            next_room_id += 1
+
+        result[original_index] = room_id
+        heappush(occupied, (end, room_id))
+
+    return result
+
+
+# ------------------------------------------------------------
+# Tests
+# ------------------------------------------------------------
+
+def test_empty():
+    assert assign_rooms([]) == []
+
+
+def test_non_overlapping_intervals_reuse_one_room():
+    intervals = [(1, 3), (3, 5), (5, 7)]
+    assert assign_rooms(intervals) == [0, 0, 0]
+
+
+def test_overlapping_intervals_need_multiple_rooms():
+    intervals = [(1, 4), (2, 5), (3, 6)]
+    assert assign_rooms(intervals) == [0, 1, 2]
+
+
+def test_original_order_is_preserved():
+    intervals = [
+        (5, 7),
+        (1, 3),
+        (3, 5),
+    ]
+
+    # Processing order is (1,3), (3,5), (5,7), all using room 0.
+    assert assign_rooms(intervals) == [0, 0, 0]
+
+
+def test_end_at_start_can_reuse_room():
+    intervals = [
+        (1, 4),
+        (4, 6),
+    ]
+
+    assert assign_rooms(intervals) == [0, 0]
+
+
+def test_multiple_available_rooms_use_smallest_room_id():
+    intervals = [
+        (1, 3),   # room 0
+        (1, 4),   # room 1
+        (3, 5),   # room 0 becomes available
+        (4, 6),   # room 1 becomes available
+    ]
+
+    assert assign_rooms(intervals) == [0, 1, 0, 1]
+
+
+def test_same_start_is_deterministic():
+    intervals = [
+        (2, 5),
+        (2, 4),
+        (2, 3),
+    ]
+
+    # Sorted by (start, end, original_index):
+    # (2,3) -> room 0
+    # (2,4) -> room 1
+    # (2,5) -> room 2
+    #
+    # Mapped back to original order:
+    assert assign_rooms(intervals) == [2, 1, 0]
+
+
+def test_smallest_room_id_when_several_rooms_are_available():
+    intervals = [
+        (1, 2),  # room 0
+        (1, 3),  # room 1
+        (1, 4),  # room 2
+        (4, 5),  # rooms 0, 1, 2 available -> choose room 0
+    ]
+
+    assert assign_rooms(intervals) == [0, 1, 2, 0]
+
+
+def test_minimum_number_of_rooms():
+    intervals = [
+        (0, 10),
+        (1, 2),
+        (2, 3),
+        (3, 4),
+        (4, 5),
+    ]
+
+    result = assign_rooms(intervals)
+
+    # Two rooms are sufficient:
+    # room 0: [0,10)
+    # room 1: all short intervals
+    assert result == [0, 1, 1, 1, 1]
+    assert len(set(result)) == 2
+
+
+if __name__ == "__main__":
+    test_empty()
+    test_non_overlapping_intervals_reuse_one_room()
+    test_overlapping_intervals_need_multiple_rooms()
+    test_original_order_is_preserved()
+    test_end_at_start_can_reuse_room()
+    test_multiple_available_rooms_use_smallest_room_id()
+    test_same_start_is_deterministic()
+    test_smallest_room_id_when_several_rooms_are_available()
+    test_minimum_number_of_rooms()
+
+    print("All tests passed.")

@@ -1,0 +1,186 @@
+from collections import Counter
+from datetime import datetime
+
+VALID_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+def parse_log_line(line):
+    """Parse a log line and reject malformed records."""
+    if not isinstance(line, str):
+        return None
+
+    line = line.strip()
+    if not line:
+        return None
+
+    parts = [part.strip() for part in line.split("|")]
+
+    if len(parts) != 3:
+        return None
+
+    timestamp_text, level, message = parts
+
+    if not timestamp_text or not level or not message:
+        return None
+
+    try:
+        timestamp = datetime.strptime(timestamp_text, TIMESTAMP_FORMAT)
+    except ValueError:
+        return None
+
+    level = level.upper()
+
+    if level not in VALID_LEVELS:
+        return None
+
+    return {
+        "timestamp": timestamp,
+        "level": level,
+        "message": message
+    }
+
+
+def detect_repeated_errors(logs, threshold=2):
+    """
+    Return error messages that occur at least `threshold` times.
+    Both ERROR and CRITICAL records are considered.
+    """
+    if threshold < 1:
+        threshold = 1
+
+    counts = Counter()
+
+    for line in logs or []:
+        record = parse_log_line(line)
+
+        if record and record["level"] in {"ERROR", "CRITICAL"}:
+            counts[record["message"]] += 1
+
+    return {
+        message: count
+        for message, count in sorted(
+            counts.items(),
+            key=lambda item: (-item[1], item[0])
+        )
+        if count >= threshold
+    }
+
+
+def summarize_logs(logs, repeated_error_threshold=2):
+    """Create the complete log summary."""
+    valid_logs = []
+    malformed_count = 0
+
+    for line in logs or []:
+        record = parse_log_line(line)
+
+        if record is None:
+            malformed_count += 1
+        else:
+            valid_logs.append(record)
+
+    level_counts = Counter(record["level"] for record in valid_logs)
+    message_counts = Counter(record["message"] for record in valid_logs)
+
+    if valid_logs:
+        first_timestamp = min(
+            record["timestamp"] for record in valid_logs
+        )
+        last_timestamp = max(
+            record["timestamp"] for record in valid_logs
+        )
+    else:
+        first_timestamp = None
+        last_timestamp = None
+
+    repeated_errors = detect_repeated_errors(
+        logs,
+        repeated_error_threshold
+    )
+
+    return {
+        "total": len(valid_logs),
+        "malformed": malformed_count,
+        "by_level": {
+            "DEBUG": level_counts["DEBUG"],
+            "INFO": level_counts["INFO"],
+            "WARNING": level_counts["WARNING"],
+            "ERROR": level_counts["ERROR"],
+            "CRITICAL": level_counts["CRITICAL"]
+        },
+        "first_timestamp": first_timestamp,
+        "last_timestamp": last_timestamp,
+        "messages": dict(message_counts),
+        "repeated_errors": repeated_errors
+    }
+
+
+def format_summary(summary):
+    """Format the summary as readable text."""
+    first = summary["first_timestamp"]
+    last = summary["last_timestamp"]
+
+    first_text = first.strftime(TIMESTAMP_FORMAT) if first else "N/A"
+    last_text = last.strftime(TIMESTAMP_FORMAT) if last else "N/A"
+
+    lines = [
+        "Log Summary",
+        "-----------",
+        f"Total valid entries: {summary['total']}",
+        f"Malformed entries: {summary['malformed']}",
+        f"First timestamp: {first_text}",
+        f"Last timestamp: {last_text}",
+        "",
+        "Entries by level:"
+    ]
+
+    for level, count in summary["by_level"].items():
+        lines.append(f"  {level}: {count}")
+
+    lines.append("")
+    lines.append("Message frequencies:")
+
+    if summary["messages"]:
+        for message, count in sorted(
+            summary["messages"].items(),
+            key=lambda item: (-item[1], item[0])
+        ):
+            lines.append(f"  {count}x - {message}")
+    else:
+        lines.append("  N/A")
+
+    lines.append("")
+    lines.append("Repeated errors:")
+
+    if summary["repeated_errors"]:
+        for message, count in summary["repeated_errors"].items():
+            lines.append(f"  {count}x - {message}")
+    else:
+        lines.append("  None")
+
+    return "\n".join(lines)
+
+
+def analyze_logs(logs, repeated_error_threshold=2):
+    """Run the complete log summarizer."""
+    summary = summarize_logs(logs, repeated_error_threshold)
+    return format_summary(summary)
+
+
+if __name__ == "__main__":
+    logs = [
+        "2026-10-04 09:15:00 | INFO | Application started",
+        "2026-10-04 09:16:00 | INFO | User logged in",
+        "2026-10-04 09:17:00 | ERROR | Database connection failed",
+        "2026-10-04 09:18:00 | ERROR | Database connection failed",
+        "2026-10-04 09:19:00 | ERROR | Database connection failed",
+        "2026-10-04 09:20:00 | CRITICAL | Service unavailable",
+        "2026-10-04 09:21:00 | CRITICAL | Service unavailable",
+        "2026-10-04 09:22:00 | WARNING | Slow response detected",
+        "malformed line",
+        "2026-99-99 09:23:00 | ERROR | Invalid timestamp",
+        "2026-10-04 09:24:00 | UNKNOWN | Unsupported level"
+    ]
+
+    print(analyze_logs(logs, repeated_error_threshold=2))

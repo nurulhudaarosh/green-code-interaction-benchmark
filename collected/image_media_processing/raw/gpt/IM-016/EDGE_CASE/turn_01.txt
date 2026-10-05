@@ -1,0 +1,74 @@
+```python
+from pathlib import Path
+from PIL import Image
+import math
+
+
+def sobel_edges(input_dir, output_dir):
+    """
+    Apply explicit Sobel gradient convolution to every image in input_dir.
+
+    Saves the clipped gradient magnitude as grayscale PNG files in output_dir.
+    """
+
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Sobel kernels
+    Gx = [
+        [-1, 0, 1],
+        [-2, 0, 2],
+        [-1, 0, 1],
+    ]
+
+    Gy = [
+        [-1, -2, -1],
+        [0,  0,  0],
+        [1,  2,  1],
+    ]
+
+    valid_extensions = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+
+    for input_path in input_dir.iterdir():
+        if not input_path.is_file() or input_path.suffix.lower() not in valid_extensions:
+            continue
+
+        with Image.open(input_path) as img:
+            # Convert to grayscale
+            gray = img.convert("L")
+            width, height = gray.size
+            pixels = gray.load()
+
+            output = Image.new("L", (width, height), 0)
+            out_pixels = output.load()
+
+            # Convolution requires a 3x3 neighborhood.
+            for y in range(1, height - 1):
+                for x in range(1, width - 1):
+                    gx = 0
+                    gy = 0
+
+                    for ky in range(-1, 2):
+                        for kx in range(-1, 2):
+                            pixel = pixels[x + kx, y + ky]
+
+                            gx += pixel * Gx[ky + 1][kx + 1]
+                            gy += pixel * Gy[ky + 1][kx + 1]
+
+                    # Gradient magnitude
+                    magnitude = math.sqrt(gx * gx + gy * gy)
+
+                    # Clip to valid grayscale range
+                    out_pixels[x, y] = min(255, max(0, int(magnitude)))
+
+            output_path = output_dir / f"{input_path.stem}_sobel.png"
+            output.save(output_path, format="PNG")
+```
+
+The important kernel orientation is:
+
+- **Gx** detects the horizontal intensity gradient, so a **vertical edge** produces a strong `Gx` response.
+- **Gy** detects the vertical intensity gradient.
+- The final magnitude is `sqrt(Gx² + Gy²)` and is clipped to `[0, 255]`.
+- Border pixels are left as `0` because they don't have a complete 3×3 neighborhood.

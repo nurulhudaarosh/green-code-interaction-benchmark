@@ -1,0 +1,49 @@
+from collections import defaultdict
+import hashlib
+from pathlib import Path
+
+
+def find_exact_duplicates(input_dir: str | Path) -> list[list[str]]:
+    """Finds exact byte-identical files in input_dir and its subdirectories,
+
+    grouping them by full SHA-256 checksum.
+
+    Returns:
+        A list of lists, where each sublist contains string paths of
+        files that are byte-identical, sorted alphabetically. Only groups
+        with 2 or more files are returned.
+    """
+    input_path = Path(input_dir)
+
+    # Step 1: Pre-filter by file size (files with unique sizes cannot be duplicates)
+    size_groups = defaultdict(list)
+    for path in input_path.rglob("*"):
+        if path.is_file():
+            size_groups[path.stat().st_size].append(path)
+
+    # Step 2: Compute full-file SHA-256 checksums only for files sharing a size
+    hash_groups = defaultdict(list)
+
+    for paths in size_groups.values():
+        if len(paths) < 2:
+            continue
+
+        for path in paths:
+            hasher = hashlib.sha256()
+            try:
+                # Read the entire file in chunks until EOF
+                with path.open("rb") as f:
+                    while chunk := f.read(65536):  # 64 KB chunks
+                        hasher.update(chunk)
+                hash_groups[hasher.hexdigest()].append(str(path))
+            except (OSError, PermissionError):
+                continue
+
+    # Step 3: Collect groups with 2+ members and sort paths alphabetically
+    duplicate_groups = [
+        sorted(paths)
+        for paths in hash_groups.values()
+        if len(paths) > 1
+    ]
+
+    return sorted(duplicate_groups)

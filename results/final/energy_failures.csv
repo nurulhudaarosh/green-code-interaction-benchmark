@@ -48,12 +48,56 @@ algorithms_computation,AC-014,gpt,BUG_FIX,algorithms_computation/code/gpt/AC-014
 algorithms_computation,AC-014,gpt,FEATURE_ADDITION,algorithms_computation/code/gpt/AC-014/FEATURE_ADDITION/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
 algorithms_computation,AC-014,gpt,FULL_MULTI_TURN,algorithms_computation/code/gpt/AC-014/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
 algorithms_computation,AC-015,gpt,BUG_FIX,algorithms_computation/code/gpt/AC-015/BUG_FIX/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-016,gemini,FULL_MULTI_TURN,algorithms_computation/code/gemini/AC-016/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-016,gpt,EDGE_CASE,algorithms_computation/code/gpt/AC-016/EDGE_CASE/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-016,gpt,FEATURE_ADDITION,algorithms_computation/code/gpt/AC-016/FEATURE_ADDITION/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-016,gpt,FULL_MULTI_TURN,algorithms_computation/code/gpt/AC-016/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-017,claude,FULL_MULTI_TURN,algorithms_computation/code/claude/AC-017/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-017,deepseek,EDGE_CASE,algorithms_computation/code/deepseek/AC-017/EDGE_CASE/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-017,deepseek,FULL_MULTI_TURN,algorithms_computation/code/deepseek/AC-017/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-017,gemini,FULL_MULTI_TURN,algorithms_computation/code/gemini/AC-017/FULL_MULTI_TURN/final.py,NOT_PYTHON,"model prose / truncated file, not valid Python"
+algorithms_computation,AC-017,gpt,FEATURE_ADDITION,algorithms_computation/code/gpt/AC-017/FEATURE_ADDITION/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-018,claude,FULL_MULTI_TURN,algorithms_computation/code/claude/AC-018/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-018,gpt,EDGE_CASE,algorithms_computation/code/gpt/AC-018/EDGE_CASE/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-019,claude,EDGE_CASE,algorithms_computation/code/claude/AC-019/EDGE_CASE/final.py,RUNTIME_BUG,FAILED (errors=1)
+algorithms_computation,AC-019,deepseek,FULL_MULTI_TURN,algorithms_computation/code/deepseek/AC-019/FULL_MULTI_TURN/final.py,RUNTIME_BUG,"ValueError: not enough values to unpack (expected 3, got 2)"
+algorithms_computation,AC-019,gemini,EDGE_CASE,algorithms_computation/code/gemini/AC-019/EDGE_CASE/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-019,gemini,FULL_MULTI_TURN,algorithms_computation/code/gemini/AC-019/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-019,gpt,EDGE_CASE,algorithms_computation/code/gpt/AC-019/EDGE_CASE/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-019,gpt,FULL_MULTI_TURN,algorithms_computation/code/gpt/AC-019/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-020,gemini,EDGE_CASE,algorithms_computation/code/gemini/AC-020/EDGE_CASE/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-020,gemini,FULL_MULTI_TURN,algorithms_computation/code/gemini/AC-020/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-020,gpt,BUG_FIX,algorithms_computation/code/gpt/AC-020/BUG_FIX/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-020,gpt,EDGE_CASE,algorithms_computation/code/gpt/AC-020/EDGE_CASE/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-020,gpt,FULL_MULTI_TURN,algorithms_computation/code/gpt/AC-020/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-021,gpt,FEATURE_ADDITION,algorithms_computation/code/gpt/AC-021/FEATURE_ADDITION/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-021,gpt,ONE_SHOT,algorithms_computation/code/gpt/AC-021/ONE_SHOT/code.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-022,gpt,EDGE_CASE,algorithms_computation/code/gpt/AC-022/EDGE_CASE/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-022,gpt,FEATURE_ADDITION,algorithms_computation/code/gpt/AC-022/FEATURE_ADDITION/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-022,gpt,FULL_MULTI_TURN,algorithms_computation/code/gpt/AC-022/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-022,gpt,ONE_SHOT,algorithms_computation/code/gpt/AC-022/ONE_SHOT/code.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-023,claude,FULL_MULTI_TURN,algorithms_computation/code/claude/AC-023/FULL_MULTI_TURN/final.py,MISSING_DEP,needs module threshold_connectivity
+algorithms_computation,AC-023,gpt,FULL_MULTI_TURN,algorithms_computation/code/gpt/AC-023/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-024,deepseek,EDGE_CASE,algorithms_computation/code/deepseek/AC-024/EDGE_CASE/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-024,gemini,FULL_MULTI_TURN,algorithms_computation/code/gemini/AC-024/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-024,gpt,BUG_FIX,algorithms_computation/code/gpt/AC-024/BUG_FIX/final.py,NOT_PYTHON,"model prose / truncated file, not valid Python"
+algorithms_computation,AC-024,gpt,EDGE_CASE,algorithms_computation/code/gpt/AC-024/EDGE_CASE/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-024,gpt,FEATURE_ADDITION,algorithms_computation/code/gpt/AC-024/FEATURE_ADDITION/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-024,gpt,ONE_SHOT,algorithms_computation/code/gpt/AC-024/ONE_SHOT/code.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-025,claude,BUG_FIX,algorithms_computation/code/claude/AC-025/BUG_FIX/final.py,OTHER,error: expected: n B M
+algorithms_computation,AC-025,claude,FEATURE_ADDITION,algorithms_computation/code/claude/AC-025/FEATURE_ADDITION/final.py,RUNTIME_BUG,IndexError: list index out of range
+algorithms_computation,AC-025,claude,ONE_SHOT,algorithms_computation/code/claude/AC-025/ONE_SHOT/code.py,RUNTIME_BUG,IndexError: list index out of range
+algorithms_computation,AC-025,deepseek,FEATURE_ADDITION,algorithms_computation/code/deepseek/AC-025/FEATURE_ADDITION/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-025,gpt,EDGE_CASE,algorithms_computation/code/gpt/AC-025/EDGE_CASE/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-025,gpt,FEATURE_ADDITION,algorithms_computation/code/gpt/AC-025/FEATURE_ADDITION/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-025,gpt,FULL_MULTI_TURN,algorithms_computation/code/gpt/AC-025/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+algorithms_computation,AC-025,gpt,ONE_SHOT,algorithms_computation/code/gpt/AC-025/ONE_SHOT/code.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
 file_data_processing,FD-001,deepseek,EDGE_CASE,file_data_processing/code/deepseek/FD-001/EDGE_CASE/final.py,SILENT_RC1,no message (schema mismatch / no-op)
 file_data_processing,FD-001,deepseek,FEATURE_ADDITION,file_data_processing/code/deepseek/FD-001/FEATURE_ADDITION/final.py,OTHER,Usage: python customer_event_utility.py input.csv output.csv
 file_data_processing,FD-001,gpt,EDGE_CASE,file_data_processing/code/gpt/FD-001/EDGE_CASE/final.py,CLI_ARGS,prog.py: error: the following arguments are required: input
 file_data_processing,FD-002,claude,BUG_FIX,file_data_processing/code/claude/FD-002/BUG_FIX/final.py,RUNTIME_BUG,NameError: name 'lines' is not defined
 file_data_processing,FD-004,gemini,EDGE_CASE,file_data_processing/code/gemini/FD-004/EDGE_CASE/final.py,RUNTIME_BUG,KeyError: 'Warehouse'
-file_data_processing,FD-004,gemini,FEATURE_ADDITION,file_data_processing/code/gemini/FD-004/FEATURE_ADDITION/final.py,RUNTIME_BUG,"ValueError: Missing required columns {'Warehouse', 'Quantity', 'Product_ID'} in file: inventory_old.csv"
+file_data_processing,FD-004,gemini,FEATURE_ADDITION,file_data_processing/code/gemini/FD-004/FEATURE_ADDITION/final.py,RUNTIME_BUG,"ValueError: Missing required columns {'Product_ID', 'Quantity', 'Warehouse'} in file: inventory_old.csv"
 file_data_processing,FD-005,gpt,FULL_MULTI_TURN,file_data_processing/code/gpt/FD-005/FULL_MULTI_TURN/final.py,SILENT_RC1,no message (schema mismatch / no-op)
 file_data_processing,FD-007,claude,FEATURE_ADDITION,file_data_processing/code/claude/FD-007/FEATURE_ADDITION/final.py,RUNTIME_BUG,ValueError: Invalid isoformat string: '32'
 file_data_processing,FD-007,deepseek,FEATURE_ADDITION,file_data_processing/code/deepseek/FD-007/FEATURE_ADDITION/final.py,SILENT_RC1,no message (schema mismatch / no-op)
@@ -70,11 +114,64 @@ file_data_processing,FD-009,deepseek,EDGE_CASE,file_data_processing/code/deepsee
 file_data_processing,FD-009,deepseek,ONE_SHOT,file_data_processing/code/deepseek/FD-009/ONE_SHOT/code.py,SILENT_RC1,no message (schema mismatch / no-op)
 file_data_processing,FD-009,gpt,EDGE_CASE,file_data_processing/code/gpt/FD-009/EDGE_CASE/final.py,SILENT_RC1,no message (schema mismatch / no-op)
 file_data_processing,FD-009,gpt,FULL_MULTI_TURN,file_data_processing/code/gpt/FD-009/FULL_MULTI_TURN/final.py,SILENT_RC1,no message (schema mismatch / no-op)
+file_data_processing,FD-014,claude,FULL_MULTI_TURN,file_data_processing/code/claude/FD-014/FULL_MULTI_TURN/final.py,CLI_ARGS,prog.py: error: the following arguments are required: left
+file_data_processing,FD-014,claude,ONE_SHOT,file_data_processing/code/claude/FD-014/ONE_SHOT/code.py,OTHER,"error: provide at least one CSV file, or use --demo"
+file_data_processing,FD-015,claude,BUG_FIX,file_data_processing/code/claude/FD-015/BUG_FIX/final.py,CLI_ARGS,"prog.py: error: the following arguments are required: input, --min-score"
+file_data_processing,FD-015,claude,EDGE_CASE,file_data_processing/code/claude/FD-015/EDGE_CASE/final.py,CLI_ARGS,prog.py: error: the following arguments are required: -t/--threshold
+file_data_processing,FD-015,claude,FEATURE_ADDITION,file_data_processing/code/claude/FD-015/FEATURE_ADDITION/final.py,CLI_ARGS,"prog.py: error: the following arguments are required: input, -t/--threshold"
+file_data_processing,FD-015,claude,FULL_MULTI_TURN,file_data_processing/code/claude/FD-015/FULL_MULTI_TURN/final.py,CLI_ARGS,"prog.py: error: the following arguments are required: input, -t/--threshold"
+file_data_processing,FD-015,claude,ONE_SHOT,file_data_processing/code/claude/FD-015/ONE_SHOT/code.py,CLI_ARGS,"prog.py: error: the following arguments are required: input, -t/--threshold"
+file_data_processing,FD-015,deepseek,FEATURE_ADDITION,file_data_processing/code/deepseek/FD-015/FEATURE_ADDITION/final.py,CLI_ARGS,prog.py: error: the following arguments are required: -t/--threshold
+file_data_processing,FD-015,deepseek,FULL_MULTI_TURN,file_data_processing/code/deepseek/FD-015/FULL_MULTI_TURN/final.py,CLI_ARGS,"prog.py: error: the following arguments are required: input, output, --score-threshold"
+file_data_processing,FD-015,gpt,FULL_MULTI_TURN,file_data_processing/code/gpt/FD-015/FULL_MULTI_TURN/final.py,SILENT_RC1,no message (schema mismatch / no-op)
+file_data_processing,FD-016,claude,FULL_MULTI_TURN,file_data_processing/code/claude/FD-016/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+file_data_processing,FD-018,deepseek,BUG_FIX,file_data_processing/code/deepseek/FD-018/BUG_FIX/final.py,CLI_ARGS,prog.py: error: the following arguments are required: input
 image_media_processing,IM-002,gemini,FEATURE_ADDITION,image_media_processing/code/gemini/IM-002/FEATURE_ADDITION/final.py,NOT_PYTHON,"model prose / truncated file, not valid Python"
 image_media_processing,IM-003,deepseek,BUG_FIX,image_media_processing/code/deepseek/IM-003/BUG_FIX/final.py,SILENT_RC1,no message (schema mismatch / no-op)
 image_media_processing,IM-003,deepseek,ONE_SHOT,image_media_processing/code/deepseek/IM-003/ONE_SHOT/code.py,SILENT_RC1,no message (schema mismatch / no-op)
 image_media_processing,IM-004,deepseek,FULL_MULTI_TURN,image_media_processing/code/deepseek/IM-004/FULL_MULTI_TURN/final.py,MISSING_DEP,needs module pytest
+image_media_processing,IM-009,claude,BUG_FIX,image_media_processing/code/claude/IM-009/BUG_FIX/final.py,RUNTIME_BUG,IndexError: list index out of range
+image_media_processing,IM-009,claude,EDGE_CASE,image_media_processing/code/claude/IM-009/EDGE_CASE/final.py,NOT_PYTHON,"model prose / truncated file, not valid Python"
+image_media_processing,IM-009,claude,FEATURE_ADDITION,image_media_processing/code/claude/IM-009/FEATURE_ADDITION/final.py,RUNTIME_BUG,IndexError: list index out of range
+image_media_processing,IM-009,claude,FULL_MULTI_TURN,image_media_processing/code/claude/IM-009/FULL_MULTI_TURN/final.py,RUNTIME_BUG,IndexError: list index out of range
+image_media_processing,IM-009,claude,ONE_SHOT,image_media_processing/code/claude/IM-009/ONE_SHOT/code.py,RUNTIME_BUG,IndexError: list index out of range
+image_media_processing,IM-010,claude,EDGE_CASE,image_media_processing/code/claude/IM-010/EDGE_CASE/final.py,OTHER,usage: rotate_and_crop.py INPUT_DIR OUTPUT_DIR ANGLE CROP_SIZE [FILL_COLOR]
+image_media_processing,IM-010,claude,FEATURE_ADDITION,image_media_processing/code/claude/IM-010/FEATURE_ADDITION/final.py,CLI_ARGS,"prog.py: error: the following arguments are required: input_dir, output_dir, angle, width"
+image_media_processing,IM-010,claude,FULL_MULTI_TURN,image_media_processing/code/claude/IM-010/FULL_MULTI_TURN/final.py,CLI_ARGS,"prog.py: error: the following arguments are required: input_dir, output_dir, angle, width"
+image_media_processing,IM-010,claude,ONE_SHOT,image_media_processing/code/claude/IM-010/ONE_SHOT/code.py,CLI_ARGS,"prog.py: error: the following arguments are required: input_dir, output_dir, angle, width"
+image_media_processing,IM-011,claude,FEATURE_ADDITION,image_media_processing/code/claude/IM-011/FEATURE_ADDITION/final.py,OTHER,Usage: python organize_by_resolution.py INPUT_DIR OUTPUT_DIR
+image_media_processing,IM-012,claude,ONE_SHOT,image_media_processing/code/claude/IM-012/ONE_SHOT/code.py,MISSING_FILE,FileNotFoundError: [Errno 2] No such file or directory: 'images_in'
+image_media_processing,IM-013,claude,BUG_FIX,image_media_processing/code/claude/IM-013/BUG_FIX/final.py,OTHER,usage: contact_sheet.py INPUT_DIR OUTPUT_PATH THUMB_SIZE COLUMNS
+image_media_processing,IM-013,claude,EDGE_CASE,image_media_processing/code/claude/IM-013/EDGE_CASE/final.py,CLI_ARGS,"prog.py: error: the following arguments are required: input_dir, output_path"
+image_media_processing,IM-013,claude,FEATURE_ADDITION,image_media_processing/code/claude/IM-013/FEATURE_ADDITION/final.py,CLI_ARGS,"prog.py: error: the following arguments are required: input_dir, output_path"
+image_media_processing,IM-013,claude,ONE_SHOT,image_media_processing/code/claude/IM-013/ONE_SHOT/code.py,OTHER,usage: contact_sheet.py INPUT_DIR OUTPUT_PATH THUMB_SIZE COLUMNS
+image_media_processing,IM-013,gemini,FEATURE_ADDITION,image_media_processing/code/gemini/IM-013/FEATURE_ADDITION/final.py,MISSING_FILE,FileNotFoundError: [Errno 2] No such file or directory: 'my_photos'
+image_media_processing,IM-014,claude,FEATURE_ADDITION,image_media_processing/code/claude/IM-014/FEATURE_ADDITION/final.py,OTHER,usage: python bulk_reencode.py INPUT_DIR OUTPUT_DIR [QUALITY]
+image_media_processing,IM-014,claude,FULL_MULTI_TURN,image_media_processing/code/claude/IM-014/FULL_MULTI_TURN/final.py,OTHER,Usage: python bulk_reencode.py INPUT_DIR OUTPUT_DIR [QUALITY=80]
+image_media_processing,IM-015,deepseek,FEATURE_ADDITION,image_media_processing/code/deepseek/IM-015/FEATURE_ADDITION/final.py,CLI_ARGS,prog.py: error: the following arguments are required: cmd
+image_media_processing,IM-015,deepseek,FULL_MULTI_TURN,image_media_processing/code/deepseek/IM-015/FULL_MULTI_TURN/final.py,RUNTIME_BUG,NameError: name 'merge_channels' is not defined
+image_media_processing,IM-018,claude,BUG_FIX,image_media_processing/code/claude/IM-018/BUG_FIX/final.py,RUNTIME_BUG,IndexError: list index out of range
+image_media_processing,IM-018,claude,ONE_SHOT,image_media_processing/code/claude/IM-018/ONE_SHOT/code.py,RUNTIME_BUG,IndexError: list index out of range
+image_media_processing,IM-018,deepseek,FULL_MULTI_TURN,image_media_processing/code/deepseek/IM-018/FULL_MULTI_TURN/final.py,RUNTIME_BUG,NameError: name 'find_near_duplicates' is not defined
+image_media_processing,IM-019,claude,BUG_FIX,image_media_processing/code/claude/IM-019/BUG_FIX/final.py,RUNTIME_BUG,IndexError: list index out of range
+image_media_processing,IM-019,claude,FEATURE_ADDITION,image_media_processing/code/claude/IM-019/FEATURE_ADDITION/final.py,RUNTIME_BUG,IndexError: list index out of range
+image_media_processing,IM-019,deepseek,BUG_FIX,image_media_processing/code/deepseek/IM-019/BUG_FIX/final.py,RUNTIME_BUG,NameError: name 'max_hamming' is not defined
+image_media_processing,IM-019,gemini,EDGE_CASE,image_media_processing/code/gemini/IM-019/EDGE_CASE/final.py,MISSING_DEP,needs module imagehash
+image_media_processing,IM-019,gemini,FEATURE_ADDITION,image_media_processing/code/gemini/IM-019/FEATURE_ADDITION/final.py,RUNTIME_BUG,NameError: name 'Literal' is not defined
+image_media_processing,IM-019,gemini,FULL_MULTI_TURN,image_media_processing/code/gemini/IM-019/FULL_MULTI_TURN/final.py,MISSING_DEP,needs module imagehash
 realistic_applications_utilities,RA-001,deepseek,BUG_FIX,realistic_applications_utilities/code/deepseek/RA-001/BUG_FIX/final.py,RUNTIME_BUG,EOFError: EOF when reading a line
 realistic_applications_utilities,RA-001,gpt,FULL_MULTI_TURN,realistic_applications_utilities/code/gpt/RA-001/FULL_MULTI_TURN/final.py,RUNTIME_BUG,NameError: name 'records' is not defined
 realistic_applications_utilities,RA-002,deepseek,ONE_SHOT,realistic_applications_utilities/code/deepseek/RA-002/ONE_SHOT/code.py,RUNTIME_BUG,ValueError: No cycle count for SKU002
 realistic_applications_utilities,RA-002,gemini,FEATURE_ADDITION,realistic_applications_utilities/code/gemini/RA-002/FEATURE_ADDITION/final.py,RUNTIME_BUG,sqlite3.OperationalError: no such table: inventory
+realistic_applications_utilities,RA-004,claude,BUG_FIX,realistic_applications_utilities/code/claude/RA-004/BUG_FIX/final.py,CLI_ARGS,prog.py: error: the following arguments are required: folder
+realistic_applications_utilities,RA-004,claude,FULL_MULTI_TURN,realistic_applications_utilities/code/claude/RA-004/FULL_MULTI_TURN/final.py,OTHER,prog.py: error: folder is required
+realistic_applications_utilities,RA-004,deepseek,BUG_FIX,realistic_applications_utilities/code/deepseek/RA-004/BUG_FIX/final.py,CLI_ARGS,prog.py: error: the following arguments are required: folder
+realistic_applications_utilities,RA-004,deepseek,FEATURE_ADDITION,realistic_applications_utilities/code/deepseek/RA-004/FEATURE_ADDITION/final.py,NOT_PYTHON,"model prose / truncated file, not valid Python"
+realistic_applications_utilities,RA-004,gemini,FULL_MULTI_TURN,realistic_applications_utilities/code/gemini/RA-004/FULL_MULTI_TURN/final.py,MISSING_DEP,needs module unicodecontroldata
+realistic_applications_utilities,RA-006,deepseek,FEATURE_ADDITION,realistic_applications_utilities/code/deepseek/RA-006/FEATURE_ADDITION/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+text_log_processing,TL-002,claude,FULL_MULTI_TURN,text_log_processing/code/claude/TL-002/FULL_MULTI_TURN/final.py,NOT_PYTHON,"model prose / truncated file, not valid Python"
+text_log_processing,TL-004,deepseek,FULL_MULTI_TURN,text_log_processing/code/deepseek/TL-004/FULL_MULTI_TURN/final.py,WRONG_OUTPUT,embedded self-tests fail (logic bug)
+text_log_processing,TL-005,claude,BUG_FIX,text_log_processing/code/claude/TL-005/BUG_FIX/final.py,NOT_PYTHON,"model prose / truncated file, not valid Python"
+text_log_processing,TL-005,claude,EDGE_CASE,text_log_processing/code/claude/TL-005/EDGE_CASE/final.py,CLI_ARGS,"prog.py: error: the following arguments are required: src, dst"
+text_log_processing,TL-005,deepseek,EDGE_CASE,text_log_processing/code/deepseek/TL-005/EDGE_CASE/final.py,MISSING_FILE,NotADirectoryError: Source is not a directory: ./raw_corpus
+text_log_processing,TL-005,gemini,FEATURE_ADDITION,text_log_processing/code/gemini/TL-005/FEATURE_ADDITION/final.py,CLI_ARGS,"prog.py: error: the following arguments are required: src, dest"

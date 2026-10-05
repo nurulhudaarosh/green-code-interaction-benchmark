@@ -1,0 +1,103 @@
+import os
+import re
+from collections import Counter
+from pathlib import Path
+
+
+def analyze_text_files(directory_path):
+    """
+    Recursively processes .txt files in a directory to compute total word counts
+    and document frequencies.
+
+    Args:
+        directory_path (str or Path): The root directory to search.
+
+    Returns:
+        tuple: (total_counts, doc_frequencies, file_count)
+            - total_counts (Counter): Total occurrences of each word.
+            - doc_frequencies (Counter): Number of documents containing each word.
+            - file_count (int): Total .txt files successfully processed.
+    """
+    total_counts = Counter()
+    doc_frequencies = Counter()
+    file_count = 0
+
+    # Regex pattern matching alphabetic words (case-insensitive)
+    word_pattern = re.compile(r"[a-zA-Z]+")
+
+    root_dir = Path(directory_path)
+
+    if not root_dir.exists() or not root_dir.is_dir():
+        raise ValueError(f"Invalid directory path: {directory_path}")
+
+    # Recursively traverse directory for .txt files
+    for file_path in root_dir.rglob("*.txt"):
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+
+            # Extract words and case-fold to lowercase
+            words = word_pattern.findall(content.lower())
+
+            if words:
+                total_counts.update(words)
+                # Count unique words in current file for document frequency
+                doc_frequencies.update(set(words))
+
+            file_count += 1
+
+        except Exception as e:
+            print(f"Error reading {file_path}: {e}")
+
+    return total_counts, doc_frequencies, file_count
+
+
+def display_ranked_words(
+    total_counts, doc_frequencies, total_files, top_n=None
+):
+    """
+    Sorts words deterministically (by count descending, then alphabetically ascending)
+    and prints the aggregated results.
+    """
+    # Deterministic ranking key: (-total_count, word)
+    sorted_words = sorted(
+        total_counts.keys(), key=lambda w: (-total_counts[w], w)
+    )
+
+    print(
+        f"\nProcessed {total_files} '.txt' file(s). Total unique words: {len(sorted_words)}\n"
+    )
+    print(
+        f"{'Rank':<6} | {'Word':<20} | {'Total Count':<12} | {'Doc Frequency':<14} | {'Doc %':<8}"
+    )
+    print("-" * 70)
+
+    display_list = sorted_words[:top_n] if top_n else sorted_words
+
+    for rank, word in enumerate(display_list, start=1):
+        count = total_counts[word]
+        doc_freq = doc_frequencies[word]
+        doc_pct = (doc_freq / total_files * 100) if total_files > 0 else 0.0
+
+        print(
+            f"{rank:<6} | {word:<20} | {count:<12} | {doc_freq:<14} | {doc_pct:.1f}%"
+        )
+
+
+if __name__ == "__main__":
+    import sys
+
+    # Specify directory to analyze (defaults to current directory)
+    target_dir = sys.argv[1] if len(sys.argv) > 1 else "."
+
+    print(f"Starting text analysis on directory: {Path(target_dir).resolve()}")
+
+    totals, doc_freqs, files_processed = analyze_text_files(target_dir)
+
+    if files_processed > 0:
+        # Pass top_n parameter to limit output (e.g., top_n=50) or leave None for all
+        display_ranked_words(
+            totals, doc_freqs, files_processed, top_n=20
+        )
+    else:
+        print("No .txt files found to analyze.")

@@ -1,0 +1,127 @@
+```python
+import csv
+import math
+import statistics
+import sys
+from typing import Dict, List, Optional, Tuple, Union
+
+
+def is_numeric(val: str) -> bool:
+    """Check if a string value can be converted to a float."""
+    try:
+        f = float(val)
+        return not math.isnan(f)
+    except ValueError:
+        return False
+
+
+def calculate_csv_stats(
+    file_path: str,
+) -> Dict[str, Dict[str, Optional[Union[int, float]]]]:
+    """Reads a CSV file and calculates statistics per column independently.
+
+    A missing or non-numeric value in one column only affects that specific
+    column and does NOT cause the rest of the row to be discarded.
+    """
+    with open(file_path, mode="r", newline="", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        try:
+            headers = next(reader)
+        except StopIteration:
+            return {}
+
+        # Preserve column order and collect valid numeric entries per column independently
+        column_data: Dict[str, List[float]] = {h: [] for h in headers}
+
+        for row in reader:
+            # zip_longest / zip ensures each column is processed independently
+            for header, cell in zip(headers, row):
+                cell_clean = cell.strip()
+                # Parse numeric values; missing/invalid values in this column are ignored
+                # without skipping or invalidating other column values in the same row
+                if cell_clean != "" and is_numeric(cell_clean):
+                    column_data[header].append(float(cell_clean))
+
+    stats: Dict[str, Dict[str, Optional[Union[int, float]]]] = {}
+
+    for header in headers:
+        values = column_data[header]
+        count = len(values)
+
+        if count > 0:
+            stats[header] = {
+                "count": count,
+                "min": min(values),
+                "max": max(values),
+                "mean": statistics.mean(values),
+                "median": statistics.median(values),
+            }
+        else:
+            stats[header] = {
+                "count": 0,
+                "min": None,
+                "max": None,
+                "mean": None,
+                "median": None,
+            }
+
+    return stats
+
+
+def print_stats_table(
+    stats: Dict[str, Dict[str, Optional[Union[int, float]]]]
+) -> None:
+    """Print the calculated statistics in a formatted tabular layout."""
+    if not stats:
+        print("No data or empty CSV file.")
+        return
+
+    headers = ["Column", "Count", "Min", "Max", "Mean", "Median"]
+    rows = []
+
+    for col, s in stats.items():
+        count_str = str(s["count"])
+        min_str = f"{s['min']:.4f}" if s["min"] is not None else "N/A"
+        max_str = f"{s['max']:.4f}" if s["max"] is not None else "N/A"
+        mean_str = f"{s['mean']:.4f}" if s["mean"] is not None else "N/A"
+        median_str = f"{s['median']:.4f}" if s["median"] is not None else "N/A"
+
+        rows.append([col, count_str, min_str, max_str, mean_str, median_str])
+
+    col_widths = [
+        max(len(str(item)) for item in col_values)
+        for col_values in zip(headers, *rows)
+    ]
+
+    row_format = " | ".join(f"{{:<{w}}}" for w in col_widths)
+    separator = "-+-".join("-" * w for w in col_widths)
+
+    print(row_format.format(*headers))
+    print(separator)
+    for row in rows:
+        print(row_format.format(*row))
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        filepath = sys.argv[1]
+    else:
+        # Example demonstration:
+        # Row 2 is missing Salary, but Age (30) and Score (92.0) are processed.
+        # Row 3 is missing Age and Score, but Salary (60000) is processed.
+        filepath = "sample_data.csv"
+        sample_csv_content = """Age,Salary,Score
+25,50000,88.5
+30,,92.0
+,60000,
+40,75000,75.2
+35,55000,90.0
+"""
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(sample_csv_content)
+        print(f"Created sample CSV file '{filepath}' for demonstration.\n")
+
+    results = calculate_csv_stats(filepath)
+    print_stats_table(results)
+
+```

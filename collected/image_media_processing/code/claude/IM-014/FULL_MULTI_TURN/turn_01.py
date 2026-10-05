@@ -1,0 +1,102 @@
+"""Bulk re-encode images as JPEG and report size savings. Requires Pillow."""
+
+import sys
+from pathlib import Path
+
+from PIL import Image, ImageOps, UnidentifiedImageError
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
+
+
+def _fmt_size(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+
+
+def _to_rgb(img: Image.Image) -> Image.Image:
+    """Convert to RGB, flattening any transparency onto white."""
+    if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+        rgba = img.convert("RGBA")
+        background = Image.new("RGB", rgba.size, (255, 255, 255))
+        background.paste(rgba, mask=rgba.getchannel("A"))
+        return background
+    return img.convert("RGB")
+
+
+def bulk_reencode(input_dir, output_dir, quality=80):
+    """Re-encode every image under input_dir as JPEG at `quality` (1-95).
+
+    Subdirectory structure is preserved under output_dir. Prints a per-file
+    report plus a summary, and returns a list of result dicts with keys:
+    file, output, original_size, new_size, ratio, error.
+    """
+    if not 1 <= quality <= 95:
+        raise ValueError("quality must be between 1 and 95")
+
+    in_dir = Path(input_dir).resolve()
+    out_dir = Path(output_dir).resolve()
+    if not in_dir.is_dir():
+        raise NotADirectoryError(f"Input directory not found: {in_dir}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    files = sorted(
+        p for p in in_dir.rglob("*")
+        if p.is_file()
+        and p.suffix.lower() in IMAGE_EXTS
+        and out_dir not in p.resolve().parents  # skip output dir if nested in input
+    )
+
+    results, used_outputs = [], set()
+    print(f"{'File':<40} {'Original':>10} {'Re-encoded':>11} {'Ratio':>7}")
+    print("-" * 71)
+
+    for src in files:
+        rel = src.relative_to(in_dir)
+        dest = out_dir / rel.with_suffix(".jpg")
+        if dest in used_outputs:  # e.g. photo.png and photo.webp in same folder
+            dest = dest.with_name(f"{rel.stem}_{src.suffix.lower().lstrip('.')}.jpg")
+        used_outputs.add(dest)
+
+        result = {"file": str(rel), "output": str(dest), "original_size": src.stat().st_size,
+                  "new_size": None, "ratio": None, "error": None}
+        try:
+            with Image.open(src) as img:
+                img = ImageOps.exif_transpose(img)  # honor camera rotation
+                icc = img.info.get("icc_profile")
+                rgb = _to_rgb(img)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                save_kwargs = {"format": "JPEG", "quality": quality, "optimize": True}
+                if icc:
+                    save_kwargs["icc_profile"] = icc
+                rgb.save(dest, **save_kwargs)
+
+            result["new_size"] = dest.stat().st_size
+            result["ratio"] = result["original_size"] / result["new_size"]
+            flag = "  (larger!)" if result["ratio"] < 1 else ""
+            print(f"{str(rel)[:40]:<40} {_fmt_size(result['original_size']):>10} "
+                  f"{_fmt_size(result['new_size']):>11} {result['ratio']:>6.2f}x{flag}")
+        except (UnidentifiedImageError, OSError, ValueError) as e:
+            result["error"] = str(e)
+            print(f"{str(rel)[:40]:<40} FAILED: {e}", file=sys.stderr)
+        results.append(result)
+
+    ok = [r for r in results if r["error"] is None]
+    total_orig = sum(r["original_size"] for r in ok)
+    total_new = sum(r["new_size"] for r in ok)
+    print("-" * 71)
+    if ok:
+        print(f"{'TOTAL (' + str(len(ok)) + ' files)':<40} {_fmt_size(total_orig):>10} "
+              f"{_fmt_size(total_new):>11} {total_orig / total_new:>6.2f}x")
+    else:
+        print("No images were re-encoded.")
+    if len(ok) != len(results):
+        print(f"{len(results) - len(ok)} file(s) failed.")
+    return results
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 3:
+        sys.exit("Usage: python bulk_reencode.py INPUT_DIR OUTPUT_DIR [QUALITY=80]")
+    bulk_reencode(sys.argv[1], sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else 80)

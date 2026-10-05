@@ -1,0 +1,131 @@
+# Problem Identification
+
+**Problem:** Given two strings `a` and `b`, compute the minimum number of edit operations needed to turn `a` into `b`.
+
+**Allowed operations (each cost 1):**
+1. Insertion of a character
+2. Deletion of a character
+3. Substitution of one character for another
+4. Transposition of two *adjacent* characters
+
+## Key Constraints
+
+- **Unit costs:** every operation costs exactly 1.
+- **Transposition is adjacent only:** swapping `a[i-1]` and `a[i]`.
+- **Which variant?** There are two well-known distances that allow transpositions:
+  - *Optimal String Alignment (OSA)*: no substring is edited more than once. For example, OSA("CA", "ABC") = 3.
+  - *Damerau-Levenshtein (true)*: allows edits between a transposed pair (e.g. insertion between swapped characters). For example, DL("CA", "ABC") = 2.
+
+  The problem statement says "adjacent transposition" as one more operation of unit cost, with no restriction on interacting with other edits. The unrestricted minimum is the **true Damerau-Levenshtein distance**, so I implement that. It is still a DP with an explicit transposition transition, but it needs a map of the last row where each character appeared.
+- **Input:** two strings (possibly empty, any Unicode characters).
+- **Output:** a single non-negative integer, the minimum cost.
+- **Complexity:** O(n·m) time, O(n·m) space (a full table is needed for the true variant because the transposition transition may jump back to an arbitrary earlier row).
+
+## Algorithm
+
+Let `d[i][j]` be the distance between `a[:i]` and `b[:j]`.
+
+**Base cases:** `d[i][0] = i`, `d[0][j] = j`.
+
+**Transitions** for `i, j ≥ 1`:
+- Deletion: `d[i-1][j] + 1`
+- Insertion: `d[i][j-1] + 1`
+- Substitution/match: `d[i-1][j-1] + (a[i-1] != b[j-1])`
+- **Transposition:** let `k` be the last row `< i` where `a[k-1] == b[j-1]`, and `l` be the last column `< j` where `b[l-1] == a[i-1]`. If both exist, then
+  `d[k-1][l-1] + (i-k-1) + 1 + (j-l-1)`
+
+  That is: reach the state before the pair, delete the characters between the two positions in `a`, do one swap, and insert the characters between the two positions in `b`. When `i-k-1 = 0` and `j-l-1 = 0` this is the plain adjacent swap, cost 1.
+
+`last_row[c]` tracks the most recent row where character `c` appeared in `a`, and `last_col` tracks the most recent matching column in `b` for the current row.
+
+## Implementation
+
+```python
+from typing import Dict, List
+
+
+def damerau_levenshtein(a: str, b: str) -> int:
+    """
+    Minimum number of insertions, deletions, substitutions, and adjacent
+    transpositions (each cost 1) needed to turn `a` into `b`.
+    Deterministic; standard library only.
+    """
+    n, m = len(a), len(b)
+    if n == 0:
+        return m
+    if m == 0:
+        return n
+
+    # d has an extra leading row/column so indices line up with the
+    # recurrence: d[i][j] = distance(a[:i], b[:j]).
+    d: List[List[int]] = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(n + 1):
+        d[i][0] = i
+    for j in range(m + 1):
+        d[0][j] = j
+
+    # last_row[c] = last row index i (1-based) processed so far where a[i-1] == c
+    last_row: Dict[str, int] = {}
+
+    for i in range(1, n + 1):
+        ai = a[i - 1]
+        last_match_col = 0  # last column j in this row where b[j-1] == ai
+
+        for j in range(1, m + 1):
+            bj = b[j - 1]
+            k = last_row.get(bj, 0)   # last row where a[k-1] == bj
+            l = last_match_col        # last col where b[l-1] == ai
+
+            cost = 0 if ai == bj else 1
+            if cost == 0:
+                last_match_col = j
+
+            best = min(
+                d[i - 1][j] + 1,          # deletion
+                d[i][j - 1] + 1,          # insertion
+                d[i - 1][j - 1] + cost,   # substitution / match
+            )
+
+            if k > 0 and l > 0:
+                # transposition: d[k-1][l-1] + deletions + 1 swap + insertions
+                best = min(best, d[k - 1][l - 1] + (i - k - 1) + 1 + (j - l - 1))
+
+            d[i][j] = best
+
+        last_row[ai] = i
+
+    return d[n][m]
+
+
+def _self_test() -> None:
+    cases = [
+        ("", "", 0),
+        ("", "abc", 3),
+        ("abc", "", 3),
+        ("abc", "abc", 0),
+        ("ab", "ba", 1),            # single adjacent transposition
+        ("abcd", "acbd", 1),
+        ("kitten", "sitting", 3),   # classic Levenshtein example
+        ("ca", "abc", 2),           # true DL (OSA would give 3)
+        ("a", "b", 1),
+        ("abcdef", "badcfe", 3),    # three disjoint swaps
+        ("teh", "the", 1),
+    ]
+    for x, y, expected in cases:
+        got = damerau_levenshtein(x, y)
+        assert got == expected, f"{x!r} -> {y!r}: expected {expected}, got {got}"
+        assert damerau_levenshtein(y, x) == expected, "symmetry violated"
+
+
+if __name__ == "__main__":
+    _self_test()
+    print(damerau_levenshtein("ca", "abc"))   # 2
+    print(damerau_levenshtein("kitten", "sitting"))  # 3
+    print("All tests passed.")
+```
+
+## Notes
+
+- **Correctness check on `"ca" → "abc"`:** `ca → ac` (swap, 1) then `ac → abc` (insert `b`, 1) gives 2. The simple OSA recurrence cannot find this because it forbids editing the swapped pair afterwards; the `(i-k-1)`/`(j-l-1)` terms in the transposition transition are what make it possible.
+- **If you want OSA instead,** replace the transposition block with: `if i > 1 and j > 1 and a[i-1] == b[j-2] and a[i-2] == b[j-1]: best = min(best, d[i-2][j-2] + 1)`, and drop `last_row`/`last_match_col`.
+- **Space:** the full table is kept deliberately; the true variant's transposition may reference any earlier row.

@@ -1,0 +1,213 @@
+from typing import Any, Dict, List
+
+
+def get_nested_value(data: Any, path: str, default=None):
+    """Safely retrieve a value from a nested dictionary using dot notation."""
+    if not isinstance(data, dict) or not isinstance(path, str) or not path.strip():
+        return default
+
+    current = data
+
+    for key in path.split("."):
+        if not isinstance(current, dict) or key not in current:
+            return default
+        current = current[key]
+
+    return current
+
+
+def is_number(value: Any) -> bool:
+    """Return True for int/float values, but not booleans."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def validate_value(value: Any, rule: Dict[str, Any]) -> bool:
+    """Validate a value against supported rules."""
+    if not isinstance(rule, dict):
+        return True
+
+    if "required" in rule and rule["required"] is True:
+        if value is None:
+            return False
+
+    if value is None:
+        return True
+
+    if "type" in rule:
+        expected_type = rule["type"]
+
+        type_valid = {
+            "string": isinstance(value, str),
+            "integer": isinstance(value, int) and not isinstance(value, bool),
+            "float": isinstance(value, float) and not isinstance(value, bool),
+            "number": is_number(value),
+            "boolean": isinstance(value, bool),
+            "list": isinstance(value, list),
+            "dict": isinstance(value, dict),
+        }.get(expected_type, True)
+
+        if not type_valid:
+            return False
+
+    if "min" in rule and is_number(value):
+        if value < rule["min"]:
+            return False
+
+    if "max" in rule and is_number(value):
+        if value > rule["max"]:
+            return False
+
+    if "min_length" in rule and hasattr(value, "__len__"):
+        if len(value) < rule["min_length"]:
+            return False
+
+    if "max_length" in rule and hasattr(value, "__len__"):
+        if len(value) > rule["max_length"]:
+            return False
+
+    if "allowed" in rule:
+        allowed = rule["allowed"]
+        if isinstance(allowed, list) and value not in allowed:
+            return False
+
+    return True
+
+
+def validate_configuration(
+    configuration: Any,
+    rules: Any
+) -> Dict[str, Any]:
+    """
+    Validate configuration while safely handling:
+    - Empty configurations
+    - Empty rules
+    - Boundary values
+    - Missing nested paths
+    - Mixed data types
+    - Boolean/int type confusion
+    """
+
+    if configuration is None:
+        configuration = {}
+
+    if rules is None:
+        rules = {}
+
+    if not isinstance(configuration, dict):
+        return {
+            "valid": False,
+            "errors": ["Configuration must be a dictionary."]
+        }
+
+    if not isinstance(rules, dict):
+        return {
+            "valid": False,
+            "errors": ["Validation rules must be a dictionary."]
+        }
+
+    # Empty configuration and empty rules are valid.
+    if not configuration and not rules:
+        return {
+            "valid": True,
+            "errors": []
+        }
+
+    errors: List[str] = []
+
+    for path, rule in rules.items():
+        if not isinstance(path, str) or not path.strip():
+            errors.append("Invalid or empty configuration path.")
+            continue
+
+        if not isinstance(rule, dict):
+            errors.append(f"Invalid rule for '{path}'.")
+            continue
+
+        value = get_nested_value(configuration, path)
+
+        required = rule.get("required", False)
+
+        # Missing path.
+        if value is None and required:
+            errors.append(f"Missing required field: {path}")
+            continue
+
+        # Optional missing paths are valid.
+        if value is None:
+            continue
+
+        if not validate_value(value, rule):
+            errors.append(f"Invalid value for '{path}'.")
+
+    return {
+        "valid": len(errors) == 0,
+        "errors": errors
+    }
+
+
+# Example usage
+if __name__ == "__main__":
+    configuration = {
+        "server": {
+            "port": 65535,
+            "enabled": True,
+            "name": "production"
+        },
+        "database": {
+            "host": "localhost"
+        },
+        "mixed": {
+            "count": 10,
+            "active": False,
+            "tags": ["api", "web"]
+        }
+    }
+
+    rules = {
+        "server.port": {
+            "required": True,
+            "type": "integer",
+            "min": 1,
+            "max": 65535
+        },
+        "server.enabled": {
+            "required": True,
+            "type": "boolean"
+        },
+        "server.name": {
+            "required": True,
+            "type": "string",
+            "min_length": 1,
+            "max_length": 50
+        },
+        "database.host": {
+            "required": True,
+            "type": "string"
+        },
+        "database.port": {
+            "required": False,
+            "type": "integer",
+            "min": 1,
+            "max": 65535
+        },
+        "missing.nested.path": {
+            "required": False,
+            "type": "string"
+        },
+        "mixed.count": {
+            "required": True,
+            "type": "number",
+            "min": 0,
+            "max": 10
+        },
+        "mixed.active": {
+            "required": True,
+            "type": "boolean"
+        },
+        "mixed.tags": {
+            "required": True,
+            "type": "list"
+        }
+    }
+
+    print(validate_configuration(configuration, rules))

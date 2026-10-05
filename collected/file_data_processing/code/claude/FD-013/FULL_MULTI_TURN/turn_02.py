@@ -1,0 +1,239 @@
+#!/usr/bin/env python3
+"""
+csv_stats.py - Per-column statistics for CSV files.
+
+Reports count, minimum, maximum, mean, and median for every column, in the
+same order the columns appear in the input.
+
+Missing values are handled independently per column: a blank/NA cell in one
+column never discards the row for any other column. Example:
+
+    a,b
+    1,10
+    ,20      <- 'a' is missing here, but 20 still counts toward 'b'
+    3,
+
+    a: count=2 (1, 3)    b: count=2 (10, 20)
+
+Usage:
+    python csv_stats.py data.csv
+    python csv_stats.py data.csv --delimiter ";" --missing "N/A" "-" --format json
+    cat data.csv | python csv_stats.py -
+    python csv_stats.py --selftest
+"""
+
+import argparse
+import csv
+import io
+import json
+import math
+import statistics
+import sys
+from typing import Dict, Iterable, List, Optional, Sequence
+
+DEFAULT_MISSING = ["", "na", "n/a", "nan", "null", "none", "nil", "-", "--", "?"]
+
+
+def _has_thousands_commas(text: str) -> bool:
+    """Detect values like '1,234,567.89'."""
+    if "," not in text:
+        return False
+    head = text.partition(".")[0]
+    parts = head.lstrip("+-").split(",")
+    return (
+        all(p.isdigit() for p in parts)
+        and 1 <= len(parts[0]) <= 3
+        and all(len(p) == 3 for p in parts[1:])
+    )
+
+
+def parse_number(raw: Optional[str], missing: set) -> Optional[float]:
+    """Return a finite float, or None if the cell is missing/non-numeric."""
+    if raw is None:
+        return None
+    text = raw.strip()
+    if text.lower() in missing:
+        return None
+    try:
+        value = float(text.replace(",", "")) if _has_thousands_commas(text) else float(text)
+    except ValueError:
+        return None
+    return value if math.isfinite(value) else None
+
+
+def compute_stats(
+    rows: Iterable[Sequence[str]],
+    header: List[str],
+    missing: set,
+) -> List[Dict[str, object]]:
+    """Accumulate values per column independently, then compute statistics.
+
+    Every cell is judged on its own. A missing or invalid cell only skips
+    that one column's accumulator; the other cells in the row are still used.
+    """
+    columns: List[List[float]] = [[] for _ in header]
+    non_numeric = [0] * len(header)
+
+    for row in rows:
+        for idx in range(len(header)):
+            cell = row[idx] if idx < len(row) else ""  # short row -> missing cell
+            value = parse_number(cell, missing)
+            if value is not None:
+                columns[idx].append(value)
+            elif cell.strip().lower() not in missing:
+                non_numeric[idx] += 1  # has content, but not a usable number
+
+    results = []
+    for idx, name in enumerate(header):
+        values = columns[idx]
+        entry: Dict[str, object] = {
+            "column": name,
+            "count": len(values),
+            "min": min(values) if values else None,
+            "max": max(values) if values else None,
+            "mean": statistics.fmean(values) if values else None,
+            "median": statistics.median(values) if values else None,
+        }
+        if non_numeric[idx]:
+            entry["non_numeric_skipped"] = non_numeric[idx]
+        results.append(entry)
+    return results
+
+
+def fmt(value: object, precision: int) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, float):
+        if value == int(value) and abs(value) < 1e15:
+            return str(int(value))
+        return f"{value:.{precision}f}".rstrip("0").rstrip(".")
+    return str(value)
+
+
+COLUMNS = ["column", "count", "min", "max", "mean", "median"]
+
+
+def render_table(results: List[Dict[str, object]], precision: int) -> str:
+    table = [COLUMNS] + [[fmt(r[h], precision) for h in COLUMNS] for r in results]
+    widths = [max(len(row[i]) for row in table) for i in range(len(COLUMNS))]
+
+    def line(row: List[str]) -> str:
+        cells = [row[0].ljust(widths[0])]
+        cells += [c.rjust(widths[i]) for i, c in enumerate(row[1:], start=1)]
+        return "  ".join(cells)
+
+    out = [line(table[0]), "  ".join("-" * w for w in widths)]
+    out.extend(line(r) for r in table[1:])
+
+    notes = [r for r in results if r.get("non_numeric_skipped")]
+    if notes:
+        out.append("")
+        for r in notes:
+            out.append(
+                f"note: column '{r['column']}' had {r['non_numeric_skipped']} "
+                f"non-numeric value(s) that were ignored"
+            )
+    return "\n".join(out)
+
+
+def render_csv(results: List[Dict[str, object]], precision: int) -> str:
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+    writer.writerow(COLUMNS)
+    for r in results:
+        writer.writerow(
+            [r["column"], r["count"]]
+            + ["" if r[k] is None else fmt(r[k], precision) for k in COLUMNS[2:]]
+        )
+    return buf.getvalue().rstrip("\n")
+
+
+def analyze(handle, delimiter: str, missing: set, no_header: bool) -> List[Dict[str, object]]:
+    reader = csv.reader(handle, delimiter=delimiter)
+    try:
+        first = next(reader)
+    except StopIteration:
+        raise ValueError("input is empty")
+
+    if no_header:
+        header = [f"col{i + 1}" for i in range(len(first))]
+        rows: Iterable[Sequence[str]] = _chain(first, reader)
+    else:
+        header = [h.strip() or f"col{i + 1}" for i, h in enumerate(first)]
+        rows = reader
+    return compute_stats(rows, header, missing)
+
+
+def _chain(first: Sequence[str], rest: Iterable[Sequence[str]]):
+    yield first
+    yield from rest
+
+
+def selftest() -> int:
+    data = "a,b,c\n1,10,x\n,20,\n3,,\n5,30,\n"
+    res = analyze(io.StringIO(data), ",", set(DEFAULT_MISSING), False)
+    by_name = {r["column"]: r for r in res}
+    assert [r["column"] for r in res] == ["a", "b", "c"]          # input order kept
+    assert by_name["a"]["count"] == 3 and by_name["a"]["median"] == 3
+    assert by_name["b"]["count"] == 3 and by_name["b"]["mean"] == 20  # row 2's 20 kept
+    assert by_name["c"]["count"] == 0
+    print("selftest passed\n")
+    print(render_table(res, 4))
+    return 0
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Per-column count/min/max/mean/median for a CSV file; "
+        "missing values are handled independently per column."
+    )
+    parser.add_argument("file", nargs="?", help="CSV file path, or '-' for stdin")
+    parser.add_argument("-d", "--delimiter", default=",", help="field delimiter (default: ,)")
+    parser.add_argument("--encoding", default="utf-8-sig", help="file encoding (default: utf-8-sig)")
+    parser.add_argument(
+        "-m", "--missing", nargs="+", default=None,
+        help="extra strings to treat as missing (case-insensitive), added to the defaults: "
+        + ", ".join(repr(m) for m in DEFAULT_MISSING),
+    )
+    parser.add_argument("--no-header", action="store_true",
+                        help="input has no header row; columns are named col1, col2, ...")
+    parser.add_argument("-p", "--precision", type=int, default=4, help="decimal places (default: 4)")
+    parser.add_argument("-f", "--format", choices=["table", "csv", "json"], default="table",
+                        help="output format (default: table)")
+    parser.add_argument("--selftest", action="store_true",
+                        help="run a built-in check of per-column missing-value handling")
+    args = parser.parse_args(argv)
+
+    if args.selftest:
+        return selftest()
+    if not args.file:
+        parser.error("the following arguments are required: file")
+
+    missing = set(DEFAULT_MISSING)
+    if args.missing:
+        missing.update(m.strip().lower() for m in args.missing)
+
+    try:
+        handle = sys.stdin if args.file == "-" else open(args.file, newline="", encoding=args.encoding)
+    except OSError as exc:
+        print(f"error: cannot open {args.file}: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        with handle:
+            results = analyze(handle, args.delimiter, missing, args.no_header)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if args.format == "json":
+        print(json.dumps(results, indent=2))
+    elif args.format == "csv":
+        print(render_csv(results, args.precision))
+    else:
+        print(render_table(results, args.precision))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

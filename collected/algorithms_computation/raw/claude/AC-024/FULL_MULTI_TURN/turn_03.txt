@@ -1,0 +1,135 @@
+## Original problem and existing required outputs
+
+Given intervals `[start, end)`, assign each one a room so that overlapping intervals never share a room. A room is reusable when its last interval's `end <= ` the next interval's `start`. Use the minimum number of rooms and return the room ID for every interval in original input order.
+
+Existing requirements, all unchanged:
+- **Output:** a list `rooms` where `rooms[i]` is the 0-based room ID for `intervals[i]`. The room count is `max(rooms) + 1`, or 0 for empty input.
+- **Algorithm:** sort indices by `(start, end, index)` and keep a single min-heap of `(available_at, room_id)`. Reuse the heap top if `available_at <= start`, otherwise open a new room.
+- **Ties:** the earliest-available room wins, and the lowest room ID breaks exact ties.
+- **Validation:** `end < start` raises `ValueError`, and zero-length intervals are allowed.
+- **Constraints:** standard library only, deterministic, `O(n log n)`.
+
+## New feature: `operation_summary`
+
+The feature is opt-in through `include_summary=False`, which is the default.
+
+- **Disabled or not requested:** the function returns the plain `List[int]` exactly as before.
+- **Enabled:** it returns a dict with `"rooms"` (the same list as above) and `"operation_summary"`.
+
+The summary counts only the algorithm's own decisions, so it is deterministic and does not depend on Python's internal sort comparisons.
+
+| Field | Meaning |
+|---|---|
+| `intervals_processed` | Intervals handled, which is the number of placement decisions |
+| `rooms_reused` | Decisions that popped and reused a free room |
+| `rooms_opened` | Decisions that opened a new room (equals the room count) |
+| `heap_pops` | Heap pops (equal to `rooms_reused`) |
+| `heap_pushes` | Heap pushes (one per interval) |
+| `total_major_operations` | `intervals_processed + heap_pops + heap_pushes` |
+
+## Implementation
+
+```python
+import heapq
+from typing import Dict, List, Tuple, Union
+
+
+def assign_rooms(
+    intervals: List[Tuple[int, int]],
+    include_summary: bool = False,
+) -> Union[List[int], Dict[str, object]]:
+    """Assign each interval a room ID using the minimum number of rooms.
+
+    Default (include_summary=False): returns rooms, a list where rooms[i] is
+    the 0-based room ID for intervals[i].
+
+    include_summary=True: returns {"rooms": rooms, "operation_summary": {...}}.
+
+    A room is reusable when its last interval's end <= the next start.
+    Ties: earliest-available room, then lowest room ID (heap tuple ordering).
+    """
+    for s, e in intervals:
+        if e < s:
+            raise ValueError(f"Invalid interval ({s}, {e}): end must be >= start")
+
+    n = len(intervals)
+    result = [0] * n
+    order = sorted(range(n), key=lambda i: (intervals[i][0], intervals[i][1], i))
+
+    heap: List[Tuple[int, int]] = []  # (available_at, room_id)
+    room_count = 0
+    reused = 0
+    pops = 0
+    pushes = 0
+
+    for i in order:
+        start, end = intervals[i]
+        if heap and heap[0][0] <= start:
+            _, rid = heapq.heappop(heap)
+            pops += 1
+            reused += 1
+        else:
+            rid = room_count
+            room_count += 1
+        result[i] = rid
+        heapq.heappush(heap, (end, rid))
+        pushes += 1
+
+    if not include_summary:
+        return result
+
+    return {
+        "rooms": result,
+        "operation_summary": {
+            "intervals_processed": n,
+            "rooms_reused": reused,
+            "rooms_opened": room_count,
+            "heap_pops": pops,
+            "heap_pushes": pushes,
+            "total_major_operations": n + pops + pushes,
+        },
+    }
+
+
+if __name__ == "__main__":
+    cases = {
+        "defect example": ([(0, 5), (1, 3), (6, 8)], [0, 1, 1]),
+        "empty": ([], []),
+        "single": ([(1, 2)], [0]),
+        "touching": ([(1, 3), (3, 5), (5, 7)], [0, 0, 0]),
+        "chain": ([(1, 4), (2, 5), (3, 6), (4, 7)], [0, 1, 2, 0]),
+        "unsorted input": ([(7, 10), (2, 4)], [0, 0]),
+        "nested": ([(0, 30), (5, 10), (15, 20)], [0, 1, 1]),
+        "zero-length": ([(2, 2), (2, 2)], [0, 0]),
+    }
+    for name, (data, expected) in cases.items():
+        plain = assign_rooms(data)
+        assert plain == expected, (name, plain, expected)
+
+        full = assign_rooms(data, include_summary=True)
+        assert full["rooms"] == plain          # feature never alters the result
+        s = full["operation_summary"]
+        assert s["rooms_opened"] == (max(plain) + 1 if plain else 0)
+        assert s["rooms_reused"] + s["rooms_opened"] == len(data)
+        assert assign_rooms(data, include_summary=True) == full  # deterministic
+        print(f"{name}: {plain} | {s}")
+```
+
+## Example
+
+For `[(0, 5), (1, 3), (6, 8)]`:
+
+```
+assign_rooms(data)
+# [0, 1, 1]
+
+assign_rooms(data, include_summary=True)
+# {"rooms": [0, 1, 1],
+#  "operation_summary": {"intervals_processed": 3, "rooms_reused": 1,
+#                        "rooms_opened": 2, "heap_pops": 1,
+#                        "heap_pushes": 3, "total_major_operations": 7}}
+```
+
+The first two intervals each open a room because the heap top (available at 5, then 3) is still busy. The third pops room 1 (available at 3) and reuses it. That gives 2 rooms opened, 1 reuse, 1 pop, 3 pushes, and 3 + 1 + 3 = 7 total operations.
+
+The counters are updated alongside the existing logic and never influence it, so the room assignments are identical with the summary on or off.

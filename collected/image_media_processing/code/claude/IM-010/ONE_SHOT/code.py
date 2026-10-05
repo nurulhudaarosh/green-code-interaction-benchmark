@@ -1,0 +1,84 @@
+from pathlib import Path
+from typing import Sequence, Union
+
+from PIL import Image, ImageOps
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
+
+
+def rotate_and_crop(
+    input_dir: Union[str, Path],
+    output_dir: Union[str, Path],
+    angle_degrees: float,
+    crop_size: Union[int, Sequence[int]],
+    fill=None,
+) -> int:
+    """Rotate every image in input_dir and write it to output_dir at exactly crop_size.
+
+    angle_degrees: counter-clockwise rotation in degrees. The canvas expands so
+        no content is lost during rotation.
+    crop_size: int (square) or (width, height). Larger-than-target images are
+        center-cropped; smaller ones are centered on a padded canvas (per axis).
+    fill: pad / corner color. Defaults to transparent for images with alpha,
+        black otherwise.
+
+    Returns the number of images written.
+    """
+    if isinstance(crop_size, int):
+        cw = ch = crop_size
+    else:
+        cw, ch = crop_size
+    if cw <= 0 or ch <= 0:
+        raise ValueError("crop_size must be positive")
+
+    in_dir, out_dir = Path(input_dir), Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    count = 0
+    for path in sorted(in_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in IMAGE_EXTS:
+            continue
+        try:
+            with Image.open(path) as im:
+                im = ImageOps.exif_transpose(im)  # honor camera orientation
+                if im.mode == "P":
+                    im = im.convert("RGBA")
+
+                bg = fill
+                if bg is None:
+                    bg = 0 if im.mode in ("L", "I", "F", "1") else (
+                        (0, 0, 0, 0) if "A" in im.mode else (0, 0, 0)
+                    )
+
+                rotated = im.rotate(
+                    angle_degrees, resample=Image.BICUBIC, expand=True, fillcolor=bg
+                )
+
+                # Center on a canvas of exactly crop_size; Pillow clips negative
+                # offsets, which performs the center crop when image > canvas.
+                canvas = Image.new(rotated.mode, (cw, ch), bg)
+                offset = ((cw - rotated.width) // 2, (ch - rotated.height) // 2)
+                canvas.paste(rotated, offset)
+
+                save_im = canvas
+                if path.suffix.lower() in (".jpg", ".jpeg") and canvas.mode == "RGBA":
+                    save_im = canvas.convert("RGB")
+                save_im.save(out_dir / path.name)
+                count += 1
+        except OSError as e:
+            print(f"Skipping {path.name}: {e}")
+    return count
+
+
+if __name__ == "__main__":
+    import argparse
+
+    p = argparse.ArgumentParser()
+    p.add_argument("input_dir")
+    p.add_argument("output_dir")
+    p.add_argument("angle", type=float)
+    p.add_argument("width", type=int)
+    p.add_argument("height", type=int, nargs="?")
+    a = p.parse_args()
+    n = rotate_and_crop(a.input_dir, a.output_dir, a.angle, (a.width, a.height or a.width))
+    print(f"Wrote {n} images")

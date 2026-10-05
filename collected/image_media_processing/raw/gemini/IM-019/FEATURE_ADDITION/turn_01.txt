@@ -1,0 +1,137 @@
+Here is the implementation of `find_fuzzy_duplicates` using Pillow (`PIL`) to compute the average hash (aHash) for each image and a Union-Find (Disjoint Set Union) data structure to greedily cluster transitively connected images.
+
+### Implementation
+
+```python
+from pathlib import Path
+from typing import Dict, List, Set, Tuple
+from PIL import Image
+
+class UnionFind:
+    """Disjoint Set Union (DSU) structure with path compression and rank optimization."""
+
+    def __init__(self):
+        self.parent: Dict[Path, Path] = {}
+        self.rank: Dict[Path, int] = {}
+
+    def add(self, item: Path) -> None:
+        if item not in self.parent:
+            self.parent[item] = item
+            self.rank[item] = 0
+
+    def find(self, item: Path) -> Path:
+        if self.parent[item] != item:
+            self.parent[item] = self.find(self.parent[item])  # Path compression
+        return self.parent[item]
+
+    def union(self, item1: Path, item2: Path) -> None:
+        root1 = self.find(item1)
+        root2 = self.find(item2)
+
+        if root1 != root2:
+            # Union by rank
+            if self.rank[root1] < self.rank[root2]:
+                root1, root2 = root2, root1
+            self.parent[root2] = root1
+            if self.rank[root1] == self.rank[root2]:
+                self.rank[root1] += 1
+
+
+def compute_average_hash(image_path: Path, hash_size: int = 8) -> int:
+    """
+    Computes average hash (aHash) as a 64-bit (or hash_size^2) integer.
+    Steps:
+      1. Convert to grayscale.
+      2. Resize to hash_size x hash_size using anti-aliasing.
+      3. Compute average pixel value.
+      4. Set bit to 1 if pixel >= average, else 0.
+    """
+    with Image.open(image_path) as img:
+        # Convert to grayscale and resize
+        img = img.convert("L").resize((hash_size, hash_size), Image.Resampling.LANCZOS)
+        pixels = list(img.getdata())
+
+    avg = sum(pixels) / len(pixels)
+
+    # Construct bitmask integer
+    diff_bits = [1 if pixel >= avg else 0 for pixel in pixels]
+    hash_val = 0
+    for bit in diff_bits:
+        hash_val = (hash_val << 1) | bit
+
+    return hash_val
+
+
+def hamming_distance(hash1: int, hash2: int) -> int:
+    """Computes bitwise Hamming distance between two integer hashes."""
+    return bin(hash1 ^ hash2).count("1")
+
+
+def find_fuzzy_duplicates(
+    input_dir: str | Path,
+    hash_size: int = 8,
+    max_hamming: int = 5,
+    valid_extensions: Set[str] = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff"},
+) -> List[List[Path]]:
+    """
+    Finds fuzzy duplicate images using Average Hash and groups them transitively.
+
+    Parameters:
+      input_dir: Directory containing images to scan.
+      hash_size: Dimensions for aHash resizing (default 8 yields 64-bit hash).
+      max_hamming: Maximum Hamming distance to consider images as duplicates.
+      valid_extensions: Set of allowed image extensions.
+
+    Returns:
+      A list of image groups (clusters), where each group contains >= 2 paths.
+    """
+    directory = Path(input_dir)
+    if not directory.exists() or not directory.is_dir():
+        raise ValueError(f"Invalid directory path: {input_dir}")
+
+    # Step 1: Discover images and compute hashes
+    hashes: Dict[Path, int] = {}
+    uf = UnionFind()
+
+    for path in directory.rglob("*"):
+        if path.is_file() and path.suffix.lower() in valid_extensions:
+            try:
+                hashes[path] = compute_average_hash(path, hash_size=hash_size)
+                uf.add(path)
+            except Exception as e:
+                print(f"Skipping corrupt or unreadable image {path}: {e}")
+
+    paths = list(hashes.keys())
+
+    # Step 2: Compare pairs and merge components in Union-Find
+    for i in range(len(paths)):
+        for j in range(i + 1, len(paths)):
+            p1, p2 = paths[i], paths[j]
+            dist = hamming_distance(hashes[p1], hashes[p2])
+            if dist <= max_hamming:
+                uf.union(p1, p2)
+
+    # Step 3: Aggregate paths by root parent
+    clusters: Dict[Path, List[Path]] = {}
+    for path in paths:
+        root = uf.find(path)
+        clusters.setdefault(root, []).append(path)
+
+    # Filter out isolated images (keep only actual duplicate clusters)
+    return [group for group in clusters.values() if len(group) > 1]
+
+
+if __name__ == "__main__":
+    # Example usage:
+    # duplicates = find_fuzzy_duplicates("./my_photos", hash_size=8, max_hamming=5)
+    # for i, group in enumerate(duplicates, 1):
+    #     print(f"Group {i}: {[p.name for p in group]}")
+    pass
+
+```
+
+### Key Technical Details
+
+1. **Perceptual Hash (`compute_average_hash`)**: Resizes image to $N \times N$ (default $8 \times 8 = 64$ bits), converts to grayscale, calculates mean luminosity, and generates a bit vector indicating whether each pixel is above/below average.
+2. **Hamming Distance**: Calculated efficiently via `bin(hash1 ^ hash2).count("1")` (XOR operation followed by population count).
+3. **Transitive Grouping**: Uses Union-Find with path compression. If $A \sim B$ and $B \sim C$, Union-Find automatically links $A$ and $C$ into the same group even if Hamming distance between $A$ and $C$ exceeds `max_hamming`.

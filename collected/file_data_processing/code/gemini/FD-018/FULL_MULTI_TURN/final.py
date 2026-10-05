@@ -1,0 +1,55 @@
+import re
+from typing import List, Dict, Any, Tuple
+
+def normalize_title(title: str) -> str:
+    """Normalizes title by lowercasing, stripping punctuation, and collapsing whitespace."""
+    if not title:
+        return ""
+    text = str(title).lower()
+    text = re.sub(r'[^a-z0-9\s]', '', text)
+    return ' '.join(text.split())
+
+def normalize_description(desc: str) -> str:
+    """Normalizes description by lowercasing and collapsing whitespace while preserving punctuation."""
+    if not desc:
+        return ""
+    text = str(desc).lower()
+    return ' '.join(text.split())
+
+def detect_duplicates(records: List[Dict[str, Any]]) -> List[List[Any]]:
+    """
+    Groups record IDs that share normalized title, description, and date.
+    Preserves punctuation in description while normalizing whitespace and case.
+    Omits singletons and sorts IDs within each group deterministically.
+    """
+    grouped_records: Dict[Tuple[str, str, str], List[Any]] = {}
+
+    for record in records:
+        rec_id = record.get("id")
+        norm_title = normalize_title(record.get("title", ""))
+        norm_desc = normalize_description(record.get("description", ""))
+        date = str(record.get("date", "")).strip()
+
+        key = (norm_title, norm_desc, date)
+        grouped_records.setdefault(key, []).append(rec_id)
+
+    # Filter out singletons (len < 2) and sort IDs within each duplicate group
+    duplicate_groups = [
+        sorted(group) for group in grouped_records.values() if len(group) > 1
+    ]
+
+    # Sort groups deterministically by the lowest ID in each group
+    duplicate_groups.sort(key=lambda group: group[0])
+
+    return duplicate_groups
+
+# Example Usage
+if __name__ == "__main__":
+    sample_records = [
+        {"id": 103, "title": " Acme   Corp   Report ", "description": "  Q1,   Financials!  ", "date": "2026-03-31"},
+        {"id": 101, "title": "ACME CORP REPORT", "description": "q1, financials!", "date": "2026-03-31"},
+        {"id": 102, "title": "Acme Corp Report", "description": "Q1 Financials", "date": "2026-03-31"}  # Different punctuation in description, won't match 101/103
+    ]
+
+    duplicates = detect_duplicates(sample_records)
+    print("Duplicate ID Groups:", duplicates)

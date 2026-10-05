@@ -1,0 +1,86 @@
+## Problem
+
+Given a list of positive integers `nums` and a target `T`, decide whether some subset sums exactly to `T`. Among all valid subsets, choose:
+
+1. the one with the fewest elements, then
+2. the one whose ascending index list is lexicographically smallest.
+
+**Constraints**
+- Every element is a positive integer (`> 0`) and `T >= 0`.
+- Each element (identified by its index) can be used at most once (0/1 choice).
+- `T = 0` is solvable by the empty subset, so the answer is `[]`.
+- Duplicate values are distinct items, which is why ties are broken by index.
+
+**Required output:** the ascending list of 0-based indices of the chosen elements, or `None` if no subset reaches `T`.
+
+## Algorithm
+
+I use a suffix DP. Let `cnt[i][s]` be the minimum number of elements needed to reach sum `s` using only items `i..n-1` (`INF` if impossible).
+
+- Base case: `cnt[n][0] = 0`, and `cnt[n][s] = INF` for `s > 0`.
+- Transition: `cnt[i][s] = min(cnt[i+1][s], cnt[i+1][s-a] + 1)`. The second option applies only when `s >= a`, where `a = nums[i]`.
+
+**Reconstruction** is greedy from `i = 0`, `s = T`. Take item `i` if `cnt[i+1][s-a] + 1 == cnt[i][s]`, otherwise skip it. This gives the lexicographically smallest index list. Any optimal list that contains `i` starts with `i`, which beats every optimal list whose first index is larger. So whenever taking `i` is still optimal, it is the right choice.
+
+Time and space are both O(n·T). The code is deterministic and uses only the standard library.
+
+## Implementation
+
+```python
+from typing import List, Optional
+
+
+def min_card_lex_subset(nums: List[int], target: int) -> Optional[List[int]]:
+    """Return ascending indices of a subset of nums summing to target,
+    with minimum cardinality, then lexicographically smallest index list.
+    Return None if impossible."""
+    if target < 0 or any((not isinstance(x, int)) or x <= 0 for x in nums):
+        raise ValueError("nums must be positive integers and target >= 0")
+
+    n = len(nums)
+    INF = float("inf")
+
+    # cnt[i][s]: min elements from nums[i:] summing to s
+    cnt = [[INF] * (target + 1) for _ in range(n + 1)]
+    cnt[n][0] = 0
+
+    for i in range(n - 1, -1, -1):
+        a = nums[i]
+        nxt, cur = cnt[i + 1], cnt[i]
+        for s in range(target + 1):
+            best = nxt[s]                      # skip item i
+            if s >= a and nxt[s - a] + 1 < best:
+                best = nxt[s - a] + 1          # take item i
+            cur[s] = best
+
+    if cnt[0][target] == INF:
+        return None
+
+    result, s = [], target
+    for i in range(n):
+        if s == 0:
+            break
+        a = nums[i]
+        if s >= a and cnt[i + 1][s - a] + 1 == cnt[i][s]:
+            result.append(i)                   # taking i keeps optimality
+            s -= a
+    return result
+
+
+if __name__ == "__main__":
+    tests = [
+        ([3, 34, 4, 12, 5, 2], 9, [2, 4]),   # 4 + 5
+        ([1, 2, 3, 4], 5, [0, 3]),           # {1,4} beats {2,3} by index
+        ([5, 5, 5], 10, [0, 1]),
+        ([2, 4], 7, None),
+        ([7], 0, []),
+        ([1, 1, 1, 1], 3, [0, 1, 2]),
+        ([2, 3, 5, 7], 12, [2, 3]),          # 5 + 7, two elements
+    ]
+    for nums, t, expected in tests:
+        got = min_card_lex_subset(nums, t)
+        assert got == expected, (nums, t, got, expected)
+    print("All tests passed.")
+```
+
+**Check on `[1, 2, 3, 4]`, `T = 5`:** both `{1,4}` (indices `[0,3]`) and `{2,3}` (indices `[1,2]`) have two elements. `[0,3]` is lexicographically smaller, and the greedy reconstruction picks it because taking index 0 still leaves an optimal completion.

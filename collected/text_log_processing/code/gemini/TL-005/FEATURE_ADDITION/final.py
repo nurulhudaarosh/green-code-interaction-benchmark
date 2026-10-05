@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+import argparse
+import unicodedata
+import re
+from pathlib import Path
+from dataclasses import dataclass, field
+
+
+@dataclass
+class FileStats:
+    rel_path: Path
+    chars_before: int = 0
+    chars_after: int = 0
+    words_before: int = 0
+    words_after: int = 0
+    lines_before: int = 0
+    lines_after: int = 0
+    success: bool = True
+    error_msg: str = ""
+
+    @property
+    def char_delta(self) -> int:
+        return self.chars_after - self.chars_before
+
+
+@dataclass
+class RunSummary:
+    file_stats: list[FileStats] = field(default_factory=list)
+
+    @property
+    def total_processed(self) -> int:
+        return sum(1 for s in self.file_stats if s.success)
+
+    @property
+    def total_failed(self) -> int:
+        return sum(1 for s in self.file_stats if not s.success)
+
+    @property
+    def total_chars_before(self) -> int:
+        return sum(s.chars_before for s in self.file_stats if s.success)
+
+    @property
+    def total_chars_after(self) -> int:
+        return sum(s.chars_after for s in self.file_stats if s.success)
+
+    @property
+    def total_words_before(self) -> int:
+        return sum(s.words_before for s in self.file_stats if s.success)
+
+    @property
+    def total_words_after(self) -> int:
+        return sum(s.words_after for s in self.file_stats if s.success)
+
+
+def normalize_text(text: str) -> str:
+    """
+    Normalizes text:
+    - Unicode NFKC decomposition/recomposition
+    - Replaces typographic quotes, dashes, and CRLF endings
+    - Strips lines and collapses internal whitespace
+    - Caps consecutive blank lines at 2
+    """
+    text = unicodedata.normalize("NFKC", text)
+
+    replacements = {
+        "“": '"', "”": '"', "„": '"',
+        "‘": "'", "’": "'", "‚": "'",
+        "—": "-", "–": "-",
+        "\r\n": "\n", "\r": "\n"
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    cleaned_lines = [
+        re.sub(r"[ \t]+", " ", line).strip()
+        for line in text.split("\n")
+    ]
+    text = "\n".join(cleaned_lines)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+
+    return text.strip() + "\n" if text.strip() else ""
+
+
+def process_file(src_file: Path, dest_file: Path, rel_path: Path, encoding: str) -> FileStats:
+    stats = FileStats(rel_path=rel_path)
+    try:
+        raw_text = src_file.read_text(encoding=encoding, errors="replace")
+        
+        stats.chars_before = len(raw_text)
+        stats.words_before = len(raw_text.split())
+        stats.lines_before = raw_text.count("\n") + (1 if raw_text and not raw_text.endswith("\n") else 0)
+
+        cleaned_text = normalize_text(raw_text)
+
+        stats.chars_after = len(cleaned_text)
+        stats.words_after = len(cleaned_text.split())
+        stats.lines_after = cleaned_text.count("\n")
+
+        # Mirror parent folder structure before writing
+        dest_file.parent.mkdir(parents=True, exist_ok=True)
+        dest_file.write_text(cleaned_text, encoding="utf-8")
+        stats.success = True
+    except Exception as exc:
+        stats.success = False
+        stats.error_msg = str(exc)
+
+    return stats
+
+
+def process_tree(src_dir: Path, dest_dir: Path, encoding: str = "utf-8") -> RunSummary:
+    src_dir = src_dir.resolve()
+    dest_dir = dest_dir.resolve()
+
+    if not src_dir.is_dir():
+        raise NotADirectoryError(f"Source directory not found: {src_dir}")
+
+    summary = RunSummary()
+    # Collect files first to prevent traversal loops if output is inside input
+    txt_files = [
+        p for p in src_dir.rglob("*.txt") 
+        if dest_dir not in p.resolve().parents and p.resolve() != dest_dir
+    ]
+
+    if not txt_files:
+        print(f"No .txt files found under '{src_dir}'.")
+        return summary
+
+    col_fmt = "{:<45} {:>10} {:>10} {:>10} {:>8}"
+    print(col_fmt.format("File", "Chars (Δ)", "Words", "Lines", "Status"))
+    print("-" * 88)
+
+    for src_file in txt_files:
+        rel_path = src_file.relative_to(src_dir)
+        dest_file = dest_dir / rel_path
+
+        stats = process_file(src_file, dest_file, rel_path, encoding)
+        summary.file_stats.append(stats)
+
+        if stats.success:
+            char_delta_str = f"{stats.chars_after} ({stats.char_delta:+d})"
+            words_str = f"{stats.words_after}"
+            lines_str = f"{stats.lines_before}→{stats.lines_after}"
+            display_name = str(rel_path) if len(str(rel_path)) <= 43 else "..." + str(rel_path)[-40:]
+            print(col_fmt.format(display_name, char_delta_str, words_str, lines_str, "[OK]"))
+        else:
+            display_name = str(rel_path) if len(str(rel_path)) <= 43 else "..." + str(rel_path)[-40:]
+            print(col_fmt.format(display_name, "-", "-", "-", "[FAIL]"))
+            print(f"   └ Error: {stats.error_msg}")
+
+    print("-" * 88)
+    net_char_delta = summary.total_chars_after - summary.total_chars_before
+    print(f"Summary:")
+    print(f"  Files Succeeded : {summary.total_processed}/{len(txt_files)}")
+    print(f"  Files Failed    : {summary.total_failed}")
+    print(f"  Total Characters: {summary.total_chars_before:,} -> {summary.total_chars_after:,} ({net_char_delta:+,} chars)")
+    print(f"  Total Words     : {summary.total_words_before:,} -> {summary.total_words_after:,}")
+    print(f"  Destination Root: {dest_dir}")
+
+    return summary
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Recursively normalize .txt files, preserve directory structures, and report stats."
+    )
+    parser.add_argument("src", type=Path, help="Root input directory")
+    parser.add_argument("dest", type=Path, help="Root output directory")
+    parser.add_argument(
+        "--encoding",
+        default="utf-8",
+        help="Input encoding (default: utf-8)",
+    )
+
+    args = parser.parse_args()
+    process_tree(args.src, args.dest, encoding=args.encoding)
+
+
+if __name__ == "__main__":
+    main()

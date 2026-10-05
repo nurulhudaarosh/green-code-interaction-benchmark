@@ -1,0 +1,129 @@
+### Problem Restatement & Requirements
+
+Given an array of positive integers $A = [a_0, a_1, \dots, a_{n-1}]$ and a target sum $T \ge 0$, find a sequence of 0-based indices $[i_1, i_2, \dots, i_k]$ ($i_1 < i_2 < \dots < i_k$) such that:
+
+1. **Target Sum:** $\sum_{j=1}^k a_{i_j} = T$.
+2. **Minimum Cardinality:** $k$ is minimized across all valid index subsets.
+3. **Lexicographically Smallest Index Sequence:** If multiple subsets attain the target with the minimal size $k$, the tuple $(i_1, i_2, \dots, i_k)$ must be lexicographically strictly smaller than all other minimal-size tuples.
+
+**Original Output Behavior:**
+
+* Returns a list of 0-based indices (sorted in ascending order), or `None` if no valid subset sums to $T$.
+
+---
+
+### Feature Addition: `operation_summary`
+
+We introduce an optional parameter `include_summary: bool = False`.
+
+* When `include_summary=False` (default): Returns purely `list[int] | None` to maintain complete backward compatibility.
+* When `include_summary=True`: Returns a dictionary with two fields:
+1. `"indices"`: The original result (`list[int] | None`).
+2. `"operation_summary"`: A dictionary containing operational metrics:
+* `"candidates_evaluated"`: Total number of non-`None` state transitions evaluated (i.e., when `dp[s - val]` was valid).
+* `"table_updates"`: Total number of times a DP state `dp[s]` was created or updated with a strictly better candidate.
+* `"states_inspected"`: Total number of DP table cells inspected in the inner loop (`for s in range(...)`).
+
+
+
+
+
+---
+
+### Python Implementation
+
+```python
+from typing import Any
+
+
+def min_elements_subset_sum(
+    nums: list[int], target: int, include_summary: bool = False
+) -> list[int] | None | dict[str, Any]:
+    """
+    Finds a subset of 0-based indices in `nums` that sum to `target`.
+    
+    Tie-breaking criteria:
+      1. Fewest elements (minimum cardinality).
+      2. Lexicographically smallest sorted index sequence.
+
+    Args:
+        nums: List of positive integers.
+        target: Non-negative integer target sum.
+        include_summary: If True, returns a dict containing 'indices' and 'operation_summary'.
+
+    Returns:
+        - If include_summary is False: list[int] | None
+        - If include_summary is True: {'indices': list[int] | None, 'operation_summary': dict}
+    """
+    metrics = {
+        "states_inspected": 0,
+        "candidates_evaluated": 0,
+        "table_updates": 0,
+    }
+
+    if target < 0:
+        indices = None
+        if include_summary:
+            return {"indices": indices, "operation_summary": metrics}
+        return indices
+
+    if target == 0:
+        indices = []
+        if include_summary:
+            return {"indices": indices, "operation_summary": metrics}
+        return indices
+
+    # dp[s] = (element_count, index_list) for sum s
+    dp: list[tuple[int, list[int]] | None] = [None] * (target + 1)
+    dp[0] = (0, [])
+
+    for i, val in enumerate(nums):
+        if val > target:
+            continue
+
+        for s in range(target, val - 1, -1):
+            metrics["states_inspected"] += 1
+            prev = dp[s - val]
+            
+            if prev is not None:
+                metrics["candidates_evaluated"] += 1
+                cand_count = prev[0] + 1
+                cand_indices = prev[1] + [i]
+                
+                curr = dp[s]
+                if curr is None or (cand_count, cand_indices) < (curr[0], curr[1]):
+                    dp[s] = (cand_count, cand_indices)
+                    metrics["table_updates"] += 1
+
+    indices = dp[target][1] if dp[target] is not None else None
+
+    if include_summary:
+        return {
+            "indices": indices,
+            "operation_summary": metrics,
+        }
+    return indices
+
+
+# Example Usage:
+if __name__ == "__main__":
+    nums = [4, 1, 3, 2]
+    target = 5
+
+    # Backward-compatible call
+    res = min_elements_subset_sum(nums, target)
+    print(f"Standard Output: {res}")  # Output: [0, 1]
+
+    # Call with operation summary feature
+    res_summary = min_elements_subset_sum(nums, target, include_summary=True)
+    print(f"Output with Summary: {res_summary}")
+    # Output: {
+    #   'indices': [0, 1],
+    #   'operation_summary': {
+    #       'states_inspected': 14,
+    #       'candidates_evaluated': 8,
+    #       'table_updates': 6
+    #   }
+    # }
+
+```

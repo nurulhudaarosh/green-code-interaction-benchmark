@@ -1,0 +1,145 @@
+"""
+Offline Customer Record Matcher
+-------------------------------
+Matches customer records using:
+  1. Blocking key: (surname_initial, postal_prefix)
+  2. Within each block, compares exact normalized email OR phone.
+
+Outputs pairs of record indices that match.
+"""
+
+from collections import defaultdict
+import re
+import unicodedata
+
+
+# ----------------------------------------------------------------------
+# Normalization helpers
+# ----------------------------------------------------------------------
+def normalize_name(name: str) -> str:
+    if not name:
+        return ""
+    # Strip accents, lowercase, remove non-letters
+    name = unicodedata.normalize("NFKD", name)
+    name = "".join(c for c in name if not unicodedata.combining(c))
+    name = re.sub(r"[^a-z]", "", name.lower())
+    return name
+
+
+def normalize_email(email: str) -> str:
+    if not email:
+        return ""
+    email = email.strip().lower()
+    # Basic sanity: must have exactly one @ and a dot after it
+    if email.count("@") != 1:
+        return ""
+    local, domain = email.split("@")
+    if not local or "." not in domain:
+        return ""
+    # Gmail-style: strip dots and +tag in local part
+    if domain in ("gmail.com", "googlemail.com"):
+        local = local.split("+")[0].replace(".", "")
+    return f"{local}@{domain}"
+
+
+def normalize_phone(phone: str) -> str:
+    if not phone:
+        return ""
+    digits = re.sub(r"\D", "", phone)
+    # Keep last 10 digits (handles +1 country code, extensions, etc.)
+    if len(digits) >= 10:
+        return digits[-10:]
+    return digits
+
+
+def postal_prefix(postal: str, length: int = 3) -> str:
+    if not postal:
+        return ""
+    cleaned = re.sub(r"[^A-Za-z0-9]", "", postal).upper()
+    return cleaned[:length]
+
+
+def surname_initial(surname: str) -> str:
+    s = normalize_name(surname)
+    return s[0] if s else ""
+
+
+# ----------------------------------------------------------------------
+# Blocking + matching
+# ----------------------------------------------------------------------
+def build_blocking_key(record: dict) -> tuple:
+    return (
+        surname_initial(record.get("surname", "")),
+        postal_prefix(record.get("postal", "")),
+    )
+
+
+def match_records(records: list) -> list:
+    """
+    records: list of dicts with keys:
+        first_name, surname, postal, email, phone
+    returns: list of (i, j) index pairs that match.
+    """
+    blocks = defaultdict(list)
+
+    # Precompute normalized values
+    normalized = []
+    for idx, rec in enumerate(records):
+        email_n = normalize_email(rec.get("email", ""))
+        phone_n = normalize_phone(rec.get("phone", ""))
+        key = build_blocking_key(rec)
+        normalized.append((email_n, phone_n))
+        # Only block if we have a usable key (non-empty surname initial)
+        if key[0]:
+            blocks[key].append(idx)
+
+    matches = []
+    seen = set()
+
+    for key, indices in blocks.items():
+        # Compare each pair within the block
+        for a_pos in range(len(indices)):
+            i = indices[a_pos]
+            email_i, phone_i = normalized[i]
+            for b_pos in range(a_pos + 1, len(indices)):
+                j = indices[b_pos]
+                email_j, phone_j = normalized[j]
+
+                hit = False
+                if email_i and email_i == email_j:
+                    hit = True
+                elif phone_i and phone_i == phone_j and len(phone_i) == 10:
+                    hit = True
+
+                if hit:
+                    pair = (min(i, j), max(i, j))
+                    if pair not in seen:
+                        seen.add(pair)
+                        matches.append(pair)
+
+    return matches
+
+
+# ----------------------------------------------------------------------
+# Demo
+# ----------------------------------------------------------------------
+if __name__ == "__main__":
+    customers = [
+        {"first_name": "John",   "surname": "Smith",   "postal": "SW1A 1AA",
+         "email": "John.Smith@gmail.com", "phone": "020 7946 0958"},
+        {"first_name": "Jon",    "surname": "Smyth",   "postal": "SW1A 2BB",
+         "email": "johnsmith@googlemail.com", "phone": ""},
+        {"first_name": "Jane",   "surname": "Smith",   "postal": "SW1A 3CC",
+         "email": "jane@example.com", "phone": "+44 20 7946 0958"},
+        {"first_name": "Bob",    "surname": "Jones",   "postal": "EC1A 1BB",
+         "email": "bob@example.com", "phone": "555-123-4567"},
+        {"first_name": "Robert", "surname": "Jonas",   "postal": "EC1A 9ZZ",
+         "email": "", "phone": "(555) 123-4567"},
+    ]
+
+    results = match_records(customers)
+    print("Matched pairs (index_i, index_j):")
+    for i, j in results:
+        print(f"  ({i}, {j}) -> {customers[i]['first_name']} "
+              f"{customers[i]['surname']}  <->  "
+              f"{customers[j]['first_name']} {customers[j]['surname']}")

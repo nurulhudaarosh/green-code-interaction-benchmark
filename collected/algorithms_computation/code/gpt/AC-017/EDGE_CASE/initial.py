@@ -1,0 +1,172 @@
+"""
+Prime Range Analyzer
+
+Problem:
+    Given an integer interval [L, R], list every prime number in that
+    inclusive range and return the largest gap between consecutive primes.
+
+Key constraints:
+    - The interval width (R - L) is bounded, so a segmented sieve is practical.
+    - Only the Python standard library is used.
+    - The solution is deterministic.
+    - No network access, APIs, external services, randomness, or user interaction.
+    - Prime generation for the sieve only needs base primes up to sqrt(R).
+
+Required output:
+    A dictionary containing:
+        "primes": all primes in [L, R] in increasing order.
+        "largest_gap": the largest difference between consecutive primes.
+                       If fewer than two primes exist, it is 0.
+
+Algorithm:
+    1. Generate all base primes up to sqrt(R) using the ordinary Sieve of
+       Eratosthenes.
+    2. Create a boolean segmented sieve for [L, R].
+    3. For every base prime p, mark its multiples inside [L, R] as composite.
+       The first multiple to mark is max(p*p, ceil(L/p)*p).
+    4. Collect the unmarked values as primes.
+    5. Compute consecutive differences and return the maximum gap.
+
+Complexity:
+    Let W = R - L + 1.
+    - Base sieve: O(sqrt(R) log log R)
+    - Segmented sieve: approximately O(W log log R)
+    - Space: O(W + sqrt(R))
+"""
+
+
+from math import isqrt
+
+
+def prime_range_analyzer(L: int, R: int) -> dict:
+    """Return all primes in [L, R] and their largest consecutive gap."""
+
+    # Handle an empty/reversed interval deterministically.
+    if L > R:
+        return {
+            "primes": [],
+            "largest_gap": 0,
+        }
+
+    # No prime is smaller than 2.
+    if R < 2:
+        return {
+            "primes": [],
+            "largest_gap": 0,
+        }
+
+    # ---------------------------------------------------------
+    # 1. Generate base primes through sqrt(R)
+    # ---------------------------------------------------------
+    limit = isqrt(R)
+
+    base_is_prime = [True] * (limit + 1)
+
+    if limit >= 0:
+        base_is_prime[0] = False
+    if limit >= 1:
+        base_is_prime[1] = False
+
+    p = 2
+    while p * p <= limit:
+        if base_is_prime[p]:
+            for multiple in range(p * p, limit + 1, p):
+                base_is_prime[multiple] = False
+        p += 1
+
+    base_primes = [
+        number
+        for number in range(2, limit + 1)
+        if base_is_prime[number]
+    ]
+
+    # ---------------------------------------------------------
+    # 2. Segmented sieve over [L, R]
+    # ---------------------------------------------------------
+    start = max(L, 2)
+    width = R - start + 1
+
+    if width <= 0:
+        return {
+            "primes": [],
+            "largest_gap": 0,
+        }
+
+    is_prime = [True] * width
+
+    for p in base_primes:
+        # The first multiple of p in [start, R].
+        first_multiple = max(
+            p * p,
+            ((start + p - 1) // p) * p
+        )
+
+        if first_multiple > R:
+            continue
+
+        for multiple in range(first_multiple, R + 1, p):
+            is_prime[multiple - start] = False
+
+    primes = [
+        start + index
+        for index, flag in enumerate(is_prime)
+        if flag
+    ]
+
+    # ---------------------------------------------------------
+    # 3. Largest gap between consecutive primes
+    # ---------------------------------------------------------
+    largest_gap = 0
+
+    for i in range(1, len(primes)):
+        gap = primes[i] - primes[i - 1]
+        if gap > largest_gap:
+            largest_gap = gap
+
+    return {
+        "primes": primes,
+        "largest_gap": largest_gap,
+    }
+
+
+# -------------------------------------------------------------
+# Deterministic tests
+# -------------------------------------------------------------
+if __name__ == "__main__":
+    # Normal range.
+    assert prime_range_analyzer(10, 30) == {
+        "primes": [11, 13, 17, 19, 23, 29],
+        "largest_gap": 6,
+    }
+
+    # Range containing only one prime.
+    assert prime_range_analyzer(14, 17) == {
+        "primes": [17],
+        "largest_gap": 0,
+    }
+
+    # Range containing no primes.
+    assert prime_range_analyzer(20, 22) == {
+        "primes": [],
+        "largest_gap": 0,
+    }
+
+    # Includes values below 2.
+    assert prime_range_analyzer(-5, 10) == {
+        "primes": [2, 3, 5, 7],
+        "largest_gap": 2,
+    }
+
+    # Reversed interval.
+    assert prime_range_analyzer(20, 10) == {
+        "primes": [],
+        "largest_gap": 0,
+    }
+
+    # Smallest possible prime.
+    assert prime_range_analyzer(2, 2) == {
+        "primes": [2],
+        "largest_gap": 0,
+    }
+
+    print("All tests passed.")

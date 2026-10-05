@@ -1,0 +1,154 @@
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Iterable, List, Optional, Sequence, Tuple
+import csv
+
+
+@dataclass
+class Reading:
+    sensor_id: str
+    timestamp: datetime
+    value: float
+    inserted: bool = False
+
+
+def _parse_ts(ts: str) -> datetime:
+    ts = ts.strip()
+    # Accept "YYYY-MM-DD HH:MM:SS" or ISO "YYYY-MM-DDTHH:MM:SS"
+    ts = ts.replace("T", " ")
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(ts, fmt)
+        except ValueError:
+            continue
+    raise ValueError(f"Unrecognized timestamp format: {ts!r}")
+
+
+def _format_ts(ts: datetime) -> str:
+    return ts.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def read_csv(path: str) -> List[Reading]:
+    readings: List[Reading] = []
+    with open(path, "r", newline="") as f:
+        reader = csv.DictReader(f)
+        required = {"sensor_id", "timestamp", "value"}
+        if not required.issubset(reader.fieldnames or []):
+            raise ValueError(
+                f"CSV must contain columns {sorted(required)}, got {reader.fieldnames}"
+            )
+        for row in reader:
+            readings.append(
+                Reading(
+                    sensor_id=row["sensor_id"].strip(),
+                    timestamp=_parse_ts(row["timestamp"]),
+                    value=float(row["value"]),
+                    inserted=False,
+                )
+            )
+    return readings
+
+
+def _floor_hour(ts: datetime) -> datetime:
+    return ts.replace(minute=0, second=0, microsecond=0)
+
+
+def fill_missing_hourly(readings: Iterable[Reading]) -> List[Reading]:
+    """
+    Sort readings per sensor, then fill any missing interior hourly timestamps
+    via linear interpolation between the two surrounding real readings.
+    Only gaps strictly between existing points are filled (no leading/trailing).
+    Inserted rows are marked with inserted=True.
+    """
+    grouped: dict[str, List[Reading]] = {}
+    for r in readings:
+        grouped.setdefault(r.sensor_id, []).append(r)
+
+    result: List[Reading] = []
+
+    for sensor_id in sorted(grouped.keys()):
+        rows = grouped[sensor_id]
+
+        # Sort by timestamp; dedupe by keeping the last occurrence per timestamp
+        rows.sort(key=lambda r: r.timestamp)
+        deduped: List[Reading] = []
+        for r in rows:
+            if deduped and deduped[-1].timestamp == r.timestamp:
+                deduped[-1] = r
+            else:
+                deduped.append(r)
+
+        if not deduped:
+            continue
+
+        # Snap existing readings to floor-hour? We keep original timestamps for
+        # real readings but generate inserts on exact hour boundaries between
+        # consecutive real readings. Only fill if the gap spans >= 1 hour.
+        out: List[Reading] = [deduped[0]]
+
+        for prev, curr in zip(deduped, deduped[1:]):
+            gap = curr.timestamp - prev.timestamp
+            hours = int(gap.total_seconds() // 3600)
+
+            if hours > 1 and prev.value is not None and curr.value is not None:
+                # Generate hours-1 interior points at hourly offsets from prev
+                for h in range(1, hours):
+                    t = prev.timestamp + timedelta(hours=h)
+                    # Linear interpolation fraction
+                    frac = h / hours
+                    v = prev.value + (curr.value - prev.value) * frac
+                    out.append(
+                        Reading(
+                            sensor_id=sensor_id,
+                            timestamp=t,
+                            value=v,
+                            inserted=True,
+                        )
+                    )
+            out.append(curr)
+
+        # Re-sort to ensure deterministic ordering (interp points inserted between)
+        out.sort(key=lambda r: (r.timestamp, r.inserted))
+        result.extend(out)
+
+    return result
+
+
+def write_csv(readings: Sequence[Reading], path: str) -> None:
+    with open(path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["sensor_id", "timestamp", "value", "inserted"])
+        for r in readings:
+            writer.writerow(
+                [
+                    r.sensor_id,
+                    _format_ts(r.timestamp),
+                    f"{r.value:.6f}",
+                    "1" if r.inserted else "0",
+                ]
+            )
+
+
+def process(input_csv: str, output_csv: str) -> List[Reading]:
+    readings = read_csv(input_csv)
+    filled = fill_missing_hourly(readings)
+    write_csv(filled, output_csv)
+    return filled
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Sort sensor readings, fill interior hourly gaps by "
+        "linear interpolation, mark inserted rows, write deterministic CSV."
+    )
+    parser.add_argument("input_csv")
+    parser.add_argument("output_csv")
+    args = parser.parse_args()
+
+    process(args.input_csv, args.output_csv)
+```

@@ -1,0 +1,195 @@
+"""
+Minimum Room Assignment
+
+Problem:
+Assign every interval to a room so that overlapping intervals never share
+the same room. A room can be reused when its previous interval ends at or
+before the next interval's start.
+
+Goal:
+1. Minimize the total number of rooms.
+2. Return the room ID assigned to every interval in its original input order.
+3. Make all tie handling deterministic.
+
+Key constraints:
+- Intervals are given as (start, end).
+- Intervals use the rule that a room is reusable when previous_end <= start.
+- Intervals may be given in any order.
+- Room IDs are deterministic and start from 0.
+- No randomness, network access, APIs, external services, or human interaction.
+- Standard library only.
+
+Required output:
+Return:
+{
+    "room_count": <minimum number of rooms>,
+    "room_ids": [<room ID for each original interval>]
+}
+
+Algorithm:
+1. Sort intervals by (start time, end time, original index).
+2. Maintain a min-heap of currently occupied rooms:
+       (available_time, room_id)
+   The room with the earliest availability is considered first.
+3. Before assigning an interval, release every room whose availability time
+   is <= the interval's start time.
+4. If an available room exists, reuse the room with the smallest room ID
+   among rooms that are available at the current start time.
+5. Otherwise, create a new room with the next room ID.
+6. Store the selected room ID at the interval's original index.
+
+The algorithm is optimal because a new room is required exactly when every
+existing room overlaps the current interval. Therefore, the number of rooms
+equals the maximum number of simultaneously active intervals.
+
+Time complexity:
+O(n log n), where n is the number of intervals.
+
+Space complexity:
+O(n).
+"""
+
+from heapq import heappop, heappush
+from typing import List, Sequence, Tuple, Dict, Any
+
+
+def minimum_room_assignment(
+    intervals: Sequence[Tuple[int, int]]
+) -> Dict[str, Any]:
+    """
+    Assign each interval to a minimum number of rooms.
+
+    Args:
+        intervals:
+            A sequence of (start, end) pairs.
+
+    Returns:
+        A dictionary containing:
+            room_count: minimum number of rooms required.
+            room_ids: room ID assigned to each original interval.
+
+    Raises:
+        ValueError: if an interval has end < start.
+    """
+
+    n = len(intervals)
+
+    if n == 0:
+        return {
+            "room_count": 0,
+            "room_ids": []
+        }
+
+    # Validate intervals and preserve their original indices.
+    jobs = []
+    for index, (start, end) in enumerate(intervals):
+        if end < start:
+            raise ValueError(
+                f"Invalid interval at index {index}: end must be >= start."
+            )
+        jobs.append((start, end, index))
+
+    # Deterministic ordering:
+    # start time, then end time, then original index.
+    jobs.sort(key=lambda item: (item[0], item[1], item[2]))
+
+    # Busy rooms:
+    # (available_time, room_id)
+    busy_rooms = []
+
+    # Free room IDs.
+    # We keep them in a min-heap so that the smallest available room ID
+    # is always selected deterministically.
+    free_rooms = []
+
+    room_ids = [-1] * n
+    next_room_id = 0
+
+    for start, end, original_index in jobs:
+        # Release every room that is available at this interval's start.
+        while busy_rooms and busy_rooms[0][0] <= start:
+            available_time, room_id = heappop(busy_rooms)
+            heappush(free_rooms, room_id)
+
+        # Reuse the smallest available room ID when possible.
+        if free_rooms:
+            room_id = heappop(free_rooms)
+        else:
+            room_id = next_room_id
+            next_room_id += 1
+
+        room_ids[original_index] = room_id
+
+        # The room becomes available after this interval ends.
+        heappush(busy_rooms, (end, room_id))
+
+    return {
+        "room_count": next_room_id,
+        "room_ids": room_ids
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+def run_tests() -> None:
+    # No intervals.
+    assert minimum_room_assignment([]) == {
+        "room_count": 0,
+        "room_ids": []
+    }
+
+    # No overlap: the same room can be reused.
+    intervals = [(1, 3), (3, 5), (5, 8)]
+    assert minimum_room_assignment(intervals) == {
+        "room_count": 1,
+        "room_ids": [0, 0, 0]
+    }
+
+    # Three overlapping intervals require three rooms.
+    intervals = [(1, 5), (2, 6), (3, 7)]
+    assert minimum_room_assignment(intervals) == {
+        "room_count": 3,
+        "room_ids": [0, 1, 2]
+    }
+
+    # Input order differs from chronological order.
+    intervals = [(5, 7), (1, 4), (3, 6)]
+    result = minimum_room_assignment(intervals)
+
+    assert result["room_count"] == 2
+    assert result["room_ids"] == [1, 0, 0]
+
+    # End exactly equals start: reuse is allowed.
+    intervals = [(1, 2), (2, 3), (2, 4)]
+    result = minimum_room_assignment(intervals)
+
+    assert result["room_count"] == 2
+    assert result["room_ids"] == [0, 0, 1]
+
+    # Same start time: deterministic assignment.
+    intervals = [(1, 4), (1, 3), (1, 2)]
+    result = minimum_room_assignment(intervals)
+
+    assert result["room_count"] == 3
+    assert result["room_ids"] == [2, 1, 0]
+
+    # Zero-length intervals can reuse rooms immediately.
+    intervals = [(2, 2), (2, 2), (2, 3)]
+    result = minimum_room_assignment(intervals)
+
+    assert result["room_count"] == 1
+    assert result["room_ids"] == [0, 0, 0]
+
+    # Invalid interval.
+    try:
+        minimum_room_assignment([(5, 2)])
+        assert False, "Expected ValueError"
+    except ValueError:
+        pass
+
+
+if __name__ == "__main__":
+    run_tests()
+    print("All tests passed.")

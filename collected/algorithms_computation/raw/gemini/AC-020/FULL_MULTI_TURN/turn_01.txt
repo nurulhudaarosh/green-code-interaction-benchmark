@@ -1,0 +1,109 @@
+```python
+"""
+Problem Identification & Understanding:
+----------------------------------------
+We need to solve the Traveling Salesperson Problem (TSP) for up to N = 14 cities.
+Given a symmetric distance matrix D where D[i][j] is the distance between city i and city j,
+we find a minimum-cost Hamiltonian cycle starting and ending at city 0.
+Ties in cycle cost are broken by preferring a smaller predecessor city at each step.
+
+Key Constraints:
+----------------
+- Number of cities N <= 14.
+- Complete, symmetric distance matrix.
+- Tour must start and end at city 0.
+- Ties broken by lexicographically smaller predecessor path / smaller predecessor.
+
+Required Output:
+----------------
+- Optimal cycle path (list of city indices starting and ending at 0).
+- Minimum total cost/distance of the path.
+
+Algorithm Description (Held-Karp Dynamic Programming):
+-------------------------------------------------------
+1. Let subset bitmask S represent a subset of cities visited so far, including city 0.
+2. Define dp[mask][u] as the minimum distance to start at city 0, visit all cities in `mask`, 
+   and end at city `u`.
+3. Base case: dp[1 << 0][0] = 0 (starting at city 0 with mask = 1).
+4. Transition: For a subset mask S containing u and v (where v is not in S originally):
+   dp[S | (1 << v)][v] = min over u in S of (dp[S][u] + distance[u][v]).
+5. After filling DP for all masks up to (1 << N) - 1, find min cost to return to 0:
+   min_cost = min over u in {1..N-1} of (dp[(1 << N) - 1][u] + distance[u][0]).
+6. Reconstruct the path backwards from city 0 using the parent tracking or DP table, 
+   ensuring tie-breaking rules prefer smaller predecessor indices.
+"""
+
+def solve_tsp(dist_matrix):
+    N = len(dist_matrix)
+    if N == 1:
+        return [0, 0], 0
+
+    # dp[mask][u] stores (min_cost, path_to_u)
+    # mask is a bitmask where bit i is set if city i is in the subset
+    INF = float('inf')
+    dp = {}
+
+    # Base case: start at city 0
+    dp[(1 << 0, 0)] = (0, [0])
+
+    for mask_size in range(1, N):
+        next_dp = {}
+        for (mask, u), (cost, path) in dp.items():
+            for v in range(N):
+                if not (mask & (1 << v)):
+                    next_mask = mask | (1 << v)
+                    new_cost = cost + dist_matrix[u][v]
+                    new_path = path + [v]
+
+                    key = (next_mask, v)
+                    if key not in next_dp:
+                        next_dp[key] = (new_cost, new_path)
+                    else:
+                        cur_cost, cur_path = next_dp[key]
+                        # Tie-breaking: compare cost, then prefer smaller predecessor (last element before v)
+                        if new_cost < cur_cost:
+                            next_dp[key] = (new_cost, new_path)
+                        elif new_cost == cur_cost:
+                            # Compare predecessors (path[-1] is u)
+                            if path[-1] < cur_path[-2]:
+                                next_dp[key] = (new_cost, new_path)
+        dp = next_dp
+
+    # Final step: return to city 0 from full mask
+    full_mask = (1 << N) - 1
+    best_cost = INF
+    best_path = []
+
+    for u in range(1, N):
+        if (full_mask, u) in dp:
+            cost, path = dp[(full_mask, u)]
+            total_cost = cost + dist_matrix[u][0]
+            candidate_path = path + [0]
+
+            if total_cost < best_cost:
+                best_cost = total_cost
+                best_path = candidate_path
+            elif total_cost == best_cost:
+                # Tie-breaking: compare predecessor at step N (i.e. city u)
+                if path[-1] < best_path[-2]:
+                    best_cost = total_cost
+                    best_path = candidate_path
+
+    return best_path, best_cost
+
+
+# Example Usage / Verification:
+if __name__ == "__main__":
+    # Sample symmetric distance matrix for 4 cities
+    dist = [
+        [0, 10, 15, 20],
+        [10, 0, 35, 25],
+        [15, 35, 0, 30],
+        [20, 25, 30, 0]
+    ]
+
+    path, cost = solve_tsp(dist)
+    print(f"Optimal Path: {path}")
+    print(f"Minimum Distance: {cost}")
+
+```

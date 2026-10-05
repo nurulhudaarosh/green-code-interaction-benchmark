@@ -1,0 +1,80 @@
+## Problem
+
+Given integers `L ≤ R`, find every prime in `[L, R]` and return the **largest gap between consecutive primes** in that range.
+
+## Constraints and required output
+
+- The width `R - L + 1` is bounded, but `R` itself can be large. Sieving all of `[0, R]` is impractical, while sieving only `[L, R]` is fine.
+- `L` may be below 2 (0, 1 and negatives are not prime).
+- Only the standard library is allowed, and the solution must be deterministic.
+- **Output:** the maximum gap `q - p` over consecutive primes `p < q` in `[L, R]`, plus the pair that achieves it. If several pairs tie, report the first (smallest) one. If the range has fewer than two primes, no gap exists, so return `(0, None)`.
+
+## Algorithm
+
+1. Compute base primes up to `isqrt(R)` with an ordinary sieve of Eratosthenes. Any composite `n ≤ R` has a prime factor `≤ √R`.
+2. Segmented sieve. Process `[L, R]` in blocks with a `bytearray`. For each base prime `p`, mark multiples starting at `max(p*p, ceil(lo/p)*p)`, so `p` itself is never crossed out.
+3. Force values below 2 to non-prime.
+4. Scan each block for primes in increasing order, carrying the previous prime across block boundaries, and track the largest difference.
+
+Time is about `O(W log log R + √R)` for width `W`, with memory of one block plus the base primes.
+
+## Implementation
+
+```python
+from math import isqrt
+
+
+def _base_primes(n):
+    """All primes <= n via a simple sieve."""
+    if n < 2:
+        return []
+    sieve = bytearray([1]) * (n + 1)
+    sieve[0] = sieve[1] = 0
+    for i in range(2, isqrt(n) + 1):
+        if sieve[i]:
+            sieve[i * i::i] = bytes(len(range(i * i, n + 1, i)))
+    return [i for i, v in enumerate(sieve) if v]
+
+
+def primes_in_range(L, R, block=1 << 20):
+    """Yield all primes in [L, R] in increasing order (segmented sieve)."""
+    if R < 2 or L > R:
+        return
+    L = max(L, 2)
+    base = _base_primes(isqrt(R))
+    for lo in range(L, R + 1, block):
+        hi = min(R, lo + block - 1)
+        seg = bytearray([1]) * (hi - lo + 1)
+        for p in base:
+            if p * p > hi:
+                break
+            start = max(p * p, ((lo + p - 1) // p) * p)
+            if start <= hi:
+                seg[start - lo::p] = bytes(len(range(start - lo, hi - lo + 1, p)))
+        i = seg.find(1)
+        while i != -1:
+            yield lo + i
+            i = seg.find(1, i + 1)
+
+
+def largest_prime_gap(L, R):
+    """Return (max_gap, (p, q)) for consecutive primes in [L, R],
+    or (0, None) if fewer than two primes exist."""
+    best_gap, best_pair = 0, None
+    prev = None
+    for p in primes_in_range(L, R):
+        if prev is not None and p - prev > best_gap:  # strict > keeps first tie
+            best_gap, best_pair = p - prev, (prev, p)
+        prev = p
+    return best_gap, best_pair
+
+
+if __name__ == "__main__":
+    tests = [(1, 100), (10, 20), (14, 16), (0, 1), (1_000_000, 1_001_000)]
+    for L, R in tests:
+        print(f"[{L}, {R}] -> {largest_prime_gap(L, R)}")
+```
+
+Hand-checked results: `[1, 100]` gives `(8, (89, 97))`, `[10, 20]` gives `(4, (13, 17))`, and `[14, 16]` and `[0, 1]` both give `(0, None)`. I haven't run the code, so the last test range is unchecked.
+
+To read `L` and `R` from input, call `largest_prime_gap(L, R)` with your own values. I left the demo hard-coded to avoid any interaction.

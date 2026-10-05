@@ -1,0 +1,66 @@
+import os
+import re
+import unicodedata
+
+_WS = re.compile(r"\s+")
+
+
+def normalize_corpus(input_dir, output_dir, lowercase=False):
+    """Normalize every .txt under input_dir and mirror the results into output_dir.
+
+    Per file: NFC-normalize, collapse all whitespace runs (including newlines)
+    to a single space, strip ends, optionally lowercase.
+
+    Returns {"files", "total_chars_in", "total_chars_out", "per_file"} where
+    per_file is a list of {"path", "chars_in", "chars_out"} sorted by path.
+    """
+    input_dir = os.path.abspath(input_dir)
+    output_dir = os.path.abspath(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+
+    per_file = []
+    total_in = total_out = 0
+
+    for root, dirs, files in os.walk(input_dir):
+        # Skip output_dir if it lives inside input_dir (avoid re-processing).
+        dirs[:] = sorted(
+            d for d in dirs if os.path.abspath(os.path.join(root, d)) != output_dir
+        )
+
+        rel_root = os.path.relpath(root, input_dir)
+        out_root = output_dir if rel_root == "." else os.path.join(output_dir, rel_root)
+        os.makedirs(out_root, exist_ok=True)  # mirrors empty dirs too
+
+        for name in sorted(files):
+            if not name.lower().endswith(".txt"):
+                continue
+
+            src = os.path.join(root, name)
+            dst = os.path.join(out_root, name)
+
+            with open(src, "r", encoding="utf-8-sig", newline="") as f:
+                text = f.read()
+            chars_in = len(text)
+
+            out = unicodedata.normalize("NFC", text)
+            out = _WS.sub(" ", out).strip()
+            if lowercase:
+                out = unicodedata.normalize("NFC", out.lower())
+
+            with open(dst, "w", encoding="utf-8", newline="") as f:
+                f.write(out)
+
+            rel_path = name if rel_root == "." else os.path.join(rel_root, name)
+            per_file.append(
+                {"path": rel_path, "chars_in": chars_in, "chars_out": len(out)}
+            )
+            total_in += chars_in
+            total_out += len(out)
+
+    per_file.sort(key=lambda d: d["path"])
+    return {
+        "files": len(per_file),
+        "total_chars_in": total_in,
+        "total_chars_out": total_out,
+        "per_file": per_file,
+    }

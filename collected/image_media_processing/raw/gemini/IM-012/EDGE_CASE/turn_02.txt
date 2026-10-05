@@ -1,0 +1,74 @@
+Here is the updated implementation. It checks whether the source dimensions already match `target_size`, skipping the resize and `copyMakeBorder` steps entirely when `scale == 1.0` (or `(w, h) == (target_w, target_h)`).
+
+```python
+import os
+from pathlib import Path
+import cv2
+import numpy as np
+
+def letterbox_resize(input_dir, output_dir, target_size=(640, 640), pad_color=(0, 0, 0)):
+    """
+    Resizes images from input_dir to target_size while preserving aspect ratio,
+    padding remaining borders to keep the content centered, and saving to output_dir.
+
+    Args:
+        input_dir (str or Path): Directory containing source images.
+        output_dir (str or Path): Directory where resized images will be saved.
+        target_size (tuple): Target dimensions as (width, height).
+        pad_color (tuple): BGR color tuple for padding borders, default (0, 0, 0).
+    """
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    target_w, target_h = target_size
+    valid_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff"}
+
+    for img_file in input_path.iterdir():
+        if img_file.suffix.lower() not in valid_extensions:
+            continue
+
+        img = cv2.imread(str(img_file))
+        if img is None:
+            continue
+
+        h, w = img.shape[:2]
+
+        # Exact match check: fast path to prevent subpixel rounding or border artifacts
+        if w == target_w and h == target_h:
+            letterboxed_img = img
+        else:
+            # Calculate scale factor while maintaining aspect ratio
+            scale = min(target_w / w, target_h / h)
+            new_w = int(round(w * scale))
+            new_h = int(round(h * scale))
+
+            # Resize image using area interpolation for downscaling and linear for upscaling
+            interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+            resized_img = cv2.resize(img, (new_w, new_h), interpolation=interp)
+
+            # Calculate padding to center the image
+            pad_w = target_w - new_w
+            pad_h = target_h - new_h
+
+            top = pad_h // 2
+            bottom = pad_h - top
+            left = pad_w // 2
+            right = pad_w - left
+
+            # Pad border around the resized image
+            letterboxed_img = cv2.copyMakeBorder(
+                resized_img,
+                top, bottom, left, right,
+                cv2.BORDER_CONSTANT,
+                value=pad_color
+            )
+
+        cv2.imwrite(str(output_path / img_file.name), letterboxed_img)
+
+```
+
+### What Changed
+
+* **Direct Dimension Comparison:** Added `if w == target_w and h == target_h:` before computing scale factors.
+* **No Lossy Operations:** Prevents interpolation noise or accidental 1-pixel padding shifts caused by floating-point rounding when `scale` is mathematically `1.0`.

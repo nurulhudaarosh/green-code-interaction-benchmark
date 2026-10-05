@@ -1,0 +1,87 @@
+Here's a simple exact duplicate line remover in Python that preserves order and returns counts:
+
+```python
+def remove_duplicate_lines(lines):
+    """
+    Remove exact duplicate lines while preserving order.
+    
+    Args:
+        lines: An iterable of strings (or a string with newlines)
+    
+    Returns:
+        tuple: (unique_lines, counts)
+            - unique_lines: list of unique lines in original order
+            - counts: dict mapping each line to its occurrence count
+    """
+    # Allow passing a single string with newlines
+    if isinstance(lines, str):
+        lines = lines.splitlines()
+    
+    seen = set()
+    unique_lines = []
+    counts = {}
+    
+    for line in lines:
+        counts[line] = counts.get(line, 0) + 1
+        if line not in seen:
+            seen.add(line)
+            unique_lines.append(line)
+    
+    return unique_lines, counts
+
+
+if __name__ == "__main__":
+    sample = """apple
+banana
+apple
+cherry
+banana
+apple
+date"""
+
+    unique, counts = remove_duplicate_lines(sample)
+    
+    print("Unique lines (in order):")
+    for line in unique:
+        print(f"  {line}  (x{counts[line]})")
+    
+    print("\nCounts:", counts)
+```
+
+**Output:**
+```
+Unique lines (in order):
+  apple  (x3)
+  banana  (x2)
+  cherry  (x1)
+  date  (x1)
+
+Counts: {'apple': 3, 'banana': 2, 'cherry': 1, 'date': 1}
+```
+
+### How it works
+
+1. **Single pass** over the input — O(n) time, O(k) space where k is the number of unique lines.
+2. **`counts`** tracks how many times each line appears, regardless of whether it's new.
+3. **`seen`** (a set) makes the "is this new?" check O(1), and `unique_lines` preserves insertion order.
+4. Accepts either a list of lines or a single multi-line string for convenience.
+
+### File-based variant
+
+If you want to dedupe a file in place:
+
+
+def dedupe_file(input_path, output_path):
+    with open(input_path) as f:
+        unique, counts = remove_duplicate_lines(f.read().splitlines())
+    
+    with open(output_path, "w") as f:
+        f.write("\n".join(unique) + "\n")
+    
+    return counts
+```
+
+### Notes on edge cases
+
+- **Trailing newline**: using `.splitlines()` drops the final empty string, which is usually what you want. If you need to preserve exact file bytes including a trailing blank line, iterate with `for line in f` and strip only `\n`.
+- **Whitespace**: this compares lines *exactly* — `"apple"` and `"apple "` are different. If you want to normalize, apply `.strip()` (or `.rstrip('\n')`) before counting.

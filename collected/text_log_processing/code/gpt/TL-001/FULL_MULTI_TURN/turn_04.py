@@ -1,0 +1,93 @@
+import re
+from collections import Counter
+
+
+def analyze_error_log(path, top_n=None):
+    """
+    Analyze ERROR-level entries in a server log.
+
+    Returns:
+        (top_errors, malformed_lines)
+
+        top_errors: list of (normalized_message, count), sorted by:
+                    1. count descending
+                    2. message ascending (deterministic tie-breaker)
+
+        malformed_lines: number of blank/malformed ERROR lines.
+
+    Edge cases:
+        - Empty file -> ([], 0)
+        - No ERROR entries -> ([], malformed_lines)
+        - top_n > number of signatures -> all signatures
+        - top_n=None -> all signatures
+        - top_n=0 -> []
+    """
+
+    if top_n is not None and top_n < 0:
+        raise ValueError("top_n must be non-negative")
+
+    error_counts = Counter()
+    malformed_lines = 0
+
+    try:
+        file = open(
+            path,
+            "r",
+            encoding="utf-8",
+            errors="replace"
+        )
+    except OSError:
+        raise
+
+    with file:
+        for line in file:
+            line = line.strip()
+
+            # Blank line
+            if not line:
+                malformed_lines += 1
+                continue
+
+            # Ignore non-ERROR log entries
+            if "ERROR" not in line:
+                continue
+
+            # Extract ERROR message
+            match = re.search(r"\bERROR\b[:\s-]*(.*)", line)
+
+            if not match:
+                malformed_lines += 1
+                continue
+
+            message = match.group(1).strip()
+
+            # ERROR with no message
+            if not message:
+                malformed_lines += 1
+                continue
+
+            # Normalize numbers
+            message = re.sub(r"\b\d+\b", "<N>", message)
+
+            # Normalize long hexadecimal IDs
+            message = re.sub(
+                r"\b[0-9a-fA-F]{8,}\b",
+                "<ID>",
+                message
+            )
+
+            error_counts[message] += 1
+
+    # Deterministic ordering:
+    # highest count first, then alphabetically by message
+    sorted_errors = sorted(
+        error_counts.items(),
+        key=lambda item: (-item[1], item[0])
+    )
+
+    # top_n larger than the number of signatures is safe;
+    # Python slicing simply returns everything available.
+    if top_n is not None:
+        sorted_errors = sorted_errors[:top_n]
+
+    return sorted_errors, malformed_lines

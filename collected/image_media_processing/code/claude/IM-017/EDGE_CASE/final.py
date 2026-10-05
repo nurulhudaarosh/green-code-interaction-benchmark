@@ -1,0 +1,122 @@
+"""Store and retrieve string key/value metadata in PNG text chunks (stdlib only).
+
+Pixel data is never decoded or re-encoded, so the image is preserved byte-for-byte
+apart from the added/removed text chunks.
+"""
+import struct
+import zlib
+
+_SIG = b"\x89PNG\r\n\x1a\n"
+_TEXT_TYPES = (b"tEXt", b"zTXt", b"iTXt")
+
+
+def _iter_chunks(data):
+    if data[:8] != _SIG:
+        raise ValueError("Not a PNG file")
+    pos = 8
+    while pos < len(data):
+        if pos + 8 > len(data):
+            raise ValueError("Truncated PNG chunk header")
+        length, ctype = struct.unpack(">I4s", data[pos:pos + 8])
+        body = data[pos + 8:pos + 8 + length]
+        if len(body) != length:
+            raise ValueError("Truncated PNG chunk")
+        yield ctype, body, data[pos:pos + 12 + length]  # raw chunk incl. length+CRC
+        pos += 12 + length
+
+
+def _make_chunk(ctype, body):
+    crc = zlib.crc32(ctype + body) & 0xFFFFFFFF
+    return struct.pack(">I", len(body)) + ctype + body + struct.pack(">I", crc)
+
+
+def _validate_key(key):
+    if not isinstance(key, str):
+        raise TypeError("Tag keys and values must be strings")
+    try:
+        raw = key.encode("latin-1")
+    except UnicodeEncodeError:
+        raise ValueError(f"Key must be Latin-1: {key!r}")
+    if not 1 <= len(raw) <= 79:
+        raise ValueError("Key must be 1-79 characters")
+    if key != key.strip() or "  " in key or "\x00" in key:
+        raise ValueError(f"Invalid key (spaces/NUL rules): {key!r}")
+    return raw
+
+
+def _text_chunk(key, value):
+    if not isinstance(value, str):
+        raise TypeError("Tag keys and values must be strings")
+    raw_key = _validate_key(key)
+    try:
+        raw_val = value.encode("latin-1")
+        if b"\x00" in raw_val:
+            raise UnicodeEncodeError("latin-1", value, 0, 1, "NUL")
+        return _make_chunk(b"tEXt", raw_key + b"\x00" + raw_val)
+    except UnicodeEncodeError:
+        # Non-Latin-1 (or NUL-containing) text -> UTF-8 iTXt, uncompressed
+        body = raw_key + b"\x00\x00\x00" + b"\x00" + b"\x00" + value.encode("utf-8")
+        return _make_chunk(b"iTXt", body)
+
+
+def _decode_text(ctype, body):
+    """Return (key, value) for a tEXt/zTXt/iTXt chunk body."""
+    key_raw, _, rest = body.partition(b"\x00")
+    key = key_raw.decode("latin-1")
+    if ctype == b"tEXt":
+        return key, rest.decode("latin-1")
+    if ctype == b"zTXt":
+        return key, zlib.decompress(rest[1:]).decode("latin-1")
+    # iTXt: flag, method, language\0, translated keyword\0, text
+    flag, rest = rest[0], rest[2:]
+    _, _, rest = rest.partition(b"\x00")
+    _, _, text = rest.partition(b"\x00")
+    if flag:
+        text = zlib.decompress(text)
+    return key, text.decode("utf-8")
+
+
+def embed_tags(input_path, output_path, tags):
+    """Copy a PNG to output_path with `tags` (dict[str, str]) stored as text chunks.
+
+    Existing text chunks whose keys appear in `tags` are replaced; others are kept.
+    """
+    tags = tags or {}  # {} (or None) is valid: output is a faithful copy
+    chunks = []
+    for key, value in tags.items():
+        chunks.append((key, _text_chunk(key, value)))  # validates first
+    new_keys = {k for k, _ in chunks}
+
+    with open(input_path, "rb") as f:
+        data = f.read()
+
+    out = [_SIG]
+    inserted = False
+    for ctype, body, raw in _iter_chunks(data):
+        if ctype in _TEXT_TYPES and _decode_key(body) in new_keys:
+            continue  # replaced by new value
+        if ctype in (b"IDAT", b"IEND") and not inserted:
+            out.extend(c for _, c in chunks)
+            inserted = True
+        out.append(raw)
+    if not inserted:
+        raise ValueError("PNG has no IDAT/IEND chunk")
+
+    with open(output_path, "wb") as f:
+        f.write(b"".join(out))
+
+
+def _decode_key(body):
+    return body.partition(b"\x00")[0].decode("latin-1")
+
+
+def read_tags(image_path):
+    """Return all text-chunk metadata of a PNG as dict[str, str]."""
+    with open(image_path, "rb") as f:
+        data = f.read()
+    tags = {}
+    for ctype, body, _ in _iter_chunks(data):
+        if ctype in _TEXT_TYPES:
+            key, value = _decode_text(ctype, body)
+            tags[key] = value
+    return tags

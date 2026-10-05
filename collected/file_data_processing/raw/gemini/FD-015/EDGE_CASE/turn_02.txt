@@ -1,0 +1,98 @@
+Here is the updated Python block ensuring scores **equal to or above** the threshold (`>=`) are retained and inactive records (`status != "active"`) are explicitly excluded:
+
+```python
+import json
+from typing import Dict, List, Any, Tuple
+
+
+def filter_jsonl(
+    input_file: str, 
+    output_file: str, 
+    min_score: float
+) -> Dict[str, int]:
+    """
+    Filters a JSONL file:
+    - Retains records where status == 'active' and score >= min_score (inclusive threshold).
+    - Sorts retained records by category (asc), score (desc), and id (asc).
+    - Counts skipped records broken down by reason.
+    """
+    valid_records: List[Dict[str, Any]] = []
+    
+    counts = {
+        "invalid_json": 0,
+        "missing_required_fields": 0,
+        "invalid_score_type": 0,
+        "inactive_record": 0,
+        "score_below_threshold": 0,
+        "retained": 0,
+    }
+
+    required_keys = {"id", "category", "score", "status"}
+
+    with open(input_file, "r", encoding="utf-8") as infile:
+        for line in infile:
+            line = line.strip()
+            if not line:
+                continue
+
+            # 1. JSON parsing validation
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                counts["invalid_json"] += 1
+                continue
+
+            # 2. Key presence validation
+            if not isinstance(record, dict) or not required_keys.issubset(record.keys()):
+                counts["missing_required_fields"] += 1
+                continue
+
+            # 3. Numeric type validation for score
+            score = record.get("score")
+            if not isinstance(score, (int, float)) or isinstance(score, bool):
+                counts["invalid_score_type"] += 1
+                continue
+
+            # 4. Explicitly exclude non-active records
+            if record.get("status") != "active":
+                counts["inactive_record"] += 1
+                continue
+
+            # 5. Score threshold check (retains score >= min_score, excluding strictly score < min_score)
+            if score < min_score:
+                counts["score_below_threshold"] += 1
+                continue
+
+            valid_records.append(record)
+            counts["retained"] += 1
+
+    # Sorting: Category (A-Z), Score (Highest to Lowest), ID (A-Z)
+    valid_records.sort(
+        key=lambda r: (str(r["category"]), -float(r["score"]), r["id"])
+    )
+
+    # Write output JSONL
+    with open(output_file, "w", encoding="utf-8") as outfile:
+        for record in valid_records:
+            outfile.write(json.dumps(record) + "\n")
+
+    return counts
+
+
+# Example Execution:
+if __name__ == "__main__":
+    threshold = 75.0
+    stats = filter_jsonl("input.jsonl", "output.jsonl", min_score=threshold)
+    
+    print(f"--- Processing Results (Threshold: {threshold}) ---")
+    print(f"Retained records: {stats['retained']}")
+    print(f"Inactive skipped: {stats['inactive_record']}")
+    print(f"Below threshold skipped (< {threshold}): {stats['score_below_threshold']}")
+    print(f"Invalid JSON skipped: {stats['invalid_json']}")
+    print(f"Missing fields skipped: {stats['missing_required_fields']}")
+    print(f"Invalid score types skipped: {stats['invalid_score_type']}")
+    
+    skipped_total = sum(v for k, v in stats.items() if k != "retained")
+    print(f"Total Skipped: {skipped_total}")
+
+```

@@ -1,0 +1,43 @@
+```python
+def multiply_polynomials(a: list[int], b: list[int]) -> list[int]:
+    """
+    Multiplies two integer polynomials using direct linear convolution
+    and returns the canonical coefficient array in ascending degree order.
+    
+    :param a: List of integer coefficients for P(x) in ascending degree order.
+    :param b: List of integer coefficients for Q(x) in ascending degree order.
+    :return: Canonical list of integer coefficients for R(x) = P(x) * Q(x).
+    """
+    if not a or not b:
+        return []
+    
+    len_a = len(a)
+    len_b = len(b)
+    
+    # Direct linear coefficient convolution
+    result = [0] * (len_a + len_b - 1)
+    for i in range(len_a):
+        for j in range(len_b):
+            result[i + j] += a[i] * b[j]
+            
+    # Deterministic trimming of trailing high-degree zero coefficients
+    while result and result[-1] == 0:
+        result.pop()
+        
+    return result
+
+
+if __name__ == "__main__":
+    # Example 1: Standard integer multiplication with negative coefficients
+    # P(x) = 1 + 2x - 3x^2, Q(x) = 4 - x + 5x^2
+    print(multiply_polynomials([1, 2, -3], [4, -1, 5]))  # [4, 7, -9, 13, -15]
+
+    # Example 2: High-degree term cancellation & trailing zero trimming
+    # P(x) = 1 + x, Q(x) = 1 - x + 0x^2 -> (1 + x)(1 - x) = 1 - x^2
+    print(multiply_polynomials([1, 1], [1, -1, 0]))       # [1, 0, -1]
+
+    # Example 3: Zero polynomial cases
+    print(multiply_polynomials([], [1, 2, 3]))            # []
+    print(multiply_polynomials([0], [5, -2]))             # []
+
+```

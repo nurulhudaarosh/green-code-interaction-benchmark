@@ -1,0 +1,238 @@
+"""
+event_pivot.py
+
+Validate event records, aggregate counts by (date, region), pivot event types
+into deterministic columns, fill missing cells with zero, and sort rows.
+
+Usage:
+    from event_pivot import build_event_pivot
+    df = build_event_pivot(records)
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from datetime import date, datetime
+from typing import Any, Iterable, Mapping
+
+import pandas as pd
+
+REQUIRED_FIELDS = ("date", "region", "event_type")
+DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%d-%m-%Y")
+
+
+class ValidationError(ValueError):
+    """Raised when one or more records fail validation (strict mode)."""
+
+    def __init__(self, errors: list[str]):
+        self.errors = errors
+        preview = "; ".join(errors[:5])
+        more = f" (+{len(errors) - 5} more)" if len(errors) > 5 else ""
+        super().__init__(f"{len(errors)} invalid record(s): {preview}{more}")
+
+
+@dataclass(frozen=True)
+class CleanRecord:
+    date: date
+    region: str
+    event_type: str
+    count: int
+
+
+def _parse_date(value: Any) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, pd.Timestamp):
+        return value.date()
+    if isinstance(value, str):
+        text = value.strip()
+        for fmt in DATE_FORMATS:
+            try:
+                return datetime.strptime(text, fmt).date()
+            except ValueError:
+                continue
+    raise ValueError(f"unparseable date: {value!r}")
+
+
+def _clean_label(value: Any, field: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string, got {type(value).__name__}")
+    text = " ".join(value.split())
+    if not text:
+        raise ValueError(f"{field} is empty")
+    return text
+
+
+def _parse_count(value: Any) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"count must be a non-negative integer, got {value!r}")
+    if isinstance(value, int):
+        count = value
+    elif isinstance(value, float) and value.is_integer():
+        count = int(value)
+    elif isinstance(value, str) and value.strip().isdigit():
+        count = int(value.strip())
+    else:
+        raise ValueError(f"count must be a non-negative integer, got {value!r}")
+    if count < 0:
+        raise ValueError(f"count must be non-negative, got {count}")
+    return count
+
+
+def validate_records(
+    records: Iterable[Mapping[str, Any]],
+    *,
+    strict: bool = True,
+) -> tuple[list[CleanRecord], list[str]]:
+    """
+    Validate and normalize records.
+
+    Each record needs: date, region, event_type. An optional 'count' field
+    (default 1) lets pre-aggregated rows be supplied.
+
+    Region is normalized to upper-case; event_type to lower-case with
+    whitespace collapsed, so 'US-East ' and 'us-east' merge deterministically.
+
+    strict=True  -> raise ValidationError listing every problem.
+    strict=False -> skip bad records and return their error messages.
+    """
+    clean: list[CleanRecord] = []
+    errors: list[str] = []
+
+    for idx, rec in enumerate(records):
+        try:
+            if not isinstance(rec, Mapping):
+                raise ValueError("record is not a mapping")
+            missing = [f for f in REQUIRED_FIELDS if rec.get(f) is None]
+            if missing:
+                raise ValueError(f"missing field(s): {', '.join(missing)}")
+
+            clean.append(
+                CleanRecord(
+                    date=_parse_date(rec["date"]),
+                    region=_clean_label(rec["region"], "region").upper(),
+                    event_type=_clean_label(rec["event_type"], "event_type").lower(),
+                    count=_parse_count(rec.get("count", 1)),
+                )
+            )
+        except ValueError as exc:
+            errors.append(f"record {idx}: {exc}")
+
+    if errors and strict:
+        raise ValidationError(errors)
+    return clean, errors
+
+
+def derive_column_name(event_type: str, prefix: str = "evt_") -> str:
+    """Deterministically map an event type to a safe column name."""
+    slug = re.sub(r"[^a-z0-9]+", "_", event_type.lower()).strip("_")
+    return f"{prefix}{slug or 'unknown'}"
+
+
+def _build_column_map(event_types: Iterable[str], prefix: str) -> dict[str, str]:
+    """
+    Map event types -> column names, sorted by event type so output order never
+    depends on input order. Slug collisions (e.g. 'a-b' vs 'a b') get stable
+    numeric suffixes based on sorted order.
+    """
+    mapping: dict[str, str] = {}
+    used: dict[str, int] = {}
+    for et in sorted(set(event_types)):
+        base = derive_column_name(et, prefix)
+        n = used.get(base, 0)
+        used[base] = n + 1
+        mapping[et] = base if n == 0 else f"{base}_{n + 1}"
+    return mapping
+
+
+def build_event_pivot(
+    records: Iterable[Mapping[str, Any]],
+    *,
+    strict: bool = True,
+    column_prefix: str = "evt_",
+    event_types: Iterable[str] | None = None,
+    add_total: bool = False,
+) -> pd.DataFrame:
+    """
+    Build a (date, region) x event-type count table.
+
+    Parameters
+    ----------
+    records       : iterable of dicts with date, region, event_type [, count]
+    strict        : raise on invalid records (True) or skip them (False)
+    column_prefix : prefix for derived event-type columns
+    event_types   : optional fixed list of event types to always include
+                    (useful so columns stay stable across runs/batches)
+    add_total     : append a 'total' column
+
+    Returns
+    -------
+    DataFrame with columns [date, region, <event columns...>] sorted by
+    date, then region; missing cells are 0 (int dtype).
+    """
+    clean, _ = validate_records(records, strict=strict)
+
+    forced = (
+        [_clean_label(e, "event_type").lower() for e in event_types]
+        if event_types is not None
+        else []
+    )
+    column_map = _build_column_map([r.event_type for r in clean] + forced, column_prefix)
+    event_cols = list(column_map.values())
+
+    if not clean:
+        cols = ["date", "region", *event_cols] + (["total"] if add_total else [])
+        return pd.DataFrame(columns=cols).astype(
+            {c: "int64" for c in event_cols + (["total"] if add_total else [])}
+        )
+
+    df = pd.DataFrame(
+        [(r.date, r.region, column_map[r.event_type], r.count) for r in clean],
+        columns=["date", "region", "event_col", "count"],
+    )
+
+    pivot = (
+        df.pivot_table(
+            index=["date", "region"],
+            columns="event_col",
+            values="count",
+            aggfunc="sum",
+            fill_value=0,
+        )
+        .reindex(columns=event_cols, fill_value=0)  # fixed, deterministic order
+        .fillna(0)
+        .astype("int64")
+    )
+    pivot.columns.name = None
+
+    if add_total:
+        pivot["total"] = pivot.sum(axis=1)
+
+    return (
+        pivot.reset_index()
+        .sort_values(["date", "region"], kind="mergesort")
+        .reset_index(drop=True)
+    )
+
+
+if __name__ == "__main__":
+    sample = [
+        {"date": "2024-03-02", "region": "us-east", "event_type": "Login"},
+        {"date": "2024-03-02", "region": "US-EAST ", "event_type": "login"},
+        {"date": "2024-03-02", "region": "eu-west", "event_type": "Sign Up"},
+        {"date": "2024-03-01", "region": "eu-west", "event_type": "Login", "count": 3},
+        {"date": "03/01/2024", "region": "us-east", "event_type": "Purchase", "count": "2"},
+    ]
+    print(build_event_pivot(sample, add_total=True).to_string(index=False))
+
+    bad = sample + [{"date": "not-a-date", "region": "", "event_type": "x"}]
+    try:
+        build_event_pivot(bad)
+    except ValidationError as err:
+        print("\nStrict mode error:", err)
+
+    print("\nLenient mode:")
+    print(build_event_pivot(bad, strict=False).to_string(index=False))

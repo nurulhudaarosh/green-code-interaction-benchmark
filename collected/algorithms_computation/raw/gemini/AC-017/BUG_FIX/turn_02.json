@@ -1,0 +1,11 @@
+{
+  "task_id": "AC-017",
+  "model": "gemini",
+  "interaction": "BUG_FIX",
+  "turn": 2,
+  "saved_at": "2026-09-30T05:41:20.750352+00:00",
+  "response_sha256": "f97c5d65bf139d8ad1987de840a94c554b9a8a58c924494d55a880fb642aa790",
+  "code_sha256": "a6167eab833d2b3ad82f73b7d8a5c8930ba243ff89dea4ae7907794dfc2f5268",
+  "raw_file": ".collection/raw/gemini/AC-017/BUG_FIX/turn_02.txt",
+  "code_file": ".collection/code/gemini/AC-017/BUG_FIX/final.py"
+}

@@ -1,0 +1,128 @@
+import os
+from pathlib import Path
+from collections import defaultdict
+from PIL import Image
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff"}
+
+
+def average_hash(path, hash_size=8):
+    """Compute the average hash (aHash) of an image as an integer bitmask."""
+    with Image.open(path) as img:
+        img = img.convert("L").resize((hash_size, hash_size), Image.LANCZOS)
+        pixels = list(img.getdata())
+    avg = sum(pixels) / len(pixels)
+    bits = 0
+    for i, p in enumerate(pixels):
+        if p >= avg:
+            bits |= 1 << i
+    return bits
+
+
+def hamming(a, b):
+    return bin(a ^ b).count("1")
+
+
+class UnionFind:
+    def __init__(self):
+        self.parent = {}
+
+    def find(self, x):
+        # path compression (iterative)
+        root = x
+        while self.parent[root] != root:
+            root = self.parent[root]
+        while self.parent[x] != root:
+            self.parent[x], x = root, self.parent[x]
+        return root
+
+    def add(self, x):
+        self.parent.setdefault(x, x)
+
+    def union(self, a, b):
+        ra, rb = self.find(a), self.find(b)
+        if ra != rb:
+            self.parent[rb] = ra
+
+
+def find_fuzzy_duplicates(input_dir, hash_size=8, max_hamming=5,
+                          return_hashes=False):
+    """
+    Cluster images in `input_dir` into groups of fuzzy duplicates.
+
+    Two images are considered similar if the Hamming distance between their
+    average hashes is <= max_hamming. Similarity is transitively closed
+    via union-find, so A~B and B~C places A, B, and C in the same cluster.
+
+    Parameters
+    ----------
+    input_dir : str | Path
+        Directory to scan recursively for image files.
+    hash_size : int
+        Side length of the square aHash (bits = hash_size ** 2).
+    max_hamming : int
+        Maximum Hamming distance for two hashes to be considered similar.
+    return_hashes : bool, default False
+        If True, also return a dict mapping each successfully hashed file
+        path (as a string) to its integer hash.
+
+    Returns
+    -------
+    clusters : list[list[str]]
+        Each cluster is a list of file paths (strings), sorted for
+        determinism. Singleton clusters are omitted.
+    hash_map : dict[str, int]  (only if return_hashes=True)
+        Maps filename (str path) to the computed integer hash. Includes
+        every image that was successfully hashed — even those not in any
+        cluster.
+    """
+    input_dir = Path(input_dir)
+    if not input_dir.is_dir():
+        raise ValueError(f"Not a directory: {input_dir}")
+
+    # 1. Collect image paths
+    paths = sorted(
+        p for p in input_dir.rglob("*")
+        if p.is_file() and p.suffix.lower() in IMAGE_EXTS
+    )
+
+    # 2. Compute hashes (skip unreadable files)
+    hashes = {}
+    for p in paths:
+        try:
+            hashes[p] = average_hash(p, hash_size=hash_size)
+        except Exception as e:
+            print(f"[warn] skipping {p}: {e}")
+
+    # 3. Union-find over pairwise Hamming distances
+    uf = UnionFind()
+    for p in hashes:
+        uf.add(p)
+
+    items = list(hashes.items())
+    n = len(items)
+    for i in range(n):
+        pi, hi = items[i]
+        for j in range(i + 1, n):
+            pj, hj = items[j]
+            if hamming(hi, hj) <= max_hamming:
+                uf.union(pi, pj)
+
+    # 4. Group by root
+    clusters_by_root = defaultdict(list)
+    for p in hashes:
+        clusters_by_root[uf.find(p)].append(p)
+
+    # 5. Return only real clusters (size >= 2)
+    clusters = [
+        sorted((str(p) for p in group))
+        for group in clusters_by_root.values()
+        if len(group) > 1
+    ]
+    clusters.sort(key=lambda g: g[0])
+
+    if return_hashes:
+        hash_map = {str(p): h for p, h in hashes.items()}
+        return clusters, hash_map
+
+    return clusters

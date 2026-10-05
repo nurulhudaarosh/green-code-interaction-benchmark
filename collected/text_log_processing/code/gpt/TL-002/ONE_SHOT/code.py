@@ -1,0 +1,85 @@
+import csv
+import re
+
+
+def convert_access_log(in_path, out_path, methods, status_classes):
+    """
+    Convert an Apache-style access log to CSV.
+
+    Returns:
+        {'written': int, 'skipped': int}
+    """
+
+    # Common/Combined Apache access-log format:
+    # 127.0.0.1 - - [10/Oct/2000:13:55:36 -0700] "GET /index.html HTTP/1.1" 200 1234
+    pattern = re.compile(
+        r'^(?P<ip>\S+)\s+\S+\s+\S+\s+'
+        r'\[(?P<timestamp>[^\]]+)\]\s+'
+        r'"(?P<method>[A-Z]+)\s+(?P<url>\S+)(?:\s+[^"]+)?'
+        r'"\s+(?P<status>\d{3})\s+(?P<size>\S+)'
+    )
+
+    methods = set(methods)
+    status_classes = set(status_classes)
+
+    written = 0
+    skipped = 0
+
+    with open(in_path, "r", encoding="utf-8", errors="replace") as infile, \
+         open(out_path, "w", newline="", encoding="utf-8") as outfile:
+
+        writer = csv.writer(outfile)
+        writer.writerow([
+            "ip",
+            "timestamp",
+            "method",
+            "url",
+            "status",
+            "statusClass",
+            "size",
+        ])
+
+        for line in infile:
+            line = line.rstrip("\r\n")
+
+            match = pattern.match(line)
+
+            if not match:
+                skipped += 1
+                continue
+
+            data = match.groupdict()
+
+            method = data["method"]
+            status = int(data["status"])
+            status_class = f"{status // 100}xx"
+
+            # Convert "-" to 0; malformed numeric sizes are skipped.
+            if data["size"] == "-":
+                size = 0
+            else:
+                try:
+                    size = int(data["size"])
+                except ValueError:
+                    skipped += 1
+                    continue
+
+            if method not in methods or status_class not in status_classes:
+                continue
+
+            writer.writerow([
+                data["ip"],
+                data["timestamp"],
+                method,
+                data["url"],
+                status,
+                status_class,
+                size,
+            ])
+
+            written += 1
+
+    return {
+        "written": written,
+        "skipped": skipped,
+    }

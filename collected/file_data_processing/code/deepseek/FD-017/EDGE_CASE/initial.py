@@ -1,0 +1,86 @@
+import pandas as pd
+
+
+def pivot_events(records, date_field="date", region_field="region", event_field="event_type"):
+    """
+    Validate records, pivot event counts by date/region, and fill missing cells with zero.
+
+    Parameters
+    ----------
+    records : list[dict] or pd.DataFrame
+        Input event records.
+    date_field : str
+        Column name containing the date.
+    region_field : str
+        Column name containing the region.
+    event_field : str
+        Column name containing the event type.
+
+    Returns
+    -------
+    pd.DataFrame
+        Pivoted table with dates as rows, regions/event-types as columns,
+        missing cells filled with 0, sorted by date.
+    """
+    df = pd.DataFrame(records)
+
+    required = [date_field, region_field, event_field]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
+    # Drop records with nulls in required fields
+    df = df.dropna(subset=required).copy()
+
+    # Normalize types
+    df[date_field] = pd.to_datetime(df[date_field], errors="coerce")
+    df = df.dropna(subset=[date_field])
+    df[region_field] = df[region_field].astype(str).str.strip()
+    df[event_field] = df[event_field].astype(str).str.strip()
+
+    if df.empty:
+        return pd.DataFrame()
+
+    # Aggregate counts by date + region + event type
+    counts = (
+        df.groupby([date_field, region_field, event_field])
+        .size()
+        .reset_index(name="count")
+    )
+
+    # Derive deterministic event-type columns
+    event_types = sorted(counts[event_field].unique())
+
+    # Pivot: rows = (date, region), columns = event_type
+    pivot = counts.pivot_table(
+        index=[date_field, region_field],
+        columns=event_field,
+        values="count",
+        aggfunc="sum",
+        fill_value=0,
+    )
+
+    # Ensure all event-type columns exist (deterministic ordering)
+    pivot = pivot.reindex(columns=event_types, fill_value=0)
+
+    # Flatten column names
+    pivot.columns = [str(c) for c in pivot.columns]
+    pivot = pivot.reset_index()
+
+    # Sort rows by date then region
+    pivot = pivot.sort_values(by=[date_field, region_field]).reset_index(drop=True)
+
+    return pivot
+
+
+if __name__ == "__main__":
+    sample = [
+        {"date": "2024-01-01", "region": "NA", "event_type": "click"},
+        {"date": "2024-01-01", "region": "NA", "event_type": "click"},
+        {"date": "2024-01-01", "region": "EU", "event_type": "view"},
+        {"date": "2024-01-02", "region": "NA", "event_type": "view"},
+        {"date": "2024-01-02", "region": "EU", "event_type": "click"},
+        {"date": "2024-01-02", "region": "EU", "event_type": "view"},
+        {"date": "2024-01-03", "region": "APAC", "event_type": "click"},
+    ]
+    print(pivot_events(sample))

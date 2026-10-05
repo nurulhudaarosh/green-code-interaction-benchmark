@@ -1,0 +1,62 @@
+from PIL import Image
+import os
+
+
+def letterbox_resize(
+    input_dir,
+    output_dir,
+    target_size,
+    pad_color=(0, 0, 0),
+    align="center"
+):
+    os.makedirs(output_dir, exist_ok=True)
+
+    if align not in ("center", "top-left"):
+        raise ValueError("align must be either 'center' or 'top-left'")
+
+    target_w, target_h = target_size
+
+    for filename in os.listdir(input_dir):
+        input_path = os.path.join(input_dir, filename)
+
+        if not os.path.isfile(input_path):
+            continue
+
+        try:
+            with Image.open(input_path) as img:
+                img = img.convert("RGB")
+                src_w, src_h = img.size
+
+                # Preserve aspect ratio and ensure the image fits
+                scale = min(target_w / src_w, target_h / src_h)
+
+                new_w = max(1, int(round(src_w * scale)))
+                new_h = max(1, int(round(src_h * scale)))
+
+                resized = img.resize(
+                    (new_w, new_h),
+                    Image.Resampling.LANCZOS
+                )
+
+                # Create padded canvas
+                canvas = Image.new(
+                    "RGB",
+                    (target_w, target_h),
+                    pad_color
+                )
+
+                # Determine placement
+                if align == "center":
+                    x = (target_w - new_w) // 2
+                    y = (target_h - new_h) // 2
+                else:  # top-left
+                    x = 0
+                    y = 0
+
+                canvas.paste(resized, (x, y))
+
+                output_path = os.path.join(output_dir, filename)
+                canvas.save(output_path)
+
+        except (OSError, ValueError) as e:
+            print(f"Skipping {filename}: {e}")

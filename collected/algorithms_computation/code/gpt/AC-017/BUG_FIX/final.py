@@ -1,0 +1,204 @@
+"""
+Prime Range Analyzer
+====================
+
+Problem Restatement
+-------------------
+Given two integers L and R, find every prime number in the inclusive
+range [L, R] and return the largest gap between consecutive primes.
+
+Expected Behavior
+-----------------
+The function must return exactly:
+
+{
+    "primes": [...],
+    "largest_gap": ...
+}
+
+Rules:
+1. Every prime in [L, R] must appear in ascending order.
+2. No composite number may appear.
+3. The largest gap is the maximum difference between consecutive
+   primes in the returned list.
+4. If there are fewer than two primes, largest_gap is 0.
+5. The result must be deterministic.
+6. Generate base primes through sqrt(R), then use those primes in a
+   segmented sieve for [L, R].
+7. Do not change unrelated requirements.
+
+Bug Demonstration
+-----------------
+A common segmented-sieve defect is starting marking at p*p without
+first making sure that p*p lies inside the requested segment.
+
+For example:
+
+    L = 10
+    R = 20
+
+The base primes through sqrt(20) are [2, 3].
+
+For p = 2, the correct first multiple inside [10, 20] is 10.
+For p = 3, the correct first multiple is 12.
+
+If an implementation incorrectly starts marking at p*p directly,
+then:
+
+    p = 2 -> starts at 4
+    p = 3 -> starts at 9
+
+Those values are outside the segment. If the segment array is indexed
+directly using those values, the implementation can mark the wrong
+positions or produce incorrect results.
+
+Correct approach:
+    first_multiple = max(
+        p * p,
+        ceil(L / p) * p
+    )
+
+For [10, 20]:
+    p = 2 -> first_multiple = 10
+    p = 3 -> first_multiple = 12
+
+The correct result is:
+
+    {
+        "primes": [11, 13, 17, 19],
+        "largest_gap": 4
+    }
+
+Corrected Implementation
+-------------------------
+The implementation below keeps the original requirements and fixes
+the segmented-sieve marking logic. It also handles values below 2
+without treating them as primes.
+"""
+
+from math import isqrt
+
+
+def generate_base_primes(limit: int) -> list[int]:
+    """Generate all primes <= limit using the Sieve of Eratosthenes."""
+    if limit < 2:
+        return []
+
+    is_prime = [True] * (limit + 1)
+    is_prime[0] = False
+    is_prime[1] = False
+
+    for p in range(2, isqrt(limit) + 1):
+        if is_prime[p]:
+            for multiple in range(p * p, limit + 1, p):
+                is_prime[multiple] = False
+
+    return [
+        number
+        for number in range(2, limit + 1)
+        if is_prime[number]
+    ]
+
+
+def prime_range_analyzer(L: int, R: int) -> dict:
+    """
+    Return all primes in [L, R] and the largest gap between
+    consecutive primes.
+    """
+    if L > R:
+        raise ValueError("L must be less than or equal to R")
+
+    if R < 2:
+        return {
+            "primes": [],
+            "largest_gap": 0,
+        }
+
+    # The segment cannot contain primes below 2.
+    segment_start = max(L, 2)
+    segment_size = R - segment_start + 1
+
+    # Initially assume every number in the segment is prime.
+    is_prime = [True] * segment_size
+
+    # Required: generate base primes through sqrt(R).
+    base_primes = generate_base_primes(isqrt(R))
+
+    # Segmented sieve.
+    for p in base_primes:
+        # The first multiple of p inside the segment must also be
+        # at least p*p. Smaller multiples have already been handled
+        # by smaller prime factors.
+        first_multiple = max(
+            p * p,
+            ((segment_start + p - 1) // p) * p
+        )
+
+        # Mark every multiple of p inside [segment_start, R].
+        for multiple in range(first_multiple, R + 1, p):
+            is_prime[multiple - segment_start] = False
+
+    # Extract primes in deterministic ascending order.
+    primes = [
+        segment_start + index
+        for index, prime in enumerate(is_prime)
+        if prime
+    ]
+
+    # Find the largest consecutive-prime gap.
+    largest_gap = 0
+
+    for i in range(1, len(primes)):
+        gap = primes[i] - primes[i - 1]
+        if gap > largest_gap:
+            largest_gap = gap
+
+    return {
+        "primes": primes,
+        "largest_gap": largest_gap,
+    }
+
+
+# ------------------------------------------------------------
+# Tests
+# ------------------------------------------------------------
+
+# Bug-revealing example:
+# The segment begins well after p*p, so marking must begin at the
+# first valid multiple inside the segment.
+assert prime_range_analyzer(10, 20) == {
+    "primes": [11, 13, 17, 19],
+    "largest_gap": 4,
+}
+
+# Values below 2 are not prime.
+assert prime_range_analyzer(1, 10) == {
+    "primes": [2, 3, 5, 7],
+    "largest_gap": 2,
+}
+
+# No primes.
+assert prime_range_analyzer(14, 16) == {
+    "primes": [],
+    "largest_gap": 0,
+}
+
+# Exactly one prime.
+assert prime_range_analyzer(17, 17) == {
+    "primes": [17],
+    "largest_gap": 0,
+}
+
+# Boundary beginning at 2.
+assert prime_range_analyzer(2, 20) == {
+    "primes": [2, 3, 5, 7, 11, 13, 17, 19],
+    "largest_gap": 4,
+}
+
+# Composite values mixed with primes.
+assert prime_range_analyzer(24, 40) == {
+    "primes": [29, 31, 37],
+    "largest_gap": 6,
+}
+
+print(prime_range_analyzer(10, 20))

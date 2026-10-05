@@ -1,0 +1,60 @@
+import heapq
+import re
+from collections import Counter
+
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def keyword_freq(paths, stopwords=(), top_k=20, include_bigrams=False):
+    """
+    Returns (top, total_tokens):
+      top          -> list of (term, count), sorted by count desc, then term asc
+      total_tokens -> number of unigram tokens kept after stopword removal
+
+    Bigrams are formed from adjacent kept tokens (stopwords already removed),
+    may span line breaks, and reset at the start of each file.
+    Bigram terms appear as "w1 w2" in the same ranked list as unigrams.
+    """
+    if isinstance(paths, (str, bytes)) or hasattr(paths, "__fspath__"):
+        paths = [paths]
+
+    stop = {s.lower() for s in stopwords}
+    counts = Counter()
+    total = 0
+
+    for path in paths:
+        prev = None  # last kept token in this file (carries across lines)
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:  # streaming: one line in memory at a time
+                for tok in _TOKEN_RE.findall(line.lower()):
+                    if tok in stop:
+                        continue
+                    total += 1
+                    counts[tok] += 1
+                    if include_bigrams:
+                        if prev is not None:
+                            counts[f"{prev} {tok}"] += 1
+                        prev = tok
+
+    if top_k <= 0 or not counts:
+        return [], total
+
+    top = heapq.nsmallest(top_k, counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return top, total
+
+
+if __name__ == "__main__":
+    import os
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        a = os.path.join(d, "a.txt")
+        b = os.path.join(d, "empty.txt")
+        with open(a, "w", encoding="utf-8") as f:
+            f.write("The quick brown fox\njumps over the quick brown dog.\nQuick-brown!")
+        open(b, "w").close()
+
+        print(keyword_freq([a, b], stopwords=["THE", "over"], top_k=5, include_bigrams=True))
+        # ([('brown', 3), ('quick', 3), ('quick brown', 3), ('brown fox', 1), ('brown dog', 1)], 9)
+        print(keyword_freq([b]))
+        # ([], 0)

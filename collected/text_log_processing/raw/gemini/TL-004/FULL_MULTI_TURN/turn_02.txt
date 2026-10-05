@@ -1,0 +1,138 @@
+Here is the updated analyzer addressing case-normalization for custom stopwords, empty or whitespace-only files/inputs, and bigram extraction across line breaks and hyphens.
+
+```python
+import re
+from collections import Counter
+from typing import Iterable, List, Optional, Set, Tuple
+
+DEFAULT_STOPWORDS: Set[str] = {
+    "a", "about", "above", "after", "again", "against", "all", "am", "an",
+    "and", "any", "are", "aren't", "as", "at", "be", "because", "been",
+    "before", "being", "below", "between", "both", "but", "by", "can't",
+    "cannot", "could", "couldn't", "did", "didn't", "do", "does", "doesn't",
+    "doing", "don't", "down", "during", "each", "few", "for", "from",
+    "further", "had", "hadn't", "has", "hasn't", "have", "haven't", "having",
+    "he", "he'd", "he'll", "he's", "her", "here", "here's", "hers", "herself",
+    "him", "himself", "his", "how", "how's", "i", "i'd", "i'll", "i'm",
+    "i've", "if", "in", "into", "is", "isn't", "it", "it's", "its", "itself",
+    "let's", "me", "more", "most", "mustn't", "my", "myself", "no", "nor",
+    "not", "of", "off", "on", "once", "only", "or", "other", "ought", "our",
+    "ours", "ourselves", "out", "over", "own", "same", "shan't", "she",
+    "she'd", "she'll", "she's", "should", "shouldn't", "so", "some", "such",
+    "than", "that", "that's", "the", "their", "theirs", "them", "themselves",
+    "then", "there", "there's", "these", "they", "they'd", "they'll", "they're",
+    "they've", "this", "those", "through", "to", "too", "under", "until",
+    "up", "very", "was", "wasn't", "we", "we'd", "we'll", "we're", "we've",
+    "were", "weren't", "what", "what's", "when", "when's", "where", "where's",
+    "which", "while", "who", "who's", "whom", "why", "why's", "with", "won't",
+    "would", "wouldn't", "you", "you'd", "you'll", "you're", "you've", "your",
+    "yours", "yourself", "yourselves"
+}
+
+
+def _clean_and_tokenize(text: Optional[str]) -> List[str]:
+    """Handles empty inputs, joins hyphenated line breaks, and tokenizes."""
+    if not text or not text.strip():
+        return []
+
+    # Rejoin words hyphenated across line breaks (e.g. "ma-\nchine" -> "machine")
+    normalized_text = re.sub(r"(\b[a-zA-Z]+)-\s*\n\s*([a-zA-Z]+\b)", r"\1\2", text)
+
+    # Convert all whitespace (newlines, tabs) to single spaces so sentences flow smoothly
+    normalized_text = normalized_text.lower()
+
+    # Match tokens including internal single quotes (e.g., "don't", "it's")
+    return re.findall(r"\b[a-z]+(?:'[a-z]+)?\b", normalized_text)
+
+
+def analyze_text(
+    text: Optional[str],
+    top_k: int = 10,
+    stopwords: Optional[Iterable[str]] = None,
+    min_length: int = 2,
+    include_bigrams: bool = True
+) -> dict:
+    """
+    Extracts top-k unigrams and cross-line bigrams with stopword filtering.
+    Safe against empty strings, empty files, and NoneType inputs.
+    """
+    # 1. Guard against empty/invalid top_k
+    if top_k <= 0:
+        return {"unigrams": [], "bigrams": []}
+
+    # 2. Case-insensitive stopword normalization
+    if stopwords is None:
+        stopword_set = DEFAULT_STOPWORDS
+    else:
+        stopword_set = {word.strip().lower() for word in stopwords if word}
+
+    # 3. Tokenize with crash protection for empty text
+    tokens = _clean_and_tokenize(text)
+    if not tokens:
+        return {"unigrams": [], "bigrams": []}
+
+    # 4. Filter unigrams by stopword set and minimum character length
+    filtered_unigrams = [
+        token for token in tokens
+        if token not in stopword_set and len(token) >= min_length
+    ]
+
+    unigram_counts = Counter(filtered_unigrams).most_common(top_k)
+
+    # 5. Extract cross-line bigrams
+    bigram_counts: List[Tuple[str, int]] = []
+    if include_bigrams and len(filtered_unigrams) >= 2:
+        bigram_list = [
+            f"{filtered_unigrams[i]} {filtered_unigrams[i + 1]}"
+            for i in range(len(filtered_unigrams) - 1)
+        ]
+        bigram_counts = Counter(bigram_list).most_common(top_k)
+
+    return {
+        "unigrams": unigram_counts,
+        "bigrams": bigram_counts
+    }
+
+
+def analyze_file(filepath: str, top_k: int = 10, **kwargs) -> dict:
+    """Safely reads and analyzes a file, handling empty files and missing files."""
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            content = f.read()
+    except (FileNotFoundError, IsADirectoryError):
+        return {"unigrams": [], "bigrams": []}
+
+    return analyze_text(content, top_k=top_k, **kwargs)
+
+
+# Demonstration
+if __name__ == "__main__":
+    # Test case: Cross-line words, hyphenated wraps, uppercase stopwords, and empty edge cases
+    multiline_text = """
+    Natural lan-
+    guage processing transforms un-
+    structured text into insights.
+    NATURAL LANGUAGE models require high-quality text datasets.
+    """
+
+    custom_stops = ["THE", "InTo", "AnD"]  # Mixed-case custom stopwords
+
+    print("--- Multiline & Cross-Line Test ---")
+    results = analyze_text(multiline_text, top_k=3, stopwords=custom_stops)
+    print("Top Unigrams:", results["unigrams"])
+    print("Top Bigrams: ", results["bigrams"])
+
+    print("\n--- Empty Input Crash Tests ---")
+    print("Empty String:", analyze_text("", top_k=5))
+    print("None Input:   ", analyze_text(None, top_k=5))
+    print("Whitespace:   ", analyze_text("   \n\t\n   ", top_k=5))
+
+```
+
+### Fixes Applied
+
+1. **Case-Sensitivity:** User-provided stopwords are normalized with `{w.strip().lower() for w in stopwords}` so uppercase terms like `"THE"` or `"Into"` reliably match lowercase tokens.
+2. **Crash Guards (Empty Inputs & Files):** `_clean_and_tokenize` and `analyze_file` validate `None`, zero-length strings, whitespace-only buffers, and non-existent files upfront, returning empty `[]` lists instead of raising exceptions or failing slicing operations.
+3. **Cross-Line Bigrams & Hyphenation:**
+* `re.sub(r"(\b[a-zA-Z]+)-\s*\n\s*([a-zA-Z]+\b)", r"\1\2", ...)` glues broken hyphenated words across line boundaries (e.g., `lan-\nguage` $\to$ `language`).
+* Newlines are treated as regular whitespace during regex scanning, allowing bigrams like `("processing", "transforms")` to bridge across lines seamlessly.

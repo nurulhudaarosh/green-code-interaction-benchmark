@@ -1,0 +1,214 @@
+```python
+#!/usr/bin/env python3
+"""
+csv_stats.py - Per-column statistics for CSV files.
+
+For every column, reports count, minimum, maximum, mean, and median.
+Missing values are handled independently per column: a blank/NA cell in one
+column never causes a row to be dropped from the other columns' statistics.
+Columns are reported in the same order they appear in the input.
+
+Usage:
+    python csv_stats.py data.csv
+    python csv_stats.py data.csv --delimiter ";" --missing "N/A" "-" --format json
+    cat data.csv | python csv_stats.py -
+"""
+
+import argparse
+import csv
+import json
+import math
+import statistics
+import sys
+from typing import Dict, Iterable, List, Optional, Sequence
+
+DEFAULT_MISSING = ["", "na", "n/a", "nan", "null", "none", "nil", "-", "--", "?"]
+
+
+def parse_number(raw: str, missing: set) -> Optional[float]:
+    """Return a float for a valid numeric cell, or None if missing/non-numeric.
+
+    Non-finite results (inf, nan) are treated as missing so they cannot
+    poison min/max/mean.
+    """
+    if raw is None:
+        return None
+    text = raw.strip()
+    if text.lower() in missing:
+        return None
+    try:
+        value = float(text.replace(",", "")) if _has_thousands_commas(text) else float(text)
+    except ValueError:
+        return None
+    return value if math.isfinite(value) else None
+
+
+def _has_thousands_commas(text: str) -> bool:
+    """Detect values like '1,234,567.89' (only when the delimiter isn't a comma)."""
+    if "," not in text:
+        return False
+    head, _, tail = text.partition(".")
+    parts = head.lstrip("+-").split(",")
+    return (
+        all(p.isdigit() for p in parts)
+        and 1 <= len(parts[0]) <= 3
+        and all(len(p) == 3 for p in parts[1:])
+    )
+
+
+def compute_stats(
+    rows: Iterable[Sequence[str]],
+    header: List[str],
+    missing: set,
+) -> List[Dict[str, object]]:
+    """Collect values per column (independently) and compute statistics."""
+    columns: List[List[float]] = [[] for _ in header]
+    non_missing_text = [0] * len(header)  # cells with content that were not "missing"
+
+    for row in rows:
+        for idx in range(len(header)):
+            cell = row[idx] if idx < len(row) else ""  # short rows -> missing
+            value = parse_number(cell, missing)
+            if value is not None:
+                columns[idx].append(value)
+            elif cell is not None and cell.strip().lower() not in missing:
+                non_missing_text[idx] += 1  # present but not numeric
+
+    results = []
+    for idx, name in enumerate(header):
+        values = columns[idx]
+        entry: Dict[str, object] = {
+            "column": name,
+            "count": len(values),
+            "min": min(values) if values else None,
+            "max": max(values) if values else None,
+            "mean": statistics.fmean(values) if values else None,
+            "median": statistics.median(values) if values else None,
+        }
+        if non_missing_text[idx]:
+            entry["non_numeric_skipped"] = non_missing_text[idx]
+        results.append(entry)
+    return results
+
+
+def fmt(value: object, precision: int) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, float):
+        if value == int(value) and abs(value) < 1e15:
+            return str(int(value))
+        return f"{value:.{precision}f}".rstrip("0").rstrip(".")
+    return str(value)
+
+
+def render_table(results: List[Dict[str, object]], precision: int) -> str:
+    headers = ["column", "count", "min", "max", "mean", "median"]
+    table = [headers] + [[fmt(r[h], precision) for h in headers] for r in results]
+    widths = [max(len(row[i]) for row in table) for i in range(len(headers))]
+
+    def line(row: List[str]) -> str:
+        first = row[0].ljust(widths[0])
+        rest = [cell.rjust(widths[i]) for i, cell in enumerate(row[1:], start=1)]
+        return "  ".join([first] + rest)
+
+    out = [line(table[0]), "  ".join("-" * w for w in widths)]
+    out.extend(line(r) for r in table[1:])
+
+    skipped = [r for r in results if r.get("non_numeric_skipped")]
+    if skipped:
+        out.append("")
+        for r in skipped:
+            out.append(
+                f"note: column '{r['column']}' had {r['non_numeric_skipped']} "
+                f"non-numeric value(s) that were ignored"
+            )
+    return "\n".join(out)
+
+
+def render_csv(results: List[Dict[str, object]], precision: int) -> str:
+    import io
+
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+    writer.writerow(["column", "count", "min", "max", "mean", "median"])
+    for r in results:
+        writer.writerow(
+            [r["column"], r["count"]]
+            + ["" if r[k] is None else fmt(r[k], precision) for k in ("min", "max", "mean", "median")]
+        )
+    return buf.getvalue().rstrip("\n")
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Per-column count/min/max/mean/median for a CSV file, "
+        "with missing values handled independently per column."
+    )
+    parser.add_argument("file", help="CSV file path, or '-' for stdin")
+    parser.add_argument("-d", "--delimiter", default=",", help="field delimiter (default: ,)")
+    parser.add_argument("--encoding", default="utf-8-sig", help="file encoding (default: utf-8-sig)")
+    parser.add_argument(
+        "-m",
+        "--missing",
+        nargs="+",
+        default=None,
+        help="extra strings to treat as missing (case-insensitive); "
+        f"defaults already include: {', '.join(repr(m) for m in DEFAULT_MISSING)}",
+    )
+    parser.add_argument("--no-header", action="store_true", help="input has no header row; columns are named col1, col2, ...")
+    parser.add_argument("-p", "--precision", type=int, default=4, help="decimal places (default: 4)")
+    parser.add_argument("-f", "--format", choices=["table", "csv", "json"], default="table", help="output format (default: table)")
+    args = parser.parse_args(argv)
+
+    missing = set(DEFAULT_MISSING)
+    if args.missing:
+        missing.update(m.strip().lower() for m in args.missing)
+
+    try:
+        handle = sys.stdin if args.file == "-" else open(args.file, newline="", encoding=args.encoding)
+    except OSError as exc:
+        print(f"error: cannot open {args.file}: {exc}", file=sys.stderr)
+        return 1
+
+    with handle:
+        reader = csv.reader(handle, delimiter=args.delimiter)
+        try:
+            first = next(reader)
+        except StopIteration:
+            print("error: input is empty", file=sys.stderr)
+            return 1
+
+        if args.no_header:
+            header = [f"col{i + 1}" for i in range(len(first))]
+            rows = _chain_first(first, reader)
+        else:
+            header = [h.strip() or f"col{i + 1}" for i, h in enumerate(first)]
+            rows = reader
+
+        results = compute_stats(rows, header, missing)
+
+    if args.format == "json":
+        print(json.dumps(results, indent=2))
+    elif args.format == "csv":
+        print(render_csv(results, args.precision))
+    else:
+        print(render_table(results, args.precision))
+    return 0
+
+
+def _chain_first(first: Sequence[str], rest: Iterable[Sequence[str]]):
+    yield first
+    yield from rest
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+**Key behaviors**
+
+- **Per-column missing handling:** each cell is evaluated on its own, so a blank in one column never removes that row from other columns' statistics. Short rows count as missing for the absent cells.
+- **Column order:** results follow the header order exactly (duplicate header names are kept as separate columns since processing is index-based).
+- **Missing markers:** blank, `NA`, `N/A`, `NaN`, `null`, `none`, `-`, `?` and similar are treated as missing by default, with more addable via `--missing`. `inf`/`nan` values are also excluded so they can't corrupt results.
+- **Non-numeric columns:** text columns show `count` of 0 and `-` for the stats, and a note reports how many non-numeric values were ignored in columns that mix text and numbers.
+- **Output:** `--format table|csv|json`, with `--delimiter`, `--no-header`, `--precision`, and `-` for stdin.

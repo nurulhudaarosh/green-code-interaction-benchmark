@@ -1,0 +1,132 @@
+Here's the extended implementation with the `align` parameter:
+
+```python
+import os
+from pathlib import Path
+from PIL import Image
+
+
+def letterbox_resize(input_dir, output_dir, target_size, pad_color=(0, 0, 0), align="center"):
+    """
+    Resize all images in input_dir to fit within target_size while preserving
+    aspect ratio, then pad to exactly target_size.
+
+    Args:
+        input_dir (str | Path): Directory containing source images.
+        output_dir (str | Path): Directory to write resized images to.
+        target_size (tuple): (width, height) of the output image.
+        pad_color (tuple): RGB color tuple for padding. Default black.
+        align (str): Where to place the resized content inside the padded
+            canvas. One of:
+              - 'center'   : content centered (default)
+              - 'top-left' : content placed at the top-left corner;
+                             padding accumulates on the right/bottom.
+
+    Returns:
+        list[Path]: Paths of successfully written output images.
+    """
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    target_w, target_h = target_size
+    if target_w <= 0 or target_h <= 0:
+        raise ValueError("target_size dimensions must be positive")
+
+    valid_aligns = {"center", "top-left"}
+    if align not in valid_aligns:
+        raise ValueError(f"align must be one of {valid_aligns}, got {align!r}")
+
+    supported_exts = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".webp"}
+    written = []
+
+    for src_path in sorted(input_dir.iterdir()):
+        if not src_path.is_file() or src_path.suffix.lower() not in supported_exts:
+            continue
+
+        try:
+            with Image.open(src_path) as img:
+                orig_w, orig_h = img.size
+                if orig_w == 0 or orig_h == 0:
+                    continue
+
+                # Scale factor to fit inside target box
+                scale = min(target_w / orig_w, target_h / orig_h)
+                new_w = max(1, int(round(orig_w * scale)))
+                new_h = max(1, int(round(orig_h * scale)))
+
+                # High-quality downscale / upscale
+                resample = Image.LANCZOS if scale < 1 else Image.BICUBIC
+                resized = img.resize((new_w, new_h), resample)
+
+                # Build a fresh canvas in a mode matching the source (RGB/RGBA)
+                mode = resized.mode
+                if mode == "RGBA":
+                    bg_color = tuple(pad_color) + (255,) if len(pad_color) == 3 else tuple(pad_color)
+                elif mode == "L":
+                    # grayscale padding uses luminance approximation
+                    bg_color = int(0.299 * pad_color[0] + 0.587 * pad_color[1] + 0.114 * pad_color[2])
+                else:
+                    bg_color = tuple(pad_color[:3])
+
+                canvas = Image.new(mode, (target_w, target_h), bg_color)
+
+                # Compute placement based on align
+                if align == "center":
+                    offset_x = (target_w - new_w) // 2
+                    offset_y = (target_h - new_h) // 2
+                elif align == "top-left":
+                    offset_x = 0
+                    offset_y = 0
+                # (validation above guarantees align is one of the two)
+
+                if mode == "RGBA":
+                    canvas.paste(resized, (offset_x, offset_y), resized)
+                else:
+                    canvas.paste(resized, (offset_x, offset_y))
+
+                # Save preserving format; force RGB for JPEG (no alpha)
+                out_path = output_dir / src_path.name
+                save_img = canvas
+                save_kwargs = {}
+                suffix = src_path.suffix.lower()
+                if suffix in {".jpg", ".jpeg"}:
+                    if save_img.mode != "RGB":
+                        save_img = save_img.convert("RGB")
+                    save_kwargs = {"quality": 95, "subsampling": 0}
+                elif suffix == ".png":
+                    save_kwargs = {"optimize": True}
+
+                save_img.save(out_path, **save_kwargs)
+                written.append(out_path)
+
+        except (OSError, ValueError) as e:
+            print(f"Skipping {src_path.name}: {e}")
+
+    return written
+
+
+if __name__ == "__main__":
+    # Centered (default behavior)
+    letterbox_resize("input_images", "output_images", (640, 640))
+
+    # Top-left aligned
+    letterbox_resize("input_images", "output_tl", (640, 640),
+                     pad_color=(114, 114, 114), align="top-left")
+```
+
+## What changed
+
+**Signature**: Added `align="center"` as a keyword argument, so existing callers keep the current behavior.
+
+**Validation**: The function raises `ValueError` for any `align` value outside `{"center", "top-left"}`, catching typos early rather than silently falling back.
+
+
+
+For `top-left`, padding naturally accumulates on the right and bottom edges since the content is pasted at `(0, 0)`.
+
+## Why top-left can matter
+
+For some ML pipelines (e.g., certain detection or classification training setups), placing content at the top-left corner makes the padding region predictable — annotations or downstream crops that assume origin-anchored content will work without needing to know the exact padding offsets. Centered alignment is more common for display, but top-left is often preferred when the padded image will be further processed programmatically.
+
+If you later want more flexible placement (e.g., `'top-right'`, `'bottom-left'`, arbitrary anchor points, or explicit `(x, y)` offsets), the cleanest extension would be to map an anchor string to `(offset_x, offset_y)` via a small helper — happy to add that if useful.

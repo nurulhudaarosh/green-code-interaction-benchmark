@@ -1,0 +1,385 @@
+```python
+"""
+Priority Queue Simulator
+========================
+
+Problem restatement:
+--------------------
+Simulate a non-preemptive single-server queue.
+
+For every job:
+- Larger priority runs first.
+- If priorities are equal, the earlier arrival runs first.
+- If both priority and arrival time are equal, the smaller job ID runs first.
+- Once a job starts, it runs until completion.
+- If the server is idle and no job has arrived, time jumps to the next arrival.
+
+For each job, return:
+- completion_time
+- waiting_time
+
+Also return:
+- average_waiting_time
+
+Required algorithm:
+- Sort jobs by arrival time.
+- Use a priority heap for server decisions.
+- Heap ordering must be:
+      larger priority
+      -> earlier arrival
+      -> smaller job ID
+
+Required result:
+{
+    "jobs": {
+        job_id: {
+            "completion_time": ...,
+            "waiting_time": ...
+        },
+        ...
+    },
+    "average_waiting_time": ...
+}
+
+
+BUG REPORT
+==========
+
+The important defect is deterministic output ordering.
+
+The previous implementation inserted results into the dictionary when jobs
+finished. Therefore, the "jobs" dictionary followed EXECUTION order rather
+than the original/input job order.
+
+Example:
+
+    jobs = [
+        (1, 0, 5, 1),
+        (2, 1, 2, 5),
+    ]
+
+Job 1 starts at time 0 and finishes at 5.
+While Job 1 is running, Job 2 arrives.
+Job 2 then runs from 5 to 7.
+
+The previous implementation produces:
+
+    {
+        "jobs": {
+            1: {"completion_time": 5, "waiting_time": 0},
+            2: {"completion_time": 7, "waiting_time": 4}
+        },
+        "average_waiting_time": 2.0
+    }
+
+That example does not expose the ordering problem because execution order
+happens to match input order.
+
+A small valid example that exposes it is:
+
+    jobs = [
+        (1, 0, 5, 1),
+        (2, 0, 1, 10),
+    ]
+
+Both jobs arrive at time 0, but Job 2 has higher priority.
+
+Correct server decisions:
+    Job 2 -> time 0 to 1
+    Job 1 -> time 1 to 6
+
+So the previous implementation constructs its dictionary as:
+
+    {
+        "jobs": {
+            2: {"completion_time": 1, "waiting_time": 0},
+            1: {"completion_time": 6, "waiting_time": 1}
+        },
+        "average_waiting_time": 0.5
+    }
+
+If the required result is expected in the original job order, this violates
+the requirement to return the result deterministically for every job.
+
+Correction:
+-----------
+Compute the scheduling decisions using the priority heap exactly as before,
+but store each result separately and construct the final "jobs" dictionary
+using the original input order.
+
+This changes only result construction. The scheduling algorithm and all
+priority/tie-breaking rules remain unchanged.
+"""
+
+
+import heapq
+
+
+def simulate_priority_queue(jobs):
+    """
+    Simulate a non-preemptive single-server priority queue.
+
+    Each job is:
+        (job_id, arrival_time, service_time, priority)
+
+    Returns:
+        {
+            "jobs": {
+                job_id: {
+                    "completion_time": ...,
+                    "waiting_time": ...
+                }
+            },
+            "average_waiting_time": ...
+        }
+    """
+
+    jobs = list(jobs)
+
+    if not jobs:
+        return {
+            "jobs": {},
+            "average_waiting_time": 0.0
+        }
+
+    # Preserve the original input order for deterministic result construction.
+    original_order = [job[0] for job in jobs]
+
+    # Sort arrivals for simulation.
+    arrivals = sorted(
+        jobs,
+        key=lambda job: (job[1], job[0])
+    )
+
+    # Heap key:
+    #   -priority -> larger priority first
+    #   arrival   -> earlier arrival first
+    #   job_id    -> smaller ID first
+    heap = []
+
+    results = {}
+
+    current_time = 0
+    next_job = 0
+    total_waiting_time = 0
+    completed = 0
+
+    while completed < len(arrivals):
+
+        # If the server is idle, jump to the next arrival.
+        if not heap and current_time < arrivals[next_job][1]:
+            current_time = arrivals[next_job][1]
+
+        # Add every job that has arrived.
+        while (
+            next_job < len(arrivals)
+            and arrivals[next_job][1] <= current_time
+        ):
+            job_id, arrival_time, service_time, priority = arrivals[next_job]
+
+            heapq.heappush(
+                heap,
+                (-priority, arrival_time, job_id, service_time)
+            )
+
+            next_job += 1
+
+        # Select the next job according to the required rules.
+        neg_priority, arrival_time, job_id, service_time = heapq.heappop(heap)
+
+        start_time = current_time
+        waiting_time = start_time - arrival_time
+
+        current_time += service_time
+        completion_time = current_time
+
+        results[job_id] = {
+            "completion_time": completion_time,
+            "waiting_time": waiting_time
+        }
+
+        total_waiting_time += waiting_time
+        completed += 1
+
+    # FIX:
+    # Build the final result in the original input order rather than
+    # execution order.
+    ordered_results = {
+        job_id: results[job_id]
+        for job_id in original_order
+    }
+
+    return {
+        "jobs": ordered_results,
+        "average_waiting_time": total_waiting_time / len(jobs)
+    }
+
+
+# ============================================================
+# Tests
+# ============================================================
+
+if __name__ == "__main__":
+
+    # --------------------------------------------------------
+    # Bug-demonstration case
+    # --------------------------------------------------------
+    #
+    # Input order: 1, 2
+    # Scheduling order: 2, 1 because Job 2 has higher priority.
+    #
+    # The corrected result must still be returned in input order.
+    #
+    jobs = [
+        (1, 0, 5, 1),
+        (2, 0, 1, 10),
+    ]
+
+    expected = {
+        "jobs": {
+            1: {
+                "completion_time": 6,
+                "waiting_time": 1
+            },
+            2: {
+                "completion_time": 1,
+                "waiting_time": 0
+            }
+        },
+        "average_waiting_time": 0.5
+    }
+
+    actual = simulate_priority_queue(jobs)
+
+    print("Bug demonstration / corrected result:")
+    print(actual)
+
+    assert actual == expected
+
+
+    # --------------------------------------------------------
+    # Test 2: Priority tie -> earlier arrival first
+    # --------------------------------------------------------
+    jobs = [
+        (1, 0, 4, 5),
+        (2, 1, 2, 5),
+        (3, 2, 1, 5),
+    ]
+
+    expected = {
+        "jobs": {
+            1: {
+                "completion_time": 4,
+                "waiting_time": 0
+            },
+            2: {
+                "completion_time": 6,
+                "waiting_time": 3
+            },
+            3: {
+                "completion_time": 7,
+                "waiting_time": 4
+            }
+        },
+        "average_waiting_time": 7 / 3
+    }
+
+    assert simulate_priority_queue(jobs) == expected
+
+
+    # --------------------------------------------------------
+    # Test 3: Same priority and same arrival -> smaller ID
+    # --------------------------------------------------------
+    jobs = [
+        (3, 0, 2, 5),
+        (1, 0, 3, 5),
+        (2, 0, 1, 5),
+    ]
+
+    expected = {
+        "jobs": {
+            3: {
+                "completion_time": 6,
+                "waiting_time": 4
+            },
+            1: {
+                "completion_time": 3,
+                "waiting_time": 0
+            },
+            2: {
+                "completion_time": 4,
+                "waiting_time": 3
+            }
+        },
+        "average_waiting_time": 7 / 3
+    }
+
+    assert simulate_priority_queue(jobs) == expected
+
+
+    # --------------------------------------------------------
+    # Test 4: Server initially idle
+    # --------------------------------------------------------
+    jobs = [
+        (10, 5, 4, 1),
+        (20, 10, 2, 3),
+    ]
+
+    expected = {
+        "jobs": {
+            10: {
+                "completion_time": 9,
+                "waiting_time": 0
+            },
+            20: {
+                "completion_time": 12,
+                "waiting_time": 0
+            }
+        },
+        "average_waiting_time": 0.0
+    }
+
+    assert simulate_priority_queue(jobs) == expected
+
+
+    # --------------------------------------------------------
+    # Test 5: Higher-priority job arriving while server busy
+    # --------------------------------------------------------
+    jobs = [
+        (1, 0, 5, 1),
+        (2, 1, 2, 10),
+        (3, 2, 1, 5),
+    ]
+
+    expected = {
+        "jobs": {
+            1: {
+                "completion_time": 5,
+                "waiting_time": 0
+            },
+            2: {
+                "completion_time": 7,
+                "waiting_time": 4
+            },
+            3: {
+                "completion_time": 8,
+                "waiting_time": 5
+            }
+        },
+        "average_waiting_time": 3.0
+    }
+
+    assert simulate_priority_queue(jobs) == expected
+
+
+    # --------------------------------------------------------
+    # Test 6: Empty input
+    # --------------------------------------------------------
+    assert simulate_priority_queue([]) == {
+        "jobs": {},
+        "average_waiting_time": 0.0
+    }
+
+
+    print("\nAll tests passed.")
+```

@@ -1,0 +1,73 @@
+import csv
+import re
+
+LOG_PATTERN = re.compile(
+    r'^(?P<ip>\S+)\s+\S+\s+\S+\s+\[(?P<timestamp>[^\]]+)\]\s+'
+    r'"(?P<method>\S+)\s+(?P<url>\S+)(?:\s+[^"]*)?"\s+'
+    r'(?P<status>\d{3})\s+(?P<size>\S+)'
+)
+
+
+def convert_access_log(in_path, out_path):
+    written = 0
+    skipped = 0
+
+    with open(in_path, "r", encoding="utf-8") as infile, \
+         open(out_path, "w", newline="", encoding="utf-8") as outfile:
+
+        writer = csv.writer(outfile)
+        writer.writerow([
+            "ip", "timestamp", "method", "url",
+            "status", "statusClass", "size"
+        ])
+
+        for line in infile:
+            line = line.strip()
+
+            if not line:
+                skipped += 1
+                continue
+
+            match = LOG_PATTERN.match(line)
+
+            if not match:
+                skipped += 1
+                continue
+
+            data = match.groupdict()
+
+            # Safely parse status
+            try:
+                status = int(data["status"])
+            except (ValueError, TypeError):
+                skipped += 1
+                continue
+
+            # "-" means unknown/missing response size
+            if data["size"] == "-":
+                size = 0
+            else:
+                try:
+                    size = int(data["size"])
+                except (ValueError, TypeError):
+                    skipped += 1
+                    continue
+
+            status_class = f"{status // 100}xx"
+
+            writer.writerow([
+                data["ip"],
+                data["timestamp"],
+                data["method"],
+                data["url"],
+                status,
+                status_class,
+                size
+            ])
+
+            written += 1
+
+    return {
+        "written": written,
+        "skipped": skipped
+    }

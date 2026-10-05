@@ -1,0 +1,11 @@
+{
+  "task_id": "TL-003",
+  "model": "deepseek",
+  "interaction": "ONE_SHOT",
+  "turn": 1,
+  "saved_at": "2026-10-05T05:19:45.560788+00:00",
+  "response_sha256": "91a73d7252cd4db16256191a21aa874d105b6a0022a8be416be249bcf6189e4f",
+  "code_sha256": "e276e16ad818e3b556602a6b7645b5548c2d519b0d5ec1bfe1287c837eeacd3e",
+  "raw_file": ".collection/raw/deepseek/TL-003/ONE_SHOT/turn_01.txt",
+  "code_file": ".collection/code/deepseek/TL-003/ONE_SHOT/code.py"
+}

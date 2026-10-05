@@ -1,0 +1,98 @@
+import os
+import re
+from collections import Counter, defaultdict
+from pathlib import Path
+
+
+def analyze_text_files(directory_path: str):
+    """Recursively analyzes all .txt files in directory_path.
+
+    Returns:
+        total_files (int): Total number of .txt files processed.
+        ranked_stats (list): List of tuples (word, total_freq, doc_freq) sorted
+        deterministically.
+    """
+    total_tf = Counter()
+    doc_freq = defaultdict(set)
+    total_files = 0
+
+    # Regex pattern to match alphabetic words (case-insensitive)
+    word_pattern = re.compile(r"[a-zA-Z]+")
+
+    root_dir = Path(directory_path)
+
+    if not root_dir.exists() or not root_dir.is_dir():
+        raise ValueError(
+            f"Directory path '{directory_path}' does not exist or is not a directory."
+        )
+
+    # Recursively traverse directory for .txt files
+    for file_path in root_dir.rglob("*.txt"):
+        if not file_path.is_file():
+            continue
+
+        total_files += 1
+
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+
+            # Find all alphabetic words and case-fold them to lowercase
+            words = word_pattern.findall(content)
+
+            for word in words:
+                folded_word = word.casefold()
+                total_tf[folded_word] += 1
+                doc_freq[folded_word].add(file_path)
+
+        except Exception as e:
+            print(f"Error reading file {file_path}: {e}")
+
+    # Compile word stats: (word, total_frequency, document_frequency)
+    word_stats = [
+        (word, count, len(doc_freq[word])) for word, count in total_tf.items()
+    ]
+
+    # Deterministic sorting:
+    # 1. Total Frequency (descending -> -stat[1])
+    # 2. Document Frequency (descending -> -stat[2])
+    # 3. Alphabetical order (ascending -> stat[0])
+    ranked_stats = sorted(word_stats, key=lambda x: (-x[1], -x[2], x[0]))
+
+    return total_files, ranked_stats
+
+
+def main():
+    import sys
+
+    # Get directory path from command line arguments or default to current directory
+    target_dir = sys.argv[1] if len(sys.argv) > 1 else "."
+
+    print(f"Scanning directory recursively: {os.path.abspath(target_dir)}\n")
+
+    try:
+        total_files, results = analyze_text_files(target_dir)
+
+        print(f"Processed {total_files} .txt file(s).")
+        print(f"Total unique alphabetic words found: {len(results)}\n")
+
+        if not results:
+            print("No text data found.")
+            return
+
+        # Print top 20 words as an illustration
+        print(f"{'WORD':<20} | {'TOTAL FREQ':<12} | {'DOC FREQ':<10}")
+        print("-" * 48)
+
+        for word, tf, df in results[:20]:
+            print(f"{word:<20} | {tf:<12} | {df:<10}")
+
+        if len(results) > 20:
+            print(f"\n... and {len(results) - 20} more terms.")
+
+    except Exception as err:
+        print(f"Error: {err}")
+
+
+if __name__ == "__main__":
+    main()

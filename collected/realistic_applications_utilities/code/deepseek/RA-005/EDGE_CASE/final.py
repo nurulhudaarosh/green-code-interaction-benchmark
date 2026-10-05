@@ -1,0 +1,53 @@
+def process_logs(logs, separator="|", threshold=2, case_sensitive=False):
+    """
+    Handle: empty logs, extra separators, case differences, exact thresholds.
+    Returns only keys whose count EXACTLY equals `threshold`.
+    """
+    if not logs:
+        return {}
+
+    if isinstance(logs, str):
+        logs = [logs]
+
+    counts = {}
+
+    for log in logs:
+        # 1. Skip empty / None / whitespace-only logs
+        if log is None:
+            continue
+        log = str(log).strip()
+        if not log:
+            continue
+
+        # 2. Split and strip extra separators (leading/trailing/double)
+        parts = [p.strip() for p in log.split(separator) if p.strip()]
+        if not parts:
+            continue
+
+        # 3. Build key + normalize case
+        key = separator.join(parts)
+        if not case_sensitive:
+            key = key.casefold()  # better than .lower() for unicode
+
+        counts[key] = counts.get(key, 0) + 1
+
+    # 4. Keep only EXACT threshold matches
+    return {k: v for k, v in counts.items() if v == threshold}
+
+
+# ---------------- Demo ----------------
+if __name__ == "__main__":
+    logs = [
+        "",                        # empty
+        "   ",                     # whitespace
+        None,                      # None
+        "ERROR|login failed",      # normal
+        "||ERROR|login failed||",  # extra separators
+        "error|login failed",      # case difference
+        "Error|Login Failed",      # case difference
+        "ERROR|login failed",      # count → exact threshold
+        "INFO|page loaded",        # below threshold
+    ]
+
+    print(process_logs(logs, separator="|", threshold=5, case_sensitive=False))
+    # → {'error|login failed': 5}

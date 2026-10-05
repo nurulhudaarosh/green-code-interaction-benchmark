@@ -1,0 +1,215 @@
+Here's a self-contained utility using only the standard library (pandas version noted at the end).
+
+```python
+"""
+event_pivot.py
+
+Validates event records, aggregates counts by (date, region), derives
+deterministic event-type columns, zero-fills missing cells, and sorts rows.
+"""
+
+from __future__ import annotations
+
+import csv
+import io
+from collections import Counter
+from dataclasses import dataclass
+from datetime import date, datetime
+from typing import Any, Iterable, Mapping, Optional, Sequence
+
+
+class ValidationError(ValueError):
+    """Raised when a record fails validation (in strict mode)."""
+
+
+@dataclass(frozen=True)
+class Event:
+    date: date
+    region: str
+    event_type: str
+
+
+@dataclass
+class PivotResult:
+    columns: list[str]                 # ["date", "region", <event types...>]
+    rows: list[list[Any]]              # sorted, zero-filled
+    rejected: list[tuple[int, str]]    # (record index, reason) in lenient mode
+
+    def to_dicts(self) -> list[dict[str, Any]]:
+        return [dict(zip(self.columns, row)) for row in self.rows]
+
+    def to_csv(self) -> str:
+        buf = io.StringIO()
+        writer = csv.writer(buf, lineterminator="\n")
+        writer.writerow(self.columns)
+        writer.writerows(self.rows)
+        return buf.getvalue()
+
+    def to_table(self) -> str:
+        """Plain-text aligned table for quick inspection."""
+        cells = [self.columns] + [[str(v) for v in r] for r in self.rows]
+        widths = [max(len(r[i]) for r in cells) for i in range(len(self.columns))]
+        lines = ["  ".join(c.ljust(w) for c, w in zip(r, widths)) for r in cells]
+        lines.insert(1, "  ".join("-" * w for w in widths))
+        return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------
+# Validation
+# --------------------------------------------------------------------------
+
+_DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y")
+
+
+def _parse_date(value: Any) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        for fmt in _DATE_FORMATS:
+            try:
+                return datetime.strptime(text, fmt).date()
+            except ValueError:
+                continue
+        # ISO timestamps such as 2024-03-05T10:15:00
+        try:
+            return datetime.fromisoformat(text).date()
+        except ValueError:
+            pass
+    raise ValidationError(f"invalid date: {value!r}")
+
+
+def _clean_text(value: Any, field: str, *, lower: bool) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValidationError(f"missing or invalid {field}: {value!r}")
+    text = " ".join(value.split())  # collapse internal whitespace
+    return text.lower() if lower else text
+
+
+def validate_record(record: Mapping[str, Any]) -> Event:
+    """Validate and normalise one record into an Event."""
+    if not isinstance(record, Mapping):
+        raise ValidationError(f"record is not a mapping: {record!r}")
+    for key in ("date", "region", "event_type"):
+        if key not in record:
+            raise ValidationError(f"missing field: {key}")
+    return Event(
+        date=_parse_date(record["date"]),
+        region=_clean_text(record["region"], "region", lower=False).title(),
+        event_type=_clean_text(record["event_type"], "event_type", lower=True),
+    )
+
+
+# --------------------------------------------------------------------------
+# Pivot
+# --------------------------------------------------------------------------
+
+def pivot_events(
+    records: Iterable[Mapping[str, Any]],
+    *,
+    strict: bool = True,
+    event_types: Optional[Sequence[str]] = None,
+    descending_dates: bool = False,
+) -> PivotResult:
+    """
+    Build a (date, region) x event_type count table.
+
+    Parameters
+    ----------
+    records:
+        Iterable of mappings with keys 'date', 'region', 'event_type'.
+    strict:
+        True  -> raise ValidationError on the first bad record.
+        False -> skip bad records and report them in `rejected`.
+    event_types:
+        Optional fixed column set/order. Types are normalised (lowercased).
+        Events whose type is not listed are ignored. If omitted, columns are
+        derived from the data and sorted alphabetically (deterministic).
+    descending_dates:
+        Sort newest date first (region still ascending within a date).
+    """
+    counts: Counter[tuple[date, str, str]] = Counter()
+    seen_types: set[str] = set()
+    rejected: list[tuple[int, str]] = []
+
+    allowed: Optional[list[str]] = None
+    if event_types is not None:
+        allowed = []
+        for t in event_types:
+            norm = _clean_text(t, "event_types entry", lower=True)
+            if norm not in allowed:
+                allowed.append(norm)
+
+    for idx, rec in enumerate(records):
+        try:
+            ev = validate_record(rec)
+        except ValidationError as exc:
+            if strict:
+                raise ValidationError(f"record {idx}: {exc}") from exc
+            rejected.append((idx, str(exc)))
+            continue
+
+        if allowed is not None and ev.event_type not in allowed:
+            continue
+        counts[(ev.date, ev.region, ev.event_type)] += 1
+        seen_types.add(ev.event_type)
+
+    type_columns = allowed if allowed is not None else sorted(seen_types)
+
+    keys = {(d, r) for d, r, _ in counts}
+    ordered_keys = sorted(
+        keys,
+        key=lambda k: (k[0].toordinal() * (-1 if descending_dates else 1), k[1]),
+    )
+
+    rows = [
+        [d.isoformat(), r] + [counts.get((d, r, t), 0) for t in type_columns]
+        for d, r in ordered_keys
+    ]
+    return PivotResult(["date", "region"] + type_columns, rows, rejected)
+
+
+# --------------------------------------------------------------------------
+# Demo
+# --------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    sample = [
+        {"date": "2024-03-01", "region": "north", "event_type": "Login"},
+        {"date": "2024-03-01", "region": "North ", "event_type": "login"},
+        {"date": "2024-03-01", "region": "south", "event_type": "purchase"},
+        {"date": "2024/03/02", "region": "south", "event_type": "login"},
+        {"date": "03/02/2024", "region": "north", "event_type": "error"},
+        {"date": "not-a-date", "region": "east", "event_type": "login"},
+        {"date": "2024-03-03", "region": "", "event_type": "login"},
+    ]
+
+    result = pivot_events(sample, strict=False)
+    print(result.to_table())
+    print("\nRejected:", result.rejected)
+```
+
+**Output of the demo:**
+
+```
+date        region  error  login  purchase
+----------  ------  -----  -----  --------
+2024-03-01  North   0      2      0
+2024-03-01  South   0      0      1
+2024-03-02  North   1      0      0
+2024-03-02  South   0      1      0
+
+Rejected: [(5, "invalid date: 'not-a-date'"), (6, "missing or invalid region: ''")]
+```
+
+**Design notes**
+
+- **Validation:** Requires `date`, `region`, `event_type`. Dates accept `YYYY-MM-DD`, `YYYY/MM/DD`, `MM/DD/YYYY`, ISO timestamps, or `date`/`datetime` objects. Regions and types are whitespace-collapsed; regions are title-cased and types lowercased so `"North "` and `"north"` merge.
+- **Strict vs. lenient:** `strict=True` (default) raises with the record index; `strict=False` skips bad records and returns them in `rejected`.
+- **Deterministic columns:** Event-type columns are sorted alphabetically unless you pass `event_types=[...]` to fix the set and order (useful for stable schemas across runs; unlisted types are ignored).
+- **Zero-fill:** Every (date, region) row gets a value for every type column via `counts.get(..., 0)`.
+- **Sorting:** By date, then region; set `descending_dates=True` for newest-first.
+
+If you'd prefer pandas, the core is `df.pivot_table(index=["date","region"], columns="event_type", aggfunc="size", fill_value=0).sort_index()`, though the validation layer above would still be needed beforehand.

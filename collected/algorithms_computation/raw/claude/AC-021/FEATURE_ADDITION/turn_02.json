@@ -1,0 +1,11 @@
+{
+  "task_id": "AC-021",
+  "model": "claude",
+  "interaction": "FEATURE_ADDITION",
+  "turn": 2,
+  "saved_at": "2026-10-01T04:02:43.981897+00:00",
+  "response_sha256": "de171cbeb1760c6885698a292bfe3a46a7db14bc8d63835a4ee2842681def3bd",
+  "code_sha256": "802ddf1e9a70599d33148d45f92a0876f4c6152fb7bebe878ea70cf78902029d",
+  "raw_file": ".collection/raw/claude/AC-021/FEATURE_ADDITION/turn_02.txt",
+  "code_file": ".collection/code/claude/AC-021/FEATURE_ADDITION/final.py"
+}

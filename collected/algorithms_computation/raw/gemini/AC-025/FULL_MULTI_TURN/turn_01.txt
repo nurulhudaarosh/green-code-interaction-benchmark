@@ -1,0 +1,159 @@
+### Problem Identification & Understanding
+
+The problem is a variant of the **Multiple-Choice Knapsack Problem (MCKP)** with **two capacity constraints** (Budget and Memory).
+
+* **Structure:** There are $N$ stages (groups). Each stage $i$ contains a set of mutually exclusive options.
+* **Decision:** Select exactly one option per stage.
+* **Costs & Value:** Each option $j$ in stage $i$ has a budget cost $b_{i, j}$, a memory cost $m_{i, j}$, and a score $s_{i, j}$.
+* **Objective:** Maximize total score $\sum s_{i, j}$ subject to total budget $\le B_{max}$ and total memory $\le M_{max}$.
+* **Tie-breaking:** If multiple selection vectors achieve the same maximum score, choose the lexicographically smallest selection vector (e.g., choice indices $[0, 1, ...]$ over $[0, 2, ...]$).
+
+---
+
+### Key Constraints & Required Output
+
+1. **Stage Selection Constraint:** Exactly one option selected per stage: $\sum_{j} x_{i, j} = 1 \quad \forall i \in \{0, \dots, N-1\}, x_{i, j} \in \{0, 1\}$.
+2. **Resource Constraints:**
+* Total Budget: $\sum_{i, j} x_{i, j} \cdot b_{i, j} \le B_{max}$
+* Total Memory: $\sum_{i, j} x_{i, j} \cdot m_{i, j} \le M_{max}$
+
+
+3. **Tie-Breaking Constraint:** Among optimal scoring solutions, choose the lexicographically smallest vector of option indices.
+4. **Required Output:** The maximum total score, total budget used, total memory used, and the vector of chosen option indices per stage.
+
+---
+
+### Algorithm Description
+
+We use a **Layered Two-Resource Dynamic Programming (DP)** algorithm with **Deterministic Reconstruction**:
+
+1. **DP State:** `dp[stage][b][m]` represents the maximum score attainable after processing up to stage `stage` using exactly budget `b` and memory `m`.
+2. **Transitions:** For stage $i$, transition from stage $i-1$:
+
+$$\text{dp}[i][b + b_{i, j}][m + m_{i, j}] = \max(\text{dp}[i][b + b_{i, j}][m + m_{i, j}], \text{dp}[i-1][b][m] + s_{i, j})$$
+
+
+3. **Optimization:** Process layer by layer (keeping only the previous stage's DP table to save memory) or maintain the state table.
+4. **Deterministic Reconstruction:** To guarantee the lexicographically smallest choice vector without storing large arrays of vectors in the DP state, perform a deterministic backward pass (or forward DP storing choices with lexicographical priority on tie scores):
+* Store the best option index $j$ that achieved the DP entry `dp[i][b][m]`.
+* When updating `dp[i][b][m]`, if a new score strictly exceeds the old score, update the score and choice. If the score is equal, resolve ties deterministically based on lexicographical order of choices.
+
+
+
+---
+
+### Deterministic Python Implementation
+
+```python
+from typing import List, Dict, Tuple, Optional
+
+class Option:
+    def __init__(self, budget: int, memory: int, score: int):
+        self.budget = budget
+        self.memory = memory
+        self.score = score
+
+def solve_mckp_2d(
+    stages: List[List[Option]], 
+    max_budget: int, 
+    max_memory: int
+) -> Optional[Tuple[int, int, int, List[int]]]:
+    """
+    Solves 2D Multiple-Choice Knapsack Problem with lexicographical tie-breaking.
+    
+    Returns:
+        (max_score, used_budget, used_memory, choice_indices) or None if infeasible.
+    """
+    num_stages = len(stages)
+    if num_stages == 0:
+        return 0, 0, 0, []
+
+    # dp[b][m] = (max_score, choices_list)
+    # Using full choices in state guarantees exact lexicographical tie-breaking across all stages.
+    dp: Dict[Tuple[int, int], Tuple[int, List[int]]] = {(0, 0): (0, [])}
+
+    for stage_idx, options in enumerate(stages):
+        next_dp: Dict[Tuple[int, int], Tuple[int, List[int]]] = {}
+
+        for opt_idx, opt in enumerate(options):
+            b_cost = opt.budget
+            m_cost = opt.memory
+            score = opt.score
+
+            for (b, m), (prev_score, prev_choices) in dp.items():
+                new_b = b + b_cost
+                new_m = m + m_cost
+
+                if new_b <= max_budget and new_m <= max_memory:
+                    new_score = prev_score + score
+                    new_choices = prev_choices + [opt_idx]
+                    key = (new_b, new_m)
+
+                    if key not in next_dp:
+                        next_dp[key] = (new_score, new_choices)
+                    else:
+                        existing_score, existing_choices = next_dp[key]
+                        if new_score > existing_score:
+                            next_dp[key] = (new_score, new_choices)
+                        elif new_score == existing_score:
+                            # Lexicographical tie-breaking
+                            if new_choices < existing_choices:
+                                next_dp[key] = (new_score, new_choices)
+
+        dp = next_dp
+        if not dp:
+            return None  # Infeasible state reached
+
+    # Find global optimal solution considering tie-breaker
+    best_score = -1
+    best_budget = 0
+    best_memory = 0
+    best_choices: List[int] = []
+
+    for (b, m), (score, choices) in dp.items():
+        if score > best_score:
+            best_score = score
+            best_budget = b
+            best_memory = m
+            best_choices = choices
+        elif score == best_score:
+            if choices < best_choices:
+                best_score = score
+                best_budget = b
+                best_memory = m
+                best_choices = choices
+
+    if best_score == -1:
+        return None
+
+    return best_score, best_budget, best_memory, best_choices
+
+
+# Example Usage
+if __name__ == "__main__":
+    # Stage 0 options
+    stage_0 = [
+        Option(budget=2, memory=3, score=10),
+        Option(budget=1, memory=2, score=10),  # Same score, lower resource cost
+    ]
+    # Stage 1 options
+    stage_1 = [
+        Option(budget=3, memory=1, score=15),
+        Option(budget=2, memory=4, score=20),
+    ]
+
+    budget_limit = 5
+    memory_limit = 6
+
+    result = solve_mckp_2d([stage_0, stage_1], budget_limit, memory_limit)
+    
+    if result:
+        max_score, b_used, m_used, choices = result
+        print(f"Optimal Score: {max_score}")
+        print(f"Budget Used: {b_used}/{budget_limit}")
+        print(f"Memory Used: {m_used}/{memory_limit}")
+        print(f"Choices Vector (0-indexed): {choices}")
+    else:
+        print("No feasible selection fits the budget and memory limits.")
+
+```

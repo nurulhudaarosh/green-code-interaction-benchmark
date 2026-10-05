@@ -1,0 +1,70 @@
+### Problem Overview
+
+The goal is to multiply two polynomials with integer coefficients (which may be negative) and return the exact coefficient array of the resulting product polynomial.
+
+Representing a polynomial $P(x) = a_0 + a_1 x + a_2 x^2 + \dots + a_m x^m$ as a list of coefficients `[a_0, a_1, a_2, ..., a_m]`, multiplying two polynomials $P(x)$ of degree $m$ and $Q(x)$ of degree $n$ produces a result $R(x) = P(x) \times Q(x)$ of degree $m + n$.
+
+### Key Constraints & Required Output
+
+* **Input**: Two lists of integers representing the coefficients of the input polynomials in ascending order of degree (from constant term $x^0$ up to $x^m$ and $x^n$).
+* **Coefficients**: Can be zero, positive, or negative integers.
+* **Algorithm Constraint**: Direct coefficient convolution (direct $O(m \cdot n)$ multiplication) is used, which is exact and optimal for typical execution environment constraint sizes.
+* **Output**: A single list of integers representing the coefficients of the product polynomial in ascending order of degree. If either input is empty, the result is an empty list.
+
+### Algorithm Description
+
+The direct Cauchy product (discrete convolution) is used:
+
+1. If either input polynomial list is empty, return an empty list `[]`.
+2. Determine the output degree/length: $len(R) = len(P) + len(Q) - 1$.
+3. Initialize the product list with zeros of size $len(R)$.
+4. Iterate over each term $a_i$ at index $i$ in $P$ and $b_j$ at index $j$ in $Q$, accumulating the product into $R[i + j]$:
+
+$$R[k] = \sum_{i + j = k} P[i] \cdot Q[j]$$
+
+
+5. Return the resulting coefficient array $R$.
+
+### Python Implementation
+
+```python
+def multiply_polynomials(p: list[int], q: list[int]) -> list[int]:
+    """
+    Multiplies two integer polynomials using direct coefficient convolution.
+    
+    :param p: Coefficient array of first polynomial (ascending order of degree)
+    :param q: Coefficient array of second polynomial (ascending order of degree)
+    :return: Exact coefficient array of the product polynomial
+    """
+    if not p or not q:
+        return []
+    
+    len_p = len(p)
+    len_q = len(q)
+    
+    # Initialize output list for polynomial of degree (len_p - 1) + (len_q - 1)
+    result = [0] * (len_p + len_q - 1)
+    
+    # Direct convolution
+    for i in range(len_p):
+        for j in range(len_q):
+            result[i + j] += p[i] * q[j]
+            
+    return result
+
+
+# Example Usage & Verification:
+if __name__ == "__main__":
+    # P(x) = 1 - 2x + 3x^2
+    # Q(x) = 4 + 5x
+    # P(x) * Q(x) = 4 - 3x + 2x^2 + 15x^3
+    poly1 = [1, -2, 3]
+    poly2 = [4, 5]
+    
+    product = multiply_polynomials(poly1, poly2)
+    print("Poly 1:", poly1)
+    print("Poly 2:", poly2)
+    print("Product:", product)
+    # Output: [4, -3, 2, 15]
+
+```

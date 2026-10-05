@@ -1,0 +1,79 @@
+Here’s the extended version. `include_alpha=True` writes `<stem>_A.png` only when the source image actually contains an alpha channel.
+
+```python
+from pathlib import Path
+from PIL import Image
+
+
+def split_channels(input_dir, output_dir, include_alpha=False):
+    """
+    Split images into R, G, and B grayscale channel files.
+
+    If include_alpha=True and the source image has an alpha channel,
+    also save the alpha channel as <stem>_A.png.
+    """
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    valid_extensions = {
+        ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"
+    }
+
+    for path in input_dir.iterdir():
+        if not path.is_file() or path.suffix.lower() not in valid_extensions:
+            continue
+
+        with Image.open(path) as img:
+            # Preserve alpha information when requested
+            has_alpha = "A" in img.getbands()
+
+            if include_alpha and has_alpha:
+                r, g, b, a = img.convert("RGBA").split()
+
+                r.save(output_dir / f"{path.stem}_R.png")
+                g.save(output_dir / f"{path.stem}_G.png")
+                b.save(output_dir / f"{path.stem}_B.png")
+                a.save(output_dir / f"{path.stem}_A.png")
+            else:
+                r, g, b = img.convert("RGB").split()
+
+                r.save(output_dir / f"{path.stem}_R.png")
+                g.save(output_dir / f"{path.stem}_G.png")
+                b.save(output_dir / f"{path.stem}_B.png")
+
+
+def merge_channels(r_path, g_path, b_path, output_path):
+    """
+    Merge three grayscale channel images into an RGB image.
+    """
+    with Image.open(r_path) as r_img, \
+         Image.open(g_path) as g_img, \
+         Image.open(b_path) as b_img:
+
+        r = r_img.convert("L")
+        g = g_img.convert("L")
+        b = b_img.convert("L")
+
+        if not (r.size == g.size == b.size):
+            raise ValueError(
+                f"Channel dimensions must match: "
+                f"R={r.size}, G={g.size}, B={b.size}"
+            )
+
+        merged = Image.merge("RGB", (r, g, b))
+        merged.save(output_path)
+```
+
+
+
+For an RGBA image such as `photo.png`, the second call produces:
+
+```text
+photo_R.png
+photo_G.png
+photo_B.png
+photo_A.png
+```
+
+For a normal RGB/JPEG image, `photo_A.png` is **not** created.

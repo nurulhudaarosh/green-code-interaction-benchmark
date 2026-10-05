@@ -1,0 +1,94 @@
+## Problem
+
+You have an undirected weighted graph with `n` vertices and `m` edges. For each query threshold `q`, keep only the edges with weight `<= q`. In that subgraph, report:
+
+1. the number of connected components, and
+2. the size of the largest component.
+
+## Key constraints and edge cases
+
+- Vertices are labeled `0..n-1`. Isolated vertices count as components of size 1.
+- Edges and queries can come in any order, and queries can repeat, so answers must be returned in the original query order.
+- Self-loops and parallel edges are possible and harmless, since a union of already-connected vertices does nothing.
+- With `n = 0`, the answer is `(0, 0)` for every query.
+- `m`, `n` and the number of queries `k` may be large, so the solution must be about `O((m + k) log(m + k))`, not `O(k * m)`.
+
+## Output
+
+A list of `k` pairs `(components, largest_size)`, where entry `i` answers `queries[i]`.
+
+## Algorithm
+
+Raising the threshold only ever adds edges, so the components only merge.
+
+1. Sort the edges by weight.
+2. Sort the query indices by threshold.
+3. Process queries in increasing threshold order, with a pointer into the sorted edges. Before answering a query, union every edge with weight `<= q`.
+4. Use a disjoint-set union (union by size, path compression) and track the component count and the largest size as unions happen.
+5. Store each answer at the query's original index.
+
+Complexity is `O(m log m + k log k + (n + m) α(n))`.
+
+## Implementation
+
+```python
+from typing import List, Tuple
+
+
+def component_stats(
+    n: int,
+    edges: List[Tuple[int, int, int]],
+    queries: List[int],
+) -> List[Tuple[int, int]]:
+    """For each q in queries, return (num_components, largest_component_size)
+    using only edges with weight <= q. Vertices are 0..n-1."""
+    parent = list(range(n))
+    size = [1] * n
+    components = n
+    largest = 1 if n > 0 else 0
+
+    def find(x: int) -> int:
+        root = x
+        while parent[root] != root:
+            root = parent[root]
+        while parent[x] != root:          # path compression
+            parent[x], x = root, parent[x]
+        return root
+
+    sorted_edges = sorted(edges, key=lambda e: e[2])
+    order = sorted(range(len(queries)), key=lambda i: (queries[i], i))
+    answers: List[Tuple[int, int]] = [(0, 0)] * len(queries)
+
+    ptr = 0
+    m = len(sorted_edges)
+    for qi in order:
+        q = queries[qi]
+        while ptr < m and sorted_edges[ptr][2] <= q:
+            u, v, _ = sorted_edges[ptr]
+            ptr += 1
+            ru, rv = find(u), find(v)
+            if ru == rv:
+                continue
+            if size[ru] < size[rv]:       # union by size
+                ru, rv = rv, ru
+            parent[rv] = ru
+            size[ru] += size[rv]
+            components -= 1
+            if size[ru] > largest:
+                largest = size[ru]
+        answers[qi] = (components, largest)
+
+    return answers
+
+
+if __name__ == "__main__":
+    n = 5
+    edges = [(0, 1, 1), (1, 2, 3), (3, 4, 2), (2, 3, 5)]
+    queries = [3, 0, 5, 1, 2]
+    print(component_stats(n, edges, queries))
+    # [(2, 3), (5, 1), (1, 5), (4, 2), (3, 2)]
+```
+
+The example output matches a hand check. At `q=0` there are no edges, so 5 components of size 1. At `q=3`, edges 0-1, 3-4 and 1-2 are active, giving components `{0,1,2}` and `{3,4}`, so 2 components with largest size 3. At `q=5` everything is connected.
+
+The code uses only the standard library and is fully deterministic. It makes no network calls and needs no randomness or user input.

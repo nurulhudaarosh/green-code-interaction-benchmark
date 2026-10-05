@@ -1,0 +1,11 @@
+{
+  "task_id": "FD-015",
+  "model": "claude",
+  "interaction": "BUG_FIX",
+  "turn": 1,
+  "saved_at": "2026-10-05T04:09:32.490075+00:00",
+  "response_sha256": "7b25b45c22784ab2a107ff28d46627f43331685afd4c2cff89e7929695ed71f2",
+  "code_sha256": "b2cd7b0040dd8f1e24cba6be095aeee4b6da68446e0b80958c551956d0f572d4",
+  "raw_file": ".collection/raw/claude/FD-015/BUG_FIX/turn_01.txt",
+  "code_file": ".collection/code/claude/FD-015/BUG_FIX/initial.py"
+}

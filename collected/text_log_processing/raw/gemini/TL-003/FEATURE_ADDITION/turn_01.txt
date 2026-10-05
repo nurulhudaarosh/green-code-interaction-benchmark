@@ -1,0 +1,81 @@
+Here is a Python function that removes exact duplicate lines while preserving their original order of appearance, streaming output to a target destination, and returning line counts.
+
+```python
+from collections import Counter
+from typing import Dict, Iterable, Tuple
+
+
+def deduplicate_lines(
+    input_lines: Iterable[str], output_path: str | None = None
+) -> Tuple[list[str], Dict[str, int]]:
+    """Removes exact duplicate lines in order of appearance.
+
+    Args:
+        input_lines: An iterable of strings (e.g., list of lines or an open
+          file object).
+        output_path: Optional path to write unique lines to disk.
+
+    Returns:
+        A tuple of (unique_lines, counts_dict), where:
+          - unique_lines: List of strings preserving first-seen order.
+          - counts_dict: Mapping of each unique line to its total occurrence
+            count.
+    """
+    seen: set[str] = set()
+    unique_lines: list[str] = []
+    counts: Counter[str] = Counter()
+
+    out_file = open(output_path, "w", encoding="utf-8") if output_path else None
+
+    try:
+        for raw_line in input_lines:
+            # Preserve original line terminators or exact content
+            counts[raw_line] += 1
+
+            if raw_line not in seen:
+                seen.add(raw_line)
+                unique_lines.append(raw_line)
+                if out_file:
+                    out_file.write(raw_line)
+    finally:
+        if out_file:
+            out_file.close()
+
+    return unique_lines, dict(counts)
+
+```
+
+### Usage Example
+
+
+# Sample data with duplicates
+lines = [
+    "apple\n",
+    "banana\n",
+    "apple\n",
+    "orange\n",
+    "banana\n",
+    "apple\n",
+    "grape\n",
+]
+
+# Run in-memory or provide an output file path
+unique, counts = deduplicate_lines(lines, output_path="cleaned.txt")
+
+print("Unique in order:", [line.strip() for line in unique])
+print("Occurrences:", {k.strip(): v for k, v in counts.items()})
+
+
+**Output:**
+
+```text
+Unique in order: ['apple', 'banana', 'orange', 'grape']
+Occurrences: {'apple': 3, 'banana': 2, 'orange': 1, 'grape': 1}
+
+```
+
+### Key Details
+
+* **$O(N)$ Time Complexity:** Uses a hash set (`seen`) for $O(1)$ lookups, guaranteeing linear runtime.
+* **Order Preservation:** Appends items to `unique_lines` as soon as they are first encountered.
+* **Large File Support:** Can accept an active file handle (`open("large_file.txt", "r")`) directly into `input_lines` to stream line-by-line without loading the entire input file into memory at once.

@@ -1,0 +1,443 @@
+```python
+from typing import Any, Dict, List, Tuple
+
+
+class ValidationError:
+    def __init__(self, path: str, message: str):
+        self.path = path
+        self.message = message
+
+    def to_dict(self) -> Dict[str, str]:
+        return {
+            "path": self.path,
+            "message": self.message,
+        }
+
+
+def get_nested_value(data: Dict[str, Any], path: str) -> Tuple[bool, Any]:
+    """Safely retrieve a value using a dot-separated nested path."""
+    if not isinstance(data, dict):
+        return False, None
+
+    current = data
+
+    for part in path.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return False, None
+        current = current[part]
+
+    return True, current
+
+
+def is_correct_type(value: Any, expected_type: str) -> bool:
+    """Validate types while treating bool separately from int."""
+    if expected_type == "string":
+        return isinstance(value, str)
+
+    if expected_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+
+    if expected_type == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+    if expected_type == "boolean":
+        return isinstance(value, bool)
+
+    if expected_type == "object":
+        return isinstance(value, dict)
+
+    if expected_type == "array":
+        return isinstance(value, list)
+
+    return True
+
+
+def validate_field(
+    data: Dict[str, Any],
+    path: str,
+    rules: Dict[str, Any],
+    errors: List[ValidationError],
+) -> None:
+    """Validate a single field according to its configuration."""
+    exists, value = get_nested_value(data, path)
+
+    if rules.get("required", False) and not exists:
+        errors.append(ValidationError(path, "Field is required."))
+        return
+
+    if not exists:
+        return
+
+    expected_type = rules.get("type")
+
+    if expected_type and not is_correct_type(value, expected_type):
+        errors.append(
+            ValidationError(
+                path,
+                f"Expected type '{expected_type}'.",
+            )
+        )
+        return
+
+    if "min" in rules and isinstance(value, (int, float)) and value < rules["min"]:
+        errors.append(
+            ValidationError(
+                path,
+                f"Value must be at least {rules['min']}.",
+            )
+        )
+
+    if "max" in rules and isinstance(value, (int, float)) and value > rules["max"]:
+        errors.append(
+            ValidationError(
+                path,
+                f"Value must be at most {rules['max']}.",
+            )
+        )
+
+    if "min_length" in rules and isinstance(value, (str, list)):
+        if len(value) < rules["min_length"]:
+            errors.append(
+                ValidationError(
+                    path,
+                    f"Length must be at least {rules['min_length']}.",
+                )
+            )
+
+    if "max_length" in rules and isinstance(value, (str, list)):
+        if len(value) > rules["max_length"]:
+            errors.append(
+                ValidationError(
+                    path,
+                    f"Length must be at most {rules['max_length']}.",
+                )
+            )
+
+    if "choices" in rules and value not in rules["choices"]:
+        errors.append(
+            ValidationError(
+                path,
+                f"Value must be one of {rules['choices']}.",
+            )
+        )
+
+
+def validate_cross_field_dependencies(
+    data: Dict[str, Any],
+    dependencies: List[Dict[str, Any]],
+    errors: List[ValidationError],
+) -> None:
+    """
+    Validate relationships between multiple fields.
+
+    Supported dependency rules:
+      - required_if:
+          {"when": "country", "equals": "BD", "then_required": "city"}
+
+      - required_if_any:
+          {"when_any": ["email", "phone"], "then_required": "contact_name"}
+
+      - required_if_all:
+          {"when_all": ["is_student", "has_id"], "equals": True,
+           "then_required": "student_id"}
+
+      - equals:
+          {"fields": ["password", "confirm_password"]}
+
+      - greater_than:
+          {"fields": ["end", "start"]}
+
+      - greater_than_or_equal:
+          {"fields": ["end", "start"]}
+
+      - less_than:
+          {"fields": ["start", "end"]}
+
+      - less_than_or_equal:
+          {"fields": ["start", "end"]}
+    """
+    for dependency in dependencies:
+        # required_if
+        if "when" in dependency and "then_required" in dependency:
+            when_path = dependency["when"]
+            target_path = dependency["then_required"]
+
+            when_exists, when_value = get_nested_value(data, when_path)
+
+            condition_met = when_exists
+
+            if "equals" in dependency:
+                condition_met = (
+                    when_exists and when_value == dependency["equals"]
+                )
+
+            if condition_met:
+                target_exists, target_value = get_nested_value(
+                    data, target_path
+                )
+
+                if (
+                    not target_exists
+                    or target_value is None
+                    or (isinstance(target_value, str) and not target_value.strip())
+                ):
+                    errors.append(
+                        ValidationError(
+                            target_path,
+                            f"Field is required when '{when_path}' "
+                            f"meets the dependency condition.",
+                        )
+                    )
+
+        # required_if_any
+        if "when_any" in dependency and "then_required" in dependency:
+            target_path = dependency["then_required"]
+            condition_met = False
+
+            for source_path in dependency["when_any"]:
+                exists, value = get_nested_value(data, source_path)
+                if exists and value not in (None, "", False):
+                    condition_met = True
+                    break
+
+            if condition_met:
+                target_exists, target_value = get_nested_value(
+                    data, target_path
+                )
+
+                if (
+                    not target_exists
+                    or target_value is None
+                    or (isinstance(target_value, str) and not target_value.strip())
+                ):
+                    errors.append(
+                        ValidationError(
+                            target_path,
+                            "Field is required because at least one "
+                            "dependent field is provided.",
+                        )
+                    )
+
+        # required_if_all
+        if "when_all" in dependency and "then_required" in dependency:
+            target_path = dependency["then_required"]
+            condition_met = True
+
+            for source_path in dependency["when_all"]:
+                exists, value = get_nested_value(data, source_path)
+
+                if not exists or value in (None, "", False):
+                    condition_met = False
+                    break
+
+                if "equals" in dependency and value != dependency["equals"]:
+                    condition_met = False
+                    break
+
+            if condition_met:
+                target_exists, target_value = get_nested_value(
+                    data, target_path
+                )
+
+                if (
+                    not target_exists
+                    or target_value is None
+                    or (isinstance(target_value, str) and not target_value.strip())
+                ):
+                    errors.append(
+                        ValidationError(
+                            target_path,
+                            "Field is required because all dependency "
+                            "conditions are satisfied.",
+                        )
+                    )
+
+        # Two-field comparison/equality rules
+        if "fields" in dependency:
+            fields = dependency["fields"]
+
+            if len(fields) != 2:
+                continue
+
+            first_path, second_path = fields
+
+            first_exists, first_value = get_nested_value(data, first_path)
+            second_exists, second_value = get_nested_value(data, second_path)
+
+            if not first_exists or not second_exists:
+                continue
+
+            rule_type = dependency.get("rule")
+
+            if rule_type == "equals" and first_value != second_value:
+                errors.append(
+                    ValidationError(
+                        first_path,
+                        f"'{first_path}' must equal '{second_path}'.",
+                    )
+                )
+
+            elif rule_type == "greater_than":
+                try:
+                    if not first_value > second_value:
+                        errors.append(
+                            ValidationError(
+                                first_path,
+                                f"'{first_path}' must be greater than "
+                                f"'{second_path}'.",
+                            )
+                        )
+                except TypeError:
+                    errors.append(
+                        ValidationError(
+                            first_path,
+                            "Fields must contain comparable values.",
+                        )
+                    )
+
+            elif rule_type == "greater_than_or_equal":
+                try:
+                    if not first_value >= second_value:
+                        errors.append(
+                            ValidationError(
+                                first_path,
+                                f"'{first_path}' must be greater than or "
+                                f"equal to '{second_path}'.",
+                            )
+                        )
+                except TypeError:
+                    errors.append(
+                        ValidationError(
+                            first_path,
+                            "Fields must contain comparable values.",
+                        )
+                    )
+
+            elif rule_type == "less_than":
+                try:
+                    if not first_value < second_value:
+                        errors.append(
+                            ValidationError(
+                                first_path,
+                                f"'{first_path}' must be less than "
+                                f"'{second_path}'.",
+                            )
+                        )
+                except TypeError:
+                    errors.append(
+                        ValidationError(
+                            first_path,
+                            "Fields must contain comparable values.",
+                        )
+                    )
+
+            elif rule_type == "less_than_or_equal":
+                try:
+                    if not first_value <= second_value:
+                        errors.append(
+                            ValidationError(
+                                first_path,
+                                f"'{first_path}' must be less than or "
+                                f"equal to '{second_path}'.",
+                            )
+                        )
+                except TypeError:
+                    errors.append(
+                        ValidationError(
+                            first_path,
+                            "Fields must contain comparable values.",
+                        )
+                    )
+
+
+def validate_configuration(
+    data: Dict[str, Any],
+    configuration: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Run field-level and cross-field configuration validation."""
+    errors: List[ValidationError] = []
+
+    if not isinstance(data, dict):
+        return {
+            "valid": False,
+            "errors": [
+                {
+                    "path": "",
+                    "message": "Input data must be an object.",
+                }
+            ],
+        }
+
+    fields = configuration.get("fields", {})
+
+    if isinstance(fields, dict):
+        for path, rules in fields.items():
+            if isinstance(rules, dict):
+                validate_field(data, path, rules, errors)
+
+    dependencies = configuration.get("dependencies", [])
+
+    if isinstance(dependencies, list):
+        validate_cross_field_dependencies(
+            data,
+            dependencies,
+            errors,
+        )
+
+    return {
+        "valid": len(errors) == 0,
+        "errors": [error.to_dict() for error in errors],
+    }
+
+
+if __name__ == "__main__":
+    config = {
+        "fields": {
+            "user.name": {
+                "required": True,
+                "type": "string",
+                "min_length": 2,
+            },
+            "user.age": {
+                "required": True,
+                "type": "integer",
+                "min": 18,
+            },
+            "account.is_business": {
+                "type": "boolean",
+            },
+        },
+        "dependencies": [
+            {
+                "when": "account.is_business",
+                "equals": True,
+                "then_required": "account.company_name",
+            },
+            {
+                "fields": ["password", "confirm_password"],
+                "rule": "equals",
+            },
+            {
+                "fields": ["end_date", "start_date"],
+                "rule": "greater_than_or_equal",
+            },
+        ],
+    }
+
+    data = {
+        "user": {
+            "name": "Sam",
+            "age": 22,
+        },
+        "account": {
+            "is_business": True,
+        },
+        "password": "abc123",
+        "confirm_password": "abc124",
+        "start_date": 10,
+        "end_date": 5,
+    }
+
+    result = validate_configuration(data, config)
+    print(result)
+```

@@ -1,0 +1,89 @@
+"""Sobel edge detection with explicit convolution (no cv2 / scipy filters)."""
+
+from pathlib import Path
+
+import numpy as np
+from PIL import Image
+
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".gif", ".webp"}
+
+# Sobel kernels (correlation form: positive Gx = brightness increasing left->right,
+# positive Gy = brightness increasing top->bottom).
+SOBEL_X = np.array([[-1, 0, 1],
+                    [-2, 0, 2],
+                    [-1, 0, 1]], dtype=np.float64)
+SOBEL_Y = np.array([[-1, -2, -1],
+                    [ 0,  0,  0],
+                    [ 1,  2,  1]], dtype=np.float64)
+
+
+def convolve2d(image, kernel):
+    """Explicit 2D convolution with edge-replicated padding, output same size as input.
+
+    True convolution: the kernel is flipped in both axes before being slid over
+    the image. Each kernel tap is applied as a shifted view of the padded image,
+    so the sum over the window is explicit while remaining vectorized over pixels.
+    """
+    kh, kw = kernel.shape
+    ph, pw = kh // 2, kw // 2
+    h, w = image.shape
+
+    padded = np.pad(image, ((ph, ph), (pw, pw)), mode="edge")
+    flipped = kernel[::-1, ::-1]
+
+    out = np.zeros((h, w), dtype=np.float64)
+    for i in range(kh):
+        for j in range(kw):
+            out += flipped[i, j] * padded[i:i + h, j:j + w]
+    return out
+
+
+def sobel_edges(input_dir, output_dir):
+    """Compute Sobel gradient magnitude for every image in input_dir.
+
+    For each image: convert to grayscale, compute Gx and Gy by explicit
+    convolution, form magnitude sqrt(Gx^2 + Gy^2), clip to [0, 255], and save
+    as an 8-bit grayscale PNG in output_dir (same stem, .png extension).
+
+    Returns the list of saved output paths.
+    """
+    input_dir, output_dir = Path(input_dir), Path(output_dir)
+    if not input_dir.is_dir():
+        raise NotADirectoryError(f"Input directory not found: {input_dir}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    saved = []
+    for path in sorted(input_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in IMAGE_EXTS:
+            continue
+
+        try:
+            with Image.open(path) as img:
+                gray = np.asarray(img.convert("L"), dtype=np.float64)
+        except OSError as exc:
+            print(f"Skipping {path.name}: {exc}")
+            continue
+
+        # Kernels are written in correlation form; flipping inside convolve2d
+        # would reverse their sign, so pre-flip to get the conventional
+        # orientation under true convolution. (Magnitude is unaffected either way.)
+        gx = convolve2d(gray, SOBEL_X[::-1, ::-1])
+        gy = convolve2d(gray, SOBEL_Y[::-1, ::-1])
+
+        magnitude = np.sqrt(gx ** 2 + gy ** 2)
+        edges = np.clip(magnitude, 0, 255).astype(np.uint8)
+
+        out_path = output_dir / f"{path.stem}.png"
+        Image.fromarray(edges, mode="L").save(out_path)
+        saved.append(out_path)
+
+    return saved
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) != 3:
+        sys.exit("Usage: python sobel_edges.py <input_dir> <output_dir>")
+    results = sobel_edges(sys.argv[1], sys.argv[2])
+    print(f"Saved {len(results)} edge map(s) to {sys.argv[2]}")

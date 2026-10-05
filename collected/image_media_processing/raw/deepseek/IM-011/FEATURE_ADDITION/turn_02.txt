@@ -1,0 +1,123 @@
+```python
+import os
+import json
+import shutil
+from pathlib import Path
+from PIL import Image
+
+# File extensions we consider to be images
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp"}
+
+# (threshold, folder_name) pairs, ordered from smallest to largest
+BUCKETS = [
+    (640, "small"),    # max(w, h) <= 640
+    (1920, "medium"),  # 640 < max(w, h) <= 1920
+]
+LARGE_FOLDER = "large"  # max(w, h) > 1920
+
+MANIFEST_NAME = "manifest.json"
+
+
+def organize_by_resolution(input_dir, output_dir):
+    """
+    Copy images from input_dir into small/medium/large subfolders of output_dir
+    based on max(width, height):
+        - small:  max(width, height) <= 640
+        - medium: 640 < max(width, height) <= 1920
+        - large:  max(width, height) > 1920
+
+    Files that are not images or cannot be opened are skipped.
+    Name collisions in the destination are resolved by appending a counter.
+
+    Also writes output_dir/manifest.json containing, for every processed
+    image, its source filename, destination filename, bucket, and dimensions.
+
+    Returns a dict mapping bucket name -> list of destination paths.
+    """
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+
+    if not input_path.is_dir():
+        raise NotADirectoryError(f"Input directory does not exist: {input_dir}")
+
+    # Create bucket directories
+    buckets = [name for _, name in BUCKETS] + [LARGE_FOLDER]
+    for bucket in buckets:
+        (output_path / bucket).mkdir(parents=True, exist_ok=True)
+
+    results = {bucket: [] for bucket in buckets}
+    manifest = []
+
+    for source in sorted(input_path.rglob("*")):
+        if not source.is_file():
+            continue
+        if source.suffix.lower() not in IMAGE_EXTENSIONS:
+            continue
+
+        try:
+            with Image.open(source) as img:
+                width, height = img.size
+        except Exception:
+            # Unreadable / corrupt image file – skip it
+            continue
+
+        longest = max(width, height)
+        if longest <= 640:
+            bucket = "small"
+        elif longest <= 1920:
+            bucket = "medium"
+        else:
+            bucket = "large"
+
+        dest_dir = output_path / bucket
+        dest = _unique_path(dest_dir / source.name)
+
+        shutil.copy2(source, dest)
+        results[bucket].append(str(dest))
+
+        manifest.append({
+            "filename": source.name,
+            "bucket": bucket,
+            "width": width,
+            "height": height,
+            "dest": str(dest.relative_to(output_path)),
+        })
+
+    manifest_path = output_path / MANIFEST_NAME
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+
+    return results
+
+
+def _unique_path(path):
+    """Return a path that doesn't yet exist by appending ' (n)' if needed."""
+    if not path.exists():
+        return path
+    stem, suffix, parent = path.stem, path.suffix, path.parent
+    counter = 1
+    while True:
+        candidate = parent / f"{stem} ({counter}){suffix}"
+        if not candidate.exists():
+            return candidate
+        counter += 1
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) != 3:
+        print("Usage: python organize.py <input_dir> <output_dir>")
+        sys.exit(1)
+    result = organize_by_resolution(sys.argv[1], sys.argv[2])
+    for bucket, files in result.items():
+        print(f"{bucket}: {len(files)} file(s)")
+    print(f"Manifest written to {Path(sys.argv[2]) / MANIFEST_NAME}")
+```
+
+Key changes:
+
+- A `manifest` list is accumulated during the loop, with one entry per successfully copied image.
+- Each entry contains the original filename, the assigned bucket, the image dimensions, and the destination path (relative to `output_dir` so the manifest is portable).
+- Iteration now uses `sorted(input_path.rglob("*"))` so the manifest order is deterministic and reproducible.
+- After processing, the list is written as pretty-printed JSON to `output_dir/manifest.json`.
+- The `dest` field is stored relative to `output_dir` via `Path.relative_to`, which keeps the manifest machine-independent and easy to consume.

@@ -1,0 +1,68 @@
+Yes. The safest fix is to handle **blank lines, invalid UTF-8, and malformed ERROR lines** separately, while returning both the normalized error counts and the malformed-line count.
+
+```python
+import re
+from collections import Counter
+
+
+def analyze_error_log(path):
+    error_counts = Counter()
+    malformed_lines = 0
+
+    try:
+        file = open(path, "r", encoding="utf-8", errors="replace")
+    except OSError:
+        raise
+
+    with file:
+        for line in file:
+            line = line.strip()
+
+            # Skip blank lines
+            if not line:
+                malformed_lines += 1
+                continue
+
+            # Only process ERROR-level entries
+            if "ERROR" not in line:
+                continue
+
+            match = re.search(r"\bERROR\b[:\s-]*(.*)", line)
+
+            # ERROR exists, but no valid message follows it
+            if not match or not match.group(1).strip():
+                malformed_lines += 1
+                continue
+
+            message = match.group(1).strip()
+
+            # Normalize numbers
+            message = re.sub(r"\b\d+\b", "<N>", message)
+
+            # Normalize long hexadecimal IDs
+            message = re.sub(r"\b[0-9a-fA-F]{8,}\b", "<ID>", message)
+
+            error_counts[message] += 1
+
+    return dict(error_counts), malformed_lines
+```
+
+### Example
+
+For:
+
+```text
+ERROR Failed to connect to DB: timeout=10
+
+ERROR Failed to connect to DB: timeout=20
+ERROR
+ERROR Database connection failed
+```
+
+Result:
+
+
+
+Here the `2` represents the two malformed/blank lines.
+
+**Key fix:** `errors="replace"` prevents corrupted UTF-8 bytes from crashing the file read, while the validation logic counts malformed records instead of raising exceptions.

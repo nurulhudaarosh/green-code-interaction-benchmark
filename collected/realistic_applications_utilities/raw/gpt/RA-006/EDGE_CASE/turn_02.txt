@@ -1,0 +1,295 @@
+```python
+from typing import Any, Dict, List
+
+
+def get_nested_value(data: Any, path: str, default=None):
+    """Safely access nested dictionary values using dot notation."""
+    if not isinstance(data, dict) or not isinstance(path, str) or not path.strip():
+        return default
+
+    current = data
+
+    for key in path.split("."):
+        if not isinstance(current, dict) or key not in current:
+            return default
+        current = current[key]
+
+    return current
+
+
+def validate_type(value: Any, expected_type: str) -> bool:
+    """Validate types without treating bool as int."""
+    if expected_type == "string":
+        return isinstance(value, str)
+
+    if expected_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+
+    if expected_type == "float":
+        return isinstance(value, float) and not isinstance(value, bool)
+
+    if expected_type == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+    if expected_type == "boolean":
+        return isinstance(value, bool)
+
+    if expected_type == "list":
+        return isinstance(value, list)
+
+    if expected_type == "dict":
+        return isinstance(value, dict)
+
+    return True
+
+
+def validate_field(value: Any, rule: Dict[str, Any]) -> bool:
+    """Validate a single field against its rule."""
+    if not isinstance(rule, dict):
+        return False
+
+    if value is None:
+        return not rule.get("required", False)
+
+    expected_type = rule.get("type")
+
+    if expected_type and not validate_type(value, expected_type):
+        return False
+
+    # Numeric boundaries are inclusive.
+    if "min" in rule:
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return False
+        if value < rule["min"]:
+            return False
+
+    if "max" in rule:
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return False
+        if value > rule["max"]:
+            return False
+
+    # Length boundaries are inclusive.
+    if "min_length" in rule:
+        try:
+            if len(value) < rule["min_length"]:
+                return False
+        except TypeError:
+            return False
+
+    if "max_length" in rule:
+        try:
+            if len(value) > rule["max_length"]:
+                return False
+        except TypeError:
+            return False
+
+    if "allowed" in rule:
+        allowed = rule["allowed"]
+        if not isinstance(allowed, (list, tuple, set)):
+            return False
+        if value not in allowed:
+            return False
+
+    return True
+
+
+def validate_configuration(
+    configuration: Any,
+    rules: Any
+) -> Dict[str, Any]:
+    """
+    Validate configuration values.
+
+    Handles:
+    - Empty configuration
+    - Empty rules
+    - Exact minimum/maximum boundaries
+    - Values below/above boundaries
+    - Missing nested paths
+    - Optional nested paths
+    - Required nested paths
+    - Mixed types
+    - Boolean vs integer distinction
+    """
+
+    errors: List[str] = []
+
+    # Empty configuration is valid when there are no rules.
+    if configuration is None:
+        configuration = {}
+
+    if rules is None:
+        rules = {}
+
+    if not isinstance(configuration, dict):
+        return {
+            "valid": False,
+            "errors": ["Configuration must be a dictionary."]
+        }
+
+    if not isinstance(rules, dict):
+        return {
+            "valid": False,
+            "errors": ["Rules must be a dictionary."]
+        }
+
+    if not rules:
+        return {
+            "valid": True,
+            "errors": []
+        }
+
+    for path, rule in rules.items():
+        if not isinstance(path, str) or not path.strip():
+            errors.append("Invalid configuration path.")
+            continue
+
+        if not isinstance(rule, dict):
+            errors.append(f"Invalid rule for '{path}'.")
+            continue
+
+        value = get_nested_value(configuration, path)
+
+        # Missing nested path.
+        if value is None:
+            if rule.get("required", False):
+                errors.append(f"Missing required field: {path}")
+            continue
+
+        if not validate_field(value, rule):
+            errors.append(f"Invalid value for '{path}'.")
+
+    return {
+        "valid": not errors,
+        "errors": errors
+    }
+
+
+# Example tests
+if __name__ == "__main__":
+    # Empty configuration with no rules.
+    print(
+        validate_configuration(
+            {},
+            {}
+        )
+    )
+
+    # Exact boundary values should be valid.
+    boundary_config = {
+        "server": {
+            "port": 65535,
+            "timeout": 0,
+            "enabled": True
+        }
+    }
+
+    boundary_rules = {
+        "server.port": {
+            "required": True,
+            "type": "integer",
+            "min": 1,
+            "max": 65535
+        },
+        "server.timeout": {
+            "required": True,
+            "type": "integer",
+            "min": 0,
+            "max": 60
+        },
+        "server.enabled": {
+            "required": True,
+            "type": "boolean"
+        }
+    }
+
+    print(
+        validate_configuration(
+            boundary_config,
+            boundary_rules
+        )
+    )
+
+    # Missing optional nested path is valid.
+    optional_config = {
+        "database": {
+            "host": "localhost"
+        }
+    }
+
+    optional_rules = {
+        "database.host": {
+            "required": True,
+            "type": "string"
+        },
+        "database.port": {
+            "required": False,
+            "type": "integer",
+            "min": 1,
+            "max": 65535
+        }
+    }
+
+    print(
+        validate_configuration(
+            optional_config,
+            optional_rules
+        )
+    )
+
+    # Missing required nested path is invalid.
+    required_rules = {
+        "database.credentials.username": {
+            "required": True,
+            "type": "string"
+        }
+    }
+
+    print(
+        validate_configuration(
+            optional_config,
+            required_rules
+        )
+    )
+
+    # Mixed types, including bool vs int.
+    mixed_config = {
+        "values": {
+            "count": 10,
+            "enabled": True,
+            "name": "example",
+            "items": ["a", "b"]
+        }
+    }
+
+    mixed_rules = {
+        "values.count": {
+            "required": True,
+            "type": "integer",
+            "min": 0,
+            "max": 10
+        },
+        "values.enabled": {
+            "required": True,
+            "type": "boolean"
+        },
+        "values.name": {
+            "required": True,
+            "type": "string",
+            "min_length": 1,
+            "max_length": 20
+        },
+        "values.items": {
+            "required": True,
+            "type": "list"
+        }
+    }
+
+    print(
+        validate_configuration(
+            mixed_config,
+            mixed_rules
+        )
+    )
+```

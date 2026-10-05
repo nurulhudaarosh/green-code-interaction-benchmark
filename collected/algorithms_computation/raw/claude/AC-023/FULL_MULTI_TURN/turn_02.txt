@@ -1,0 +1,105 @@
+## Restatement
+
+**Threshold Connectivity Tracker:** given `n` vertices (`0..n-1`), a list of weighted undirected edges `(u, v, w)`, and a list of query thresholds, return one `(components, largest_size)` pair per query, in the original query order. Each answer uses only edges with `w <= q`.
+
+Required behavior:
+- Edges with `w == q` are included (the comparison is inclusive).
+- Repeated or tied queries and tied edge weights give identical, deterministic answers.
+- Isolated vertices count as components of size 1, and `n = 0` gives `(0, 0)`.
+- The approach is to sort edges and queries, then union edges incrementally.
+
+## Attempting to reproduce the defect
+
+I traced the implementation by hand on a small input that stresses ties (equal edge weights, duplicate queries, unsorted queries):
+
+```
+n = 4
+edges   = [(0,1,2), (1,2,2), (2,3,4)]
+queries = [2, 2, 1, 4]
+```
+
+Expected, from first principles:
+- `q=1`: no edges, so `(4, 1)`.
+- `q=2`: both weight-2 edges are included, giving `{0,1,2}` and `{3}`, so `(2, 3)`.
+- `q=4`: everything is connected, so `(1, 4)`.
+
+So the expected output is `[(2,3), (2,3), (4,1), (1,4)]`.
+
+The code gives exactly this. Queries are processed in `(q, index)` order, so the duplicates `2, 2` are handled deterministically. The `<=` check pulls in both tied weight-2 edges before the first `q=2` answer, and answers are written back by original index. I also checked the path-compression swap (`parent[x], x = root, parent[x]`): the right-hand side is evaluated first, so it is correct.
+
+**I could not reproduce a violation of the stated rule on valid input**, so I don't want to invent a "fix" that changes correct behavior.
+
+## The one real gap I found
+
+The code is only wrong on invalid input, and there it fails silently. An endpoint like `-1` doesn't raise an error. Python's negative indexing makes it wrap to vertex `n-1`, which gives wrong answers with no warning:
+
+
+Out-of-range endpoints `>= n` raise `IndexError`, and a negative `n` makes `list(range(n))` empty and the results meaningless. The fix below validates input up front. Everything else (algorithm, tie handling, output format, standard library only) is unchanged.
+
+## Corrected implementation
+
+```python
+from typing import List, Tuple
+
+
+def component_stats(
+    n: int,
+    edges: List[Tuple[int, int, int]],
+    queries: List[int],
+) -> List[Tuple[int, int]]:
+    """For each q in queries, return (num_components, largest_component_size)
+    using only edges with weight <= q. Vertices are 0..n-1."""
+    if n < 0:
+        raise ValueError("n must be non-negative")
+    for u, v, _ in edges:
+        if not (0 <= u < n and 0 <= v < n):   # reject negatives that would wrap
+            raise ValueError(f"edge endpoint out of range: ({u}, {v}) for n={n}")
+
+    parent = list(range(n))
+    size = [1] * n
+    components = n
+    largest = 1 if n > 0 else 0
+
+    def find(x: int) -> int:
+        root = x
+        while parent[root] != root:
+            root = parent[root]
+        while parent[x] != root:              # path compression
+            parent[x], x = root, parent[x]
+        return root
+
+    sorted_edges = sorted(edges, key=lambda e: e[2])        # stable on ties
+    order = sorted(range(len(queries)), key=lambda i: (queries[i], i))
+    answers: List[Tuple[int, int]] = [(0, 0)] * len(queries)
+
+    ptr, m = 0, len(sorted_edges)
+    for qi in order:
+        q = queries[qi]
+        while ptr < m and sorted_edges[ptr][2] <= q:
+            u, v, _ = sorted_edges[ptr]
+            ptr += 1
+            ru, rv = find(u), find(v)
+            if ru == rv:
+                continue
+            if size[ru] < size[rv]:           # union by size
+                ru, rv = rv, ru
+            parent[rv] = ru
+            size[ru] += size[rv]
+            components -= 1
+            if size[ru] > largest:
+                largest = size[ru]
+        answers[qi] = (components, largest)
+
+    return answers
+
+
+if __name__ == "__main__":
+    print(component_stats(4, [(0, 1, 2), (1, 2, 2), (2, 3, 4)], [2, 2, 1, 4]))
+    # [(2, 3), (2, 3), (4, 1), (1, 4)]
+    try:
+        component_stats(3, [(0, -1, 1)], [1])
+    except ValueError as e:
+        print("rejected:", e)
+```
+
+If you have a specific input where you saw a wrong result, send it and I'll trace it. A genuine defect on valid input would show up on that case, and I'd rather fix that than guess.

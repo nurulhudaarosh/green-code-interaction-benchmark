@@ -298,8 +298,17 @@ def main():
                     if sha in done:
                         n_skip += 1
                         continue
-                    rec = measure(cat_dir.name, model_dir.name,
-                                  task_dir.name, cond_dir.name, prog)
+                    try:
+                        rec = measure(cat_dir.name, model_dir.name,
+                                      task_dir.name, cond_dir.name, prog)
+                    except Exception as e:  # never let one unit kill the run
+                        rec = {"category": cat_dir.name,
+                               "model": model_dir.name,
+                               "task_id": task_dir.name,
+                               "condition": cond_dir.name,
+                               "file": str(prog.relative_to(COLLECTED)),
+                               "sha256": sha, "status": "error",
+                               "reason": f"{type(e).__name__}: {e}"}
                     with LEDGER.open("a") as f:
                         f.write(json.dumps(rec) + "\n")
                     if rec["status"] == "ok":

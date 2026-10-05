@@ -1,0 +1,334 @@
+import os
+import unicodedata
+import hashlib
+from pathlib import Path
+from dataclasses import dataclass, field
+from typing import Optional, Callable, Dict, List, Tuple
+
+
+# ----------------------------------------------------------------------
+# Stats
+# ----------------------------------------------------------------------
+@dataclass
+class NormalizeStats:
+    files_scanned: int = 0
+    files_written: int = 0
+    files_skipped: int = 0
+    files_unchanged: int = 0            # [EDGE] already-clean files
+    dirs_created: int = 0               # [EDGE] empty-dir mirroring
+    dirs_skipped: int = 0               # [EDGE] dirs with no eligible files
+    bytes_read: int = 0
+    bytes_written: int = 0
+    unicode_fixes: int = 0
+    whitespace_fixes: int = 0
+    case_fixes: int = 0
+    errors: List[str] = field(default_factory=list)
+    per_extension: Dict[str, int] = field(default_factory=dict)
+    skipped_extensions: Dict[str, int] = field(default_factory=dict)  # [EDGE]
+
+    def report(self) -> str:
+        pct = (self.bytes_written / self.bytes_read * 100) if self.bytes_read else 0.0
+        lines = [
+            "=" * 60,
+            "NORMALIZATION STATS",
+            "=" * 60,
+            f"Files scanned    : {self.files_scanned}",
+            f"Files written    : {self.files_written}",
+            f"Files unchanged  : {self.files_unchanged}",
+            f"Files skipped    : {self.files_skipped}",
+            f"Dirs created     : {self.dirs_created}",
+            f"Dirs skipped     : {self.dirs_skipped}",
+            f"Bytes read       : {self.bytes_read:,}",
+            f"Bytes written    : {self.bytes_written:,}  ({pct:.1f}% of input)",
+            "-" * 60,
+            f"Unicode fixes    : {self.unicode_fixes}",
+            f"Whitespace fixes : {self.whitespace_fixes}",
+            f"Case fixes       : {self.case_fixes}",
+        ]
+        if self.per_extension:
+            lines.append("-" * 60)
+            lines.append("Processed by extension:")
+            for ext, n in sorted(self.per_extension.items(), key=lambda kv: -kv[1]):
+                lines.append(f"  {ext or '<none>':10s} {n}")
+        if self.skipped_extensions:
+            lines.append("-" * 60)
+            lines.append("Skipped by extension:")
+            for ext, n in sorted(self.skipped_extensions.items(), key=lambda kv: -kv[1]):
+                lines.append(f"  {ext or '<none>':10s} {n}")
+        if self.errors:
+            lines.append("-" * 60)
+            lines.append(f"Errors ({len(self.errors)}):")
+            for e in self.errors[:20]:
+                lines.append(f"  {e}")
+            if len(self.errors) > 20:
+                lines.append(f"  ... and {len(self.errors) - 20} more")
+        lines.append("=" * 60)
+        return "\n".join(lines)
+
+
+# ----------------------------------------------------------------------
+# Text normalization
+# ----------------------------------------------------------------------
+def _normalize_text(
+    text: str,
+    unicode_form: str,
+    lowercase: bool,
+    collapse_whitespace: bool,
+    stats: NormalizeStats,
+) -> Tuple[str, bool]:
+    """Return (normalized_text, changed)."""
+    original = text
+
+    if unicode_form and unicode_form != "NONE":
+        normed = unicodedata.normalize(unicode_form, text)
+        if normed != text:
+            stats.unicode_fixes += max(1, abs(len(text) - len(normed)))
+        text = normed
+
+    if collapse_whitespace:
+        out_chars = []
+        ws_fixes = 0
+        prev_space = False
+        for ch in text:
+            is_ws = ch in " \t\r\n\v\f" or unicodedata.category(ch) == "Zs"
+            if is_ws:
+                if not prev_space:
+                    out_chars.append(" ")
+                    prev_space = True
+                if ch != " ":
+                    ws_fixes += 1
+            else:
+                out_chars.append(ch)
+                prev_space = False
+        text = "".join(out_chars)
+        stripped = "\n".join(line.rstrip() for line in text.split("\n"))
+        if stripped != text:
+            ws_fixes += 1
+        text = stripped
+        stats.whitespace_fixes += ws_fixes
+
+    if lowercase:
+        lowered = text.lower()
+        if lowered != text:
+            stats.case_fixes += sum(1 for a, b in zip(text, lowered) if a != b)
+            text = lowered
+
+    return text, (text != original)
+
+
+# ----------------------------------------------------------------------
+# Main
+# ----------------------------------------------------------------------
+def normalize_corpus(
+    src: str,
+    dst: str,
+    *,
+    unicode_form: str = "NFKC",
+    lowercase: bool = False,
+    collapse_whitespace: bool = True,
+    encoding: str = "utf-8",
+    encoding_errors: str = "replace",
+    extensions: Optional[set] = None,
+    mirror: bool = True,
+    mirror_empty_dirs: bool = True,     # [EDGE] mirror empty source dirs
+    skip_binary: bool = True,           # [EDGE] silently ignore non-text files
+    overwrite: bool = True,
+    write_unchanged: bool = False,      # [EDGE] idempotency: don't rewrite clean files
+    dry_run: bool = False,
+    progress: Optional[Callable[[str], None]] = None,
+) -> NormalizeStats:
+    """
+    Normalize a text corpus, mirroring its directory tree.
+
+    Edge cases handled:
+      * Empty source dirs are mirrored when mirror_empty_dirs=True.
+      * Non-text files mixed into the tree are skipped (see skip_binary)
+        unless explicitly listed in `extensions`.
+      * Already-clean files are detected and, by default, not rewritten
+        (write_unchanged=False), making re-runs truly idempotent.
+    """
+    src_path = Path(src)
+    dst_path = Path(dst)
+    if not src_path.is_dir():
+        raise NotADirectoryError(f"Source is not a directory: {src}")
+
+    stats = NormalizeStats()
+    seen_dst_dirs = set()
+
+    def ensure_dir(out_dir: Path) -> bool:
+        """Create out_dir (and parents). Return True if newly created."""
+        if out_dir in seen_dst_dirs:
+            return False
+        seen_dst_dirs.add(out_dir)
+        if dry_run:
+            return not out_dir.exists()
+        existed = out_dir.exists()
+        out_dir.mkdir(parents=True, exist_ok=True)
+        return not existed
+
+    for root, dirs, files in os.walk(src_path):
+        dirs.sort()
+        files.sort()
+
+        rel_root = Path(root).relative_to(src_path)
+        out_root = (dst_path / rel_root) if mirror else dst_path
+
+        # [EDGE] Empty directory: mirror it (or count it as skipped).
+        if not files and not dirs:
+            if mirror and mirror_empty_dirs:
+                if ensure_dir(out_root):
+                    stats.dirs_created += 1
+            else:
+                stats.dirs_skipped += 1
+            continue
+
+        if not dry_run:
+            ensure_dir(out_root)
+
+        for name in files:
+            in_file = Path(root) / name
+            out_file = out_root / name
+            ext = in_file.suffix.lower()
+
+            # [EDGE] Extension filter: explicit whitelist wins.
+            if extensions is not None and ext not in extensions:
+                stats.files_skipped += 1
+                stats.skipped_extensions[ext] = stats.skipped_extensions.get(ext, 0) + 1
+                continue
+
+            # [EDGE] Non-text files (e.g. .png mixed into a .txt tree):
+            # sniff for null bytes / high non-printable ratio and skip.
+            if skip_binary and extensions is None:
+                try:
+                    head = in_file.read_bytes()[:4096]
+                except Exception as e:
+                    stats.errors.append(f"{in_file}: stat failed: {e}")
+                    continue
+                if _looks_binary(head):
+                    stats.files_skipped += 1
+                    stats.skipped_extensions[ext] = \
+                        stats.skipped_extensions.get(ext, 0) + 1
+                    continue
+
+            stats.files_scanned += 1
+            stats.per_extension[ext] = stats.per_extension.get(ext, 0) + 1
+
+            if not overwrite and out_file.exists():
+                stats.files_skipped += 1
+                continue
+
+            try:
+                raw = in_file.read_bytes()
+                stats.bytes_read += len(raw)
+                text = raw.decode(encoding, errors=encoding_errors)
+            except Exception as e:
+                stats.errors.append(f"{in_file}: read/decode failed: {e}")
+                continue
+
+            new_text, changed = _normalize_text(
+                text, unicode_form, lowercase, collapse_whitespace, stats
+            )
+            new_bytes = new_text.encode(encoding, errors=encoding_errors)
+
+            # [EDGE] Idempotency: if the file is already clean AND the
+            # destination already holds identical bytes, do nothing.
+            already_clean = (not changed)
+            same_as_dst = False
+            if not dry_run and out_file.exists():
+                try:
+                    same_as_dst = out_file.read_bytes() == new_bytes
+                except Exception:
+                    same_as_dst = False
+
+            if already_clean and (same_as_dst or not overwrite):
+                stats.files_unchanged += 1
+                if progress:
+                    progress(f"[SKIP] {in_file} (unchanged)")
+                continue
+
+            if already_clean and not write_unchanged:
+                # We still want dst to exist for a fresh run.
+                if not dry_run and not same_as_dst:
+                    ensure_dir(out_root)
+                    try:
+                        out_file.write_bytes(new_bytes)
+                    except Exception as e:
+                        stats.errors.append(f"{in_file}: write failed: {e}")
+                        continue
+                    stats.files_written += 1
+                    stats.bytes_written += len(new_bytes)
+                else:
+                    stats.files_unchanged += 1
+                if progress:
+                    progress(f"[SAME] {in_file} -> {out_file}")
+                continue
+
+            if not dry_run:
+                ensure_dir(out_root)
+                try:
+                    out_file.write_bytes(new_bytes)
+                except Exception as e:
+                    stats.errors.append(f"{in_file}: write failed: {e}")
+                    continue
+
+            stats.bytes_written += len(new_bytes)
+            stats.files_written += 1
+            if progress:
+                progress(f"[{'DRY' if dry_run else 'OK '}] {in_file} -> {out_file}")
+
+    return stats
+
+
+# ----------------------------------------------------------------------
+# Helpers
+# ----------------------------------------------------------------------
+def _looks_binary(sample: bytes) -> bool:
+    """Heuristic: null byte OR >30% non-text bytes in the sample."""
+    if not sample:
+        return False
+    if b"\x00" in sample:
+        return True
+    text_chars = bytes(range(0x20, 0x7F)) + b"\r\n\t\f\b"
+    nontext = sum(1 for b in sample if b not in text_chars)
+    return nontext / len(sample) > 0.30
+
+
+def file_hash(path: Path, chunk: int = 1 << 16) -> str:
+    """Optional helper to verify idempotency across runs."""
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(chunk), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+# ----------------------------------------------------------------------
+# Demo
+# ----------------------------------------------------------------------
+if __name__ == "__main__":
+    stats = normalize_corpus(
+        src="./raw_corpus",
+        dst="./clean_corpus",
+        unicode_form="NFKC",
+        lowercase=True,
+        collapse_whitespace=True,
+        extensions=None,          # sniff instead of whitelisting
+        skip_binary=True,
+        mirror=True,
+        mirror_empty_dirs=True,
+        write_unchanged=False,    # idempotent re-runs
+        progress=print,
+    )
+    print(stats.report())
+
+    # Run again — should report everything as unchanged.
+    stats2 = normalize_corpus(
+        src="./raw_corpus",
+        dst="./clean_corpus",
+        unicode_form="NFKC",
+        lowercase=True,
+        collapse_whitespace=True,
+        skip_binary=True,
+    )
+    assert stats2.files_written == 0, "re-run should not rewrite clean files"
+    print(stats2.report())

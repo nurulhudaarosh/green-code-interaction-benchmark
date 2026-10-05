@@ -1,0 +1,68 @@
+### Problem Identification & Understanding
+
+The objective is to multiply two polynomials with integer coefficients (which can be positive, negative, or zero) exactly. A polynomial $A(x) = a_0 + a_1 x + \dots + a_m x^m$ is represented as an array of coefficients `[a_0, a_1, ..., a_m]`. The product $C(x) = A(x) \times B(x)$ of degree $(m + n)$ has coefficients $c_k$ defined by the Cauchy product (discrete linear convolution):
+
+$$c_k = \sum_{i=0}^{k} a_i \cdot b_{k-i}$$
+
+---
+
+### Key Constraints & Output Format
+
+* **Inputs:** Two lists/arrays of integers, `A` of length $m+1$ and `B` of length $n+1$.
+* **Constraints:** Coefficients are arbitrary signed integers. Polynomial lengths are small enough that quadratic complexity $O(m \cdot n)$ runs within execution limits.
+* **Output:** A single list/array of integers of length $m + n + 1$, representing the exact coefficients of the product polynomial $C(x)$ in ascending order of degree. If either input polynomial is empty, the result is an empty list.
+
+---
+
+### Algorithm Description
+
+We use **direct coefficient convolution** (standard polynomial multiplication via nested loops):
+
+1. Initialize a result list `C` of size `len(A) + len(B) - 1` with all zeros.
+2. Iterate through each coefficient `a_i` at index `i` in `A`.
+3. Iterate through each coefficient `b_j` at index `j` in `B`.
+4. Add the product `a_i * b_j` to `C[i + j]`.
+
+This algorithm is fully deterministic, exact for arbitrary-precision integers, and requires no third-party libraries.
+
+---
+
+### Python Implementation
+
+```python
+def multiply_polynomials(A: list[int], B: list[int]) -> list[int]:
+    """
+    Multiplies two polynomials represented as lists of integer coefficients.
+    
+    :param A: List of coefficients for polynomial A(x) in ascending degree order.
+    :param B: List of coefficients for polynomial B(x) in ascending degree order.
+    :return: Exact product polynomial coefficient list C(x) = A(x) * B(x).
+    """
+    if not A or not B:
+        return []
+
+    len_a, len_b = len(A), len(B)
+    result = [0] * (len_a + len_b - 1)
+
+    for i in range(len_a):
+        for j in range(len_b):
+            result[i + j] += A[i] * B[j]
+
+    return result
+
+
+# Example Usage & Verification:
+if __name__ == "__main__":
+    # Example 1: (1 - 2x + 3x^2) * (4 + 5x)
+    # Expected: 4 - 3x + 2x^2 + 15x^3
+    poly1 = [1, -2, 3]
+    poly2 = [4, 5]
+    print("Result 1:", multiply_polynomials(poly1, poly2))  # [4, -3, 2, 15]
+
+    # Example 2: (x^2 - 1) * (x + 3) -> (-1 + 0x + 1x^2) * (3 + 1x)
+    # Expected: -3 - 1x + 3x^2 + 1x^3
+    poly3 = [-1, 0, 1]
+    poly4 = [3, 1]
+    print("Result 2:", multiply_polynomials(poly3, poly4))  # [-3, -1, 3, 1]
+
+```

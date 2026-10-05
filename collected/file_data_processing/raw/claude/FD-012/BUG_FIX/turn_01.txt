@@ -1,0 +1,189 @@
+```python
+#!/usr/bin/env python3
+"""
+Offline text analyzer.
+
+Recursively reads .txt files under one or more paths, case-folds alphabetic
+words, counts total occurrences and document frequency, and ranks words
+deterministically.
+
+Ranking order (all ties broken deterministically):
+  1. total count            (descending)
+  2. document frequency     (descending)
+  3. word                   (ascending, by code point)
+
+Usage:
+    python text_analyzer.py PATH [PATH ...] [--top N] [--min-count N]
+                            [--encoding ENC] [--format table|tsv|json]
+                            [--stopwords FILE]
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import unicodedata
+from collections import Counter
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable, Iterator
+
+
+@dataclass(frozen=True)
+class WordStat:
+    word: str
+    total: int
+    docs: int
+
+
+def iter_txt_files(paths: Iterable[Path]) -> Iterator[Path]:
+    """Yield .txt files in a deterministic (sorted, de-duplicated) order."""
+    seen: set[Path] = set()
+    for root in paths:
+        if root.is_file():
+            candidates = [root] if root.suffix.lower() == ".txt" else []
+        elif root.is_dir():
+            candidates = []
+            # followlinks=False avoids symlink cycles.
+            for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+                dirnames.sort()
+                for name in sorted(filenames):
+                    if name.lower().endswith(".txt"):
+                        candidates.append(Path(dirpath) / name)
+        else:
+            print(f"warning: skipping missing path: {root}", file=sys.stderr)
+            continue
+        for path in candidates:
+            try:
+                key = path.resolve()
+            except OSError:
+                key = path
+            if key not in seen:
+                seen.add(key)
+                yield path
+
+
+def tokenize(text: str) -> Iterator[str]:
+    """
+    Yield case-folded words made solely of alphabetic characters.
+
+    A word is a maximal run of Unicode letters (category L*), optionally
+    including combining marks (M*) so decomposed accents stay attached.
+    Apostrophes and hyphens act as separators, so "don't" -> "don", "t".
+    Text is NFC-normalized first so equivalent spellings compare equal.
+    """
+    text = unicodedata.normalize("NFC", text)
+    buf: list[str] = []
+    for ch in text:
+        cat = unicodedata.category(ch)
+        if cat.startswith("L") or (buf and cat.startswith("M")):
+            buf.append(ch)
+        elif buf:
+            yield unicodedata.normalize("NFC", "".join(buf).casefold())
+            buf.clear()
+    if buf:
+        yield unicodedata.normalize("NFC", "".join(buf).casefold())
+
+
+def read_text(path: Path, encoding: str) -> str | None:
+    try:
+        with open(path, "r", encoding=encoding, errors="replace", newline=None) as fh:
+            return fh.read()
+    except OSError as exc:
+        print(f"warning: cannot read {path}: {exc}", file=sys.stderr)
+        return None
+
+
+def load_stopwords(path: Path | None, encoding: str) -> set[str]:
+    if path is None:
+        return set()
+    text = read_text(path, encoding)
+    if text is None:
+        sys.exit(f"error: cannot read stopwords file: {path}")
+    return set(tokenize(text))
+
+
+def analyze(
+    files: Iterable[Path], encoding: str, stopwords: set[str]
+) -> tuple[list[WordStat], int]:
+    total: Counter[str] = Counter()
+    doc_freq: Counter[str] = Counter()
+    n_docs = 0
+    for path in files:
+        text = read_text(path, encoding)
+        if text is None:
+            continue
+        n_docs += 1
+        words = [w for w in tokenize(text) if w not in stopwords]
+        total.update(words)
+        doc_freq.update(set(words))
+    stats = [WordStat(w, c, doc_freq[w]) for w, c in total.items()]
+    stats.sort(key=lambda s: (-s.total, -s.docs, s.word))
+    return stats, n_docs
+
+
+def render(stats: list[WordStat], fmt: str, n_docs: int) -> str:
+    if fmt == "json":
+        return json.dumps(
+            {
+                "documents": n_docs,
+                "words": [
+                    {"rank": i, "word": s.word, "total": s.total, "docs": s.docs}
+                    for i, s in enumerate(stats, 1)
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    if fmt == "tsv":
+        lines = ["rank\tword\ttotal\tdocs"]
+        lines += [f"{i}\t{s.word}\t{s.total}\t{s.docs}" for i, s in enumerate(stats, 1)]
+        return "\n".join(lines)
+    # table
+    rank_w = max(4, len(str(len(stats))))
+    word_w = max(4, *(len(s.word) for s in stats)) if stats else 4
+    tot_w = max(5, *(len(str(s.total)) for s in stats)) if stats else 5
+    doc_w = max(4, *(len(str(s.docs)) for s in stats)) if stats else 4
+    header = f"{'Rank':>{rank_w}}  {'Word':<{word_w}}  {'Total':>{tot_w}}  {'Docs':>{doc_w}}"
+    lines = [header, "-" * len(header)]
+    for i, s in enumerate(stats, 1):
+        lines.append(
+            f"{i:>{rank_w}}  {s.word:<{word_w}}  {s.total:>{tot_w}}  {s.docs:>{doc_w}}"
+        )
+    return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(description="Offline recursive .txt word analyzer.")
+    p.add_argument("paths", nargs="+", type=Path, help="files or directories")
+    p.add_argument("--top", type=int, default=0, help="show only top N (0 = all)")
+    p.add_argument("--min-count", type=int, default=1, help="minimum total count")
+    p.add_argument("--encoding", default="utf-8", help="input encoding (default utf-8)")
+    p.add_argument("--format", choices=("table", "tsv", "json"), default="table")
+    p.add_argument("--stopwords", type=Path, help="file of words to ignore")
+    args = p.parse_args(argv)
+
+    if args.top < 0 or args.min_count < 1:
+        p.error("--top must be >= 0 and --min-count must be >= 1")
+
+    stopwords = load_stopwords(args.stopwords, args.encoding)
+    files = list(iter_txt_files(args.paths))
+    if not files:
+        print("error: no .txt files found", file=sys.stderr)
+        return 1
+
+    stats, n_docs = analyze(files, args.encoding, stopwords)
+    stats = [s for s in stats if s.total >= args.min_count]
+    if args.top:
+        stats = stats[: args.top]
+
+    print(render(stats, args.format, n_docs))
+    print(f"\n# documents analyzed: {n_docs}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```

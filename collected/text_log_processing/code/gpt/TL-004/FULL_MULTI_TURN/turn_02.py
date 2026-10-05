@@ -1,0 +1,47 @@
+import re
+from collections import Counter
+
+
+def word_frequency(text, stopwords=(), top_k=10, include_bigrams=False):
+    """
+    Word frequency analyzer with:
+    - Case-insensitive tokenization
+    - Case-insensitive stopword filtering
+    - Empty-input handling
+    - Cross-line bigram continuity
+    - Top-k unigrams and optional bigrams
+    """
+
+    # Tokenize the entire text at once, so bigrams can cross line boundaries.
+    tokens = re.findall(r"[a-z0-9]+", text.lower())
+
+    # Case-insensitive stopword filtering
+    stopwords = {word.lower() for word in stopwords}
+    tokens = [word for word in tokens if word not in stopwords]
+
+    # Safe handling for empty files / text containing only stopwords
+    unigram_counts = Counter(tokens)
+
+    top_unigrams = sorted(
+        unigram_counts.items(),
+        key=lambda x: (-x[1], x[0])
+    )[:max(0, top_k)]
+
+    result = {
+        "total_tokens": len(tokens),
+        "top_unigrams": top_unigrams
+    }
+
+    if include_bigrams:
+        # Adjacent tokens naturally include cross-line pairs.
+        bigrams = zip(tokens, tokens[1:])
+        bigram_counts = Counter(bigrams)
+
+        top_bigrams = sorted(
+            bigram_counts.items(),
+            key=lambda x: (-x[1], x[0])
+        )[:max(0, top_k)]
+
+        result["top_bigrams"] = top_bigrams
+
+    return result

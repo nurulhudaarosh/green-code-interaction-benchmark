@@ -1,0 +1,108 @@
+## Problem Identification
+
+**Problem**: Compute the **Damerau-Levenshtein distance** between two strings, where the allowed edit operations are:
+1. **Insertion** of a character — cost 1
+2. **Deletion** of a character — cost 1
+3. **Substitution** of a character — cost 1
+4. **Transposition** of two adjacent characters — cost 1
+
+**Key Constraints**:
+- Inputs are two strings (possibly empty).
+- Each operation costs exactly 1.
+- Transposition only applies to two adjacent, differing characters.
+- Must be deterministic, standard-library-only, no external I/O.
+
+**Required Output**: An integer ≥ 0 representing the minimum total edit cost.
+
+---
+
+## Algorithm
+
+**Dynamic programming** with an explicit transposition transition.
+
+Let `a` (length `n`) and `b` (length `m`). Define `dp[i][j]` = edit distance between `a[:i]` and `b[:j]`.
+
+- **Base cases**: `dp[i][0] = i` (all deletions), `dp[0][j] = j` (all insertions).
+- **Recurrence** for `i ≥ 1, j ≥ 1`:
+  - `cost = 0` if `a[i-1] == b[j-1]`, else `1`
+  - `dp[i][j] = min(`
+    - `dp[i-1][j] + 1`      *(delete)*
+    - `dp[i][j-1] + 1`      *(insert)*
+    - `dp[i-1][j-1] + cost` *(match / substitute)*
+    - `dp[i-2][j-2] + 1`    *(transpose, if `i ≥ 2`, `j ≥ 2`, `a[i-1] == b[j-2]`, and `a[i-2] == b[j-1]`)*
+  - `)`
+
+Use **O(n·m)** time and memory (row-based rolling arrays are possible; here we keep a full table for clarity).
+
+---
+
+## Python Implementation
+
+```python
+def damerau_levenshtein(a: str, b: str) -> int:
+    """
+    Compute edit distance with insertion, deletion, substitution,
+    and adjacent transposition, each costing 1.
+
+    Deterministic. Standard library only.
+    """
+    n, m = len(a), len(b)
+
+    # dp[i][j] = edit distance between a[:i] and b[:j]
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+
+    # Base cases
+    for i in range(n + 1):
+        dp[i][0] = i
+    for j in range(m + 1):
+        dp[0][j] = j
+
+    # Fill table
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+
+            dp[i][j] = min(
+                dp[i - 1][j] + 1,        # deletion
+                dp[i][j - 1] + 1,        # insertion
+                dp[i - 1][j - 1] + cost  # match or substitution
+            )
+
+            # Adjacent transposition
+            if (i >= 2 and j >= 2
+                    and a[i - 1] == b[j - 2]
+                    and a[i - 2] == b[j - 1]):
+                dp[i][j] = min(dp[i][j], dp[i - 2][j - 2] + 1)
+
+    return dp[n][m]
+
+
+if __name__ == "__main__":
+    # Deterministic self-tests
+    tests = [
+        ("", "", 0),
+        ("", "abc", 3),
+        ("abc", "", 3),
+        ("abc", "abc", 0),
+        ("abc", "abd", 1),          # substitution
+        ("abc", "ab", 1),           # deletion
+        ("ab", "abc", 1),           # insertion
+        ("ab", "ba", 1),            # transposition
+        ("ca", "abc", 3),
+        ("abcd", "abdc", 1),        # transposition in middle
+        ("kitten", "sitting", 3),
+        ("Saturday", "Sunday", 3),
+        ("a cat", "an act", 2),     # transposition + insertion
+    ]
+
+    for s1, s2, expected in tests:
+        got = damerau_levenshtein(s1, s2)
+        status = "OK" if got == expected else "FAIL"
+        print(f"[{status}] d({s1!r}, {s2!r}) = {got} (expected {expected})")
+```
+
+### Notes on correctness
+
+- The transposition check requires `a[i-1] == b[j-2]` and `a[i-2] == b[j-1]`, i.e., the two characters are swapped between the strings. The unequal-characters condition is implied because if they were equal, the plain diagonal move already achieves the same cost.
+- The rolling two-row optimization is omitted deliberately; full table is easier to verify and only differs by a constant factor in memory.
+- The algorithm runs in **O(n·m)** time and **O(n·m)** space, deterministic, with no external dependencies.

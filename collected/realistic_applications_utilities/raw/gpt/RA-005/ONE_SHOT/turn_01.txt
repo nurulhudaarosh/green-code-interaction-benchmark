@@ -1,72 +1,162 @@
 ```python
-import json
-import traceback
-from pathlib import Path
+from collections import Counter, defaultdict
+from datetime import datetime
 
-DATASET_PATH = "dataset.json"
 
-def load_dataset(path):
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"'{path}' not found. Check the path.")
-    with open(p, "r", encoding="utf-8") as f:
-        return json.load(f)
+def parse_log_line(line):
+    """
+    Parse a log line in the format:
+    YYYY-MM-DD HH:MM:SS | LEVEL | message
 
-def safe_get(lst, index, default=None, label="list"):
-    """Access list[index] safely, logging instead of crashing."""
+    Returns a dictionary for valid lines, otherwise None.
+    """
+    if not isinstance(line, str) or not line.strip():
+        return None
+
+    parts = [part.strip() for part in line.split("|")]
+
+    if len(parts) != 3:
+        return None
+
+    timestamp_text, level, message = parts
+
+    if not timestamp_text or not level or not message:
+        return None
+
     try:
-        return lst[index]
-    except IndexError:
-        print(f"IndexError: {label} has length {len(lst)}, but index {index} was requested.")
-        return default
+        timestamp = datetime.strptime(timestamp_text, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
 
-def diagnose_index_errors(data):
-    issues = []
-    interactions = data.get("interactions", []) if isinstance(data, dict) else []
+    level = level.upper()
 
-    if not interactions:
-        issues.append("'interactions' list is empty — nothing to advance through.")
-        return issues
+    if level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+        return None
 
-    for i, interaction in enumerate(interactions):
-        try:
-            # Example of the kind of indexing that typically throws this error:
-            # accessing a sub-list/messages array without checking length first
-            messages = interaction.get("messages", []) if isinstance(interaction, dict) else []
-            if not messages:
-                issues.append(f"Interaction {i}: 'messages' is empty — indexing into it would fail.")
-                continue
+    return {
+        "timestamp": timestamp,
+        "level": level,
+        "message": message
+    }
 
-            first_msg = safe_get(messages, 0, label=f"interaction[{i}].messages")
-            last_msg = safe_get(messages, len(messages) - 1, label=f"interaction[{i}].messages")
 
-            if first_msg is None or last_msg is None:
-                issues.append(f"Interaction {i}: could not safely access first/last message.")
+def summarize_logs(logs):
+    """
+    Summarize valid log records.
 
-        except Exception:
-            issues.append(f"Interaction {i}: unexpected error:\n{traceback.format_exc()}")
+    Invalid, empty, malformed, or unsupported log entries are ignored.
 
-    return issues
+    Returns:
+        {
+            "total": number of valid records,
+            "by_level": counts for each log level,
+            "first_timestamp": earliest timestamp or None,
+            "last_timestamp": latest timestamp or None,
+            "messages": most frequent messages
+        }
+    """
+    valid_logs = []
 
-def main():
-    try:
-        data = load_dataset(DATASET_PATH)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"Failed to load dataset: {e}")
-        return
+    for line in logs:
+        record = parse_log_line(line)
+        if record is not None:
+            valid_logs.append(record)
 
-    issues = diagnose_index_errors(data)
+    level_counts = Counter(record["level"] for record in valid_logs)
+    message_counts = Counter(record["message"] for record in valid_logs)
 
-    if issues:
-        print("Issues found (likely causes of 'list index out of range'):")
-        for issue in issues:
-            print(f"  - {issue}")
+    if valid_logs:
+        first_timestamp = min(record["timestamp"] for record in valid_logs)
+        last_timestamp = max(record["timestamp"] for record in valid_logs)
     else:
-        print("No obvious index issues found — the error may be occurring elsewhere in your pipeline.")
-        print("Check any loop like `data[i]` or `list[-1]` where the list could be shorter than expected.")
+        first_timestamp = None
+        last_timestamp = None
+
+    ordered_levels = {
+        "DEBUG": level_counts.get("DEBUG", 0),
+        "INFO": level_counts.get("INFO", 0),
+        "WARNING": level_counts.get("WARNING", 0),
+        "ERROR": level_counts.get("ERROR", 0),
+        "CRITICAL": level_counts.get("CRITICAL", 0)
+    }
+
+    return {
+        "total": len(valid_logs),
+        "by_level": ordered_levels,
+        "first_timestamp": first_timestamp,
+        "last_timestamp": last_timestamp,
+        "messages": dict(message_counts)
+    }
+
+
+def format_summary(summary):
+    """
+    Convert a summary dictionary into a readable text report.
+    """
+    first_timestamp = summary["first_timestamp"]
+    last_timestamp = summary["last_timestamp"]
+
+    first_text = (
+        first_timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        if first_timestamp else "N/A"
+    )
+    last_text = (
+        last_timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        if last_timestamp else "N/A"
+    )
+
+    lines = [
+        "Log Summary",
+        "-----------",
+        f"Total valid entries: {summary['total']}",
+        f"First timestamp: {first_text}",
+        f"Last timestamp: {last_text}",
+        "",
+        "Entries by level:"
+    ]
+
+    for level, count in summary["by_level"].items():
+        lines.append(f"  {level}: {count}")
+
+    lines.append("")
+    lines.append("Message frequencies:")
+
+    if summary["messages"]:
+        sorted_messages = sorted(
+            summary["messages"].items(),
+            key=lambda item: (-item[1], item[0])
+        )
+
+        for message, count in sorted_messages:
+            lines.append(f"  {count}x - {message}")
+    else:
+        lines.append("  N/A")
+
+    return "\n".join(lines)
+
+
+def analyze_logs(logs):
+    """
+    Complete log summarizer.
+
+    Accepts an iterable of log lines and returns a formatted summary.
+    """
+    summary = summarize_logs(logs)
+    return format_summary(summary)
+
 
 if __name__ == "__main__":
-    main()
-```
+    logs = [
+        "2026-10-04 09:15:00 | INFO | Application started",
+        "2026-10-04 09:16:10 | INFO | User logged in",
+        "2026-10-04 09:17:22 | WARNING | Slow response detected",
+        "2026-10-04 09:18:30 | ERROR | Database connection failed",
+        "2026-10-04 09:19:00 | ERROR | Database connection failed",
+        "2026-10-04 09:20:00 | INFO | User logged in",
+        "invalid log entry",
+        "",
+        "2026-10-04 09:21:00 | CRITICAL | Service unavailable"
+    ]
 
-This assumes a `messages` list nested inside each interaction — swap that key/structure for whatever your actual pipeline indexes into. If you can share the traceback with a line number, I can point at the exact line instead of guessing at the shape.
+    print(analyze_logs(logs))
+```

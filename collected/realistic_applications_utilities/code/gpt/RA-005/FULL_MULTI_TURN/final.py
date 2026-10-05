@@ -1,0 +1,114 @@
+from collections import Counter
+
+
+VALID_LEVELS = {"INFO", "WARNING", "ERROR", "DEBUG", "CRITICAL"}
+
+
+def parse_log_line(line):
+    if not isinstance(line, str):
+        return None
+
+    line = line.strip()
+    if not line:
+        return None
+
+    # Remove accidental extra separators around the complete line.
+    line = line.strip(":;| \t")
+    if not line:
+        return None
+
+    # A valid line must contain exactly one meaningful level/message split.
+    parts = line.split(":", 1)
+    if len(parts) != 2:
+        return None
+
+    level = parts[0].strip().upper()
+    message = parts[1].strip()
+
+    if level not in VALID_LEVELS or not message:
+        return None
+
+    return level, message
+
+
+def summarize_logs(logs, repeated_error_threshold=2):
+    summary = {
+        "total": 0,
+        "levels": {},
+        "messages": [],
+        "repeated_errors": []
+    }
+
+    if not isinstance(logs, (list, tuple)):
+        return summary
+
+    # Threshold must be an integer of at least 1.
+    if isinstance(repeated_error_threshold, bool):
+        repeated_error_threshold = 2
+
+    try:
+        repeated_error_threshold = int(repeated_error_threshold)
+    except (TypeError, ValueError):
+        repeated_error_threshold = 2
+
+    if repeated_error_threshold < 1:
+        repeated_error_threshold = 1
+
+    error_messages = []
+
+    for line in logs:
+        parsed = parse_log_line(line)
+
+        # Ignore malformed, empty, and non-string records.
+        if parsed is None:
+            continue
+
+        level, message = parsed
+
+        summary["total"] += 1
+        summary["levels"][level] = summary["levels"].get(level, 0) + 1
+        summary["messages"].append({
+            "level": level,
+            "message": message
+        })
+
+        if level == "ERROR":
+            error_messages.append(message)
+
+    error_counts = Counter(error_messages)
+
+    # Include errors exactly at the threshold as well as above it.
+    summary["repeated_errors"] = [
+        {
+            "message": message,
+            "count": count
+        }
+        for message, count in error_counts.items()
+        if count >= repeated_error_threshold
+    ]
+
+    return summary
+
+
+if __name__ == "__main__":
+    logs = [
+        "INFO: Application started",
+        "ERROR: Database connection failed",
+        "ERROR: Database connection failed",
+        "ERROR: Server unavailable",
+        "ERROR: Server unavailable",
+        "ERROR: Server unavailable",
+        " warning : Low disk space ",
+        "MALFORMED LINE",
+        "ERROR:",
+        ": Missing level",
+        "",
+        "   ",
+        None,
+        "DEBUG: User opened dashboard"
+    ]
+
+    # Exactly 2 occurrences are considered repeated.
+    result = summarize_logs(logs, repeated_error_threshold=2)
+
+    print(result)

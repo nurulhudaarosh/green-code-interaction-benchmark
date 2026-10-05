@@ -1,0 +1,27 @@
+```python
+import hashlib
+from collections import defaultdict
+from pathlib import Path
+
+
+def find_exact_duplicates(input_dir):
+    """Return {sha256_hex: [sorted file paths]} for byte-identical files.
+
+    Searches input_dir recursively and includes only groups with 2+ files.
+    """
+    groups = defaultdict(list)
+
+    for path in Path(input_dir).rglob("*"):
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            digest = hashlib.sha256()
+            with open(path, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):  # 1 MiB chunks
+                    digest.update(chunk)
+        except OSError:
+            continue  # unreadable file (permissions, race with deletion, etc.)
+        groups[digest.hexdigest()].append(str(path))
+
+    return {h: sorted(paths) for h, paths in groups.items() if len(paths) > 1}
+```

@@ -1,0 +1,115 @@
+from typing import List, Optional
+
+
+def subset_sum_min_card_lex_indices(nums: List[int], target: int) -> Optional[List[int]]:
+    """
+    Return the sorted list of 0-based indices of a subset of `nums` that sums
+    exactly to `target`, minimizing cardinality first and then lexicographic
+    order of indices. Return None if no such subset exists.
+
+    Handles edge cases: empty nums, target == 0, disconnected reachable sums,
+    elements larger than target.
+    """
+    if target < 0:
+        return None
+    n = len(nums)
+
+    # target == 0 -> empty subset is always the unique minimal solution
+    if target == 0:
+        return []
+
+    # No items and nonzero target -> impossible
+    if n == 0:
+        return None
+
+    INF = float('inf')
+
+    # Suffix DP: suf[i][s] = min items from nums[i:] to reach s
+    suf = [[INF] * (target + 1) for _ in range(n + 1)]
+    suf[n][0] = 0
+
+    for i in range(n - 1, -1, -1):
+        x = nums[i]
+        row_next = suf[i + 1]
+        row_cur = suf[i]
+        for s in range(target + 1):
+            best = row_next[s]  # skip item i
+            if s >= x and row_next[s - x] != INF:
+                cand = row_next[s - x] + 1
+                if cand < best:
+                    best = cand
+            row_cur[s] = best
+
+    if suf[0][target] == INF:
+        return None
+
+    # Reconstruction: lexicographically smallest indices
+    remaining = target
+    count = suf[0][target]
+    result: List[int] = []
+
+    for i in range(n):
+        if count == 0:
+            break
+        x = nums[i]
+        if x <= remaining and suf[i + 1][remaining - x] == count - 1:
+            result.append(i)
+            remaining -= x
+            count -= 1
+
+    if remaining != 0:
+        return None
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Test suite
+# ---------------------------------------------------------------------------
+def _check(name, got, expected):
+    status = "PASS" if got == expected else "FAIL"
+    print(f"[{status}] {name}: got={got}, expected={expected}")
+
+
+def run_tests():
+    # Smallest permitted input
+    _check("empty nums, target=0", subset_sum_min_card_lex_indices([], 0), [])
+    _check("empty nums, target=5", subset_sum_min_card_lex_indices([], 5), None)
+    _check("single [1], target=1", subset_sum_min_card_lex_indices([1], 1), [0])
+    _check("single [7], target=3", subset_sum_min_card_lex_indices([7], 3), None)
+
+    # Zero target with non-empty nums
+    _check("target=0 with nums", subset_sum_min_card_lex_indices([1, 2, 3], 0), [])
+
+    # Unreachable / disconnected sums
+    _check("unreachable 5 from [2,4,6]",
+           subset_sum_min_card_lex_indices([2, 4, 6], 5), None)
+    _check("disconnected [2,4,8], target=3",
+           subset_sum_min_card_lex_indices([2, 4, 8], 3), None)
+    _check("all elements > target",
+           subset_sum_min_card_lex_indices([10, 20, 30], 5), None)
+
+    # Original examples
+    _check("[3,34,4,12,5,2], target=9",
+           subset_sum_min_card_lex_indices([3, 34, 4, 12, 5, 2], 9), [2, 4])
+    _check("[1,2,3,4,5], target=5",
+           subset_sum_min_card_lex_indices([1, 2, 3, 4, 5], 5), [4])
+    _check("[5,1,2,3,4], target=5",
+           subset_sum_min_card_lex_indices([5, 1, 2, 3, 4], 5), [0])
+
+    # Lexicographic tie-break
+    _check("[2,3,1,4], target=5 (tie -> [0,1])",
+           subset_sum_min_card_lex_indices([2, 3, 1, 4], 5), [0, 1])
+
+    # Minimal cardinality beats longer lexicographically-smaller set
+    _check("[1,2,3,4], target=6 (size-2 [1,3])",
+           subset_sum_min_card_lex_indices([1, 2, 3, 4], 6), [1, 3])
+
+    # Extra: repeated values
+    _check("[1,1,1,1], target=4 (all four)",
+           subset_sum_min_card_lex_indices([1, 1, 1, 1], 4), [0, 1, 2, 3])
+    _check("[1,1,1,1], target=2 (lex smallest pair)",
+           subset_sum_min_card_lex_indices([1, 1, 1, 1], 2), [0, 1])
+
+
+if __name__ == "__main__":
+    run_tests()

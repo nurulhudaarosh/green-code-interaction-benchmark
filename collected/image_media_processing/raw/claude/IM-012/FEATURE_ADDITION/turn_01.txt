@@ -1,0 +1,40 @@
+```python
+from pathlib import Path
+from PIL import Image, ImageOps
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
+
+def letterbox_resize(input_dir, output_dir, target_size, pad_color=(0, 0, 0)):
+    """Resize every image in input_dir to exactly target_size (width, height),
+    preserving aspect ratio, centered on a pad_color background."""
+    tw, th = target_size
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    for path in sorted(Path(input_dir).iterdir()):
+        if path.suffix.lower() not in IMAGE_EXTS:
+            continue
+
+        with Image.open(path) as im:
+            im = ImageOps.exif_transpose(im).convert("RGB")  # honor camera rotation
+
+            scale = min(tw / im.width, th / im.height)
+            nw = max(1, min(tw, round(im.width * scale)))
+            nh = max(1, min(th, round(im.height * scale)))
+            resized = im.resize((nw, nh), Image.Resampling.LANCZOS)
+
+            canvas = Image.new("RGB", (tw, th), pad_color)
+            canvas.paste(resized, ((tw - nw) // 2, (th - nh) // 2))
+            canvas.save(out / path.name)
+```
+
+Usage:
+
+
+Notes:
+
+- `target_size` is `(width, height)`, matching PIL's convention.
+- The scale factor is the smaller of the two axis ratios, so the image fits entirely inside the target. The shorter axis gets padded, split evenly on both sides (any odd leftover pixel goes to the bottom or right).
+- Images are converted to RGB, so transparency is dropped and the pad color is applied to the whole canvas. If you need to keep alpha, switch to `"RGBA"` and use a 4-tuple `pad_color`, and save as PNG.
+- Output keeps the original filenames, so don't point `output_dir` at `input_dir` unless you want to overwrite the originals.
+- Upscaling happens too if the source is smaller than the target. To only shrink, cap the scale with `scale = min(scale, 1.0)`.

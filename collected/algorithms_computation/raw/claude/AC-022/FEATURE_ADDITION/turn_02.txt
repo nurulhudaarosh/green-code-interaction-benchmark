@@ -1,0 +1,138 @@
+# Edit Distance with Transposition: Restatement and Added Feature
+
+## 1. Original problem (unchanged)
+
+Given strings `a` (length *n*) and `b` (length *m*), either possibly empty, compute the minimum number of operations to turn `a` into `b`. The operations are insertion, deletion, substitution, and adjacent transposition, each costing 1.
+
+**Original required output:** a single non-negative integer, the minimum total cost.
+
+**Original requirements, all still in force:**
+- Optimal string alignment (restricted) interpretation of transposition.
+- Dynamic programming with an explicit transposition transition, O(n·m) time and O(m) space (three rolling rows).
+- Standard library only; deterministic; no network, APIs, randomness, or interaction.
+
+## 2. New feature: `operation_summary`
+
+A new optional parameter `summarize` (default `False`) controls it.
+
+- **`summarize=False` (default or not requested):** the function returns a plain `int`, exactly as before. No field is added, and nothing about the result changes.
+- **`summarize=True`:** the function returns a dict with the original result under `"distance"` plus an `"operation_summary"` dict.
+
+**Fields of `operation_summary`**, all pure functions of `(a, b)`:
+
+| Field | Meaning |
+|---|---|
+| `cells_evaluated` | Interior DP cells computed (n·m; 0 if either string is empty) |
+| `candidate_evaluations` | Transitions compared: 3 per cell, plus 1 for each cell where transposition is eligible |
+| `transposition_eligible` | Cells where `i,j ≥ 2`, `a[i-1]==b[j-2]` and `a[i-2]==b[j-1]` |
+| `transposition_improvements` | Eligible cells where transposition was strictly cheaper than the other three options |
+| `total_decisions` | `cells_evaluated` (one min-decision per cell) |
+
+If either string is empty, the answer is immediate (`n` or `m`) and every counter is 0.
+
+## 3. Implementation
+
+```python
+from typing import Dict, Union
+
+
+def edit_distance(
+    a: str, b: str, summarize: bool = False
+) -> Union[int, Dict[str, object]]:
+    """Edit distance with insert, delete, substitute, and adjacent
+    transposition (each cost 1; optimal string alignment).
+
+    Returns an int when summarize is False (original behavior).
+    When summarize is True, returns
+        {"distance": int, "operation_summary": {...}}.
+    """
+    n, m = len(a), len(b)
+
+    cells = candidates = eligible = improvements = 0
+
+    if n == 0 or m == 0:
+        dist = m if n == 0 else n
+    else:
+        prev2 = [0] * (m + 1)        # row i-2
+        prev = list(range(m + 1))    # row i-1 (row 0)
+
+        for i in range(1, n + 1):
+            curr = [i] + [0] * m     # d[i][0] = i
+            ai = a[i - 1]
+            for j in range(1, m + 1):
+                bj = b[j - 1]
+                cost = 0 if ai == bj else 1
+                best = min(
+                    prev[j] + 1,          # deletion
+                    curr[j - 1] + 1,      # insertion
+                    prev[j - 1] + cost,   # substitution / match
+                )
+                cells += 1
+                candidates += 3
+                if i > 1 and j > 1 and ai == b[j - 2] and a[i - 2] == bj:
+                    eligible += 1
+                    candidates += 1
+                    t = prev2[j - 2] + 1  # transposition
+                    if t < best:
+                        improvements += 1
+                        best = t
+                curr[j] = best
+            prev2, prev = prev, curr
+        dist = prev[m]
+
+    if not summarize:
+        return dist
+
+    return {
+        "distance": dist,
+        "operation_summary": {
+            "cells_evaluated": cells,
+            "candidate_evaluations": candidates,
+            "transposition_eligible": eligible,
+            "transposition_improvements": improvements,
+            "total_decisions": cells,
+        },
+    }
+
+
+if __name__ == "__main__":
+    tests = [
+        ("", "", 0), ("", "abc", 3), ("abc", "", 3), ("abc", "abc", 0),
+        ("ab", "ba", 1), ("abcd", "acbd", 1), ("kitten", "sitting", 3),
+        ("ca", "abc", 3), ("teh", "the", 1), ("abcdef", "badcfe", 3),
+        ("a", "b", 1),
+    ]
+    for x, y, expected in tests:
+        # Original contract: plain int when the feature is off.
+        got = edit_distance(x, y)
+        assert isinstance(got, int) and got == expected, (x, y, got)
+        assert got == edit_distance(y, x)
+
+        # Feature on: same distance, plus a deterministic summary.
+        r = edit_distance(x, y, summarize=True)
+        assert r["distance"] == expected
+        assert r == edit_distance(x, y, summarize=True)  # deterministic
+        s = r["operation_summary"]
+        assert s["cells_evaluated"] == len(x) * len(y)
+        assert s["candidate_evaluations"] == 3 * s["cells_evaluated"] + s["transposition_eligible"]
+        assert s["transposition_improvements"] <= s["transposition_eligible"]
+
+    # Hand-verified example: "ab" -> "ba"
+    assert edit_distance("ab", "ba", summarize=True) == {
+        "distance": 1,
+        "operation_summary": {
+            "cells_evaluated": 4,
+            "candidate_evaluations": 13,
+            "transposition_eligible": 1,
+            "transposition_improvements": 1,
+            "total_decisions": 4,
+        },
+    }
+    print("All tests passed.")
+```
+
+## 4. Notes
+
+- **Backward compatibility:** the default call `edit_distance(a, b)` returns the same integer as the original function. The counters are plain local increments and never affect the DP values.
+- **Hand check for `"ab"` → `"ba"`:** 4 cells are evaluated. Only cell (2,2) is transposition-eligible, so there are 4·3 + 1 = 13 candidate evaluations. At that cell the best non-transposition cost is 2 and transposition gives 1, so it counts as 1 improvement.
+- **Complexity:** time and space are unchanged at O(n·m) and O(m). The summary adds O(1) space.

@@ -1,0 +1,28 @@
+def dedup_lines(in_path, out_path, mode='exact'):
+    if mode not in ('exact', 'normalized'):
+        raise ValueError("mode must be 'exact' or 'normalized'")
+
+    seen = set()
+    total = unique = 0
+
+    with open(in_path, 'r', encoding='utf-8') as infile, \
+         open(out_path, 'w', encoding='utf-8') as outfile:
+
+        for line in infile:
+            total += 1
+            raw = line.rstrip('\r\n')
+
+            key = raw
+            if mode == 'normalized':
+                key = ' '.join(raw.strip().lower().split())
+
+            if key not in seen:
+                seen.add(key)
+                outfile.write(line)
+                unique += 1
+
+    return {
+        'total': total,
+        'unique': unique,
+        'removed': total - unique
+    }

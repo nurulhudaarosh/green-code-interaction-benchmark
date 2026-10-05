@@ -1,0 +1,233 @@
+import os
+import unicodedata
+import shutil
+from pathlib import Path
+from dataclasses import dataclass, field
+from typing import Optional, Callable, Dict, List
+
+
+@dataclass
+class NormalizeStats:
+    """Statistics collected while normalizing a corpus."""
+    files_scanned: int = 0
+    files_written: int = 0
+    files_skipped: int = 0
+    bytes_read: int = 0
+    bytes_written: int = 0
+    unicode_fixes: int = 0          # chars changed by NFKC/NFD
+    whitespace_fixes: int = 0       # runs of whitespace collapsed
+    case_fixes: int = 0             # chars changed by lowercasing
+    errors: List[str] = field(default_factory=list)
+    per_extension: Dict[str, int] = field(default_factory=dict)
+
+    def report(self) -> str:
+        pct = (self.bytes_written / self.bytes_read * 100) if self.bytes_read else 0.0
+        lines = [
+            "=" * 60,
+            "NORMALIZATION STATS",
+            "=" * 60,
+            f"Files scanned    : {self.files_scanned}",
+            f"Files written    : {self.files_written}",
+            f"Files skipped    : {self.files_skipped}",
+            f"Bytes read       : {self.bytes_read:,}",
+            f"Bytes written    : {self.bytes_written:,}  ({pct:.1f}% of input)",
+            "-" * 60,
+            f"Unicode fixes    : {self.unicode_fixes}",
+            f"Whitespace fixes : {self.whitespace_fixes}",
+            f"Case fixes       : {self.case_fixes}",
+        ]
+        if self.per_extension:
+            lines.append("-" * 60)
+            lines.append("By extension:")
+            for ext, n in sorted(self.per_extension.items(), key=lambda kv: -kv[1]):
+                lines.append(f"  {ext or '<none>':10s} {n}")
+        if self.errors:
+            lines.append("-" * 60)
+            lines.append(f"Errors ({len(self.errors)}):")
+            for e in self.errors[:20]:
+                lines.append(f"  {e}")
+            if len(self.errors) > 20:
+                lines.append(f"  ... and {len(self.errors) - 20} more")
+        lines.append("=" * 60)
+        return "\n".join(lines)
+
+
+def _normalize_text(
+    text: str,
+    unicode_form: str,
+    lowercase: bool,
+    collapse_whitespace: bool,
+    stats: NormalizeStats,
+) -> str:
+    # 1. Unicode normalization (NFKC by default: compatibility + canonical compose)
+    if unicode_form and unicode_form != "NONE":
+        normed = unicodedata.normalize(unicode_form, text)
+        if normed != text:
+            stats.unicode_fixes += sum(1 for a, b in zip(text, normed) if a != b) \
+                or abs(len(text) - len(normed)) or 1
+        text = normed
+
+    # 2. Whitespace normalization.
+    #    Replace tabs, NBSP, thin spaces, etc. with regular spaces,
+    #    then collapse runs of spaces and normalize newlines.
+    if collapse_whitespace:
+        original = text
+        # Map common Unicode whitespace to ASCII space
+        out_chars = []
+        ws_fixes = 0
+        prev_space = False
+        for ch in text:
+            if ch in " \t\r\n\v\f" or unicodedata.category(ch) == "Zs":
+                if not prev_space:
+                    out_chars.append(" ")
+                    prev_space = True
+                else:
+                    ws_fixes += 1
+                if ch != " ":
+                    ws_fixes += 1
+            else:
+                out_chars.append(ch)
+                prev_space = False
+        text = "".join(out_chars)
+        # Strip trailing spaces on each line, and strip trailing newlines at EOF
+        text = "\n".join(line.rstrip() for line in text.split("\n"))
+        if text != original and ws_fixes == 0:
+            ws_fixes = 1
+        stats.whitespace_fixes += ws_fixes
+
+    # 3. Lowercase (Unicode-aware, via str.lower)
+    if lowercase:
+        lowered = text.lower()
+        if lowered != text:
+            stats.case_fixes += sum(1 for a, b in zip(text, lowered) if a != b)
+            text = lowered
+
+    return text
+
+
+def normalize_corpus(
+    src: str,
+    dst: str,
+    *,
+    unicode_form: str = "NFKC",
+    lowercase: bool = False,
+    collapse_whitespace: bool = True,
+    encoding: str = "utf-8",
+    encoding_errors: str = "replace",
+    extensions: Optional[set] = None,
+    mirror: bool = True,
+    overwrite: bool = True,
+    dry_run: bool = False,
+    progress: Optional[Callable[[str], None]] = None,
+) -> NormalizeStats:
+    """
+    Normalize a text corpus, mirroring its directory tree.
+
+    Parameters
+    ----------
+    src, dst : str
+        Source and destination roots.
+    unicode_form : str
+        One of 'NFC', 'NFD', 'NFKC', 'NFKD', or 'NONE' to skip.
+    lowercase : bool
+        If True, apply Unicode-aware lowercasing.
+    collapse_whitespace : bool
+        Collapse runs of whitespace to single spaces, normalize all
+        Unicode space characters, strip trailing whitespace per line.
+    encoding : str
+        Input/output text encoding (default UTF-8).
+    encoding_errors : str
+        How to handle decode errors ('replace', 'ignore', 'strict').
+    extensions : set or None
+        If provided, only process these extensions (e.g. {'.txt', '.md'}).
+    mirror : bool
+        If True, recreate the source directory tree under dst.
+        If False, flatten all outputs into dst (names may collide).
+    overwrite : bool
+        If False, skip files that already exist at the destination.
+    dry_run : bool
+        If True, compute stats without writing anything.
+    progress : callable or None
+        Called with a status string for each file processed.
+
+    Returns
+    -------
+    NormalizeStats
+    """
+    src_path = Path(src)
+    dst_path = Path(dst)
+    if not src_path.is_dir():
+        raise NotADirectoryError(f"Source is not a directory: {src}")
+
+    stats = NormalizeStats()
+
+    for root, dirs, files in os.walk(src_path):
+        dirs.sort()          # deterministic order
+        files.sort()
+
+        rel_root = Path(root).relative_to(src_path)
+        out_root = (dst_path / rel_root) if mirror else dst_path
+
+        if not dry_run:
+            out_root.mkdir(parents=True, exist_ok=True)
+
+        for name in files:
+            in_file = Path(root) / name
+            out_file = out_root / name
+
+            if extensions is not None and in_file.suffix.lower() not in extensions:
+                stats.files_skipped += 1
+                continue
+
+            stats.files_scanned += 1
+            stats.per_extension[in_file.suffix.lower()] = \
+                stats.per_extension.get(in_file.suffix.lower(), 0) + 1
+
+            if not overwrite and out_file.exists():
+                stats.files_skipped += 1
+                continue
+
+            try:
+                raw = in_file.read_bytes()
+                stats.bytes_read += len(raw)
+                text = raw.decode(encoding, errors=encoding_errors)
+            except Exception as e:
+                stats.errors.append(f"{in_file}: read/decode failed: {e}")
+                continue
+
+            new_text = _normalize_text(
+                text, unicode_form, lowercase, collapse_whitespace, stats
+            )
+            new_bytes = new_text.encode(encoding, errors=encoding_errors)
+
+            if not dry_run:
+                try:
+                    out_file.write_bytes(new_bytes)
+                except Exception as e:
+                    stats.errors.append(f"{in_file}: write failed: {e}")
+                    continue
+
+            stats.bytes_written += len(new_bytes)
+            stats.files_written += 1
+
+            if progress:
+                progress(f"[{'DRY' if dry_run else 'OK '}] {in_file} -> {out_file}")
+
+    return stats
+
+
+# ----------------------------------------------------------------------
+# Example usage
+# ----------------------------------------------------------------------
+if __name__ == "__main__":
+    stats = normalize_corpus(
+        src="./raw_corpus",
+        dst="./clean_corpus",
+        unicode_form="NFKC",
+        lowercase=True,
+        collapse_whitespace=True,
+        extensions={".txt", ".md"},
+        mirror=True,
+        progress=print,
+    )
+    print(stats.report())

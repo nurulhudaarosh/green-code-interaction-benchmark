@@ -1,0 +1,89 @@
+from typing import List, Tuple, Optional
+
+
+def min_cost_path(cost: List[List[int]]) -> Tuple[int, List[Tuple[int, int]]]:
+    """
+    Find minimum cost path from top-left to bottom-right moving only right or down.
+
+    Returns:
+        (min_cost, path) where path is a list of (row, col) tuples from start to end.
+    """
+    if not cost or not cost[0]:
+        raise ValueError("Cost matrix must be non-empty")
+
+    m, n = len(cost), len(cost[0])
+    if any(len(row) != n for row in cost):
+        raise ValueError("Cost matrix must be rectangular")
+
+    # dp[i][j] = min cost to reach (i, j)
+    # pred[i][j] = predecessor (i, j) used to reach (i, j)
+    dp = [[0] * n for _ in range(m)]
+    pred: List[List[Optional[Tuple[int, int]]]] = [[None] * n for _ in range(m)]
+
+    dp[0][0] = cost[0][0]
+
+    # First row: can only come from the left
+    for j in range(1, n):
+        dp[0][j] = dp[0][j - 1] + cost[0][j]
+        pred[0][j] = (0, j - 1)
+
+    # First column: can only come from above
+    for i in range(1, m):
+        dp[i][0] = dp[i - 1][0] + cost[i][0]
+        pred[i][0] = (i - 1, 0)
+
+    # Fill the rest
+    for i in range(1, m):
+        for j in range(1, n):
+            from_top = dp[i - 1][j]
+            from_left = dp[i][j - 1]
+            # Deterministic tie-breaking: prefer "down" (from top) on ties
+            if from_top <= from_left:
+                dp[i][j] = from_top + cost[i][j]
+                pred[i][j] = (i - 1, j)
+            else:
+                dp[i][j] = from_left + cost[i][j]
+                pred[i][j] = (i, j - 1)
+
+    # Reconstruct path
+    path: List[Tuple[int, int]] = []
+    cur: Optional[Tuple[int, int]] = (m - 1, n - 1)
+    while cur is not None:
+        path.append(cur)
+        cur = pred[cur[0]][cur[1]]
+    path.reverse()
+
+    return dp[m - 1][n - 1], path
+
+
+if __name__ == "__main__":
+    # Example 1
+    grid1 = [
+        [1, 3, 1],
+        [1, 5, 1],
+        [4, 2, 1],
+    ]
+    c1, p1 = min_cost_path(grid1)
+    print("Example 1:")
+    print("  Min cost:", c1)
+    print("  Path:    ", p1)
+    # Expected min cost = 7, path e.g. (0,0)->(1,0)->(2,0)->(2,1)->(2,2)
+
+    # Example 2: tie case
+    grid2 = [
+        [0, 1],
+        [1, 0],
+    ]
+    c2, p2 = min_cost_path(grid2)
+    print("\nExample 2 (tie-breaking):")
+    print("  Min cost:", c2)
+    print("  Path:    ", p2)
+    # Ties everywhere; deterministic rule prefers down first.
+    # Path: (0,0) -> (1,0) -> (1,1), cost = 1
+
+    # Example 3: single cell
+    grid3 = [[42]]
+    c3, p3 = min_cost_path(grid3)
+    print("\nExample 3 (single cell):")
+    print("  Min cost:", c3)
+    print("  Path:    ", p3)

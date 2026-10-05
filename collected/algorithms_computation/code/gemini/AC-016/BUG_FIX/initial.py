@@ -1,0 +1,75 @@
+import heapq
+
+def simulate_queue(jobs):
+    """
+    Simulates a non-preemptive single-server queue.
+    
+    jobs: List of tuples/dicts representing jobs.
+          Format: (job_id, arrival_time, duration, priority)
+          
+    Returns:
+        results: List of dicts with job execution metrics.
+        avg_wait_time: Float average waiting time.
+    """
+    # Sort initial jobs by arrival time to handle arrival stream sequentially
+    unarrived_jobs = sorted(jobs, key=lambda x: (x[1], -x[3], x[0]))
+    
+    ready_heap = []
+    results = {}
+    
+    current_time = 0
+    job_idx = 0
+    num_jobs = len(jobs)
+    
+    while job_idx < num_jobs or ready_heap:
+        # Push all jobs that have arrived by current_time into the heap
+        while job_idx < num_jobs and unarrived_jobs[job_idx][1] <= current_time:
+            j_id, arr_time, dur, prio = unarrived_jobs[job_idx]
+            # Priority max-heap using tuple negation: (-prio, arr_time, j_id, dur)
+            heapq.heappush(ready_heap, (-prio, arr_time, j_id, dur))
+            job_idx += 1
+            
+        # If no jobs are ready, jump time forward to the next arrival
+        if not ready_heap:
+            current_time = unarrived_jobs[job_idx][1]
+            continue
+            
+        # Select highest-priority available job
+        prio_neg, arr_time, j_id, dur = heapq.heappop(ready_heap)
+        
+        start_time = current_time
+        wait_time = start_time - arr_time
+        completion_time = start_time + dur
+        current_time = completion_time
+        
+        results[j_id] = {
+            "job_id": j_id,
+            "completion_time": completion_time,
+            "waiting_time": wait_time
+        }
+    
+    # Sort results by job ID for output consistency
+    ordered_results = [results[j[0]] for j in jobs]
+    total_wait_time = sum(res["waiting_time"] for res in ordered_results)
+    avg_wait_time = total_wait_time / num_jobs if num_jobs > 0 else 0.0
+    
+    return ordered_results, avg_wait_time
+
+
+# Example Usage
+if __name__ == "__main__":
+    # Sample jobs format: (job_id, arrival_time, duration, priority)
+    sample_jobs = [
+        (1, 0, 5, 2),
+        (2, 1, 3, 5),
+        (3, 2, 4, 5),
+        (4, 10, 2, 1)
+    ]
+    
+    job_metrics, avg_wait = simulate_queue(sample_jobs)
+    
+    print("Job Execution Results:")
+    for metric in job_metrics:
+        print(f"Job ID {metric['job_id']}: Completion Time = {metric['completion_time']}, Waiting Time = {metric['waiting_time']}")
+    
+    print(f"\nAverage Waiting Time: {avg_wait:.2f}")

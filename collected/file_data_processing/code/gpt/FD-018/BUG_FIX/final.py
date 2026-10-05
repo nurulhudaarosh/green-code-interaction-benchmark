@@ -1,0 +1,52 @@
+import csv
+import sys
+import re
+import unicodedata
+from collections import defaultdict
+
+
+def normalize_text(value):
+    value = unicodedata.normalize("NFKC", value or "")
+    value = value.casefold()
+    value = re.sub(r"\s+", " ", value).strip()
+    return value
+
+
+def normalize_date(value):
+    return (value or "").strip()
+
+
+def main():
+    reader = csv.DictReader(sys.stdin)
+    groups = defaultdict(list)
+
+    for row in reader:
+        record_id = (row.get("id") or "").strip()
+        title = normalize_text(row.get("title"))
+        description = normalize_text(row.get("description"))
+        date = normalize_date(row.get("date"))
+
+        if not record_id or not date:
+            continue
+
+        key = (title, description, date)
+        groups[key].append(record_id)
+
+    duplicate_groups = []
+
+    for ids in groups.values():
+        unique_ids = sorted(set(ids))
+        if len(unique_ids) >= 2:
+            duplicate_groups.append(unique_ids)
+
+    duplicate_groups.sort(key=lambda group: group[0])
+
+    writer = csv.writer(sys.stdout)
+    writer.writerow(["duplicate_ids"])
+
+    for group in duplicate_groups:
+        writer.writerow(["|".join(group)])
+
+
+if __name__ == "__main__":
+    main()

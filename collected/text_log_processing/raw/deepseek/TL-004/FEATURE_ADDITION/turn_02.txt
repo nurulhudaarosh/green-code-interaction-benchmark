@@ -1,0 +1,166 @@
+Here's the updated analyzer with an optional `include_bigrams` flag. The unigram behavior is preserved exactly; bigrams are returned as an additional value when requested.
+
+```python
+import re
+import heapq
+from collections import Counter
+from typing import List, Tuple, Optional, Union
+
+
+def unigram_frequency(
+    text: str,
+    k: int = 10,
+    lowercase: bool = True,
+    strip_punctuation: bool = True,
+    include_bigrams: bool = False,
+) -> Union[
+    Tuple[List[Tuple[str, int]], int],
+    Tuple[List[Tuple[str, int]], int, List[Tuple[Tuple[str, str], int]], int],
+]:
+    """
+    Analyze unigram (and optionally bigram) frequencies in a text.
+
+    Args:
+        text: Input text to analyze.
+        k: Number of top items to return (applies to both unigrams and bigrams).
+        lowercase: Whether to normalize case before counting.
+        strip_punctuation: Whether to remove punctuation from tokens.
+        include_bigrams: If True, also compute and return top-k bigrams.
+
+    Returns:
+        If include_bigrams is False:
+            (top_k_unigrams, total_unigram_tokens)
+        If include_bigrams is True:
+            (top_k_unigrams, total_unigram_tokens,
+             top_k_bigrams, total_bigram_tokens)
+    """
+    if k <= 0:
+        raise ValueError("k must be a positive integer")
+
+    # --- Tokenize (identical to before) ---
+    if lowercase:
+        text = text.lower()
+
+    if strip_punctuation:
+        tokens = re.findall(r"\b\w+\b", text, flags=re.UNICODE)
+    else:
+        tokens = text.split()
+
+    # --- Unigrams (unchanged behavior) ---
+    unigram_counts = Counter(tokens)
+    total_tokens = sum(unigram_counts.values())
+    top_unigrams = sorted(unigram_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:k]
+
+    if not include_bigrams:
+        return top_unigrams, total_tokens
+
+    # --- Bigrams ---
+    bigrams = list(zip(tokens, tokens[1:]))
+    bigram_counts = Counter(bigrams)
+    total_bigrams = sum(bigram_counts.values())
+
+    # Sort by count desc, then lexicographically by the (w1, w2) tuple
+    top_bigrams = sorted(
+        bigram_counts.items(),
+        key=lambda kv: (-kv[1], kv[0][0], kv[0][1]),
+    )[:k]
+
+    return top_unigrams, total_tokens, top_bigrams, total_bigrams
+
+
+# ---------------------------------------------------------------------------
+# Example usage / demo
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    sample = """
+    The quick brown fox jumps over the lazy dog.
+    The dog barks, and the fox runs away. The fox is quick!
+    """
+
+    # Unigram-only call: identical output to before
+    top_words, total = unigram_frequency(sample, k=5)
+    print(f"Total tokens: {total}")
+    print("Top 5 words:")
+    for word, count in top_words:
+        print(f"  {word:<8} {count}")
+
+    print()
+
+    # With bigrams
+    top_words, total, top_bigrams, total_bigrams = unigram_frequency(
+        sample, k=5, include_bigrams=True
+    )
+    print(f"Total tokens: {total}, total bigrams: {total_bigrams}")
+    print("Top 5 bigrams:")
+    for (w1, w2), count in top_bigrams:
+        print(f"  {w1} {w2:<10} {count}")
+```
+
+**Sample output (second call):**
+```
+Total tokens: 23, total bigrams: 22
+Top 5 bigrams:
+  the fox       2
+  the dog       1
+  the lazy      1
+  the quick     1
+  away the      1
+```
+
+### Design notes
+
+- **Backward compatible:** The default `include_bigrams=False` returns the exact same tuple shape and values as before. Existing callers don't change.
+- **Variable return arity:** The return type uses `Union[...]` so type checkers understand both shapes. If you prefer a fixed shape, see the alternative below.
+- **Bigram tokenization:** Bigrams are built from the *same* token list as unigrams, so `strip_punctuation`/`lowercase` settings apply consistently.
+- **Determinism:** Bigrams are tie-broken by `(w1, w2)` lexicographically, matching the unigram tie-break style.
+- **`total_bigrams`:** By convention this is `len(tokens) - 1` (n-1 bigrams for n tokens), and it equals `sum(bigram_counts.values())`.
+
+### Alternative: fixed return shape
+
+If you'd rather avoid the conditional tuple shape, return a small result object or a dict:
+
+
+from dataclasses import dataclass, field
+
+@dataclass
+class FrequencyResult:
+    unigrams: List[Tuple[str, int]]
+    total_unigram_tokens: int
+    bigrams: Optional[List[Tuple[Tuple[str, str], int]]] = None
+    total_bigram_tokens: Optional[int] = None
+```
+
+Then `include_bigrams` just toggles whether `bigrams`/`total_bigram_tokens` are populated. This is friendlier for callers that always want the same object, at the cost of a slightly heavier API.
+
+### Streaming variant with bigrams
+
+
+def unigram_frequency_stream(lines, k=10, include_bigrams=False):
+    unigram_counts = Counter()
+    bigram_counts = Counter()
+    prev = None
+
+    for line in lines:
+        tokens = re.findall(r"\b\w+\b", line.lower())
+        unigram_counts.update(tokens)
+        if include_bigrams:
+            # Handle the boundary across lines too
+            if prev is not None and tokens:
+                bigram_counts[(prev, tokens[0])] += 1
+            bigram_counts.update(zip(tokens, tokens[1:]))
+        prev = tokens[-1] if tokens else prev
+
+    total = sum(unigram_counts.values())
+    top_unigrams = heapq.nlargest(k, unigram_counts.items(), key=lambda kv: kv[1])
+
+    if not include_bigrams:
+        return top_unigrams, total
+
+    total_bigrams = sum(bigram_counts.values())
+    top_bigrams = heapq.nlargest(
+        k, bigram_counts.items(), key=lambda kv: kv[1]
+    )
+    return top_unigrams, total, top_bigrams, total_bigrams
+```
+
+Note the boundary handling: `prev` carries the last token of the previous line so cross-line bigrams aren't dropped (e.g., `"...fox\njumps..."` produces `("fox", "jumps")`).

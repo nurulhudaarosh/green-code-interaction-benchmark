@@ -1,0 +1,187 @@
+Here is a production-ready Python implementation using `pathlib`, `unicodedata`, and standard library utilities.
+
+```python
+from collections import Counter
+from dataclasses import dataclass, field
+import os
+from pathlib import Path
+import re
+import unicodedata
+from typing import Set, Tuple
+
+
+@dataclass
+class NormalizationStats:
+    total_files: int = 0
+    total_lines: int = 0
+    raw_characters: int = 0
+    normalized_characters: int = 0
+    raw_words: int = 0
+    normalized_words: int = 0
+    skipped_binary_or_corrupt: int = 0
+    unicode_category_counts: Counter = field(default_factory=Counter)
+
+    def print_report(self) -> None:
+        char_delta = self.normalized_characters - self.raw_characters
+        char_pct = (char_delta / self.raw_characters * 100) if self.raw_characters else 0.0
+        word_delta = self.normalized_words - self.raw_words
+        word_pct = (word_delta / self.raw_words * 100) if self.raw_words else 0.0
+
+        report = f"""
+========================= Corpus Normalization Report =========================
+Files Processed Successfully : {self.total_files:,}
+Files Skipped (Binary/Errors): {self.skipped_binary_or_corrupt:,}
+Total Lines Processed        : {self.total_lines:,}
+
+Character Counts:
+  - Raw                      : {self.raw_characters:,}
+  - Normalized               : {self.normalized_characters:,}
+  - Delta                    : {char_delta:+,} ({char_pct:+.2f}%)
+
+Word Counts:
+  - Raw                      : {self.raw_words:,}
+  - Normalized               : {self.normalized_words:,}
+  - Delta                    : {word_delta:+,} ({word_pct:+.2f}%)
+
+Top 5 Unicode Categories in Output:
+"""
+        for cat, count in self.unicode_category_counts.most_common(5):
+            report += f"  - {cat:<4} : {count:,}\n"
+        report += "==============================================================================="
+        print(report)
+
+
+def _normalize_text(
+    text: str,
+    form: str = "NFC",
+    lowercase: bool = True,
+    strip_accents: bool = False,
+) -> Tuple[str, int, int]:
+    """
+    Applies unicode canonicalization, case normalization, and whitespace cleanup.
+    Returns: (cleaned_text, word_count, char_count)
+    """
+    # 1. Unicode normalization (NFC, NFKC, NFD, or NFKD)
+    normalized = unicodedata.normalize(form, text)
+
+    # 2. Optional diacritic / accent removal
+    if strip_accents:
+        normalized = "".join(
+            c for c in unicodedata.normalize("NFD", normalized)
+            if unicodedata.category(c) != "Mn"
+        )
+        normalized = unicodedata.normalize(form, normalized)
+
+    # 3. Lowercasing
+    if lowercase:
+        normalized = normalized.casefold()
+
+    # 4. Whitespace canonicalization:
+    #    - Collapse intra-line whitespace runs (tabs, non-breaking spaces, spaces) to single space
+    #    - Strip leading/trailing line whitespace
+    #    - Collapse excessive consecutive newlines (max 2 consecutive newlines preserved)
+    lines = [re.sub(r"[^\S\r\n]+", " ", line).strip() for line in normalized.splitlines()]
+    cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+    # Append trailing newline for standard POSIX text files if not empty
+    if cleaned:
+        cleaned += "\n"
+
+    # Compute metrics
+    words = len(cleaned.split())
+    chars = len(cleaned)
+
+    return cleaned, words, chars
+
+
+def normalize_corpus(
+    source_dir: str | Path,
+    target_dir: str | Path,
+    unicode_form: str = "NFC",
+    lowercase: bool = True,
+    strip_accents: bool = False,
+    file_extensions: Set[str] = {".txt", ".md", ".jsonl", ".csv"},
+    encoding: str = "utf-8",
+) -> NormalizationStats:
+    """
+    Recursively scans source_dir, mirrors folder structure in target_dir,
+    and applies text normalization to matched files.
+    """
+    src = Path(source_dir).resolve()
+    dst = Path(target_dir).resolve()
+    stats = NormalizationStats()
+
+    if not src.exists():
+        raise FileNotFoundError(f"Source directory does not exist: {src}")
+
+    for root, _, files in os.walk(src):
+        rel_path = Path(root).relative_to(src)
+        target_subdir = dst / rel_path
+
+        for file_name in files:
+            source_file = Path(root) / file_name
+
+            # Skip extensions not in filter
+            if file_extensions and source_file.suffix.lower() not in file_extensions:
+                continue
+
+            target_file = target_subdir / file_name
+
+            try:
+                # Read raw input
+                with open(source_file, "r", encoding=encoding, errors="replace") as f:
+                    raw_content = f.read()
+
+                stats.raw_characters += len(raw_content)
+                stats.raw_words += len(raw_content.split())
+                stats.total_lines += raw_content.count("\n") + (1 if raw_content and not raw_content.endswith("\n") else 0)
+
+                # Normalize content
+                norm_content, norm_words, norm_chars = _normalize_text(
+                    text=raw_content,
+                    form=unicode_form,
+                    lowercase=lowercase,
+                    strip_accents=strip_accents,
+                )
+
+                # Ensure destination directory exists before writing
+                target_subdir.mkdir(parents=True, exist_ok=True)
+
+                with open(target_file, "w", encoding=encoding) as f:
+                    f.write(norm_content)
+
+                # Track metrics
+                stats.total_files += 1
+                stats.normalized_characters += norm_chars
+                stats.normalized_words += norm_words
+                for char in norm_content:
+                    stats.unicode_category_counts[unicodedata.category(char)] += 1
+
+            except (UnicodeDecodeError, OSError):
+                stats.skipped_binary_or_corrupt += 1
+
+    return stats
+
+```
+
+### Usage
+
+
+stats = normalize_corpus(
+    source_dir="./raw_corpus",
+    target_dir="./cleaned_corpus",
+    unicode_form="NFKC",       # Resolves ligatures & compatibility characters
+    lowercase=True,            # Case-folding for NLP pipelines
+    strip_accents=False,
+    file_extensions={".txt", ".jsonl"}
+)
+
+stats.print_report()
+
+```
+
+### Core Features
+
+* **Tree Mirroring**: Recursively traverses subtrees with `os.walk` and replicates path structures via `Path.mkdir(parents=True, exist_ok=True)`.
+* **Unicode & Whitespace Sanitation**: Uses `unicodedata.normalize()` followed by full `str.casefold()` (superior to `.lower()` for multilingual text like German `ß` $\rightarrow$ `ss`), compresses inline horizontal space via `[^\S\r\n]+`, strips empty fringes, and bounds consecutive blank lines.
+* **Diagnostics**: Aggregates input/output token spans, byte/character growth deltas, lines, and general Unicode category distribution (Letters `L*`, Punctuation `P*`, Separators `Z*`).

@@ -1,0 +1,189 @@
+# Restated Problem
+
+**Edit Distance With Transposition.** Given two strings `s` and `t`, return the minimum number of operations needed to turn `s` into `t`. The allowed operations are:
+
+1. Insert one character
+2. Delete one character
+3. Substitute one character
+4. Swap two adjacent characters
+
+Each operation costs 1. The output is a single non-negative integer, and the true minimum over all edit sequences is required, so edits between a transposed pair are allowed (`"ca" → "abc"` is 2, not 3). The solution uses only the standard library and is fully deterministic.
+
+## Correction to my previous answer
+
+One test I gave earlier was wrong: `("abcdef", "abcfed", 3)`. The suffix `def → fed` takes just two substitutions (`d→f`, `f→d`, with `e` unchanged), so the correct value is **2**. The function was right but that assertion would have failed. It is fixed below.
+
+## Handling the difficult cases
+
+**Repeated values.** The transposition transition depends on `last_row[c]`, the most recent row where character `c` occurred in `s`, and `last_match_col`, the most recent matching column in the current row. With repeated characters, the most recent occurrence is the one that gives the cheapest valid transposition, and both trackers are updated in a fixed order: `last_match_col` inside the row, `last_row` after the row. This is why `"aab" → "aba"` and `"abba" → "baab"` come out right.
+
+**Deterministic ties.** The output is only the integer distance, so ties between equally cheap edit sequences cannot change it. Each cell is the `min` of four candidates evaluated in a fixed order (substitution/match, insertion, deletion, transposition), and `min` returns the same value regardless of which tied candidate is picked. No path is reconstructed, so no tie-breaking rule exists beyond this, and I haven't added one. The core function is unchanged from before, so all original outputs are preserved.
+
+## Implementation and tests
+
+```python
+def edit_distance(s: str, t: str) -> int:
+    """True Damerau-Levenshtein distance: insert, delete, substitute,
+    and adjacent transposition, each with cost 1.
+
+    Output is a single integer. Ties between equal-cost edit sequences
+    cannot affect it: each cell is min() over four candidates evaluated
+    in a fixed order (substitute/match, insert, delete, transpose).
+    """
+    n, m = len(s), len(t)
+    if n == 0:
+        return m
+    if m == 0:
+        return n
+
+    last_row = {}  # last 1-based row in s where each character occurred
+
+    INF = n + m
+    D = [[0] * (m + 2) for _ in range(n + 2)]
+    D[0][0] = INF
+    for i in range(n + 1):
+        D[i + 1][0] = INF
+        D[i + 1][1] = i
+    for j in range(m + 1):
+        D[0][j + 1] = INF
+        D[1][j + 1] = j
+
+    for i in range(1, n + 1):
+        last_match_col = 0
+        for j in range(1, m + 1):
+            i1 = last_row.get(t[j - 1], 0)
+            j1 = last_match_col
+
+            if s[i - 1] == t[j - 1]:
+                cost = 0
+                last_match_col = j
+            else:
+                cost = 1
+
+            D[i + 1][j + 1] = min(
+                D[i][j] + cost,                          # substitute / match
+                D[i + 1][j] + 1,                         # insert
+                D[i][j + 1] + 1,                         # delete
+                D[i1][j1] + (i - i1 - 1) + 1 + (j - j1 - 1),  # transpose
+            )
+
+        last_row[s[i - 1]] = i
+
+    return D[n + 1][m + 1]
+
+
+# ---------------------------------------------------------------- tests ----
+
+def _bfs_reference(alphabet: str, max_len: int, source: str) -> dict:
+    """Brute-force unrestricted edit distance from `source` to every string
+    of length <= max_len over `alphabet`. Neighbours are generated in a fixed
+    order, so this is deterministic too."""
+    dist = {source: 0}
+    frontier = [source]
+    while frontier:
+        nxt = []
+        for cur in frontier:
+            d = dist[cur] + 1
+            cands = []
+            for i in range(len(cur)):                       # delete
+                cands.append(cur[:i] + cur[i + 1:])
+            for i in range(len(cur) + 1):                   # insert
+                if len(cur) < max_len:
+                    for c in alphabet:
+                        cands.append(cur[:i] + c + cur[i:])
+            for i in range(len(cur)):                       # substitute
+                for c in alphabet:
+                    if c != cur[i]:
+                        cands.append(cur[:i] + c + cur[i + 1:])
+            for i in range(len(cur) - 1):                   # transpose
+                if cur[i] != cur[i + 1]:
+                    cands.append(cur[:i] + cur[i + 1] + cur[i] + cur[i + 2:])
+            for c in cands:
+                if c not in dist:
+                    dist[c] = d
+                    nxt.append(c)
+        frontier = nxt
+    return dist
+
+
+def _all_strings(alphabet: str, max_len: int):
+    out = [""]
+    layer = [""]
+    for _ in range(max_len):
+        layer = [p + c for p in layer for c in alphabet]
+        out.extend(layer)
+    return out
+
+
+def run_tests() -> None:
+    # --- original tests (one corrected) ---
+    original = [
+        ("", "", 0),
+        ("", "abc", 3),
+        ("abc", "", 3),
+        ("abc", "abc", 0),
+        ("ab", "ba", 1),
+        ("abcd", "acbd", 1),
+        ("kitten", "sitting", 3),
+        ("ca", "abc", 2),             # true DL; OSA would give 3
+        ("a", "b", 1),
+        ("abcdef", "abcfed", 2),      # corrected from 3
+    ]
+
+    # --- repeated values ---
+    repeated = [
+        ("aa", "aa", 0),
+        ("aaa", "aa", 1),
+        ("aaaa", "aaa", 1),
+        ("a", "aaa", 2),
+        ("aab", "aba", 1),            # swap among repeated letters
+        ("abab", "baba", 2),
+        ("abba", "baab", 2),          # two separate swaps
+        ("abcabc", "acbacb", 2),
+        ("aaab", "baaa", 2),          # b is not adjacent to its target slot
+        ("aaaa", "bbbb", 4),
+    ]
+
+    # --- deterministic ties (several optimal paths, one value) ---
+    ties = [
+        ("ab", "bc", 2),     # 2 subs  vs  delete+insert
+        ("abc", "bcd", 2),   # 2 ways: delete a + insert d, or 3 subs is worse
+        ("ab", "ba", 1),     # swap beats 2 substitutions
+        ("abc", "cba", 2),   # several equal-cost routes
+    ]
+
+    for a, b, expected in original + repeated + ties:
+        got = edit_distance(a, b)
+        assert got == expected, (a, b, got, expected)
+        assert edit_distance(a, b) == got            # repeat call, same result
+        assert edit_distance(b, a) == got            # symmetry (ops invertible)
+        print(f"OK: edit_distance({a!r}, {b!r}) = {got}")
+
+    # --- exhaustive cross-check against brute force (heavy on repeats) ---
+    for alphabet in ("ab", "abc"):
+        max_len = 3
+        strings = _all_strings(alphabet, max_len)
+        for src in strings:
+            ref = _bfs_reference(alphabet, 2 * max_len, src)
+            for dst in strings:
+                assert edit_distance(src, dst) == ref[dst], (src, dst)
+        print(f"OK: exhaustive check over {alphabet!r}, length <= {max_len} "
+              f"({len(strings) ** 2} pairs)")
+
+    # --- invariants ---
+    for x in _all_strings("ab", 4):
+        assert edit_distance(x, x) == 0
+        assert edit_distance(x, "") == len(x)
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()
+```
+
+## What the new tests cover
+
+- **Repeated values:** runs of one character, alternating patterns (`abab`), palindromic swaps (`abba`), and an adversarial case (`aaab → baaa`) where a single swap isn't enough.
+- **Ties:** inputs with several equal-cost routes, each asserted to give the same value. Every case is also checked for repeat-call stability and for symmetry, `d(s,t) == d(t,s)`.
+- **Exhaustive verification:** every pair of strings up to length 3 over `{a,b}` and `{a,b,c}` is compared with an independent brute-force BFS that allows unrestricted intermediate edits. This confirms the implementation is true Damerau-Levenshtein and not the restricted OSA variant. A length bound of 6 is enough because an optimal path never needs a string longer than `n + m`.

@@ -1,0 +1,91 @@
+# Edit Distance with Adjacent Transposition (Damerau–Levenshtein, OSA variant)
+
+## 1. Problem
+
+Given two strings `a` and `b`, compute the minimum number of operations to turn `a` into `b`. Allowed operations, each costing 1:
+
+- **Insertion** of one character
+- **Deletion** of one character
+- **Substitution** of one character
+- **Transposition** of two adjacent characters (`ab` → `ba`)
+
+## 2. Constraints and required output
+
+- **Input:** two strings (possibly empty, any Unicode characters).
+- **Output:** a single non-negative integer, the minimum cost.
+- **Interpretation:** a transposition swaps two *adjacent* characters in one step, and each substring is edited at most once. This is the "optimal string alignment" (OSA) variant. It is the standard reading of "insertion, deletion, substitution, adjacent transposition, each cost one" in most problems. (True unrestricted Damerau–Levenshtein allows later edits between transposed characters; see the note at the end.)
+- **Environment:** standard library only, deterministic, no I/O beyond what the script itself prints.
+
+## 3. Algorithm
+
+Let `dp[i][j]` be the edit distance between `a[:i]` and `b[:j]`.
+
+- **Base cases:** `dp[i][0] = i`, `dp[0][j] = j`.
+- **Transitions** for `i, j ≥ 1`:
+  - Deletion: `dp[i-1][j] + 1`
+  - Insertion: `dp[i][j-1] + 1`
+  - Match/substitution: `dp[i-1][j-1] + (a[i-1] != b[j-1])`
+  - **Transposition** (explicit): if `i ≥ 2`, `j ≥ 2`, `a[i-1] == b[j-2]` and `a[i-2] == b[j-1]`, then `dp[i-2][j-2] + 1`
+- **Answer:** `dp[len(a)][len(b)]`.
+
+**Complexity:** O(|a|·|b|) time. Space is O(|b|) using three rolling rows, since the transposition needs row `i-2`.
+
+## 4. Implementation
+
+```python
+def edit_distance(a: str, b: str) -> int:
+    """Edit distance with insert, delete, substitute, and adjacent
+    transposition, each costing 1 (optimal string alignment).
+    Uses three rolling rows: i-2, i-1, and i."""
+    n, m = len(a), len(b)
+    if n == 0:
+        return m
+    if m == 0:
+        return n
+
+    prev2 = [0] * (m + 1)            # row i-2
+    prev = list(range(m + 1))        # row i-1 (i = 0)
+
+    for i in range(1, n + 1):
+        cur = [i] + [0] * m          # dp[i][0] = i
+        ai = a[i - 1]
+        for j in range(1, m + 1):
+            cost = 0 if ai == b[j - 1] else 1
+            best = min(
+                prev[j] + 1,          # deletion
+                cur[j - 1] + 1,       # insertion
+                prev[j - 1] + cost,   # match / substitution
+            )
+            # Explicit transposition transition
+            if i >= 2 and j >= 2 and ai == b[j - 2] and a[i - 2] == b[j - 1]:
+                best = min(best, prev2[j - 2] + 1)
+            cur[j] = best
+        prev2, prev = prev, cur
+
+    return prev[m]
+
+
+if __name__ == "__main__":
+    tests = [
+        ("", "", 0),
+        ("", "abc", 3),
+        ("abc", "", 3),
+        ("abc", "abc", 0),
+        ("ab", "ba", 1),            # one transposition
+        ("abcd", "acbd", 1),        # one transposition
+        ("kitten", "sitting", 3),
+        ("ca", "abc", 3),           # OSA result (unrestricted DL gives 2)
+        ("teh", "the", 1),
+        ("abcdef", "badcfe", 3),    # three transpositions
+        ("flaw", "lawn", 2),
+    ]
+    for x, y, expected in tests:
+        got = edit_distance(x, y)
+        assert got == expected, (x, y, got, expected)
+        print(f"edit_distance({x!r}, {y!r}) = {got}")
+    print("All tests passed.")
+```
+
+## 5. Note on the variant
+
+The `"ca" → "abc"` case shows the difference: OSA returns 3, while unrestricted Damerau–Levenshtein returns 2 (transpose, then insert between the swapped characters). If your problem requires the unrestricted version, you need an alphabet-indexed "last row seen" table instead of the fixed `i-2, j-2` lookup. Say so and I can provide that variant.

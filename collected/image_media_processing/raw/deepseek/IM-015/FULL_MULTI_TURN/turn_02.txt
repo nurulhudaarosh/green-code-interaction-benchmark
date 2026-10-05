@@ -1,0 +1,13 @@
+You're right to flag that — let me look again at the code I posted.
+
+Actually, the version I wrote **does** include the size check:
+
+```python
+if not (r.size == g.size == b.size):
+    raise ValueError(
+        f"Size mismatch: R={r.size}, G={g.size}, B={b.size}"
+    )
+```
+
+
+I kept the check **after** `.convert("L")` because that's the cheapest moment to have all three decoded, and `convert("L")` never changes dimensions. If you'd rather avoid decoding at all for the common "wrong file pasted in" case, you can check `r_img.size` etc. on the un-converted

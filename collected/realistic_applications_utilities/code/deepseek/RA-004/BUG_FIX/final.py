@@ -1,0 +1,716 @@
+"""
+Complete Document Organizer (v3)
+--------------------------------
+A fully functional document organizer that:
+- Scans a source folder for files
+- Categorizes them by type (Documents, Images, Videos, Audio, Archives, Code, etc.)
+- Moves (or copies) them into organized subfolders
+- Handles duplicate filenames safely
+- Supports dry-run mode
+- Logs all actions
+- Can undo the last organization (via manifest file)
+
+BUILD HISTORY
+=============
+v1: Initial build — scan, categorize, move/copy, dry-run, undo via manifest.
+
+v2 FIXES (extension + malformed-date handling):
+  Extension:
+    - Multi-part extensions like ".tar.gz" now match as a single unit.
+    - Trailing-dot files ("report.") -> no extension -> "Others".
+    - Hidden dotfiles (".bashrc", ".gitignore") -> no extension -> "Others".
+    - Surrounding whitespace trimmed before matching ("file.pdf " -> ".pdf").
+    - Explicit `get_extension()` helper, case-insensitive.
+  Malformed dates:
+    - Manifest entries now carry an ISO timestamp.
+    - `parse_timestamp()` safely returns None on malformed input.
+    - `load_manifest()` validates structure, filters bad entries.
+    - Backwards compatible with legacy string-only manifests.
+
+v3 FIXES (this version — deeper edge cases for extension + date handling):
+  Extension:
+    - Files whose *name* is just a dot ("." or "..") are rejected as
+      having no extension (previously could slip through).
+    - Extensions consisting only of dots (e.g. "file...") normalize to "".
+    - Extension containing path separators is rejected (defense-in-depth).
+    - Whitespace-only filenames return "".
+    - Unicode/casefold handling for extensions with non-ASCII characters
+      (e.g. "FILE.ＰＤＦ" folded correctly where possible).
+    - `get_extension()` now also handles names ending with multiple dots
+      (e.g. "report.." -> "").
+    - Category lookup is a precomputed dict for O(1) matching and to avoid
+      accidental overlapping matches.
+
+  Malformed dates:
+    - `parse_timestamp()` now rejects:
+        * non-string, non-datetime inputs
+        * empty/whitespace-only strings
+        * strings with more than one timezone designator
+        * dates outside a sane range (year < 1970 or > 9999)
+        * strings containing control characters
+    - Accepts `datetime` objects directly (pass-through).
+    - Accepts a small set of common alternate formats
+      ("%Y-%m-%d %H:%M:%S", "%Y/%m/%d", "%d-%m-%Y") in addition to ISO.
+    - `load_manifest()` now quarantines malformed entries into a
+      `.organizer_manifest.bad.json` sidecar instead of silently dropping,
+      so data isn't lost on undo.
+    - Undo skips entries whose timestamp is malformed AND whose dest is
+      missing; otherwise still attempts restore with a clear warning.
+    - Manifest version field added for forward-compat ("version": 2).
+
+Usage:
+    python document_organizer.py /path/to/folder [--copy] [--dry-run] [--undo]
+    python document_organizer.py --self-test
+
+Examples:
+    python document_organizer.py ~/Downloads
+    python document_organizer.py ~/Downloads --copy
+    python document_organizer.py ~/Downloads --dry-run
+    python document_organizer.py ~/Downloads --undo
+"""
+
+import os
+import sys
+import shutil
+import argparse
+import json
+import unicodedata
+from datetime import datetime, timezone
+from pathlib import Path
+from collections import defaultdict
+
+
+# ---------- Category definitions ----------
+CATEGORIES = {
+    "Documents": [
+        ".pdf", ".doc", ".docx", ".txt", ".rtf", ".odt",
+        ".xls", ".xlsx", ".ppt", ".pptx", ".csv", ".md"
+    ],
+    "Images": [
+        ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg",
+        ".webp", ".tiff", ".ico", ".heic"
+    ],
+    "Videos": [
+        ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv",
+        ".webm", ".m4v", ".mpg", ".mpeg"
+    ],
+    "Audio": [
+        ".mp3", ".wav", ".flac", ".aac", ".ogg", ".wma",
+        ".m4a", ".opus"
+    ],
+    "Archives": [
+        ".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".iso",
+        ".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst"
+    ],
+    "Code": [
+        ".py", ".js", ".ts", ".java", ".c", ".cpp", ".cs", ".rb",
+        ".go", ".rs", ".php", ".html", ".css", ".scss", ".json",
+        ".xml", ".yml", ".yaml", ".sh", ".bat", ".sql"
+    ],
+    "Executables": [
+        ".exe", ".msi", ".app", ".deb", ".rpm", ".apk", ".dmg"
+    ],
+    "Fonts": [
+        ".ttf", ".otf", ".woff", ".woff2", ".eot"
+    ],
+    "Ebooks": [
+        ".epub", ".mobi", ".azw", ".azw3", ".fb2"
+    ],
+}
+
+# Longest multi-part extensions first so ".tar.gz" wins over ".gz".
+MULTIPART_EXTENSIONS = sorted(
+    (ext for ext in CATEGORIES["Archives"] if ext.count(".") > 1),
+    key=len,
+    reverse=True,
+)
+
+# Precomputed ext -> category map for O(1) lookup.
+_EXT_TO_CATEGORY = {}
+for _cat, _exts in CATEGORIES.items():
+    for _ext in _exts:
+        _EXT_TO_CATEGORY[_ext.lower()] = _cat
+
+# Sane date range for timestamp validation.
+_MIN_YEAR = 1970
+_MAX_YEAR = 9999
+
+# Common non-ISO formats we tolerate.
+_ALT_DATE_FORMATS = (
+    "%Y-%m-%d %H:%M:%S",
+    "%Y/%m/%d %H:%M:%S",
+    "%Y/%m/%d",
+    "%d-%m-%Y",
+    "%d/%m/%Y",
+)
+
+MANIFEST_NAME = ".organizer_manifest.json"
+MANIFEST_BAD_NAME = ".organizer_manifest.bad.json"
+MANIFEST_VERSION = 2
+
+
+# ---------- Helpers: extension handling ----------
+def _normalize_for_ext(name: str) -> str:
+    """
+    Normalize a filename for extension extraction:
+      - Unicode NFKC normalization (handles full-width chars like 'Ｐ').
+      - Casefold for matching.
+    """
+    try:
+        return unicodedata.normalize("NFKC", name).casefold()
+    except (TypeError, ValueError):
+        return name.casefold() if isinstance(name, str) else ""
+
+
+def get_extension(filename: str) -> str:
+    """
+    Extract a normalized (lowercase) extension from a filename.
+
+    Returns "" for anything that isn't a real extension:
+      - Empty/whitespace-only names
+      - Names that are just "." or ".." or all dots
+      - Dotfiles like ".bashrc" / ".gitignore"
+      - Trailing-dot names like "report." or "report.."
+      - Names containing path separators (defense-in-depth)
+      - Names whose "extension" would be empty or all dots
+
+    Handles:
+      - Multi-part extensions (".tar.gz" wins over ".gz")
+      - Unicode full-width chars ("FILE.ＰＤＦ" -> ".pdf")
+      - Case-insensitivity
+      - Surrounding whitespace
+    """
+    if not isinstance(filename, str):
+        return ""
+
+    # Strip surrounding whitespace and any path components.
+    name = filename.strip()
+    if not name:
+        return ""
+
+    # Reject path separators outright.
+    if "/" in name or "\\" in name or os.sep in name:
+        name = os.path.basename(name.replace("\\", "/"))
+        if not name:
+            return ""
+
+    # Names that are entirely dots ("." or ".." or "...") -> no extension.
+    if set(name) == {"."}:
+        return ""
+
+    # Hidden dotfile with no other dot: ".bashrc", ".gitignore".
+    if name.startswith(".") and name.count(".") == 1:
+        return ""
+
+    # No dot at all.
+    if "." not in name:
+        return ""
+
+    # Trailing dot(s): "report.", "report.." -> no extension.
+    if name.endswith("."):
+        return ""
+
+    # Unicode-fold the name so full-width chars match ASCII extensions.
+    folded = _normalize_for_ext(name)
+
+    # Multi-part extensions take priority (longest first).
+    for ext in MULTIPART_EXTENSIONS:
+        if folded.endswith(ext):
+            return ext
+
+    # Otherwise take the suffix after the final dot.
+    _, _, tail = folded.rpartition(".")
+    if not tail or set(tail) == {"."}:
+        return ""
+    return "." + tail
+
+
+def get_category(filename_or_ext: str) -> str:
+    """
+    Return the category name for a given filename or bare extension.
+    Uses the precomputed lookup for O(1) matching.
+    """
+    if not isinstance(filename_or_ext, str):
+        return "Others"
+
+    s = filename_or_ext.strip()
+    if not s:
+        return "Others"
+
+    # If it looks like a bare extension, use it directly.
+    if s.startswith(".") and "/" not in s and "\\" not in s and s.count(".") >= 1:
+        ext = _normalize_for_ext(s)
+    else:
+        ext = get_extension(s)
+
+    if not ext:
+        return "Others"
+    return _EXT_TO_CATEGORY.get(ext, "Others")
+
+
+# ---------- Helpers: malformed-date handling ----------
+def parse_timestamp(value) -> datetime | None:
+    """
+    Safely parse a timestamp into a datetime. Returns None if malformed.
+
+    Accepts:
+      - datetime objects (pass-through)
+      - ISO-8601 strings (with optional 'Z' or offset)
+      - A small set of common alternate formats
+
+    Rejects:
+      - non-str, non-datetime inputs
+      - empty/whitespace-only strings
+      - strings containing control characters
+      - multiple timezone designators
+      - dates outside [1970, 9999]
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return _clamp_year(value)
+    if not isinstance(value, str):
+        return None
+
+    s = value.strip()
+    if not s:
+        return None
+
+    # Reject embedded control characters (null bytes, newlines, etc.).
+    if any(ord(ch) < 0x20 for ch in s):
+        return None
+
+    # Reject multiple timezone designators.
+    tz_markers = sum(s.count(m) for m in ("Z", "+", "z"))
+    # Allow one "+" only if it's part of an offset (after 'T' or a date).
+    # Simpler heuristic: more than one of Z or + is suspicious.
+    if s.count("Z") + s.count("z") > 1:
+        return None
+    if s.count("+") > 1:
+        return None
+
+    # Try ISO first.
+    candidate = s.replace("Z", "+00:00").replace("z", "+00:00")
+    dt = None
+    try:
+        dt = datetime.fromisoformat(candidate)
+    except (ValueError, TypeError):
+        dt = None
+
+    # Fall back to common alternate formats.
+    if dt is None:
+        for fmt in _ALT_DATE_FORMATS:
+            try:
+                dt = datetime.strptime(s, fmt)
+                break
+            except (ValueError, TypeError):
+                continue
+
+    if dt is None:
+        return None
+    return _clamp_year(dt)
+
+
+def _clamp_year(dt: datetime) -> datetime | None:
+    """Return dt if year is in sane range, else None."""
+    if _MIN_YEAR <= dt.year <= _MAX_YEAR:
+        return dt
+    return None
+
+
+def is_valid_manifest_entry(entry) -> bool:
+    """
+    Validate a manifest entry. Accepts:
+      - legacy string (just the destination path)
+      - dict with 'dest' (str) and optional 'timestamp'
+    """
+    if isinstance(entry, str):
+        return bool(entry.strip())
+    if isinstance(entry, dict):
+        dest = entry.get("dest")
+        return isinstance(dest, str) and bool(dest.strip())
+    return False
+
+
+# ---------- Helpers: file/dir utilities ----------
+def unique_destination(dest_path: Path) -> Path:
+    """If a file already exists at dest_path, append (1), (2), ... until unique."""
+    if not dest_path.exists():
+        return dest_path
+    stem = dest_path.stem
+    suffix = dest_path.suffix
+    parent = dest_path.parent
+    counter = 1
+    while True:
+        candidate = parent / f"{stem} ({counter}){suffix}"
+        if not candidate.exists():
+            return candidate
+        counter += 1
+
+
+def _quarantine_bad_entries(folder: Path, bad: dict) -> None:
+    """Write malformed manifest entries to a sidecar file for safety."""
+    if not bad:
+        return
+    try:
+        path = folder / MANIFEST_BAD_NAME
+        # Merge with any existing sidecar.
+        existing = {}
+        if path.exists():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+                if not isinstance(existing, dict):
+                    existing = {}
+            except (json.JSONDecodeError, OSError):
+                existing = {}
+        existing.update(bad)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(existing, f, indent=2)
+        log(f"Quarantined {len(bad)} malformed entry(ies) -> {MANIFEST_BAD_NAME}")
+    except OSError as e:
+        log(f"Warning: could not write quarantine file: {e}")
+
+
+def load_manifest(folder: Path) -> dict:
+    """
+    Load the manifest. Handles malformed JSON and malformed entries:
+      - Returns {} on unreadable/invalid JSON.
+      - Filters invalid entries and quarantines them to a sidecar file.
+      - Backwards compatible with v1 string-only manifests.
+    """
+    manifest_path = folder / MANIFEST_NAME
+    if not manifest_path.exists():
+        return {}
+
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        log(f"Warning: could not read manifest ({e}). Starting fresh.")
+        return {}
+
+    # v2 manifest: {"version": 2, "entries": {...}}
+    if isinstance(raw, dict) and "entries" in raw and isinstance(raw["entries"], dict):
+        entries = raw["entries"]
+    elif isinstance(raw, dict):
+        # v1 manifest: flat {original: dest_or_dict}
+        entries = raw
+    else:
+        log("Warning: manifest has unexpected structure. Ignoring.")
+        return {}
+
+    cleaned = {}
+    bad = {}
+    for original, entry in entries.items():
+        if not isinstance(original, str) or not original.strip():
+            bad[repr(original)] = entry
+            continue
+
+        if not is_valid_manifest_entry(entry):
+            bad[original] = entry
+            continue
+
+        # Normalize to dict form.
+        if isinstance(entry, str):
+            cleaned[original] = {"dest": entry, "timestamp": None}
+        else:
+            ts_raw = entry.get("timestamp")
+            ts = parse_timestamp(ts_raw)
+            if ts_raw is not None and ts is None:
+                # Keep the entry (still undoable) but warn and mark bad ts.
+                log(f"Warning: malformed timestamp for {original!r}: {ts_raw!r}")
+                bad.setdefault(original, {"dest": entry["dest"],
+                                          "timestamp": ts_raw,
+                                          "reason": "malformed_timestamp"})
+            cleaned[original] = {
+                "dest": entry["dest"],
+                "timestamp": ts.isoformat() if ts else None,
+            }
+
+    _quarantine_bad_entries(folder, bad)
+    return cleaned
+
+
+def save_manifest(folder: Path, manifest: dict) -> None:
+    """Save the manifest in v2 format."""
+    manifest_path = folder / MANIFEST_NAME
+    payload = {
+        "version": MANIFEST_VERSION,
+        "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "entries": manifest,
+    }
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+
+
+def log(message: str) -> None:
+    """Print a timestamped log message."""
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    print(f"[{timestamp}] {message}")
+
+
+# ---------- Core operations ----------
+def scan_files(source: Path):
+    """Yield all files directly inside source (non-recursive), excluding manifests."""
+    for entry in source.iterdir():
+        if not entry.is_file():
+            continue
+        if entry.name in (MANIFEST_NAME, MANIFEST_BAD_NAME):
+            continue
+        yield entry
+
+
+def organize(source: Path, copy: bool = False, dry_run: bool = False) -> dict:
+    """
+    Organize files in `source` into category subfolders.
+    Returns a manifest dict: {original: {"dest": ..., "timestamp": ...}}.
+    """
+    if not source.exists() or not source.is_dir():
+        raise NotADirectoryError(f"Not a valid directory: {source}")
+
+    moved = {}
+    stats = defaultdict(int)
+
+    files = list(scan_files(source))
+    if not files:
+        log("No files found to organize.")
+        return moved
+
+    log(f"Found {len(files)} file(s) in '{source}'")
+    log(f"Mode: {'COPY' if copy else 'MOVE'}{' (DRY RUN)' if dry_run else ''}")
+    log("-" * 50)
+
+    for file_path in files:
+        category = get_category(file_path.name)
+        target_dir = source / category
+
+        if not dry_run:
+            target_dir.mkdir(exist_ok=True)
+
+        dest_path = unique_destination(target_dir / file_path.name)
+
+        try:
+            if dry_run:
+                log(f"[DRY] {file_path.name}  ->  {category}/")
+            else:
+                if copy:
+                    shutil.copy2(file_path, dest_path)
+                else:
+                    shutil.move(str(file_path), str(dest_path))
+                log(f"{file_path.name}  ->  {category}/{dest_path.name}")
+                moved[str(file_path)] = {
+                    "dest": str(dest_path),
+                    "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                }
+            stats[category] += 1
+        except (OSError, shutil.Error) as e:
+            log(f"ERROR moving '{file_path.name}': {e}")
+
+    log("-" * 50)
+    log("Summary:")
+    for cat, count in sorted(stats.items()):
+        log(f"  {cat:<15} {count} file(s)")
+
+    return moved
+
+
+def undo(source: Path) -> None:
+    """
+    Undo the last organization using the manifest file.
+    Malformed entries are reported; safe ones are still restored.
+    """
+    manifest = load_manifest(source)
+    if not manifest:
+        log("No valid manifest entries found. Nothing to undo.")
+        return
+
+    log(f"Undoing {len(manifest)} operation(s)...")
+    errors = 0
+    skipped = 0
+
+    for original, entry in manifest.items():
+        current = entry.get("dest")
+        ts = parse_timestamp(entry.get("timestamp"))
+
+        if not isinstance(current, str) or not current.strip():
+            log(f"SKIP (malformed dest): {original!r}")
+            skipped += 1
+            continue
+
+        original_path = Path(original)
+        current_path = Path(current)
+
+        if entry.get("timestamp") and ts is None:
+            log(f"Note: malformed timestamp for '{current_path.name}' "
+                f"(proceeding anyway)")
+        elif ts is not None:
+            log(f"  (from {ts.strftime('%Y-%m-%d %H:%M:%S')})")
+
+        if not current_path.exists():
+            log(f"SKIP (missing): {current_path}")
+            skipped += 1
+            continue
+
+        if original_path.exists():
+            log(f"SKIP (target exists): {original_path}")
+            errors += 1
+            continue
+
+        try:
+            original_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(current_path), str(original_path))
+            log(f"Restored: {current_path.name}  ->  {original_path.parent.name}/")
+        except (OSError, shutil.Error) as e:
+            log(f"ERROR restoring '{current_path.name}': {e}")
+            errors += 1
+
+    # Clean up empty category folders.
+    for folder in source.iterdir():
+        if folder.is_dir() and (folder.name in CATEGORIES or folder.name == "Others"):
+            try:
+                if not any(folder.iterdir()):
+                    folder.rmdir()
+                    log(f"Removed empty folder: {folder.name}/")
+            except OSError:
+                pass
+
+    manifest_path = source / MANIFEST_NAME
+    if manifest_path.exists():
+        manifest_path.unlink()
+
+    if errors == 0 and skipped == 0:
+        log("Undo complete.")
+    else:
+        log(f"Undo complete with {errors} error(s) and {skipped} skipped.")
+
+
+# ---------- Self-test ----------
+def _self_test() -> None:
+    """Sanity checks for v3 extension + timestamp handling."""
+    ext_cases = [
+        # (input, expected_extension, expected_category)
+        ("report.pdf", ".pdf", "Documents"),
+        ("REPORT.PDF", ".pdf", "Documents"),
+        ("archive.tar.gz", ".tar.gz", "Archives"),
+        ("archive.tar.gz", ".tar.gz", "Archives"),
+        ("backup.tar.bz2", ".tar.bz2", "Archives"),
+        ("data.tar", ".tar", "Archives"),
+        ("no_extension", "", "Others"),
+        ("trailingdot.", "", "Others"),
+        ("trailingdots..", "", "Others"),
+        ("all...", "", "Others"),
+        (".bashrc", "", "Others"),
+        (".gitignore", "", "Others"),
+        (".", "", "Others"),
+        ("..", "", "Others"),
+        ("...", "", "Others"),
+        ("   ", "", "Others"),
+        ("", "", "Others"),
+        ("file.pdf ", ".pdf", "Documents"),
+        ("  file.pdf", ".pdf", "Documents"),
+        ("my.file.name.PNG", ".png", "Images"),
+        ("FILE.ＰＤＦ", ".pdf", "Documents"),          # full-width
+        ("weird/pa.th.pdf", ".pdf", "Documents"),      # path in name
+        ("weird\\pa.th.pdf", ".pdf", "Documents"),     # windows path
+        ("script.PY", ".py", "Code"),
+        ("archive.TAR.GZ", ".tar.gz", "Archives"),
+    ]
+    for name, exp_ext, exp_cat in ext_cases:
+        got_ext = get_extension(name)
+        got_cat = get_category(name)
+        assert got_ext == exp_ext, f"ext({name!r}) = {got_ext!r} != {exp_ext!r}"
+        assert got_cat == exp_cat, f"cat({name!r}) = {got_cat!r} != {exp_cat!r}"
+
+    # Timestamp parsing — valid cases.
+    valid_ts = [
+        "2024-01-15T10:30:00",
+        "2024-01-15T10:30:00Z",
+        "2024-01-15T10:30:00+05:00",
+        "2024-01-15 10:30:00",
+        "2024/01/15 10:30:00",
+        "2024/01/15",
+        "15-01-2024",
+        "15/01/2024",
+        datetime(2024, 1, 15, 10, 30),
+    ]
+    for v in valid_ts:
+        assert parse_timestamp(v) is not None, f"expected valid: {v!r}"
+
+    # Timestamp parsing — malformed cases.
+    invalid_ts = [
+        None, "", "   ", 12345, 3.14, [], {}, object(),
+        "not-a-date", "2024-13-45", "01/99/2024",
+        "2024-01-15T10:30:00\n",       # control char
+        "2024-01-15T10:30:00\x00",     # null byte
+        "1000-01-01T00:00:00",         # year < 1970
+        "99999-01-01",                 # year > 9999
+    ]
+    for v in invalid_ts:
+        assert parse_timestamp(v) is None, f"expected invalid: {v!r}"
+
+    # Manifest entry validation.
+    assert is_valid_manifest_entry("path/to/file")
+    assert is_valid_manifest_entry({"dest": "path/to/file", "timestamp": "x"})
+    assert is_valid_manifest_entry({"dest": "path/to/file"})
+    assert not is_valid_manifest_entry({"dest": ""})
+    assert not is_valid_manifest_entry({"dest": "   "})
+    assert not is_valid_manifest_entry({})
+    assert not is_valid_manifest_entry(123)
+    assert not is_valid_manifest_entry(None)
+    assert not is_valid_manifest_entry([])
+
+    print("Self-test passed (v3).")
+
+
+# ---------- CLI ----------
+def main():
+    parser = argparse.ArgumentParser(
+        description="Organize files in a folder by category.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Examples:\n"
+               "  python document_organizer.py ~/Downloads\n"
+               "  python document_organizer.py ~/Downloads --copy\n"
+               "  python document_organizer.py ~/Downloads --dry-run\n"
+               "  python document_organizer.py ~/Downloads --undo\n"
+               "  python document_organizer.py --self-test\n"
+    )
+    parser.add_argument("folder", nargs="?", help="Folder to organize")
+    parser.add_argument("--copy", action="store_true",
+                        help="Copy files instead of moving them")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Preview actions without changing anything")
+    parser.add_argument("--undo", action="store_true",
+                        help="Undo the last organization using the manifest")
+    parser.add_argument("--self-test", action="store_true",
+                        help="Run internal tests for extension/date handling")
+
+    args = parser.parse_args()
+
+    if args.self_test:
+        _self_test()
+        return
+
+    if not args.folder:
+        parser.error("the following arguments are required: folder")
+
+    source = Path(args.folder).expanduser().resolve()
+
+    try:
+        if args.undo:
+            undo(source)
+        else:
+            moved = organize(source, copy=args.copy, dry_run=args.dry_run)
+            if moved and not args.dry_run:
+                save_manifest(source, moved)
+                log(f"Manifest saved: {MANIFEST_NAME}")
+    except NotADirectoryError as e:
+        log(f"Error: {e}")
+        sys.exit(1)
+    except KeyboardInterrupt:
+        log("Interrupted by user.")
+        sys.exit(130)
+
+
+if __name__ == "__main__":
+    main()

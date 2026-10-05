@@ -1,0 +1,61 @@
+import os
+import cv2
+
+def letterbox_resize(input_dir, output_dir, target_size=(640, 640), pad_color=(0, 0, 0)):
+    """
+    Resizes images while preserving aspect ratio, ensuring the entire image fits
+    within target_size, and pads the remaining space to center the image.
+
+    :param input_dir: Path to input images directory.
+    :param output_dir: Path to save resized images.
+    :param target_size: Tuple (target_w, target_h) specifying exact output dimensions.
+    :param pad_color: Tuple (B, G, R) for padding color (default: black).
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    target_w, target_h = target_size
+    valid_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.webp', '.tiff')
+
+    for filename in os.listdir(input_dir):
+        if not filename.lower().endswith(valid_extensions):
+            continue
+
+        img_path = os.path.join(input_dir, filename)
+        img = cv2.imread(img_path)
+
+        if img is None:
+            continue
+
+        # img.shape returns (height, width, channels)
+        src_h, src_w = img.shape[:2]
+
+        # Calculate scale factor using strict minimum to fit both dimensions
+        scale = min(target_w / src_w, target_h / src_h)
+
+        # New dimensions after scaling
+        new_w = int(round(src_w * scale))
+        new_h = int(round(src_h * scale))
+
+        # Resize image (cv2.resize accepts size as (width, height))
+        interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+        resized_img = cv2.resize(img, (new_w, new_h), interpolation=interpolation)
+
+        # Compute padding required to reach target_size
+        pad_w = target_w - new_w
+        pad_h = target_h - new_h
+
+        top = pad_h // 2
+        bottom = pad_h - top
+        left = pad_w // 2
+        right = pad_w - left
+
+        # Add black/colored borders around resized image
+        letterboxed = cv2.copyMakeBorder(
+            resized_img,
+            top, bottom, left, right,
+            borderType=cv2.BORDER_CONSTANT,
+            value=pad_color
+        )
+
+        # Guarantee final output shape matches target exactly (target_h, target_w)
+        output_path = os.path.join(output_dir, filename)
+        cv2.imwrite(output_path, letterboxed)

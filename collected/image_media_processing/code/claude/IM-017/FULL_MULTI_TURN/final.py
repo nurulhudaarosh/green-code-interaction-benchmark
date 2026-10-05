@@ -1,0 +1,123 @@
+"""Store and retrieve custom string key/value metadata in PNG text chunks."""
+import struct
+import zlib
+
+from PIL import Image, PngImagePlugin
+
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_TEXT_TYPES = (b"tEXt", b"zTXt", b"iTXt")
+
+
+def _iter_chunks(data):
+    if data[:8] != PNG_SIGNATURE:
+        raise ValueError("Not a valid PNG file")
+    pos = 8
+    while pos + 8 <= len(data):
+        length, ctype = struct.unpack(">I4s", data[pos:pos + 8])
+        body = data[pos + 8:pos + 8 + length]
+        if len(body) != length:
+            raise ValueError("Truncated PNG chunk")
+        yield ctype, body
+        pos += 12 + length
+
+
+def _make_chunk(ctype, body):
+    crc = zlib.crc32(ctype + body) & 0xFFFFFFFF
+    return struct.pack(">I", len(body)) + ctype + body + struct.pack(">I", crc)
+
+
+def _chunk_key(ctype, body):
+    """Keyword of a tEXt/zTXt/iTXt chunk (the part before the first NUL)."""
+    return body.partition(b"\x00")[0].decode("latin-1")
+
+
+def _validate(tags):
+    for key, value in tags.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise TypeError("Tag keys and values must be strings")
+        if not 1 <= len(key) <= 79:
+            raise ValueError(f"Key must be 1-79 characters: {key!r}")
+        if key != key.strip() or "\x00" in key:
+            raise ValueError(f"Key has leading/trailing spaces or NUL: {key!r}")
+        try:
+            key.encode("latin-1")
+        except UnicodeEncodeError:
+            raise ValueError(f"Key must be Latin-1 per the PNG spec: {key!r}")
+        if "\x00" in value:
+            raise ValueError(f"Value for {key!r} contains a NUL character")
+
+
+def _embed_lossless(input_path, output_path, tags):
+    with open(input_path, "rb") as f:
+        data = f.read()
+
+    new_chunks = [
+        _make_chunk(b"iTXt", key.encode("latin-1") + b"\x00\x00\x00\x00\x00" + value.encode("utf-8"))
+        for key, value in tags.items()
+    ]
+
+    out, inserted = [PNG_SIGNATURE], False
+    for ctype, body in _iter_chunks(data):
+        if ctype in _TEXT_TYPES and _chunk_key(ctype, body) in tags:
+            continue  # replaced by the new value
+        if ctype == b"IEND":
+            out.extend(new_chunks)
+            inserted = True
+        out.append(_make_chunk(ctype, body))
+    if not inserted:
+        raise ValueError("PNG has no IEND chunk")
+
+    with open(output_path, "wb") as f:
+        f.write(b"".join(out))
+
+
+def _embed_recompress(input_path, output_path, tags, compress_level):
+    with Image.open(input_path) as img:
+        if img.format != "PNG":
+            raise ValueError("Not a PNG image")
+        if getattr(img, "n_frames", 1) > 1:
+            raise ValueError("Animated PNGs are not supported with compress_level")
+        img.load()  # also parses text chunks stored after IDAT
+
+        merged = dict(img.text)  # keep existing tags...
+        merged.update(tags)      # ...new values win
+
+        info = PngImagePlugin.PngInfo()
+        for key, value in merged.items():
+            # Plain str values would be forced to Latin-1 by Pillow; wrapping
+            # in iTXt keeps them UTF-8 so tag values are stored unchanged.
+            info.add_text(key, PngImagePlugin.iTXt(str(value), lang="", tkey=""))
+
+        save_kwargs = {"pnginfo": info, "compress_level": compress_level}
+        for name in ("icc_profile", "dpi", "transparency", "gamma"):
+            if name in img.info:
+                save_kwargs[name] = img.info[name]
+        img.save(output_path, format="PNG", **save_kwargs)
+
+
+def embed_tags(input_path, output_path, tags, compress_level=None):
+    """Copy a PNG to output_path with `tags` (dict[str, str]) embedded.
+
+    compress_level: None (default) splices the tags in losslessly without
+    touching the image data. An int 0-9 re-encodes the image through Pillow
+    with that zlib level (0 = none/fastest, 9 = smallest/slowest). Pixels are
+    unchanged, but some ancillary chunks may not survive re-encoding.
+    Tag values are stored identically (UTF-8 iTXt) either way.
+    """
+    _validate(tags)
+    if compress_level is not None:
+        if isinstance(compress_level, bool) or not isinstance(compress_level, int) \
+                or not 0 <= compress_level <= 9:
+            raise ValueError("compress_level must be an integer from 0 to 9, or None")
+        _embed_recompress(input_path, output_path, tags, compress_level)
+    else:
+        _embed_lossless(input_path, output_path, tags)
+
+
+def read_tags(image_path):
+    """Return all embedded text chunks as a dict[str, str], via Pillow."""
+    with Image.open(image_path) as img:
+        if img.format != "PNG":
+            raise ValueError("Not a PNG image")
+        img.load()  # required so text chunks after IDAT are included
+        return dict(getattr(img, "text", None) or {})  # {} if no text chunks

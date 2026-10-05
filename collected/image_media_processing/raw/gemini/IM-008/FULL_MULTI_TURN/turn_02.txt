@@ -1,0 +1,67 @@
+The implementation provided in the previous turn already reads the entire file content from start to finish in $64\text{ KB}$ chunks (`while chunk := f.read(CHUNK_SIZE)`), so it does **not** stop at $1024$ bytes.
+
+However, if you want an explicit partial-header check optimization (e.g., hash the first $1024$ bytes *first* to discard false candidates quickly, then stream the **entire** file content for final verification), here is how to do that safely:
+
+```python
+import os
+import hashlib
+from collections import defaultdict
+
+def find_exact_duplicates(input_dir):
+    """
+    Finds byte-identical files in `input_dir` and its subdirectories by hashing 
+    their FULL file content with SHA-256.
+    """
+    size_map = defaultdict(list)
+    
+    # Pass 1: Group by file size (fastest filter)
+    for root, _, files in os.walk(input_dir):
+        for filename in files:
+            filepath = os.path.join(root, filename)
+            try:
+                size = os.path.getsize(filepath)
+                size_map[size].append(filepath)
+            except (OSError, IOError):
+                continue
+
+    # Pass 2: Optional optimization - check first 1 KB to quickly separate non-matching headers
+    header_map = defaultdict(list)
+    for size, paths in size_map.items():
+        if len(paths) < 2:
+            continue
+        for path in paths:
+            try:
+                with open(path, 'rb') as f:
+                    header = f.read(1024)
+                header_map[(size, header)].append(path)
+            except (OSError, IOError):
+                continue
+
+    # Pass 3: Hash FULL file content for groups sharing size and header
+    hash_map = defaultdict(list)
+    CHUNK_SIZE = 64 * 1024  # Stream 64 KB chunks through SHA-256 until EOF
+
+    for paths in header_map.values():
+        if len(paths) < 2:
+            continue
+            
+        for path in paths:
+            try:
+                hasher = hashlib.sha256()
+                with open(path, 'rb') as f:
+                    # Continues reading until f.read() returns empty bytes (EOF)
+                    while chunk := f.read(CHUNK_SIZE):
+                        hasher.update(chunk)
+                hash_map[hasher.hexdigest()].append(path)
+            except (OSError, IOError):
+                continue
+
+    # Collect groups with 2+ exact byte matches and sort paths alphabetically
+    return [sorted(paths) for paths in hash_map.values() if len(paths) >= 2]
+
+```
+
+### Why this ensures full-content accuracy:
+
+* **Complete Read:** `while chunk := f.read(CHUNK_SIZE)` loops until the entire file has been read to EOF (`b''`), ensuring full-file SHA-256 fidelity regardless of file size.
+* **Early Rejection:** The $1024$-byte header check acts as an intermediate filter to discard files that differ early on before doing full-file reads on large files.

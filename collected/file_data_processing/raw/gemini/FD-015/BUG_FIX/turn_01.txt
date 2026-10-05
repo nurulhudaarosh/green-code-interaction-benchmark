@@ -1,0 +1,103 @@
+```python
+import json
+from typing import Any, Dict, List, Tuple
+
+
+def process_jsonl(
+    input_path: str, output_path: str, min_score: float
+) -> Dict[str, int]:
+    """Reads a JSONL file, validates records, filters for active items with
+
+    score >= min_score, sorts the remaining records, and writes to an output
+    JSONL file. Returns a summary dictionary of record counts.
+    """
+    valid_records: List[Dict[str, Any]] = []
+    skipped_counts = {
+        "invalid_format": 0,
+        "missing_fields": 0,
+        "inactive": 0,
+        "below_threshold": 0,
+    }
+
+    with open(input_path, "r", encoding="utf-8") as infile:
+        for line in infile:
+            line = line.strip()
+            if not line:
+                continue
+
+            # 1. Parse JSON format
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                skipped_counts["invalid_format"] += 1
+                continue
+
+            # 2. Schema Validation
+            if not isinstance(record, dict):
+                skipped_counts["invalid_format"] += 1
+                continue
+
+            required_fields = ("id", "category", "score", "is_active")
+            if not all(field in record for field in required_fields):
+                skipped_counts["missing_fields"] += 1
+                continue
+
+            # Type checking
+            if (
+                not isinstance(record["is_active"], bool)
+                or not isinstance(record["score"], (int, float))
+                or not isinstance(record["category"], str)
+            ):
+                skipped_counts["invalid_format"] += 1
+                continue
+
+            # 3. Filter Conditions
+            if not record["is_active"]:
+                skipped_counts["inactive"] += 1
+                continue
+
+            if record["score"] < min_score:
+                skipped_counts["below_threshold"] += 1
+                continue
+
+            valid_records.append(record)
+
+    # 4. Sorting: Category (ascending), Score (descending), ID (ascending)
+    # Using -x["score"] for descending numerical sort
+    valid_records.sort(key=lambda x: (x["category"], -x["score"], str(x["id"])))
+
+    # 5. Write filtered and sorted records to output
+    with open(output_path, "w", encoding="utf-8") as outfile:
+        for record in valid_records:
+            outfile.write(json.dumps(record) + "\n")
+
+    # 6. Total counts summary
+    total_skipped = sum(skipped_counts.values())
+    summary = {
+        "kept": len(valid_records),
+        "total_skipped": total_skipped,
+        **skipped_counts,
+    }
+
+    return summary
+
+
+# Example Usage
+if __name__ == "__main__":
+    # Sample execution details
+    input_file = "data.jsonl"
+    output_file = "filtered_data.jsonl"
+    threshold = 75.0
+
+    stats = process_jsonl(input_file, output_file, min_score=threshold)
+
+    print("Processing Complete.")
+    print(f"Records Kept: {stats['kept']}")
+    print(f"Total Skipped: {stats['total_skipped']}")
+    print("Breakdown of Skipped Records:")
+    print(f"  - Invalid JSON / Types: {stats['invalid_format']}")
+    print(f"  - Missing Required Fields: {stats['missing_fields']}")
+    print(f"  - Inactive Records: {stats['inactive']}")
+    print(f"  - Score Below {threshold}: {stats['below_threshold']}")
+
+```

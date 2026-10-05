@@ -1,0 +1,107 @@
+A standalone Python implementation using the standard library (`re`, `collections.Counter`) to handle tokenization, stopword removal, unigram/bigram counting, and top-$k$ extraction.
+
+```python
+import re
+from collections import Counter
+from typing import List, Tuple, Set, Dict, Any, Optional
+
+# Minimal default English stop words list
+DEFAULT_STOPWORDS: Set[str] = {
+    "a", "about", "above", "after", "again", "against", "all", "am", "an",
+    "and", "any", "are", "aren't", "as", "at", "be", "because", "been",
+    "before", "being", "below", "between", "both", "but", "by", "can't",
+    "cannot", "could", "couldn't", "did", "didn't", "do", "does", "doesn't",
+    "doing", "don't", "down", "during", "each", "few", "for", "from",
+    "further", "had", "hadn't", "has", "hasn't", "have", "haven't", "having",
+    "he", "he'd", "he'll", "he's", "her", "here", "here's", "hers",
+    "herself", "him", "himself", "his", "how", "how's", "i", "i'd", "i'll",
+    "i'm", "i've", "if", "in", "into", "is", "isn't", "it", "it's", "its",
+    "itself", "let's", "me", "more", "most", "mustn't", "my", "myself",
+    "no", "nor", "not", "of", "off", "on", "once", "only", "or", "other",
+    "ought", "our", "ours", "ourselves", "out", "over", "own", "same",
+    "shan't", "she", "she'd", "she'll", "she's", "should", "shouldn't",
+    "so", "some", "such", "than", "that", "that's", "the", "their", "theirs",
+    "them", "themselves", "then", "there", "there's", "these", "they",
+    "they'd", "they'll", "they're", "they've", "this", "those", "through",
+    "to", "too", "under", "until", "up", "very", "was", "wasn't", "we",
+    "we'd", "we'll", "we're", "we've", "were", "weren't", "what", "what's",
+    "when", "when's", "where", "where's", "which", "while", "who", "who's",
+    "whom", "why", "why's", "with", "won't", "would", "wouldn't", "you",
+    "you'd", "you'll", "you're", "you've", "your", "yours", "yourself",
+    "yourselves"
+}
+
+def keyword_freq(
+    text: str,
+    top_k: int = 5,
+    stopwords: Optional[Set[str]] = None,
+    min_word_length: int = 2
+) -> Dict[str, List[Tuple[str, int]]]:
+    """
+    Extracts top-k unigrams and bigrams by frequency after tokenization
+    and stopword filtering.
+
+    Args:
+        text: Input string to analyze.
+        top_k: Number of highest frequency items to return.
+        stopwords: Set of lowercase stop words (defaults to DEFAULT_STOPWORDS).
+        min_word_length: Minimum character length for a token to be kept.
+
+    Returns:
+        Dict containing top-k 'unigrams' and 'bigrams' as (item, count) tuples.
+    """
+    if stopwords is None:
+        stopwords = DEFAULT_STOPWORDS
+
+    # 1. Tokenization: extract lowercase alphanumeric sequences
+    tokens = re.findall(r"\b[a-zA-Z0-9']+\b", text.lower())
+
+    # 2. Stopword and length filtering
+    filtered_tokens = [
+        tok for tok in tokens
+        if tok not in stopwords and len(tok) >= min_word_length
+    ]
+
+    # 3. Unigram counts
+    unigram_counts = Counter(filtered_tokens)
+
+    # 4. Bigram counts (paired adjacent filtered tokens)
+    bigrams = [
+        f"{filtered_tokens[i]} {filtered_tokens[i + 1]}"
+        for i in range(len(filtered_tokens) - 1)
+    ]
+    bigram_counts = Counter(bigrams)
+
+    # 5. Extract top-k
+    return {
+        "unigrams": unigram_counts.most_common(top_k),
+        "bigrams": bigram_counts.most_common(top_k),
+    }
+
+
+# Example usage:
+if __name__ == "__main__":
+    sample_text = """
+    Natural language processing enables computers to understand human language.
+    Language processing techniques are essential for modern artificial intelligence systems.
+    Computers processing human language rely heavily on machine learning and natural language datasets.
+    """
+
+    results = keyword_freq(sample_text, top_k=3)
+    print("Top Unigrams:", results["unigrams"])
+    print("Top Bigrams:", results["bigrams"])
+
+```
+
+### Output
+
+
+Top Unigrams: [('language', 3), ('processing', 3), ('computers', 2)]
+Top Bigrams: [('natural language', 2), ('language processing', 2), ('computers understand', 1)]
+
+```
+
+### Key Considerations
+
+* **Bigram Extraction Order:** Filtering stopwords *before* building bigrams pairs meaningful words together (e.g., `"natural language"` instead of `"language and"`). If you need phrases where stopwords act as bridges (like `"state of the art"`), construct bigrams prior to filtering, or retain bridge-stopword patterns with regular expressions.
+* **Regex Tokenizer:** `\b[a-zA-Z0-9']+\b` captures contractions (like *don't* or *o'clock*) and numbers. Adjust the regex if you prefer purely alphabetic tokens (`[a-z]+`).

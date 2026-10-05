@@ -1,0 +1,70 @@
+id="58321"
+from pathlib import Path
+from PIL import Image
+import numpy as np
+
+
+def analyze_brightness(input_dir):
+    """
+    Analyze brightness statistics for every valid image in input_dir.
+
+    Returns:
+        list of dictionaries containing:
+        - filename
+        - r_mean
+        - g_mean
+        - b_mean
+        - brightness: perceptual grayscale mean
+        - classification: dark / normal / bright
+
+    Classification boundaries:
+        brightness < 85      -> dark
+        85 <= brightness <= 170 -> normal
+        brightness > 170     -> bright
+    """
+    input_dir = Path(input_dir)
+    results = []
+
+    for image_path in sorted(input_dir.iterdir()):
+        if not image_path.is_file():
+            continue
+
+        try:
+            with Image.open(image_path) as img:
+                rgb = img.convert("RGB")
+                rgb_array = np.asarray(rgb, dtype=np.float32)
+
+                # Per-channel means.
+                r_mean = float(rgb_array[:, :, 0].mean())
+                g_mean = float(rgb_array[:, :, 1].mean())
+                b_mean = float(rgb_array[:, :, 2].mean())
+
+                # True grayscale conversion using perceptual luminance.
+                gray = rgb.convert("L")
+                gray_array = np.asarray(gray, dtype=np.float32)
+
+                # Mean grayscale brightness.
+                brightness = float(gray_array.mean())
+
+                # Use inclusive boundaries so 127.5 is clearly normal.
+                if brightness < 85:
+                    classification = "dark"
+                elif brightness <= 170:
+                    classification = "normal"
+                else:
+                    classification = "bright"
+
+                results.append({
+                    "filename": image_path.name,
+                    "r_mean": r_mean,
+                    "g_mean": g_mean,
+                    "b_mean": b_mean,
+                    "brightness": brightness,
+                    "classification": classification,
+                })
+
+        except (OSError, ValueError):
+            # Ignore unreadable/non-image files.
+            continue
+
+    return results

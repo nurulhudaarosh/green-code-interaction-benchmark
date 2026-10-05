@@ -1,0 +1,175 @@
+Here's a complete Python implementation of a file organizer that sorts files into categorized folders:
+
+```python
+import os
+import shutil
+from pathlib import Path
+from datetime import datetime
+
+class FileOrganizer:
+    """Organizes files in a directory into categorized subfolders."""
+    
+    # Category mapping: extension -> folder name
+    CATEGORIES = {
+        # Images
+        '.jpg': 'Images', '.jpeg': 'Images', '.png': 'Images', '.gif': 'Images',
+        '.bmp': 'Images', '.svg': 'Images', '.webp': 'Images', '.ico': 'Images',
+        '.tiff': 'Images', '.raw': 'Images',
+        
+        # Documents
+        '.pdf': 'Documents', '.doc': 'Documents', '.docx': 'Documents',
+        '.txt': 'Documents', '.rtf': 'Documents', '.odt': 'Documents',
+        '.xls': 'Documents', '.xlsx': 'Documents', '.csv': 'Documents',
+        '.ppt': 'Documents', '.pptx': 'Documents', '.md': 'Documents',
+        
+        # Audio
+        '.mp3': 'Audio', '.wav': 'Audio', '.flac': 'Audio', '.aac': 'Audio',
+        '.ogg': 'Audio', '.m4a': 'Audio', '.wma': 'Audio',
+        
+        # Video
+        '.mp4': 'Video', '.avi': 'Video', '.mkv': 'Video', '.mov': 'Video',
+        '.wmv': 'Video', '.flv': 'Video', '.webm': 'Video', '.m4v': 'Video',
+        
+        # Archives
+        '.zip': 'Archives', '.rar': 'Archives', '.7z': 'Archives',
+        '.tar': 'Archives', '.gz': 'Archives', '.bz2': 'Archives',
+        
+        # Code
+        '.py': 'Code', '.js': 'Code', '.html': 'Code', '.css': 'Code',
+        '.java': 'Code', '.cpp': 'Code', '.c': 'Code', '.h': 'Code',
+        '.json': 'Code', '.xml': 'Code', '.yaml': 'Code', '.yml': 'Code',
+        '.sh': 'Code', '.rb': 'Code', '.go': 'Code', '.rs': 'Code',
+        
+        # Executables
+        '.exe': 'Executables', '.msi': 'Executables', '.app': 'Executables',
+        '.deb': 'Executables', '.rpm': 'Executables', '.dmg': 'Executables',
+    }
+    
+    OTHER_FOLDER = 'Other'
+    LOG_FILE = 'organizer_log.txt'
+    
+    def __init__(self, target_dir, dry_run=False, recursive=False):
+        self.target_dir = Path(target_dir).resolve()
+        self.dry_run = dry_run
+        self.recursive = recursive
+        self.moved = []
+        self.skipped = []
+        self.errors = []
+        
+        if not self.target_dir.exists():
+            raise FileNotFoundError(f"Directory not found: {self.target_dir}")
+        if not self.target_dir.is_dir():
+            raise NotADirectoryError(f"Not a directory: {self.target_dir}")
+    
+    def _get_category(self, file_path):
+        """Determine the category folder for a file."""
+        ext = file_path.suffix.lower()
+        return self.CATEGORIES.get(ext, self.OTHER_FOLDER)
+    
+    def _unique_destination(self, dest_path):
+        """Avoid overwriting: append (1), (2), etc. if file exists."""
+        if not dest_path.exists():
+            return dest_path
+        stem, suffix = dest_path.stem, dest_path.suffix
+        counter = 1
+        while True:
+            candidate = dest_path.with_name(f"{stem} ({counter}){suffix}")
+            if not candidate.exists():
+                return candidate
+            counter += 1
+    
+    def _iter_files(self):
+        """Yield files to organize (skips category folders and log)."""
+        category_names = set(self.CATEGORIES.values()) | {self.OTHER_FOLDER}
+        pattern = '**/*' if self.recursive else '*'
+        
+        for entry in self.target_dir.glob(pattern):
+            if not entry.is_file():
+                continue
+            # Skip the log file and files already inside category folders
+            if entry.name == self.LOG_FILE:
+                continue
+            if any(part in category_names for part in entry.relative_to(self.target_dir).parts[:-1]):
+                continue
+            yield entry
+    
+    def organize(self):
+        """Run the organization process."""
+        print(f"{'[DRY RUN] ' if self.dry_run else ''}Organizing: {self.target_dir}\n")
+        
+        for file_path in self._iter_files():
+            category = self._get_category(file_path)
+            category_dir = self.target_dir / category
+            dest = self._unique_destination(category_dir / file_path.name)
+            
+            try:
+                if not self.dry_run:
+                    category_dir.mkdir(exist_ok=True)
+                    shutil.move(str(file_path), str(dest))
+                self.moved.append((file_path, dest, category))
+                print(f"  {'WOULD MOVE' if self.dry_run else 'MOVED'}: "
+                      f"{file_path.name} -> {category}/")
+            except Exception as e:
+                self.errors.append((file_path, str(e)))
+                print(f"  ERROR: {file_path.name} - {e}")
+        
+        self._write_log()
+        self._print_summary()
+    
+    def _write_log(self):
+        if self.dry_run:
+            return
+        log_path = self.target_dir / self.LOG_FILE
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write(f"\n--- Run: {datetime.now().isoformat()} ---\n")
+            for src, dst, cat in self.moved:
+                f.write(f"{src} -> {dst}\n")
+            for src, err in self.errors:
+                f.write(f"ERROR {src}: {err}\n")
+    
+    def _print_summary(self):
+        print(f"\n{'=' * 40}")
+        print(f"Summary{' (DRY RUN)' if self.dry_run else ''}")
+        print(f"{'=' * 40}")
+        print(f"  Moved:  {len(self.moved)}")
+        print(f"  Errors: {len(self.errors)}")
+        
+        if self.moved:
+            by_cat = {}
+            for _, _, cat in self.moved:
+                by_cat[cat] = by_cat.get(cat, 0) + 1
+            print("\n  By category:")
+            for cat, count in sorted(by_cat.items()):
+                print(f"    {cat}: {count}")
+
+
+if __name__ == '__main__':
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Organize files into categorized folders.')
+    parser.add_argument('directory', help='Directory to organize')
+    parser.add_argument('--dry-run', action='store_true', help='Preview without moving')
+    parser.add_argument('--recursive', action='store_true', help='Include subdirectories')
+    args = parser.parse_args()
+    
+    organizer = FileOrganizer(
+        args.directory,
+        dry_run=args.dry_run,
+        recursive=args.recursive,
+    )
+    organizer.organize()
+```
+
+**Key features:**
+
+- **Smart categorization** — 60+ extensions mapped across Images, Documents, Audio, Video, Archives, Code, Executables, and an `Other` fallback
+- **Safe by default** — never overwrites; appends `(1)`, `(2)` if a filename collides
+- **Dry-run mode** — preview all moves before committing
+- **Recursive option** — optionally dive into subdirectories
+- **Skip logic** — won't re-organize files already inside category folders, or its own log
+- **Audit log** — appends every move to `organizer_log.txt`
+- **Summary report** — counts moved files grouped by category
+
+**Usage:**
+
+```

@@ -1,0 +1,49 @@
+def dedup_lines(in_path, out_path, mode='exact'):
+    """
+    Remove duplicate lines while preserving the order of first occurrences.
+
+    Args:
+        in_path: Input file path.
+        out_path: Output file path.
+        mode: 'exact' or 'normalized'.
+
+    Returns:
+        {'total': total_lines, 'unique': unique_lines, 'removed': removed_lines}
+
+    Raises:
+        ValueError: If mode is not 'exact' or 'normalized'.
+    """
+    if mode not in ('exact', 'normalized'):
+        raise ValueError("mode must be 'exact' or 'normalized'")
+
+    seen = set()
+    total = 0
+    unique = 0
+
+    with open(in_path, 'r', encoding='utf-8') as infile, \
+         open(out_path, 'w', encoding='utf-8') as outfile:
+
+        for line in infile:
+            total += 1
+
+            # Remove only the trailing newline for exact comparison.
+            # Also handles files whose final line has no newline.
+            raw_line = line.rstrip('\r\n')
+
+            if mode == 'normalized':
+                key = ' '.join(raw_line.strip().lower().split())
+            else:
+                key = raw_line
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+            outfile.write(line)
+            unique += 1
+
+    return {
+        'total': total,
+        'unique': unique,
+        'removed': total - unique
+    }

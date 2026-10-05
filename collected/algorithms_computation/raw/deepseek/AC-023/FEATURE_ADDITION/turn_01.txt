@@ -1,0 +1,163 @@
+## Problem Understanding
+
+We have a graph with **n** nodes (0 to n-1) and a list of weighted undirected edges. For each query threshold **q**, we consider the subgraph consisting only of edges with weight ≤ q, and we need to report:
+1. The number of connected components
+2. The size of the largest connected component
+
+## Key Constraints & Required Output
+
+**Input format:**
+- `n`: number of nodes
+- `edges`: list of `[u, v, w]` triples (undirected)
+- `queries`: list of thresholds `q`
+
+**Output format:**
+- For each query (in original order), return `[num_components, largest_component_size]`
+
+**Typical constraints:**
+- Up to ~10^5 nodes and edges
+- Queries must be processed efficiently (not by rebuilding graph each time)
+
+## Algorithm
+
+**Offline processing with Union-Find (DSU):**
+1. Sort edges by weight ascending
+2. Sort queries by threshold ascending (keeping original indices)
+3. Sweep through queries in increasing threshold order, adding all edges with weight ≤ current threshold
+4. Use Union-Find with:
+   - Path compression + union by size
+   - Track current number of components
+   - Track size of largest component (using a max-tracking variable or size array)
+5. When an edge connects two different components, decrement component count and update largest size
+6. Store answers at original query indices
+
+**Time complexity:** O(E log E + Q log Q + (E + Q) α(N))
+
+## Python Implementation
+
+```python
+import sys
+
+class DSU:
+    __slots__ = ('parent', 'size', 'num_components', 'max_size')
+
+    def __init__(self, n):
+        self.parent = list(range(n))
+        self.size = [1] * n
+        self.num_components = n
+        self.max_size = 1 if n > 0 else 0
+
+    def find(self, x):
+        root = x
+        while self.parent[root] != root:
+            root = self.parent[root]
+        # path compression
+        while self.parent[x] != root:
+            nxt = self.parent[x]
+            self.parent[x] = root
+            x = nxt
+        return root
+
+    def union(self, a, b):
+        ra = self.find(a)
+        rb = self.find(b)
+        if ra == rb:
+            return
+        # union by size
+        if self.size[ra] < self.size[rb]:
+            ra, rb = rb, ra
+        self.parent[rb] = ra
+        self.size[ra] += self.size[rb]
+        self.num_components -= 1
+        if self.size[ra] > self.max_size:
+            self.max_size = self.size[ra]
+
+
+def solve(n, edges, queries):
+    # Handle edge case
+    if n == 0:
+        return [[0, 0] for _ in queries]
+
+    # Sort edges by weight
+    edges_sorted = sorted(edges, key=lambda e: e[2])
+
+    # Sort queries by threshold, keep original index
+    indexed_queries = sorted(enumerate(queries), key=lambda x: x[1])
+
+    dsu = DSU(n)
+    answers = [None] * len(queries)
+    ei = 0
+    m = len(edges_sorted)
+
+    for orig_idx, q in indexed_queries:
+        # Add all edges with weight <= q
+        while ei < m and edges_sorted[ei][2] <= q:
+            u, v, _ = edges_sorted[ei]
+            dsu.union(u, v)
+            ei += 1
+        answers[orig_idx] = [dsu.num_components, dsu.max_size]
+
+    return answers
+
+
+def main():
+    data = sys.stdin.read().split()
+    if not data:
+        return
+    pos = 0
+    n = int(data[pos]); pos += 1
+    m = int(data[pos]); pos += 1
+
+    edges = []
+    for _ in range(m):
+        u = int(data[pos]); pos += 1
+        v = int(data[pos]); pos += 1
+        w = int(data[pos]); pos += 1
+        edges.append((u, v, w))
+
+    qn = int(data[pos]); pos += 1
+    queries = []
+    for _ in range(qn):
+        queries.append(int(data[pos])); pos += 1
+
+    result = solve(n, edges, queries)
+    out = []
+    for comp, mx in result:
+        out.append(f"{comp} {mx}")
+    sys.stdout.write("\n".join(out) + "\n")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## Example
+
+**Input:**
+```
+5 4
+0 1 1
+1 2 2
+3 4 3
+2 3 5
+3
+1
+3
+5
+```
+
+**Trace:**
+- q=1: only edge (0,1) → components: {0,1}, {2}, {3}, {4} → 4 components, largest=2
+- q=3: edges (0,1), (1,2), (3,4) → {0,1,2}, {3,4} → 2 components, largest=3
+- q=5: all edges → 1 component, largest=5
+
+**Output:**
+```
+4 2
+2 3
+1 5
+```
+
+## Why This Works
+
+The key insight is **monotonicity**: as the threshold increases, we only ever *add* edges, never remove them. This means we can process queries in sorted order and incrementally maintain the DSU state. Union-Find with union-by-size and path compression gives near-constant amortized time per operation, making the whole algorithm efficient enough for large inputs. The `max_size` tracking avoids needing to scan the size array after each query.

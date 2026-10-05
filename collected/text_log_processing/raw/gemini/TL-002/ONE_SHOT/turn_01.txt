@@ -1,0 +1,103 @@
+```python
+import csv
+import re
+from typing import Dict, Iterable
+
+
+def convert_access_log(
+    in_path: str,
+    out_path: str,
+    methods: Iterable[str],
+    status_classes: Iterable[str],
+) -> Dict[str, int]:
+    """Parse an Apache-style access log, filter rows, and stream matching records to CSV.
+
+    Args:
+        in_path: Path to the input access log.
+        out_path: Destination path for the output CSV file.
+        methods: Collection of HTTP methods to include (e.g., {'GET', 'POST'}).
+        status_classes: Collection of status classes to include (e.g., {'2xx',
+          '4xx'}).
+
+    Returns:
+        Dict with counts of 'written' and 'skipped' lines.
+    """
+    # Normalize filter targets for consistent comparison
+    target_methods = {m.upper() for m in methods}
+    target_status_classes = {sc.lower() for sc in status_classes}
+
+    # Matches standard Apache Combined/Common log prefix:
+    # IP, identity, authuser, [timestamp], "METHOD URL PROTOCOL", status, size
+    log_pattern = re.compile(
+        r"^(\S+)\s+\S+\s+\S+\s+\[([^\]]+)\]\s+\"([A-Za-z]+)\s+(\S+)(?:\s+[^\"]+)?\"\s+(\d{3})\s+(\d+|-)"
+    )
+
+    written = 0
+    skipped = 0
+
+    fieldnames = [
+        "ip",
+        "timestamp",
+        "method",
+        "url",
+        "status",
+        "statusClass",
+        "size",
+    ]
+
+    with open(in_path, "r", encoding="utf-8", errors="replace") as src, open(
+        out_path, "w", newline="", encoding="utf-8"
+    ) as dst:
+        writer = csv.DictWriter(dst, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for line in src:
+            line = line.strip()
+            if not line:
+                skipped += 1
+                continue
+
+            match = log_pattern.match(line)
+            if not match:
+                skipped += 1
+                continue
+
+            ip, timestamp, method, url, status, raw_size = match.groups()
+
+            # Format status class (e.g., "200" -> "2xx")
+            status_class = f"{status[0]}xx".lower()
+            method_upper = method.upper()
+
+            # Filter check
+            if (
+                method_upper not in target_methods
+                or status_class not in target_status_classes
+            ):
+                skipped += 1
+                continue
+
+            # Apache logs '-' when no content was sent (e.g., 304 or redirects)
+            size = 0 if raw_size == "-" else int(raw_size)
+
+            writer.writerow(
+                {
+                    "ip": ip,
+                    "timestamp": timestamp,
+                    "method": method_upper,
+                    "url": url,
+                    "status": status,
+                    "statusClass": status_class,
+                    "size": size,
+                }
+            )
+            written += 1
+
+    return {"written": written, "skipped": skipped}
+
+```
+
+### Key Implementation Details
+
+* **Streaming:** Processes the input line-by-line via the file iterator and writes out rows on the fly, keeping memory usage constant regardless of file size.
+* **Regex Compatibility:** Accommodates requests with or without the HTTP protocol section (e.g., `"GET /index.html HTTP/1.1"` as well as `"GET /index.html"`).
+* **Robust Defaults:** Empty lines and lines failing the regex match increment `skipped` without raising exceptions; unencoded or invalid characters are safely replaced via `errors="replace"`.

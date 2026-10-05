@@ -1,0 +1,62 @@
+### Problem Statement
+
+The goal is to compute the exact product of two polynomials represented as arrays of integer coefficients. Given two polynomials $A(x) = \sum_{i=0}^{n-1} a_i x^i$ and $B(x) = \sum_{j=0}^{m-1} b_j x^j$, we want to find the product polynomial $C(x) = A(x) \cdot B(x) = \sum_{k=0}^{n+m-2} c_k x^k$, where each coefficient $c_k$ is computed exactly. Coefficients $a_i$ and $b_j$ can be positive, negative, or zero.
+
+### Key Constraints & Required Output
+
+* **Constraints:** Coefficients are integers (positive, negative, or zero). Direct $O(n \cdot m)$ dynamic range and sequence length remain within practical limits for direct convolution.
+* **Output:** A single list/array of integers representing the coefficients of the resulting polynomial $C(x)$ in ascending order of degree (index $k$ corresponds to $x^k$).
+
+### Algorithm Description
+
+We use direct discrete polynomial convolution (Cauchy product).
+
+1. If either input array is empty, the resulting polynomial is empty (or zero).
+2. For inputs of length $n$ and $m$, initialize an output list `C` of size $n + m - 1$ filled with zeros.
+3. Iterate over each term $a_i$ at index $i$ and $b_j$ at index $j$, accumulating the product into the result index $k = i + j$:
+
+$$c_{i+j} \leftarrow c_{i+j} + (a_i \cdot b_j)$$
+
+
+4. Return the resulting coefficient array `C`.
+
+### Python Implementation
+
+```python
+def multiply_polynomials(poly1: list[int], poly2: list[int]) -> list[int]:
+    """
+    Multiplies two polynomials represented by lists of integer coefficients.
+    Coefficients are ordered by degree from low to high (index i = degree i).
+    
+    :param poly1: List of integer coefficients for the first polynomial.
+    :param poly2: List of integer coefficients for the second polynomial.
+    :return: List of integer coefficients for the product polynomial.
+    """
+    if not poly1 or not poly2:
+        return []
+
+    n = len(poly1)
+    m = len(poly2)
+    
+    # The degree of the product is (n - 1) + (m - 1), so length is n + m - 1
+    result = [0] * (n + m - 1)
+    
+    for i in range(n):
+        for j in range(m):
+            result[i + j] += poly1[i] * poly2[j]
+            
+    return result
+
+
+# Example Usage:
+# P1(x) = 1 + 2x - 3x^2   -> [1, 2, -3]
+# P2(x) = -2 + x          -> [-2, 1]
+# Product: -2 - 3x + 8x^2 - 3x^3 -> [-2, -3, 8, -3]
+
+if __name__ == "__main__":
+    p1 = [1, 2, -3]
+    p2 = [-2, 1]
+    product = multiply_polynomials(p1, p2)
+    print("Product coefficients:", product)
+
+```

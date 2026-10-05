@@ -1,0 +1,124 @@
+from __future__ import annotations
+
+import csv
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Iterable, Sequence
+
+
+TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%S"
+
+
+@dataclass(frozen=True)
+class Reading:
+    sensor_id: str
+    timestamp: datetime
+    value: float
+    inserted: bool = False
+
+
+def _parse_timestamp(raw: str) -> datetime:
+    raw = raw.strip()
+    try:
+        return datetime.strptime(raw, TIMESTAMP_FORMAT)
+    except ValueError:
+        return datetime.fromisoformat(raw)
+
+
+def _format_timestamp(ts: datetime) -> str:
+    return ts.strftime(TIMESTAMP_FORMAT)
+
+
+def read_readings(path: str | Path) -> list[Reading]:
+    """Read readings from a CSV with columns: sensor_id,timestamp,value."""
+    readings: list[Reading] = []
+    with open(path, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            readings.append(
+                Reading(
+                    sensor_id=row["sensor_id"].strip(),
+                    timestamp=_parse_timestamp(row["timestamp"]),
+                    value=float(row["value"]),
+                )
+            )
+    return readings
+
+
+def _interpolate_series(sorted_series: Sequence[Reading]) -> list[Reading]:
+    """Fill missing interior hourly timestamps via linear interpolation.
+
+    Assumes `sorted_series` is already ordered chronologically.
+    """
+    if len(sorted_series) < 2:
+        return list(sorted_series)
+
+    filled: list[Reading] = [sorted_series[0]]
+    one_hour = timedelta(hours=1)
+
+    for prev, curr in zip(sorted_series, sorted_series[1:]):
+        gap = curr.timestamp - prev.timestamp
+        if gap > one_hour:
+            steps = int(gap.total_seconds() // 3600)
+            if steps >= 2:
+                value_step = (curr.value - prev.value) / steps
+                for i in range(1, steps):
+                    filled.append(
+                        Reading(
+                            sensor_id=prev.sensor_id,
+                            timestamp=prev.timestamp + one_hour * i,
+                            value=prev.value + value_step * i,
+                            inserted=True,
+                        )
+                    )
+        filled.append(curr)
+    return filled
+
+
+def process(readings: Iterable[Reading]) -> list[Reading]:
+    """Sort each sensor chronologically, interpolate interior hourly gaps."""
+    grouped: dict[str, list[Reading]] = {}
+    for r in readings:
+        grouped.setdefault(r.sensor_id, []).append(r)
+
+    output: list[Reading] = []
+    for sensor_id in sorted(grouped):
+        # Explicitly sort each sensor's readings by timestamp before gap detection.
+        series = sorted(grouped[sensor_id], key=lambda r: r.timestamp)
+        output.extend(_interpolate_series(series))
+    return output
+
+
+def write_readings(readings: Sequence[Reading], path: str | Path) -> None:
+    """Write deterministic CSV output ordered by (sensor_id, timestamp)."""
+    ordered = sorted(readings, key=lambda r: (r.sensor_id, r.timestamp))
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["sensor_id", "timestamp", "value", "inserted"])
+        for r in ordered:
+            writer.writerow(
+                [
+                    r.sensor_id,
+                    _format_timestamp(r.timestamp),
+                    f"{r.value:.6f}",
+                    "1" if r.inserted else "0",
+                ]
+            )
+
+
+def run(input_path: str | Path, output_path: str | Path) -> list[Reading]:
+    """End-to-end: read, sort per sensor, interpolate, write, and return."""
+    readings = read_readings(input_path)
+    processed = process(readings)
+    write_readings(processed, output_path)
+    return processed
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) != 3:
+        print("Usage: python time_series_util.py <input.csv> <output.csv>")
+        raise SystemExit(1)
+    run(sys.argv[1], sys.argv[2])

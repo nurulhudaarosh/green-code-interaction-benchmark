@@ -1,0 +1,82 @@
+```python
+from collections import Counter
+import re
+from typing import Any, Dict, Optional
+
+
+def analyze_error_log(
+    path: str, top_n: Optional[int] = None
+) -> Dict[str, Any]:
+    """Reads a server log file, counts normalized ERROR signatures, and tracks skipped lines.
+
+    Parameters:
+        path: Path to the log file.
+        top_n: If specified, restricts the signatures to the top N most frequent.
+
+    Returns:
+        A dictionary containing:
+            - 'signatures': Dict[str, int] of normalized error signatures and their counts.
+            - 'malformed_count': int total of unparseable or empty error messages skipped.
+            - 'non_error_count': int total of lines that were not ERROR entries.
+    """
+    error_counts: Counter[str] = Counter()
+    malformed_count = 0
+    non_error_count = 0
+
+    # Matches lines indicating an ERROR level and captures the subsequent message
+    error_line_pattern = re.compile(
+        r"(?:\[?ERROR\]?[:\s-]+|\bERROR\b[:\s-]+)(.*)", re.IGNORECASE
+    )
+
+    # Normalization regexes
+    uuid_pattern = re.compile(
+        r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+    )
+    ip_pattern = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b")
+    hex_pattern = re.compile(r"\b0x[0-9a-fA-F]+\b")
+    timestamp_pattern = re.compile(
+        r"\b\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?\b"
+    )
+    number_pattern = re.compile(r"\b\d+\b")
+    whitespace_pattern = re.compile(r"\s+")
+
+    with open(path, "r", encoding="utf-8", errors="replace") as file:
+        for line in file:
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            match = error_line_pattern.search(line)
+            if not match:
+                # Line is not an error (e.g., INFO, WARN, DEBUG, or headers)
+                non_error_count += 1
+                continue
+
+            msg = match.group(1).strip()
+
+            # Normalize dynamic tokens
+            msg = uuid_pattern.sub("<UUID>", msg)
+            msg = ip_pattern.sub("<IP>", msg)
+            msg = hex_pattern.sub("<HEX>", msg)
+            msg = timestamp_pattern.sub("<TIMESTAMP>", msg)
+            msg = number_pattern.sub("<NUM>", msg)
+            normalized_signature = whitespace_pattern.sub(" ", msg).strip()
+
+            # If an ERROR tag exists but has an empty/unusable message, treat as malformed
+            if normalized_signature:
+                error_counts[normalized_signature] += 1
+            else:
+                malformed_count += 1
+
+    # Extract top-N or all signatures, keeping them sorted by frequency descending
+    if top_n is not None:
+        sorted_signatures = dict(error_counts.most_common(top_n))
+    else:
+        sorted_signatures = dict(error_counts.most_common())
+
+    return {
+        "signatures": sorted_signatures,
+        "malformed_count": malformed_count,
+        "non_error_count": non_error_count,
+    }
+```

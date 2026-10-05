@@ -1,0 +1,11 @@
+{
+  "task_id": "IM-017",
+  "model": "claude",
+  "interaction": "FULL_MULTI_TURN",
+  "turn": 2,
+  "saved_at": "2026-10-04T23:20:32.273991+00:00",
+  "response_sha256": "c0ed3ccf57d3caca23de2d8881179b6effdb325503e0f720cb2f25bada0e2d39",
+  "code_sha256": "92367e5d9e766ebc42625b25dce7a83bdd2fa6f44e47c04580e86d1443a78d7c",
+  "raw_file": ".collection/raw/claude/IM-017/FULL_MULTI_TURN/turn_02.txt",
+  "code_file": ".collection/code/claude/IM-017/FULL_MULTI_TURN/turn_02.py"
+}

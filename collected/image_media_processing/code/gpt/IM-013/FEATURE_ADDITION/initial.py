@@ -1,0 +1,55 @@
+from pathlib import Path
+from PIL import Image
+
+
+def build_contact_sheet(input_dir, output_path, thumb_size, columns):
+    """
+    Tile all images from input_dir into a grid contact sheet.
+
+    Args:
+        input_dir: Directory containing input images.
+        output_path: Path for the generated contact sheet.
+        thumb_size: (width, height) of each thumbnail.
+        columns: Number of columns in the grid.
+    """
+    input_dir = Path(input_dir)
+    output_path = Path(output_path)
+
+    if columns <= 0:
+        raise ValueError("columns must be greater than 0")
+
+    thumb_w, thumb_h = thumb_size
+    if thumb_w <= 0 or thumb_h <= 0:
+        raise ValueError("thumb_size dimensions must be greater than 0")
+
+    image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff"}
+
+    image_paths = sorted(
+        p for p in input_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in image_extensions
+    )
+
+    if not image_paths:
+        raise ValueError("No images found in input_dir")
+
+    # Ceiling division so the final partial row is included.
+    rows = (len(image_paths) + columns - 1) // columns
+
+    sheet_width = columns * thumb_w
+    sheet_height = rows * thumb_h
+
+    contact_sheet = Image.new("RGB", (sheet_width, sheet_height), "white")
+
+    for index, image_path in enumerate(image_paths):
+        with Image.open(image_path) as img:
+            img = img.convert("RGB")
+            img.thumbnail((thumb_w, thumb_h))
+
+            # Center each thumbnail inside its cell.
+            x = (index % columns) * thumb_w + (thumb_w - img.width) // 2
+            y = (index // columns) * thumb_h + (thumb_h - img.height) // 2
+
+            contact_sheet.paste(img, (x, y))
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    contact_sheet.save(output_path)

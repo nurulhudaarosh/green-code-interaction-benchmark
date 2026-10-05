@@ -1,0 +1,136 @@
+import os
+from pathlib import Path
+from typing import Dict, List, Any
+
+import numpy as np
+from PIL import Image
+
+# Supported image extensions
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif", ".webp"}
+
+# Classification thresholds (0-255 grayscale scale)
+DARK_THRESHOLD = 85      # < 85  -> dark
+BRIGHT_THRESHOLD = 170   # > 170 -> bright
+                         # otherwise -> normal
+
+# Rec. 709 luma coefficients. NOTE: these MUST sum to 1.0 so that a
+# channel-independent grayscale (e.g. a pure black/white pattern) maps
+# its per-channel mean directly to its grayscale brightness.
+LUMA_R = 0.2126
+LUMA_G = 0.7152
+LUMA_B = 0.0722
+assert abs((LUMA_R + LUMA_G + LUMA_B) - 1.0) < 1e-9, "Luma weights must sum to 1.0"
+
+
+def analyze_brightness(input_dir: str) -> List[Dict[str, Any]]:
+    """
+    Analyze the brightness of every image in `input_dir`.
+
+    For each image, computes:
+      - per-channel means (R, G, B) on a 0-255 scale
+      - overall grayscale brightness (luminance-weighted, 0-255)
+      - classification: "dark", "normal", or "bright"
+
+    Edge case: a fully black-and-white checkerboard with exactly half
+    black and half white pixels yields channel means of 127.5 and a
+    grayscale brightness of 127.5, classified as "normal".
+
+    Parameters
+    ----------
+    input_dir : str
+        Path to a directory containing image files.
+
+    Returns
+    -------
+    list of dict
+        One dict per image with keys:
+            file, red_mean, green_mean, blue_mean,
+            grayscale_brightness, classification
+        Sorted by filename. Returns an empty list if no images are found.
+
+    Raises
+    ------
+    NotADirectoryError
+        If `input_dir` is not a valid directory.
+    """
+    directory = Path(input_dir)
+    if not directory.is_dir():
+        raise NotADirectoryError(f"Not a directory: {input_dir}")
+
+    results: List[Dict[str, Any]] = []
+
+    for path in sorted(directory.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS:
+            continue
+
+        try:
+            # Convert to RGB to normalize modes (grayscale, RGBA, CMYK, palette, etc.)
+            with Image.open(path) as img:
+                rgb = img.convert("RGB")
+                arr = np.asarray(rgb, dtype=np.float64)  # shape: (H, W, 3)
+        except (OSError, ValueError) as e:
+            results.append({
+                "file": path.name,
+                "error": str(e),
+            })
+            continue
+
+        # Guard against empty images (e.g. 0x0), which would produce NaN means.
+        if arr.size == 0:
+            results.append({
+                "file": path.name,
+                "error": "empty image",
+            })
+            continue
+
+        # Per-channel means (0-255).
+        # Mean over (H, W) only, never over the channel axis.
+        r_mean = float(arr[:, :, 0].mean())
+        g_mean = float(arr[:, :, 1].mean())
+        b_mean = float(arr[:, :, 2].mean())
+
+        # Perceptual grayscale (Rec. 709 luma). Because the weights sum to
+        # 1.0, for a channel-independent pattern (R=G=B at every pixel)
+        # this equals the mean of the per-channel means exactly.
+        grayscale = LUMA_R * r_mean + LUMA_G * g_mean + LUMA_B * b_mean
+
+        # Classification
+        if grayscale < DARK_THRESHOLD:
+            classification = "dark"
+        elif grayscale > BRIGHT_THRESHOLD:
+            classification = "bright"
+        else:
+            classification = "normal"
+
+        results.append({
+            "file": path.name,
+            "red_mean": round(r_mean, 2),
+            "green_mean": round(g_mean, 2),
+            "blue_mean": round(b_mean, 2),
+            "grayscale_brightness": round(grayscale, 2),
+            "classification": classification,
+        })
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Demo / CLI usage
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    import sys
+    import json
+
+    target = sys.argv[1] if len(sys.argv) > 1 else "."
+    report = analyze_brightness(target)
+
+    if not report:
+        print(f"No images found in: {target}")
+    else:
+        print(json.dumps(report, indent=2))
+
+        counts = {"dark": 0, "normal": 0, "bright": 0}
+        for entry in report:
+            if "classification" in entry:
+                counts[entry["classification"]] += 1
+        print(f"\nSummary: {counts}")

@@ -1,0 +1,118 @@
+```python
+import json
+from typing import Any, Dict, List, Tuple
+
+
+def process_product_catalog(json_data: str | List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], int]:
+    """
+    Parses, validates, flattens, and sorts product data from nested JSON.
+
+    Validates required fields (`id`, `name`, `warehouses`). Keeps valid entries
+    even if stock is zero.
+
+    Returns:
+        Tuple[List[Dict[str, Any]], int]: (flattened_rows, invalid_product_count)
+    """
+    data = json.loads(json_data) if isinstance(json_data, str) else json_data
+    
+    flattened_rows: List[Dict[str, Any]] = []
+    invalid_count: int = 0
+
+    if not isinstance(data, list):
+        raise ValueError("Input JSON must contain a top-level list of products.")
+
+    for product in data:
+        # Validate required top-level product fields
+        if not isinstance(product, dict):
+            invalid_count += 1
+            continue
+
+        product_id = product.get("id")
+        product_name = product.get("name")
+        warehouses = product.get("warehouses")
+
+        # Check that required product fields exist and warehouses is a list
+        if product_id is None or not product_name or not isinstance(warehouses, list):
+            invalid_count += 1
+            continue
+
+        category = product.get("category", "Uncategorized")
+        valid_product = True
+        product_rows = []
+
+        for wh in warehouses:
+            # Validate required warehouse fields
+            if not isinstance(wh, dict):
+                valid_product = False
+                break
+
+            wh_location = wh.get("location")
+            stock = wh.get("stock")
+
+            # Check required warehouse fields (stock must be an integer, including 0)
+            if not wh_location or stock is None or not isinstance(stock, int) or stock < 0:
+                valid_product = False
+                break
+
+            product_rows.append({
+                "product_id": product_id,
+                "product_name": product_name,
+                "category": category,
+                "warehouse_location": wh_location,
+                "stock": stock
+            })
+
+        if not valid_product:
+            invalid_count += 1
+        else:
+            flattened_rows.extend(product_rows)
+
+    # Sort flattened rows by product_id (asc), then warehouse_location (asc)
+    flattened_rows.sort(key=lambda x: (x["product_id"], x["warehouse_location"]))
+
+    return flattened_rows, invalid_count
+
+
+if __name__ == "__main__":
+    # Sample test dataset
+    sample_json = """
+    [
+        {
+            "id": 101,
+            "name": "Wireless Mouse",
+            "category": "Electronics",
+            "warehouses": [
+                {"location": "US-East", "stock": 50},
+                {"location": "US-West", "stock": 0}
+            ]
+        },
+        {
+            "id": 102,
+            "name": "Mechanical Keyboard",
+            "category": "Electronics",
+            "warehouses": [
+                {"location": "EU-Central", "stock": 12}
+            ]
+        },
+        {
+            "id": 103,
+            "name": "Broken Entry - Missing Warehouses"
+        },
+        {
+            "id": 104,
+            "name": "Desk Lamp",
+            "category": "Furniture",
+            "warehouses": [
+                {"location": "US-East", "stock": -5}
+            ]
+        }
+    ]
+    """
+
+    rows, invalid_products = process_product_catalog(sample_json)
+
+    print(f"--- Processed {len(rows)} Valid Flattened Warehouse Entries ---")
+    print(json.dumps(rows, indent=2))
+    print(f"\nTotal Invalid Products Count: {invalid_products}")
+
+```

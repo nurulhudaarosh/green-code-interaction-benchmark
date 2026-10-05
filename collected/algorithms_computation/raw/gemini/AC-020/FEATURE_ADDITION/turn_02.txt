@@ -1,0 +1,153 @@
+### Restatement of the Problem & Original Requirements
+
+**Problem:** Given a complete symmetric distance matrix with at most 14 cities ($N \le 14$), find the minimum Hamiltonian cycle starting and ending at city 0.
+
+**Existing Requirements:**
+
+1. **Algorithm:** Held-Karp subset dynamic programming ($O(N^2 2^N)$ time complexity).
+2. **Deterministic Tie-Breaking:** When multiple paths yield the same minimum cost, prefer the smaller predecessor city.
+3. **Execution Environment:** Use only standard library functions; no network access, APIs, external dependencies, randomness, or human interaction.
+4. **Original Output:** Returns the optimal path sequence starting/ending at city 0 and the minimum total cycle cost.
+
+---
+
+### New Feature Specification
+
+* **New Feature:** Add an optional boolean parameter `include_summary=False` (or similar toggle). When `include_summary=True`, the function returns an additional `operation_summary` dictionary detailing deterministic computation metrics (specifically tracking the total number of state transitions/predecessor evaluations made during the dynamic programming phase).
+* **Backward Compatibility:** When `include_summary=False` (default), the function retains its exact original behavior and return format `(path, minimum_distance)`.
+
+---
+
+### Updated Python Implementation
+
+```python
+from typing import Tuple, List, Dict, Any, Union
+
+
+def solve_tsp(
+    dist_matrix: List[List[Union[int, float]]], 
+    include_summary: bool = False
+) -> Union[
+    Tuple[List[int], Union[int, float]], 
+    Tuple[List[int], Union[int, float], Dict[str, Any]]
+]:
+    """
+    Solves the TSP using Held-Karp dynamic programming with deterministic tie-breaking.
+
+    :param dist_matrix: N x N symmetric distance matrix (N <= 14).
+    :param include_summary: If True, returns an additional operation summary dictionary.
+    :return: (path, min_cost) if include_summary is False, 
+             otherwise (path, min_cost, operation_summary).
+    """
+    n = len(dist_matrix)
+    
+    # Track major DP state evaluations/transitions
+    operation_count = 0
+
+    if n == 0:
+        res = ([], 0)
+        return (*res, {"total_evaluations": 0, "dp_states_visited": 0}) if include_summary else res
+    if n == 1:
+        res = ([0, 0], 0)
+        return (*res, {"total_evaluations": 0, "dp_states_visited": 1}) if include_summary else res
+
+    full_mask = (1 << n) - 1
+
+    # dp[mask][u] = (min_cost, predecessor)
+    dp: Dict[Tuple[int, int], Tuple[Union[int, float], int]] = {}
+
+    # Base case: start at city 0
+    dp[(1 << 0, 0)] = (0, -1)
+
+    # Iterate through subset sizes from 2 to N
+    for mask_size in range(2, n + 1):
+        for mask in range(1, 1 << n):
+            # Must include city 0 and have exactly `mask_size` bits set
+            if not (mask & 1) or bin(mask).count('1') != mask_size:
+                continue
+
+            for v in range(1, n):
+                if not (mask & (1 << v)):
+                    continue
+
+                prev_mask = mask ^ (1 << v)
+                best_cost = float('inf')
+                best_pred = -1
+
+                # Try all predecessors u in ascending order for tie-breaking
+                for u in range(n):
+                    if u == v or not (prev_mask & (1 << u)):
+                        continue
+
+                    operation_count += 1  # Count each edge evaluation / relaxation attempt
+
+                    if (prev_mask, u) in dp:
+                        cost = dp[(prev_mask, u)][0] + dist_matrix[u][v]
+                        # Tie-breaker: strictly less than preferred; smaller predecessors checked first
+                        if cost < best_cost:
+                            best_cost = cost
+                            best_pred = u
+
+                if best_pred != -1:
+                    dp[(mask, v)] = (best_cost, best_pred)
+
+    # Find the optimal return step to city 0
+    min_total_cost = float('inf')
+    last_city = -1
+
+    for u in range(1, n):
+        operation_count += 1  # Count final return edge evaluations
+        if (full_mask, u) in dp:
+            cost = dp[(full_mask, u)][0] + dist_matrix[u][0]
+            if cost < min_total_cost:
+                min_total_cost = cost
+                last_city = u
+
+    # Reconstruct the optimal cycle
+    curr_mask = full_mask
+    curr_city = last_city
+
+    reconstructed = []
+    while curr_city != -1:
+        reconstructed.append(curr_city)
+        _, prev_city = dp[(curr_mask, curr_city)]
+        curr_mask ^= (1 << curr_city)
+        curr_city = prev_city
+
+    reconstructed.reverse()
+    path = reconstructed + [0]
+
+    if include_summary:
+        summary = {
+            "cities_count": n,
+            "dp_states_visited": len(dp),
+            "total_evaluations": operation_count
+        }
+        return path, min_total_cost, summary
+
+    return path, min_total_cost
+
+
+# Example Usage:
+if __name__ == "__main__":
+    matrix = [
+        [0, 10, 15, 20],
+        [10, 0, 35, 25],
+        [15, 35, 0, 30],
+        [20, 25, 30, 0]
+    ]
+
+    # Original format (Backward Compatible)
+    path, cost = solve_tsp(matrix)
+    print("Default Output:")
+    print("  Path:", path)
+    print("  Cost:", cost)
+
+    # Feature Enabled Format
+    path, cost, summary = solve_tsp(matrix, include_summary=True)
+    print("\nWith Operation Summary:")
+    print("  Path:", path)
+    print("  Cost:", cost)
+    print("  Summary:", summary)
+
+```

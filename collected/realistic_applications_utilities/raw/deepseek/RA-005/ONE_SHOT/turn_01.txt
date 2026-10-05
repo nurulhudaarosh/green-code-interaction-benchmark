@@ -1,72 +1,460 @@
+Here's a complete log summarizer implementation in one Python block:
+
 ```python
+import re
+import sys
+from collections import Counter, defaultdict
+from datetime import datetime
+from typing import Dict, List, Tuple, Optional
 import json
-import traceback
-from pathlib import Path
 
-DATASET_PATH = "dataset.json"
-
-def load_dataset(path):
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"'{path}' not found. Check the path.")
-    with open(p, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-def safe_get(lst, index, default=None, label="list"):
-    """Access list[index] safely, logging instead of crashing."""
-    try:
-        return lst[index]
-    except IndexError:
-        print(f"IndexError: {label} has length {len(lst)}, but index {index} was requested.")
-        return default
-
-def diagnose_index_errors(data):
-    issues = []
-    interactions = data.get("interactions", []) if isinstance(data, dict) else []
-
-    if not interactions:
-        issues.append("'interactions' list is empty — nothing to advance through.")
-        return issues
-
-    for i, interaction in enumerate(interactions):
+class LogSummarizer:
+    """A comprehensive log summarizer that parses and analyzes log files."""
+    
+    # Common log level patterns
+    LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'WARN', 'ERROR', 'CRITICAL', 'FATAL', 'TRACE']
+    
+    # Regex patterns for common log formats
+    PATTERNS = {
+        'timestamp': [
+            r'(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)',  # ISO format
+            r'(\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2})',  # US format
+            r'(\w{3} \d{1,2} \d{2}:\d{2}:\d{2})',  # Syslog format
+        ],
+        'ip': r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})',
+        'level': r'\b(' + '|'.join(LOG_LEVELS) + r')\b',
+        'http_status': r'\s(\d{3})\s',
+        'url': r'(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(\S+)',
+        'email': r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})',
+    }
+    
+    def __init__(self):
+        self.reset()
+    
+    def reset(self):
+        """Reset all counters and data structures."""
+        self.total_lines = 0
+        self.parsed_lines = 0
+        self.level_counts = Counter()
+        self.hourly_distribution = Counter()
+        self.ip_addresses = Counter()
+        self.error_messages = Counter()
+        self.http_status_codes = Counter()
+        self.urls = Counter()
+        self.emails = Counter()
+        self.first_timestamp = None
+        self.last_timestamp = None
+        self.unparsed_lines = []
+        self.file_size = 0
+    
+    def parse_timestamp(self, line: str) -> Optional[datetime]:
+        """Extract and parse timestamp from a log line."""
+        for pattern in self.PATTERNS['timestamp']:
+            match = re.search(pattern, line)
+            if match:
+                ts_str = match.group(1)
+                # Try different timestamp formats
+                formats = [
+                    '%Y-%m-%dT%H:%M:%S.%fZ',
+                    '%Y-%m-%dT%H:%M:%SZ',
+                    '%Y-%m-%dT%H:%M:%S.%f',
+                    '%Y-%m-%dT%H:%M:%S',
+                    '%Y-%m-%d %H:%M:%S.%f',
+                    '%Y-%m-%d %H:%M:%S',
+                    '%m/%d/%Y %H:%M:%S',
+                    '%b %d %H:%M:%S',
+                ]
+                for fmt in formats:
+                    try:
+                        return datetime.strptime(ts_str, fmt)
+                    except ValueError:
+                        continue
+        return None
+    
+    def extract_log_level(self, line: str) -> Optional[str]:
+        """Extract log level from a line."""
+        match = re.search(self.PATTERNS['level'], line, re.IGNORECASE)
+        if match:
+            level = match.group(1).upper()
+            # Normalize WARN to WARNING
+            if level == 'WARN':
+                level = 'WARNING'
+            return level
+        return None
+    
+    def process_line(self, line: str):
+        """Process a single log line and update statistics."""
+        self.total_lines += 1
+        line = line.strip()
+        
+        if not line:
+            return
+        
+        parsed = False
+        
+        # Extract timestamp
+        timestamp = self.parse_timestamp(line)
+        if timestamp:
+            parsed = True
+            if self.first_timestamp is None or timestamp < self.first_timestamp:
+                self.first_timestamp = timestamp
+            if self.last_timestamp is None or timestamp > self.last_timestamp:
+                self.last_timestamp = timestamp
+            self.hourly_distribution[timestamp.hour] += 1
+        
+        # Extract log level
+        level = self.extract_log_level(line)
+        if level:
+            parsed = True
+            self.level_counts[level] += 1
+            
+            # Capture error messages (text after the level)
+            if level in ['ERROR', 'CRITICAL', 'FATAL']:
+                # Try to extract the message after the level
+                level_pattern = r'\b' + level + r'\b[:\s]*(.*)'
+                match = re.search(level_pattern, line, re.IGNORECASE)
+                if match and match.group(1):
+                    # Normalize error message (remove numbers, timestamps)
+                    msg = re.sub(r'\d+', 'N', match.group(1)[:100])
+                    self.error_messages[msg] += 1
+        
+        # Extract IP addresses
+        ips = re.findall(self.PATTERNS['ip'], line)
+        for ip in ips:
+            parsed = True
+            self.ip_addresses[ip] += 1
+        
+        # Extract HTTP status codes
+        status_match = re.search(self.PATTERNS['http_status'], line)
+        if status_match:
+            parsed = True
+            self.http_status_codes[status_match.group(1)] += 1
+        
+        # Extract URLs
+        url_match = re.search(self.PATTERNS['url'], line)
+        if url_match:
+            parsed = True
+            self.urls[url_match.group(1)] += 1
+        
+        # Extract emails
+        emails = re.findall(self.PATTERNS['email'], line)
+        for email in emails:
+            parsed = True
+            self.emails[email] += 1
+        
+        if parsed:
+            self.parsed_lines += 1
+        else:
+            if len(self.unparsed_lines) < 10:  # Keep only first 10 unparsed lines
+                self.unparsed_lines.append(line[:200])
+    
+    def process_file(self, filepath: str):
+        """Process a log file."""
         try:
-            # Example of the kind of indexing that typically throws this error:
-            # accessing a sub-list/messages array without checking length first
-            messages = interaction.get("messages", []) if isinstance(interaction, dict) else []
-            if not messages:
-                issues.append(f"Interaction {i}: 'messages' is empty — indexing into it would fail.")
-                continue
+            import os
+            self.file_size = os.path.getsize(filepath)
+            
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    self.process_line(line)
+        except FileNotFoundError:
+            print(f"Error: File '{filepath}' not found.", file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            print(f"Error reading file: {e}", file=sys.stderr)
+            sys.exit(1)
+    
+    def process_stdin(self):
+        """Process log data from stdin."""
+        for line in sys.stdin:
+            self.process_line(line)
+    
+    def format_duration(self) -> str:
+        """Format the duration between first and last timestamp."""
+        if not self.first_timestamp or not self.last_timestamp:
+            return "Unknown"
+        
+        duration = self.last_timestamp - self.first_timestamp
+        total_seconds = int(duration.total_seconds())
+        
+        days = total_seconds // 86400
+        hours = (total_seconds % 86400) // 3600
+        minutes = (total_seconds % 3600) // 60
+        seconds = total_seconds % 60
+        
+        parts = []
+        if days > 0:
+            parts.append(f"{days}d")
+        if hours > 0:
+            parts.append(f"{hours}h")
+        if minutes > 0:
+            parts.append(f"{minutes}m")
+        if seconds > 0 or not parts:
+            parts.append(f"{seconds}s")
+        
+        return " ".join(parts)
+    
+    def format_bytes(self, size: int) -> str:
+        """Format bytes into human readable format."""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size < 1024.0:
+                return f"{size:.1f} {unit}"
+            size /= 1024.0
+        return f"{size:.1f} PB"
+    
+    def generate_summary(self) -> str:
+        """Generate a formatted summary report."""
+        lines = []
+        lines.append("=" * 70)
+        lines.append("LOG SUMMARY REPORT".center(70))
+        lines.append("=" * 70)
+        lines.append("")
+        
+        # Basic statistics
+        lines.append("📊 BASIC STATISTICS")
+        lines.append("-" * 40)
+        lines.append(f"  Total lines processed: {self.total_lines:,}")
+        lines.append(f"  Successfully parsed:   {self.parsed_lines:,} ({self.parsed_lines/max(self.total_lines,1)*100:.1f}%)")
+        if self.file_size:
+            lines.append(f"  File size:             {self.format_bytes(self.file_size)}")
+        lines.append("")
+        
+        # Time range
+        if self.first_timestamp and self.last_timestamp:
+            lines.append("⏰ TIME RANGE")
+            lines.append("-" * 40)
+            lines.append(f"  First entry: {self.first_timestamp}")
+            lines.append(f"  Last entry:  {self.last_timestamp}")
+            lines.append(f"  Duration:    {self.format_duration()}")
+            lines.append("")
+        
+        # Log levels
+        if self.level_counts:
+            lines.append("📈 LOG LEVELS")
+            lines.append("-" * 40)
+            total_levels = sum(self.level_counts.values())
+            for level in sorted(self.level_counts.keys()):
+                count = self.level_counts[level]
+                pct = count / total_levels * 100
+                bar = "█" * int(pct / 2)
+                lines.append(f"  {level:<10} {count:>8,} ({pct:>5.1f}%) {bar}")
+            lines.append("")
+        
+        # Hourly distribution
+        if self.hourly_distribution:
+            lines.append("🕐 HOURLY DISTRIBUTION")
+            lines.append("-" * 40)
+            max_count = max(self.hourly_distribution.values())
+            for hour in range(24):
+                count = self.hourly_distribution.get(hour, 0)
+                if count > 0:
+                    bar_len = int(count / max_count * 40)
+                    bar = "▓" * bar_len
+                    lines.append(f"  {hour:02d}:00 {count:>8,} {bar}")
+            lines.append("")
+        
+        # HTTP status codes
+        if self.http_status_codes:
+            lines.append("🌐 HTTP STATUS CODES")
+            lines.append("-" * 40)
+            for status, count in self.http_status_codes.most_common(10):
+                lines.append(f"  {status}: {count:,}")
+            lines.append("")
+        
+        # Top IP addresses
+        if self.ip_addresses:
+            lines.append("🌍 TOP IP ADDRESSES")
+            lines.append("-" * 40)
+            for ip, count in self.ip_addresses.most_common(10):
+                lines.append(f"  {ip:<20} {count:>8,}")
+            lines.append("")
+        
+        # Top URLs
+        if self.urls:
+            lines.append("🔗 TOP URLS")
+            lines.append("-" * 40)
+            for url, count in self.urls.most_common(10):
+                display_url = url if len(url) <= 50 else url[:47] + "..."
+                lines.append(f"  {display_url:<50} {count:>6,}")
+            lines.append("")
+        
+        # Top error messages
+        if self.error_messages:
+            lines.append("❌ TOP ERROR MESSAGES")
+            lines.append("-" * 40)
+            for msg, count in self.error_messages.most_common(10):
+                display_msg = msg if len(msg) <= 60 else msg[:57] + "..."
+                lines.append(f"  [{count:>6,}] {display_msg}")
+            lines.append("")
+        
+        # Sample unparsed lines
+        if self.unparsed_lines:
+            lines.append("⚠️  SAMPLE UNPARSED LINES")
+            lines.append("-" * 40)
+            for line in self.unparsed_lines[:5]:
+                display_line = line if len(line) <= 65 else line[:62] + "..."
+                lines.append(f"  {display_line}")
+            lines.append("")
+        
+        lines.append("=" * 70)
+        lines.append(f"Report generated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append("=" * 70)
+        
+        return "\n".join(lines)
+    
+    def to_dict(self) -> Dict:
+        """Export summary data as a dictionary."""
+        return {
+            'total_lines': self.total_lines,
+            'parsed_lines': self.parsed_lines,
+            'parse_rate': self.parsed_lines / max(self.total_lines, 1),
+            'file_size': self.file_size,
+            'time_range': {
+                'first': self.first_timestamp.isoformat() if self.first_timestamp else None,
+                'last': self.last_timestamp.isoformat() if self.last_timestamp else None,
+                'duration_seconds': (self.last_timestamp - self.first_timestamp).total_seconds() if self.first_timestamp and self.last_timestamp else None,
+            },
+            'log_levels': dict(self.level_counts),
+            'hourly_distribution': dict(self.hourly_distribution),
+            'http_status_codes': dict(self.http_status_codes),
+            'top_ips': self.ip_addresses.most_common(10),
+            'top_urls': self.urls.most_common(10),
+            'top_errors': self.error_messages.most_common(10),
+            'top_emails': self.emails.most_common(10),
+        }
+    
+    def to_json(self, indent: int = 2) -> str:
+        """Export summary as JSON."""
+        return json.dumps(self.to_dict(), indent=indent, default=str)
 
-            first_msg = safe_get(messages, 0, label=f"interaction[{i}].messages")
-            last_msg = safe_get(messages, len(messages) - 1, label=f"interaction[{i}].messages")
-
-            if first_msg is None or last_msg is None:
-                issues.append(f"Interaction {i}: could not safely access first/last message.")
-
-        except Exception:
-            issues.append(f"Interaction {i}: unexpected error:\n{traceback.format_exc()}")
-
-    return issues
 
 def main():
-    try:
-        data = load_dataset(DATASET_PATH)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"Failed to load dataset: {e}")
-        return
-
-    issues = diagnose_index_errors(data)
-
-    if issues:
-        print("Issues found (likely causes of 'list index out of range'):")
-        for issue in issues:
-            print(f"  - {issue}")
+    """Main entry point for the log summarizer CLI."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="Summarize log files with detailed statistics.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s app.log                    # Summarize a log file
+  %(prog)s app.log --json             # Output as JSON
+  %(prog)s app.log --json --compact   # Compact JSON output
+  cat app.log | %(prog)s -            # Read from stdin
+  %(prog)s app.log -o report.txt      # Save report to file
+        """
+    )
+    parser.add_argument('input', nargs='?', default='-',
+                        help="Log file to process (use '-' for stdin)")
+    parser.add_argument('-j', '--json', action='store_true',
+                        help="Output as JSON instead of text report")
+    parser.add_argument('-c', '--compact', action='store_true',
+                        help="Compact JSON output (no indentation)")
+    parser.add_argument('-o', '--output',
+                        help="Output file (default: stdout)")
+    parser.add_argument('-q', '--quiet', action='store_true',
+                        help="Suppress output, only exit code")
+    
+    args = parser.parse_args()
+    
+    summarizer = LogSummarizer()
+    
+    # Process input
+    if args.input == '-':
+        summarizer.process_stdin()
     else:
-        print("No obvious index issues found — the error may be occurring elsewhere in your pipeline.")
-        print("Check any loop like `data[i]` or `list[-1]` where the list could be shorter than expected.")
+        summarizer.process_file(args.input)
+    
+    # Generate output
+    if args.json:
+        output = summarizer.to_json(indent=None if args.compact else 2)
+    else:
+        output = summarizer.generate_summary()
+    
+    # Write output
+    if not args.quiet:
+        if args.output:
+            with open(args.output, 'w') as f:
+                f.write(output)
+            print(f"Report saved to {args.output}", file=sys.stderr)
+        else:
+            print(output)
+    
+    # Exit with error code if no lines were parsed
+    if summarizer.parsed_lines == 0 and summarizer.total_lines > 0:
+        sys.exit(2)
+    sys.exit(0)
 
-if __name__ == "__main__":
+
+if __name__ == '__main__':
     main()
 ```
 
-This assumes a `messages` list nested inside each interaction — swap that key/structure for whatever your actual pipeline indexes into. If you can share the traceback with a line number, I can point at the exact line instead of guessing at the shape.
+## Usage Examples
+
+```bash
+# Save the script as log_summarizer.py and run:
+
+# Basic usage - summarize a log file
+python log_summarizer.py /var/log/app.log
+
+# Output as JSON
+python log_summarizer.py app.log --json
+
+# Compact JSON (single line)
+python log_summarizer.py app.log --json --compact
+
+# Read from stdin (pipe)
+cat app.log | python log_summarizer.py -
+
+# Save report to file
+python log_summarizer.py app.log -o summary.txt
+```
+
+## Features
+
+- **Multi-format timestamp parsing**: ISO 8601, US format, Syslog format
+- **Log level detection**: DEBUG, INFO, WARNING, ERROR, CRITICAL, FATAL, TRACE
+- **IP address extraction** and ranking
+- **HTTP status code** tracking
+- **URL extraction** from HTTP request lines
+- **Error message normalization** (numbers replaced with `N`)
+- **Hourly distribution** histogram with visual bars
+- **Email extraction**
+- **Time range** with formatted duration (e.g., `2d 5h 30m`)
+- **Unparsed line sampling** for debugging patterns
+- **JSON export** for programmatic consumption
+- **Progress-safe**: streams line-by-line, handles large files
+- **Exit codes**: `0` success, `1` file error, `2` no lines parsed
+
+## Sample Output
+
+```
+======================================================================
+                         LOG SUMMARY REPORT
+======================================================================
+
+📊 BASIC STATISTICS
+----------------------------------------
+  Total lines processed: 15,234
+  Successfully parsed:   14,891 (97.7%)
+  File size:             2.3 MB
+
+⏰ TIME RANGE
+----------------------------------------
+  First entry: 2024-01-15 08:00:01
+  Last entry:  2024-01-15 18:45:23
+  Duration:    10h 45m 22s
+
+📈 LOG LEVELS
+----------------------------------------
+  ERROR         1,234 (  8.3%) ████
+  INFO         12,345 ( 82.9%) ████████████████████████████████████████
+  WARNING       1,312 (  8.8%) ████
+
+🌐 HTTP STATUS CODES
+----------------------------------------
+  200: 8,234
+  404: 1,234
+  500: 456
+```

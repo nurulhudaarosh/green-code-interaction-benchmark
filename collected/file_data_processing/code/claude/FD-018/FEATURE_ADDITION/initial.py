@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""
+Duplicate-record detector.
+
+Normalizes `title` and `description`, groups records whose normalized
+(title, description, date) triple matches exactly, and reports duplicate
+ID groups in a deterministic order.
+
+Usage:
+    python dedupe.py records.json
+    python dedupe.py records.csv
+    python dedupe.py            # runs built-in demo
+
+Input records need: id, title, description, date
+Supported inputs: JSON (list of objects) or CSV (with header row).
+"""
+
+from __future__ import annotations
+
+import csv
+import json
+import re
+import sys
+import unicodedata
+from collections import defaultdict
+from datetime import date, datetime
+from typing import Any, Iterable
+
+# --------------------------------------------------------------------------- #
+# Normalization
+# --------------------------------------------------------------------------- #
+
+_PUNCT_RE = re.compile(r"[^\w\s]", re.UNICODE)
+_WS_RE = re.compile(r"\s+")
+
+_DATE_FORMATS = (
+    "%Y-%m-%d",
+    "%Y/%m/%d",
+    "%m/%d/%Y",
+    "%d-%m-%Y",
+    "%Y%m%d",
+    "%b %d, %Y",
+    "%B %d, %Y",
+    "%d %b %Y",
+    "%d %B %Y",
+)
+
+
+def normalize_text(value: Any) -> str:
+    """
+    Canonical text form:
+      - None -> ""
+      - Unicode NFKC, casefolded
+      - punctuation removed (replaced by space)
+      - whitespace collapsed and trimmed
+    """
+    if value is None:
+        return ""
+    text = unicodedata.normalize("NFKC", str(value)).casefold()
+    text = _PUNCT_RE.sub(" ", text)
+    return _WS_RE.sub(" ", text).strip()
+
+
+def normalize_date(value: Any) -> str:
+    """
+    Return an ISO `YYYY-MM-DD` string when the value parses as a date or
+    datetime (so '2024-03-05' and '03/05/2024' group together).
+    Unparseable values fall back to normalized text so they still group
+    exactly rather than being silently dropped.
+    """
+    if value is None or str(value).strip() == "":
+        return ""
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+
+    raw = str(value).strip()
+
+    # ISO datetime such as 2024-03-05T10:30:00 or with trailing Z / offset
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).date().isoformat()
+    except ValueError:
+        pass
+
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(raw, fmt).date().isoformat()
+        except ValueError:
+            continue
+
+    return normalize_text(raw)
+
+
+def record_key(record: dict) -> tuple[str, str, str]:
+    """Grouping key: (normalized title, normalized description, normalized date)."""
+    return (
+        normalize_text(record.get("title")),
+        normalize_text(record.get("description")),
+        normalize_date(record.get("date")),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Detection
+# --------------------------------------------------------------------------- #
+
+def _id_sort_key(rec_id: Any) -> tuple[int, Any]:
+    """
+    Deterministic, type-safe ordering of IDs: numeric IDs sort numerically
+    first, then everything else sorts by string value.
+    """
+    s = str(rec_id).strip()
+    try:
+        return (0, int(s))
+    except ValueError:
+        return (1, s)
+
+
+def find_duplicates(records: Iterable[dict], include_empty: bool = False) -> list[dict]:
+    """
+    Group records by exact normalized (title, description, date) match.
+
+    Returns a list of groups (only those with >= 2 distinct IDs), each:
+        {
+          "group_id": 1,
+          "key": {"title": ..., "description": ..., "date": ...},
+          "ids": [..sorted..],
+          "count": n
+        }
+
+    Determinism guarantees:
+      - IDs within a group are sorted via `_id_sort_key`
+      - Groups are sorted by their first ID, then by key
+      - group_id is assigned after sorting
+      - Identical inputs in any order yield identical output
+    """
+    buckets: dict[tuple[str, str, str], set] = defaultdict(set)
+
+    for rec in records:
+        if "id" not in rec or rec["id"] is None:
+            raise ValueError(f"Record missing 'id': {rec!r}")
+        key = record_key(rec)
+        # Skip records with no usable content at all (all key parts empty)
+        if not include_empty and not any(key):
+            continue
+        buckets[key].add(str(rec["id"]).strip())  # set removes repeated IDs
+
+    groups = []
+    for key, ids in buckets.items():
+        if len(ids) < 2:
+            continue
+        sorted_ids = sorted(ids, key=_id_sort_key)
+        groups.append({"key": key, "ids": sorted_ids})
+
+    groups.sort(key=lambda g: (_id_sort_key(g["ids"][0]), g["key"]))
+
+    return [
+        {
+            "group_id": i,
+            "key": {"title": g["key"][0], "description": g["key"][1], "date": g["key"][2]},
+            "ids": g["ids"],
+            "count": len(g["ids"]),
+        }
+        for i, g in enumerate(groups, start=1)
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# I/O and reporting
+# --------------------------------------------------------------------------- #
+
+def load_records(path: str) -> list[dict]:
+    if path.lower().endswith(".csv"):
+        with open(path, newline="", encoding="utf-8-sig") as fh:
+            return list(csv.DictReader(fh))
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    if not isinstance(data, list):
+        raise ValueError("JSON input must be a list of record objects.")
+    return data
+
+
+def format_report(groups: list[dict]) -> str:
+    if not groups:
+        return "No duplicate records found."
+    total = sum(g["count"] for g in groups)
+    lines = [f"Found {len(groups)} duplicate group(s) covering {total} record(s).", ""]
+    for g in groups:
+        lines.append(f"Group {g['group_id']}: IDs {', '.join(g['ids'])}")
+        lines.append(f"  title:       {g['key']['title']!r}")
+        lines.append(f"  description: {g['key']['description']!r}")
+        lines.append(f"  date:        {g['key']['date']!r}")
+    return "\n".join(lines)
+
+
+def _demo_records() -> list[dict]:
+    return [
+        {"id": 3, "title": "Quarterly Report!", "description": "Q1  results,  final", "date": "2024-03-05"},
+        {"id": 1, "title": "quarterly report", "description": "Q1 results final", "date": "03/05/2024"},
+        {"id": 7, "title": "Quarterly Report", "description": "Q1 results final", "date": "2024-03-06"},
+        {"id": 2, "title": "Team Offsite", "description": "Planning  for Q2", "date": "2024-04-01"},
+        {"id": 10, "title": "TEAM offsite.", "description": "planning for q2", "date": "2024-04-01"},
+        {"id": 5, "title": "Team Offsite", "description": "Planning for Q2", "date": "2024-04-01T09:00:00"},
+        {"id": 9, "title": "Unique Item", "description": "Nothing like it", "date": "2024-01-01"},
+    ]
+
+
+def main(argv: list[str]) -> int:
+    records = load_records(argv[1]) if len(argv) > 1 else _demo_records()
+    groups = find_duplicates(records)
+    print(format_report(groups))
+    print()
+    print(json.dumps(groups, indent=2, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

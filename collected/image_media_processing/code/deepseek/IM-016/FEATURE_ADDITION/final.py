@@ -1,0 +1,88 @@
+import os
+import numpy as np
+from PIL import Image
+
+
+def sobel_edges(input_dir, output_dir, threshold=None):
+    """
+    Apply Sobel edge detection to all images in input_dir and save
+    the gradient magnitude as grayscale PNGs in output_dir.
+
+    Uses explicit 3x3 Sobel kernels (no scipy/cv2 dependency).
+
+    Parameters
+    ----------
+    input_dir : str
+        Directory containing input images.
+    output_dir : str
+        Directory where output PNGs will be written.
+    threshold : float or None, optional
+        If None (default), the clipped gradient magnitude is written
+        as an 8-bit grayscale image. If a number is provided, output
+        pixels are binarized: 255 where magnitude > threshold, else 0.
+    """
+    # Sobel kernels
+    Gx = np.array([
+        [-1, 0, 1],
+        [-2, 0, 2],
+        [-1, 0, 1],
+    ], dtype=np.float32)
+
+    Gy = np.array([
+        [-1, -2, -1],
+        [ 0,  0,  0],
+        [ 1,  2,  1],
+    ], dtype=np.float32)
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    valid_exts = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.webp')
+
+    for fname in sorted(os.listdir(input_dir)):
+        if not fname.lower().endswith(valid_exts):
+            continue
+
+        in_path = os.path.join(input_dir, fname)
+
+        # Load as grayscale, float32
+        img = Image.open(in_path).convert('L')
+        arr = np.asarray(img, dtype=np.float32)
+
+        # Pad with edge replication so output has same size
+        padded = np.pad(arr, 1, mode='edge')
+
+        # Extract 3x3 neighborhoods via sliding window view
+        windows = np.lib.stride_tricks.sliding_window_view(padded, (3, 3))
+
+        # Explicit convolution
+        gx = np.sum(windows * Gx, axis=(-1, -2))
+        gy = np.sum(windows * Gy, axis=(-1, -2))
+
+        # Gradient magnitude
+        mag = np.sqrt(gx * gx + gy * gy)
+
+        if threshold is None:
+            # Continuous output: clip to [0, 255]
+            out_arr = np.clip(mag, 0, 255).astype(np.uint8)
+        else:
+            # Binarized output: 255 if magnitude > threshold, else 0
+            out_arr = np.where(mag > threshold, 255, 0).astype(np.uint8)
+
+        out_name = os.path.splitext(fname)[0] + '.png'
+        out_path = os.path.join(output_dir, out_name)
+        Image.fromarray(out_arr, mode='L').save(out_path, format='PNG')
+
+
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Sobel edge detection.')
+    parser.add_argument('input_dir', help='Directory of input images.')
+    parser.add_argument('output_dir', help='Directory for output PNGs.')
+    parser.add_argument(
+        '-t', '--threshold', type=float, default=None,
+        help='If set, binarize output: 255 where magnitude > threshold, else 0.'
+    )
+    args = parser.parse_args()
+
+    sobel_edges(args.input_dir, args.output_dir, threshold=args.threshold)

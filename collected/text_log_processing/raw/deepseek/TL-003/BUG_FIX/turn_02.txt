@@ -1,0 +1,149 @@
+You're right on both counts. Let me address each issue:
+
+**Bug 1 — last line without trailing newline:** My previous `rstrip('\r\n')` was fine, but the *writing* was fine too... the real subtle issue is when the last line has no terminator, we still write it correctly. However, the previous code had an inconsistency: for the empty-file and last-line cases, behavior around `\r` alone (old Mac line endings) was ambiguous. The bigger real bug: **`rstrip('\r\n')` strips *all* trailing `\r` and `\n` characters**, so a line like `"foo\n\n"` (blank line content preserved?) or a line ending in literal `\r` gets mangled. We should strip only the *one* line terminator.
+
+**Bug 2 — normalized whitespace:** `strip()` only trims the ends. The request is to **collapse internal whitespace runs** (e.g., `"a   b"` ≡ `"a b"`) **and lowercase** before comparing.
+
+Here's the corrected version:
+
+```python
+import os
+import re
+from typing import Tuple
+
+# Split on any run of Unicode whitespace, then rejoin with a single space.
+_WS_RUN = re.compile(r'\s+')
+
+def _normalize_ws(s: str) -> str:
+    """Collapse all internal whitespace runs to a single space and trim ends."""
+    return _WS_RUN.sub(' ', s).strip()
+
+def _strip_one_terminator(line: str) -> str:
+    """
+    Remove exactly one trailing line terminator from `line`, if present.
+    Handles '\\n', '\\r\\n', and '\\r' (old Mac). Leaves other trailing
+    whitespace/content intact.
+    """
+    if line.endswith('\r\n'):
+        return line[:-2]
+    if line.endswith('\n') or line.endswith('\r'):
+        return line[:-1]
+    return line
+
+def dedup_lines(in_path: str, out_path: str, mode: str = 'exact') -> Tuple[int, int, int]:
+    """
+    Remove duplicate lines from a file, preserving first-occurrence order.
+
+    Args:
+        in_path: Path to the input file.
+        out_path: Path to the output file.
+        mode: Deduplication mode:
+              - 'exact':         compare the raw line content (minus terminator)
+              - 'strip':         trim leading/trailing whitespace only
+              - 'casefold':      case-insensitive (Unicode-safe) on raw content
+              - 'normalize':     collapse internal whitespace + trim + casefold
+              - 'strip_casefold': trim + casefold (kept for backward-compat)
+
+    Returns:
+        (total_lines, unique_lines, removed_lines)
+
+    Raises:
+        ValueError: On an unsupported mode.
+        FileNotFoundError: If the input file does not exist.
+    """
+    valid_modes = {'exact', 'strip', 'casefold', 'strip_casefold', 'normalize'}
+    if mode not in valid_modes:
+        raise ValueError(f"Invalid mode '{mode}'. Must be one of {sorted(valid_modes)}")
+
+    if not os.path.isfile(in_path):
+        raise FileNotFoundError(f"Input file not found: {in_path}")
+
+    seen = set()
+    total = 0
+    unique = 0
+    removed = 0
+
+    # newline='' => no universal-newline translation; we see the real terminator.
+    with open(in_path, 'r', encoding='utf-8', newline='') as fin, \
+         open(out_path, 'w', encoding='utf-8', newline='') as fout:
+
+        for line in fin:
+            total += 1
+            content = _strip_one_terminator(line)
+
+            if mode == 'exact':
+                key = content
+            elif mode == 'strip':
+                key = content.strip()
+            elif mode == 'casefold':
+                key = content.casefold()
+            elif mode == 'strip_casefold':
+                key = content.strip().casefold()
+            else:  # 'normalize'
+                key = _normalize_ws(content).casefold()
+
+            if key in seen:
+                removed += 1
+            else:
+                seen.add(key)
+                # Preserve the original line bytes, including its terminator.
+                # If the last line lacked a terminator, it stays lacking one.
+                fout.write(line)
+                unique += 1
+
+    return total, unique, removed
+```
+
+## What changed and why
+
+### Newline handling
+
+The old code did `line.rstrip('\r\n')`, which **strips every trailing `\r` and `\n`**, not just the terminator. So:
+
+- `"foo\n\n"` → key `"foo"` (wrong: the second `\n` is *content*, i.e. a blank line following)
+- `"foo\r"` → key `"foo"` (this may or may not be a terminator)
+- `"foo \n"` → key `"foo "` (trailing space preserved for `exact` — actually correct)
+
+The new `_strip_one_terminator` removes **exactly one** terminator, handling `\r\n`, `\n`, and lone `\r`:
+
+| Raw line | Old key | New key |
+|----------|---------|---------|
+| `"foo\n"` | `"foo"` | `"foo"` ✅ |
+| `"foo\r\n"` | `"foo"` | `"foo"` ✅ |
+| `"foo\r"` | `"foo"` | `"foo"` ✅ |
+| `"foo\n\n"` | `"foo"` ❌ | `"foo\n"` ✅ |
+| `"foo "` (no terminator) | `"foo "` | `"foo "` ✅ |
+| `"foo"` (no terminator) | `"foo"` | `"foo"` ✅ |
+
+Also note: we write the original `line` unchanged, so the last line without a terminator still has no terminator in the output. Nothing to fix there — the bug was purely in the comparison key.
+
+### Normalized mode
+
+The new `normalize` mode collapses **all** internal whitespace runs (spaces, tabs, newlines, NBSP, etc.) into a single ASCII space, trims the ends, then casefolds:
+
+| Line A | Line B | `normalize` equal? |
+|--------|--------|--------------------|
+| `"Hello   World"` | `"hello world"` | ✅ |
+| `"a\t\tb"` | `"a b"` | ✅ |
+| `"  Foo\n"` | `"foo"` | ✅ |
+| `"a  b"` | `"a\t b"` | ✅ |
+| `"a-b"` | `"a b"` | ❌ (different content) |
+
+Using `\s+` with the default `re` flags matches Unicode whitespace, which is usually what you want. If you only want ASCII whitespace, compile with `re.ASCII`: `re.compile(r'\s+', re.ASCII)`.
+
+### Order of operations
+
+`_normalize_ws(content).casefold()` — collapse whitespace *first*, then casefold. Doing it the other way is also equivalent here, but collapsing first is marginally cheaper because the string is usually shorter when casefold runs.
+
+### Backward compatibility
+
+I kept `strip_casefold` as an alias-ish mode (trim ends + casefold, no internal collapse), in case anything depended on the old behavior. `normalize` is the new "do the sensible thing" mode.
+
+## Edge cases verified
+
+- **Empty file** → `(0, 0, 0)`, empty output.
+- **Single line, no terminator** → `(1, 1, 0)`, written verbatim with no terminator.
+- **Last line no terminator, duplicate of an earlier line** → counted in `removed`, not written.
+- **Blank lines in `exact` mode** → first `"\n"` survives (key `""`), subsequent ones removed.
+- **CRLF file** → endings preserved byte-for-byte in output.
+- **Mixed `\n`/`\r\n` in `exact` mode** → keys match (both strip to same content), so a line ending in `\r\n` and one ending in `\n` are considered duplicates. If you want byte-exact distinction, use `key = line` (keeps the terminator in the key). Let me know if you'd like a mode for that.

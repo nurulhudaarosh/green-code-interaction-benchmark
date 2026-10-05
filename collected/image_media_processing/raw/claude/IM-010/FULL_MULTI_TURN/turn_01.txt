@@ -1,0 +1,82 @@
+```python
+from pathlib import Path
+
+from PIL import Image, ImageOps
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
+
+
+def rotate_and_crop(input_dir, output_dir, angle_degrees, crop_size, fill=0):
+    """Rotate every image in input_dir and write it to output_dir at exactly crop_size.
+
+    Args:
+        input_dir:      directory containing images (non-recursive).
+        output_dir:     directory to write results to (created if missing).
+        angle_degrees:  counter-clockwise rotation angle in degrees.
+        crop_size:      int (square) or (width, height) of the output images.
+        fill:           background value for padding / rotated corners
+                        (0 = black; transparent for RGBA/LA images).
+
+    Rotation uses expand=True, so nothing is clipped by the rotation itself.
+    The rotated image is then centered on a crop_size canvas: if it is larger
+    than the canvas in a dimension it is center-cropped, if smaller it is padded.
+
+    Returns the list of output file paths.
+    """
+    if isinstance(crop_size, int):
+        crop_w = crop_h = crop_size
+    else:
+        crop_w, crop_h = crop_size
+    if crop_w <= 0 or crop_h <= 0:
+        raise ValueError("crop_size must be positive")
+
+    input_dir, output_dir = Path(input_dir), Path(output_dir)
+    if not input_dir.is_dir():
+        raise NotADirectoryError(input_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    written = []
+    for path in sorted(input_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in IMAGE_EXTS:
+            continue
+        try:
+            with Image.open(path) as im:
+                im = ImageOps.exif_transpose(im)  # respect camera orientation
+                if im.mode in ("P", "PA", "1", "I;16", "CMYK"):
+                    im = im.convert("RGBA" if "transparency" in im.info or im.mode == "PA" else "RGB")
+
+                rotated = im.rotate(
+                    angle_degrees, resample=Image.BICUBIC, expand=True, fillcolor=fill
+                )
+
+                # paste() clips negative offsets, which gives the center-crop for free.
+                canvas = Image.new(rotated.mode, (crop_w, crop_h), fill)
+                x = (crop_w - rotated.width) // 2
+                y = (crop_h - rotated.height) // 2
+                canvas.paste(rotated, (x, y))
+
+                if path.suffix.lower() in {".jpg", ".jpeg"} and canvas.mode not in ("RGB", "L"):
+                    canvas = canvas.convert("RGB")  # JPEG has no alpha
+
+                out_path = output_dir / path.name
+                canvas.save(out_path)
+                written.append(out_path)
+        except Exception as e:  # skip unreadable/corrupt files, keep going
+            print(f"Skipping {path.name}: {e}")
+
+    return written
+
+
+if __name__ == "__main__":
+    import argparse
+
+    p = argparse.ArgumentParser(description=rotate_and_crop.__doc__.splitlines()[0])
+    p.add_argument("input_dir")
+    p.add_argument("output_dir")
+    p.add_argument("angle", type=float)
+    p.add_argument("width", type=int)
+    p.add_argument("height", type=int, nargs="?")
+    a = p.parse_args()
+    size = (a.width, a.height or a.width)
+    print(f"Wrote {len(rotate_and_crop(a.input_dir, a.output_dir, a.angle, size))} images")
+```

@@ -1,0 +1,40 @@
+```python
+def dedup_lines(in_path, out_path, mode='exact'):
+    if mode not in ('exact', 'normalized'):
+        raise ValueError("mode must be 'exact' or 'normalized'")
+
+    total = unique = removed = 0
+    seen = set()
+
+    with open(in_path, 'r', encoding='utf-8') as infile, \
+         open(out_path, 'w', encoding='utf-8', newline='') as outfile:
+
+        for line in infile:
+            total += 1
+
+            # Keep the original line exactly as it was read for output.
+            if mode == 'exact':
+                key = line
+            else:
+                # Normalize only for comparison.
+                key = ' '.join(line.strip().lower().split())
+
+            if key in seen:
+                removed += 1
+                continue
+
+            seen.add(key)
+            outfile.write(line)
+            unique += 1
+
+    return {
+        'total': total,
+        'unique': unique,
+        'removed': removed
+    }
+```
+
+tal': 4, 'unique': 2, 'removed': 2}
+```
+
+`exact` mode compares the raw lines, so `"Hello World"` and `"hello   world"` are considered different.

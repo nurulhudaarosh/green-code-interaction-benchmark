@@ -1,0 +1,87 @@
+## Problem
+
+Given positive integers `a[0..n-1]` and a target `T`, decide whether some subset sums to exactly `T`. If so, among all such subsets pick the one with the **fewest elements**, and among those the one whose **ascending index list is lexicographically smallest**.
+
+**Constraints and assumptions**
+- All values are positive integers, and `T >= 0`. `T = 0` gives the empty subset.
+- Each element can be used at most once (0/1 choice).
+- Indices are 0-based and reported in ascending order.
+- Time and memory are O(n·T), so this suits moderate `T`.
+
+**Output**
+- A list of indices (ascending) if a subset exists. It is `[]` when `T = 0`.
+- `None` if no subset sums to `T`.
+
+## Algorithm
+
+1. **Suffix DP for cardinality.** Let `best[i][s]` be the minimum number of elements chosen from `a[i:]` that sum to `s`, or infinity if impossible. Then `best[n][0] = 0`, and
+   `best[i][s] = min(best[i+1][s], best[i+1][s - a[i]] + 1)` (the second term only when `a[i] <= s`).
+2. **Feasibility.** If `best[0][T]` is infinity, return `None`.
+3. **Lexicographic reconstruction.** Keep the current position `i`, the remaining sum `s`, and the remaining count `k = best[i][s]`. Choose the smallest `j >= i` such that `a[j] <= s` and `best[j+1][s - a[j]] == k - 1`. Append `j`, then set `i = j+1`, `s -= a[j]`, `k -= 1`. Because every candidate list has the same length `best[0][T]`, choosing the smallest feasible index at each step gives the lexicographically smallest list. The suffix table is what makes each "can this still finish optimally?" check an O(1) lookup.
+
+## Implementation
+
+```python
+from typing import List, Optional
+
+
+def min_subset_sum_indices(a: List[int], target: int) -> Optional[List[int]]:
+    """
+    Return the ascending 0-based index list of a subset of `a` summing to
+    `target` that has the fewest elements and, among ties, the
+    lexicographically smallest index list. Return None if impossible.
+    """
+    if target < 0:
+        return None
+    if target == 0:
+        return []
+
+    n = len(a)
+    INF = float("inf")
+
+    # best[i][s] = min count using elements a[i:], summing exactly to s
+    best = [[INF] * (target + 1) for _ in range(n + 1)]
+    best[n][0] = 0
+    for i in range(n - 1, -1, -1):
+        v = a[i]
+        cur, nxt = best[i], best[i + 1]
+        for s in range(target + 1):
+            val = nxt[s]
+            if v <= s and nxt[s - v] + 1 < val:
+                val = nxt[s - v] + 1
+            cur[s] = val
+
+    if best[0][target] == INF:
+        return None
+
+    # Reconstruct the lexicographically smallest optimal index list
+    result: List[int] = []
+    i, s, k = 0, target, best[0][target]
+    while k > 0:
+        for j in range(i, n):
+            v = a[j]
+            if v <= s and best[j + 1][s - v] == k - 1:
+                result.append(j)
+                i, s, k = j + 1, s - v, k - 1
+                break
+        else:  # unreachable if the DP is correct
+            raise RuntimeError("reconstruction failed")
+    return result
+
+
+if __name__ == "__main__":
+    tests = [
+        ([3, 4, 5, 2, 7], 9),    # {4,5} -> [1,2]; {2,7} -> [3,4]; picks [1,2]
+        ([1, 2, 3, 4, 5], 9),    # [3,4]
+        ([5, 5, 5], 10),         # [0,1]
+        ([2, 4, 6], 5),          # None
+        ([1, 1, 1, 1], 0),       # []
+        ([1, 2, 3, 3], 6),       # [2,3] (3+3) beats [0,1,2]
+    ]
+    for arr, t in tests:
+        print(arr, t, "->", min_subset_sum_indices(arr, t))
+```
+
+**Notes**
+- Fully deterministic and standard-library only, with no I/O beyond the demo prints.
+- To cut memory, you could keep only a boolean/count table per row, but the full suffix table is needed for the O(1) lookups during reconstruction.

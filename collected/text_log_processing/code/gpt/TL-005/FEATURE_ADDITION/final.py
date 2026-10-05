@@ -1,0 +1,41 @@
+import re
+import unicodedata
+from pathlib import Path
+
+
+def normalize_text_dir(input_dir, output_dir):
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+
+    stats = {
+        "files": [],
+        "total_files": 0,
+        "total_chars_before": 0,
+        "total_chars_after": 0,
+    }
+
+    for src in input_dir.rglob("*.txt"):
+        rel_path = src.relative_to(input_dir)
+        dst = output_dir / rel_path
+        dst.parent.mkdir(parents=True, exist_ok=True)
+
+        text = src.read_text(encoding="utf-8")
+        before = len(text)
+
+        text = unicodedata.normalize("NFC", text)
+        text = re.sub(r"\s+", " ", text).strip()
+
+        dst.write_text(text, encoding="utf-8")
+
+        after = len(text)
+
+        stats["files"].append({
+            "path": str(rel_path),
+            "chars_before": before,
+            "chars_after": after,
+        })
+        stats["total_files"] += 1
+        stats["total_chars_before"] += before
+        stats["total_chars_after"] += after
+
+    return stats

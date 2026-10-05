@@ -1,0 +1,222 @@
+```python
+import statistics
+from collections import defaultdict
+
+
+class ValidationError(Exception):
+    """Custom exception for validation failures."""
+    pass
+
+
+class StudentAnalyzer:
+    def __init__(self):
+        self.students = {}
+
+    # ---------- Validation Helpers ----------
+    @staticmethod
+    def _validate_student_id(student_id):
+        if isinstance(student_id, bool):
+            raise ValidationError("Student ID must be an integer, not bool.")
+        if not isinstance(student_id, int):
+            raise ValidationError(f"Student ID must be an integer, got {type(student_id).__name__}.")
+        if student_id <= 0:
+            raise ValidationError(f"Student ID must be positive, got {student_id}.")
+
+    @staticmethod
+    def _validate_name(name):
+        if not isinstance(name, str):
+            raise ValidationError(f"Name must be a string, got {type(name).__name__}.")
+        if not name.strip():
+            raise ValidationError("Name cannot be empty or whitespace.")
+        if len(name.strip()) > 100:
+            raise ValidationError("Name cannot exceed 100 characters.")
+
+    @staticmethod
+    def _validate_grades(grades):
+        if isinstance(grades, str):
+            raise ValidationError("Grades must be a list or tuple, not a string.")
+        if not isinstance(grades, (list, tuple)):
+            raise ValidationError(f"Grades must be a list or tuple, got {type(grades).__name__}.")
+        if len(grades) == 0:
+            raise ValidationError("Grades list cannot be empty.")
+        if len(grades) > 50:
+            raise ValidationError("Cannot exceed 50 grades per student.")
+        for i, g in enumerate(grades):
+            if isinstance(g, bool):
+                raise ValidationError(f"Grade at index {i} must be numeric, not bool.")
+            if not isinstance(g, (int, float)):
+                raise ValidationError(f"Grade at index {i} must be numeric, got {type(g).__name__}.")
+            if g != g:
+                raise ValidationError(f"Grade at index {i} cannot be NaN.")
+            if g in (float('inf'), float('-inf')):
+                raise ValidationError(f"Grade at index {i} cannot be infinite.")
+            if not (0 <= g <= 100):
+                raise ValidationError(f"Grade at index {i} must be between 0 and 100, got {g}.")
+
+    # ---------- Core Methods ----------
+    def add_student(self, student_id, name, grades):
+        try:
+            self._validate_student_id(student_id)
+            self._validate_name(name)
+            self._validate_grades(grades)
+            if student_id in self.students:
+                raise ValidationError(f"Student ID {student_id} already exists.")
+            self.students[student_id] = {'name': name.strip(), 'grades': list(grades)}
+            return True, f"Student '{name.strip()}' (ID: {student_id}) added successfully."
+        except ValidationError as e:
+            return False, f"Validation failed: {e}"
+
+    def update_grades(self, student_id, new_grades):
+        try:
+            self._validate_student_id(student_id)
+            if student_id not in self.students:
+                raise ValidationError(f"Student ID {student_id} not found.")
+            self._validate_grades(new_grades)
+            self.students[student_id]['grades'] = list(new_grades)
+            return True, f"Grades updated for ID {student_id}."
+        except ValidationError as e:
+            return False, f"Update failed: {e}"
+
+    def remove_student(self, student_id):
+        try:
+            self._validate_student_id(student_id)
+            if student_id not in self.students:
+                raise ValidationError(f"Student ID {student_id} not found.")
+            name = self.students[student_id]['name']
+            del self.students[student_id]
+            return True, f"Student '{name}' (ID: {student_id}) removed."
+        except ValidationError as e:
+            return False, f"Removal failed: {e}"
+
+    def calculate_average(self, student_id):
+        if student_id not in self.students:
+            return None
+        grades = self.students[student_id]['grades']
+        return sum(grades) / len(grades) if grades else None
+
+    def get_letter_grade(self, average):
+        if average is None or isinstance(average, bool) or not isinstance(average, (int, float)):
+            return 'N/A'
+        if average >= 90: return 'A'
+        elif average >= 80: return 'B'
+        elif average >= 70: return 'C'
+        elif average >= 60: return 'D'
+        else: return 'F'
+
+    def analyze_student(self, student_id):
+        if student_id not in self.students:
+            return {'error': f"Student {student_id} not found."}
+        student = self.students[student_id]
+        grades = student['grades']
+        if not grades:
+            return {'error': f"{student['name']}: No grades available."}
+        avg = self.calculate_average(student_id)
+        return {
+            'id': student_id,
+            'name': student['name'],
+            'average': round(avg, 2),
+            'letter_grade': self.get_letter_grade(avg),
+            'highest': max(grades),
+            'lowest': min(grades),
+            'std_dev': round(statistics.stdev(grades), 2) if len(grades) > 1 else 0.0,
+            'num_grades': len(grades)
+        }
+
+    def class_statistics(self):
+        if not self.students:
+            return {'error': "No students in the system."}
+        all_averages = [self.calculate_average(sid) for sid in self.students]
+        all_averages = [a for a in all_averages if a is not None]
+        all_grades = [g for s in self.students.values() for g in s['grades']]
+        if not all_grades or not all_averages:
+            return {'error': "No grades available."}
+        distribution = defaultdict(int)
+        for sid in self.students:
+            avg = self.calculate_average(sid)
+            distribution[self.get_letter_grade(avg)] += 1
+        return {
+            'total_students': len(self.students),
+            'class_average': round(sum(all_averages) / len(all_averages), 2),
+            'highest_average': round(max(all_averages), 2),
+            'lowest_average': round(min(all_averages), 2),
+            'grade_distribution': dict(sorted(distribution.items())),
+            'total_grades_recorded': len(all_grades),
+            'overall_std_dev': round(statistics.stdev(all_grades), 2) if len(all_grades) > 1 else 0.0
+        }
+
+    def rank_students(self):
+        rankings = []
+        for sid, data in self.students.items():
+            avg = self.calculate_average(sid)
+            rankings.append((sid, data['name'], round(avg, 2), self.get_letter_grade(avg)))
+        rankings.sort(key=lambda x: x[2], reverse=True)
+        return rankings
+
+    def generate_report(self):
+        print("=" * 60)
+        print("STUDENT ANALYSIS REPORT")
+        print("=" * 60)
+        if not self.students:
+            print("\nNo students available for analysis.")
+            print("=" * 60)
+            return
+        print("\n--- Individual Student Performance ---")
+        for sid in self.students:
+            a = self.analyze_student(sid)
+            if 'error' in a:
+                print(f"\n{sid}: {a['error']}")
+            else:
+                print(f"\nID: {a['id']} | {a['name']}")
+                print(f"  Average: {a['average']} ({a['letter_grade']})")
+                print(f"  Highest: {a['highest']} | Lowest: {a['lowest']}")
+                print(f"  Std Dev: {a['std_dev']} | Grades: {a['num_grades']}")
+        print("\n--- Class Statistics ---")
+        stats = self.class_statistics()
+        if 'error' in stats:
+            print(f"  {stats['error']}")
+        else:
+            for key, value in stats.items():
+                print(f"  {key.replace('_', ' ').title()}: {value}")
+        print("\n--- Student Rankings ---")
+        for rank, (sid, name, avg, letter) in enumerate(self.rank_students(), 1):
+            print(f"  {rank}. {name} (ID: {sid}) - {avg} [{letter}]")
+        print("\n" + "=" * 60)
+
+
+if __name__ == "__main__":
+    analyzer = StudentAnalyzer()
+
+    print("### Adding valid students ###")
+    print(analyzer.add_student(101, "Alice Johnson", [92, 88, 95, 90, 87]))
+    print(analyzer.add_student(102, "Bob Smith", [75, 82, 68, 79, 71]))
+    print(analyzer.add_student(103, "Carol Davis", [85, 90, 88, 92, 86]))
+    print(analyzer.add_student(104, "David Lee", [55, 62, 58, 60, 65]))
+    print(analyzer.add_student(105, "Emma Wilson", [98, 95, 97, 99, 96]))
+
+    print("\n### Testing invalid inputs ###")
+    print(analyzer.add_student(106, "Frank", [101, 50]))
+    print(analyzer.add_student(-1, "Ghost", [80]))
+    print(analyzer.add_student("abc", "BadID", [80]))
+    print(analyzer.add_student(True, "BoolID", [80]))
+    print(analyzer.add_student(107, "", [80]))
+    print(analyzer.add_student(108, "   ", [80]))
+    print(analyzer.add_student(109, "No Grades", []))
+    print(analyzer.add_student(110, "Bool Grade", [True, 80]))
+    print(analyzer.add_student(111, "NaN Grade", [float('nan')]))
+    print(analyzer.add_student(112, "Inf Grade", [float('inf')]))
+    print(analyzer.add_student(101, "Duplicate", [80]))
+    print(analyzer.add_student(113, "Bad Type", "not a list"))
+    print(analyzer.add_student(114, 12345, [80]))
+
+    print("\n### Update / Remove ###")
+    print(analyzer.update_grades(101, [95, 92, 93]))
+    print(analyzer.update_grades(999, [80]))
+    print(analyzer.update_grades(102, [150]))
+    print(analyzer.update_grades(103, []))
+    print(analyzer.remove_student(999))
+    print(analyzer.remove_student(104))
+    print(analyzer.remove_student("bad"))
+
+    print()
+    analyzer.generate_report()
+```

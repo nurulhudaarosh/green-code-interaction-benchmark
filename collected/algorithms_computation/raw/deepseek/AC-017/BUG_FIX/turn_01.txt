@@ -1,0 +1,191 @@
+## Problem Identification
+
+**Problem:** Given a range `[L, R]`, find all prime numbers in that range and return the largest gap between consecutive primes.
+
+**Key Constraints:**
+- The interval width `R - L` is bounded (suitable for segmented sieving)
+- `R` can be large, but `sqrt(R)` is manageable
+- Need to find the maximum difference between consecutive primes in `[L, R]`
+- If fewer than 2 primes exist, no gap can be computed
+
+**Required Output:** The largest gap between consecutive primes within `[L, R]`, or a message if fewer than 2 primes exist.
+
+**Algorithm Overview:**
+1. Generate all base primes up to `sqrt(R)` using a simple sieve
+2. Perform segmented sieve on `[L, R]` using these base primes
+3. Collect primes in the range and compute the maximum consecutive gap
+
+## Python Implementation
+
+```python
+import math
+
+def simple_sieve(limit):
+    """Generate all primes up to limit using simple sieve of Eratosthenes."""
+    if limit < 2:
+        return []
+    
+    is_prime = [True] * (limit + 1)
+    is_prime[0] = is_prime[1] = False
+    
+    for i in range(2, int(math.isqrt(limit)) + 1):
+        if is_prime[i]:
+            # Start from i*i and mark multiples
+            for j in range(i * i, limit + 1, i):
+                is_prime[j] = False
+    
+    return [i for i in range(2, limit + 1) if is_prime[i]]
+
+
+def segmented_sieve(L, R):
+    """
+    Find all primes in [L, R] using segmented sieve.
+    Returns list of primes in the range.
+    """
+    if L > R:
+        return []
+    
+    # Handle small L
+    if L < 2:
+        L = 2
+    
+    if L > R:
+        return []
+    
+    # Generate base primes up to sqrt(R)
+    limit = math.isqrt(R)
+    base_primes = simple_sieve(limit)
+    
+    # Size of segment (we can process whole range at once since width is bounded)
+    size = R - L + 1
+    is_prime = [True] * size
+    
+    # Mark composites in the segment
+    for p in base_primes:
+        # Find the first multiple of p >= L
+        start = max(p * p, ((L + p - 1) // p) * p)
+        
+        for multiple in range(start, R + 1, p):
+            is_prime[multiple - L] = False
+    
+    # Handle edge case: if L == 1, it's not prime
+    if L == 1:
+        is_prime[0] = False
+    
+    # Collect primes
+    primes = [L + i for i in range(size) if is_prime[i]]
+    return primes
+
+
+def largest_prime_gap(L, R):
+    """
+    Find the largest gap between consecutive primes in [L, R].
+    
+    Returns:
+        tuple: (largest_gap, prime_pair) where prime_pair is (p1, p2)
+               or (None, None) if fewer than 2 primes exist.
+    """
+    primes = segmented_sieve(L, R)
+    
+    if len(primes) < 2:
+        return None, None
+    
+    max_gap = 0
+    gap_pair = (None, None)
+    
+    for i in range(1, len(primes)):
+        gap = primes[i] - primes[i - 1]
+        if gap > max_gap:
+            max_gap = gap
+            gap_pair = (primes[i - 1], primes[i])
+    
+    return max_gap, gap_pair
+
+
+# ==================== Test Cases ====================
+if __name__ == "__main__":
+    # Test case 1: Simple range
+    L, R = 10, 50
+    gap, pair = largest_prime_gap(L, R)
+    primes = segmented_sieve(L, R)
+    print(f"Range [{L}, {R}]")
+    print(f"Primes: {primes}")
+    if gap is not None:
+        print(f"Largest gap: {gap} (between {pair[0]} and {pair[1]})")
+    else:
+        print("Fewer than 2 primes in range")
+    print()
+    
+    # Test case 2: Larger range
+    L, R = 100, 200
+    gap, pair = largest_prime_gap(L, R)
+    primes = segmented_sieve(L, R)
+    print(f"Range [{L}, {R}]")
+    print(f"Primes: {primes}")
+    if gap is not None:
+        print(f"Largest gap: {gap} (between {pair[0]} and {pair[1]})")
+    print()
+    
+    # Test case 3: No primes (or only one)
+    L, R = 1, 2
+    gap, pair = largest_prime_gap(L, R)
+    primes = segmented_sieve(L, R)
+    print(f"Range [{L}, {R}]")
+    print(f"Primes: {primes}")
+    if gap is not None:
+        print(f"Largest gap: {gap} (between {pair[0]} and {pair[1]})")
+    else:
+        print("Fewer than 2 primes in range")
+    print()
+    
+    # Test case 4: Single prime
+    L, R = 8, 10
+    gap, pair = largest_prime_gap(L, R)
+    primes = segmented_sieve(L, R)
+    print(f"Range [{L}, {R}]")
+    print(f"Primes: {primes}")
+    if gap is not None:
+        print(f"Largest gap: {gap} (between {pair[0]} and {pair[1]})")
+    else:
+        print("Fewer than 2 primes in range")
+    print()
+    
+    # Test case 5: Large range near 10^6
+    L, R = 999900, 1000000
+    gap, pair = largest_prime_gap(L, R)
+    primes = segmented_sieve(L, R)
+    print(f"Range [{L}, {R}]")
+    print(f"Number of primes: {len(primes)}")
+    print(f"First few primes: {primes[:5]}")
+    print(f"Last few primes: {primes[-5:]}")
+    if gap is not None:
+        print(f"Largest gap: {gap} (between {pair[0]} and {pair[1]})")
+    print()
+    
+    # Test case 6: Verify with known prime gaps
+    # The first occurrence of a gap of 8 is between 89 and 97
+    L, R = 89, 97
+    gap, pair = largest_prime_gap(L, R)
+    primes = segmented_sieve(L, R)
+    print(f"Range [{L}, {R}]")
+    print(f"Primes: {primes}")
+    print(f"Largest gap: {gap} (between {pair[0]} and {pair[1]})")
+```
+
+## How It Works
+
+1. **Base Prime Generation:** `simple_sieve(limit)` uses the classic Sieve of Eratosthenes to find all primes up to `√R`.
+
+2. **Segmented Sieve:** For the range `[L, R]`:
+   - Create a boolean array of size `R - L + 1`
+   - For each base prime `p`, find its first multiple in `[L, R]` and mark all multiples
+   - The remaining unmarked numbers are primes
+
+3. **Gap Calculation:** Iterate through the collected primes and track the maximum difference between consecutive primes.
+
+## Complexity Analysis
+
+- **Time:** `O(√R log log √R + (R-L) log log √R)` — practical for bounded interval widths
+- **Space:** `O(√R + (R-L))` — the base primes and segment array
+
+The segmented approach is efficient because it avoids sieving up to `R` when `R` is large, focusing only on the interval of interest.

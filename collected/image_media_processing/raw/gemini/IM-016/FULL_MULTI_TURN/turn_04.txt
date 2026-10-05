@@ -1,0 +1,102 @@
+To handle single-pixel width ($W=1$) or single-pixel height ($H=1$) images safely, `cv2.filter2D` needs explicit border padding handling via `borderType=cv2.BORDER_REPLICATE` (edge replication).
+
+By default, OpenCV uses `cv2.BORDER_REFLECT_101` (i.e. `g f e d c b | a b c d e f g | f e d c b a`), which requires a minimum dimension of $2$ pixels to perform reflection indexing and throws a `C++ cv::BorderInterpolate` assertion error when encountering a 1-pixel axis. `cv2.BORDER_REPLICATE` replicates the edge values (`a a a a | a | a a a a`), working seamlessly across any dimension down to $1\times 1$.
+
+Here is the updated implementation incorporating explicit edge-replication padding and robust thresholding:
+
+```python
+import os
+from pathlib import Path
+from typing import Optional, Union
+import cv2
+import numpy as np
+
+
+def sobel_edges(
+    input_dir: Union[str, Path],
+    output_dir: Union[str, Path],
+    threshold: Optional[float] = None,
+) -> None:
+    """Applies explicit Sobel edge detection to all images in input_dir and saves
+
+    the gradient output as grayscale PNGs in output_dir.
+
+    Args:
+        input_dir: Path to directory containing source images.
+        output_dir: Path to directory where output PNGs will be written.
+        threshold: Optional cutoff float. If provided, values > threshold become
+          255, otherwise 0. If None, saves clipped continuous gradient magnitude
+          [0, 255].
+    """
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # Explicit Sobel Derivative Kernels
+    # Gx: Derivative w.r.t. x (columns / horizontal direction)
+    Gx = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=np.float32)
+
+    # Gy: Derivative w.r.t. y (rows / vertical direction)
+    Gy = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=np.float32)
+
+    valid_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
+
+    for file_path in input_path.iterdir():
+        if file_path.is_file() and file_path.suffix.lower() in valid_extensions:
+            img = cv2.imread(str(file_path), cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                continue
+
+            img_float = img.astype(np.float32)
+
+            # borderType=cv2.BORDER_REPLICATE handles 1xN, Nx1, and 1x1 images
+            # without triggering out-of-bounds reflection index errors.
+            grad_x = cv2.filter2D(
+                img_float,
+                ddepth=cv2.CV_32F,
+                kernel=Gx,
+                borderType=cv2.BORDER_REPLICATE,
+            )
+            grad_y = cv2.filter2D(
+                img_float,
+                ddepth=cv2.CV_32F,
+                kernel=Gy,
+                borderType=cv2.BORDER_REPLICATE,
+            )
+
+            # Gradient Magnitude: sqrt(Gx^2 + Gy^2)
+            magnitude = np.sqrt(grad_x**2 + grad_y**2)
+
+            # Binarization or Continuous Clip
+            if threshold is not None:
+                output_map = np.where(magnitude > threshold, 255, 0).astype(
+                    np.uint8
+                )
+            else:
+                output_map = np.clip(magnitude, 0, 255).astype(np.uint8)
+
+            # Save Output PNG
+            output_filename = output_path / f"{file_path.stem}_sobel.png"
+            cv2.imwrite(str(output_filename), output_map)
+
+
+if __name__ == "__main__":
+    # Test 1xN and Nx1 edge cases explicitly
+    img_1x5 = np.array([[10, 50, 100, 150, 200]], dtype=np.uint8)
+    img_5x1 = np.array([[10], [50], [100], [150], [200]], dtype=np.uint8)
+
+    # Verification: Border replicate on 1x5 image
+    gx = cv2.filter2D(
+        img_1x5.astype(np.float32),
+        -1,
+        np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]]),
+        borderType=cv2.BORDER_REPLICATE,
+    )
+    print("1x5 Image Convolution successfully processed, shape:", gx.shape)
+
+```
+
+### Why `BORDER_REPLICATE` Fixes the Edge Case
+
+* Standard OpenCV filtering (`BORDER_REFLECT` / `BORDER_REFLECT_101`) looks up pixel indices like `-1` (maps to index `1` for reflection). On a $1\times 1$ or $1\times N$ image, index `1` does not exist, triggering an assertion/OOB failure.
+* `BORDER_REPLICATE` clamp-pads array indices to `[0, length - 1]`. For a $1$-pixel dimension, every out-of-bounds kernel tap maps safely back to index `0`, computing $G_x = 0$ and $G_y = 0$ on uniform $1\times 1$ inputs as expected.

@@ -1,0 +1,74 @@
+import os
+import cv2
+import numpy as np
+
+
+def convolve2d(image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+    """Applies 2D convolution over a single-channel image with zero-padding."""
+    img_h, img_w = image.shape
+    k_h, k_w = kernel.shape
+    pad_h, pad_w = k_h // 2, k_w // 2
+
+    # Zero-padding
+    padded = np.pad(
+        image, ((pad_h, pad_h), (pad_w, pad_w)), mode="constant", constant_values=0
+    )
+    output = np.zeros_like(image, dtype=np.float64)
+
+    # Perform 2D spatial convolution
+    for i in range(img_h):
+        for j in range(img_w):
+            region = padded[i : i + k_h, j : j + k_w]
+            output[i, j] = np.sum(region * kernel)
+
+    return output
+
+
+def sobel_edges(input_dir: str, output_dir: str) -> None:
+    """Processes all images in input_dir with explicit Sobel convolution and saves
+
+    the gradient magnitude images as grayscale PNGs in output_dir.
+    """
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+
+    # Explicit Sobel Kernels
+    G_x = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=np.float64)
+
+    G_y = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=np.float64)
+
+    valid_extensions = (".png", ".jpg", ".jpeg", ".bmp", ".tiff")
+
+    for filename in os.listdir(input_dir):
+        if not filename.lower().endswith(valid_extensions):
+            continue
+
+        input_path = os.path.join(input_dir, filename)
+        # Load image as grayscale
+        img = cv2.imread(input_path, cv2.IMREAD_GRAYSCALE)
+
+        if img is None:
+            continue
+
+        img_float = img.astype(np.float64)
+
+        # Explicit Sobel convolutions
+        gx = convolve2d(img_float, G_x)
+        gy = convolve2d(img_float, G_y)
+
+        # Gradient magnitude computation
+        magnitude = np.sqrt(gx**2 + gy**2)
+
+        # Clip values to [0, 255] and convert to uint8
+        magnitude_clipped = np.clip(magnitude, 0, 255).astype(np.uint8)
+
+        # Save output as PNG
+        base_name = os.path.splitext(filename)[0]
+        output_path = os.path.join(output_dir, f"{base_name}_sobel.png")
+        cv2.imwrite(output_path, magnitude_clipped)
+
+
+if __name__ == "__main__":
+    # Example usage:
+    # sobel_edges("path/to/input", "path/to/output")
+    pass

@@ -1,0 +1,84 @@
+```python
+# Exact Polynomial Product
+#
+# Problem:
+# Multiply two integer polynomials exactly and return their coefficient
+# array in ascending order of degree. Coefficients may be negative.
+#
+# Key constraints:
+# - Inputs are finite arrays/lists of integers.
+# - Negative, zero, and positive coefficients are allowed.
+# - The result must be exact; Python integers avoid fixed-width overflow.
+# - Direct coefficient convolution is practical because the input sizes are
+#   bounded so the quadratic computation remains feasible.
+# - The computation must be deterministic.
+#
+# Required output:
+# - A list containing the coefficients of A(x) * B(x), starting with the
+#   constant coefficient.
+# - If either polynomial is empty, return [].
+#
+# Algorithm:
+# For every coefficient A[i] and every coefficient B[j], their product
+# contributes to result[i + j]. This is direct coefficient convolution.
+#
+# Time:  O(n * m)
+# Space: O(n + m) for the output, with O(n + m - 1) result entries.
+#
+# No external libraries, network access, APIs, randomness, or human
+# interaction are used.
+
+from typing import List
+
+
+def multiply_polynomials(a: List[int], b: List[int]) -> List[int]:
+    """Return the exact coefficient array for the product a(x) * b(x)."""
+    if not a or not b:
+        return []
+
+    result = [0] * (len(a) + len(b) - 1)
+
+    for i, coefficient_a in enumerate(a):
+        for j, coefficient_b in enumerate(b):
+            result[i + j] += coefficient_a * coefficient_b
+
+    return result
+
+
+# Deterministic tests
+def run_tests() -> None:
+    # Basic multiplication:
+    # (1 + 2x) * (3 + 4x) = 3 + 10x + 8x^2
+    assert multiply_polynomials([1, 2], [3, 4]) == [3, 10, 8]
+
+    # Negative coefficients:
+    # (2 - 3x) * (-1 + 4x) = -2 + 11x - 12x^2
+    assert multiply_polynomials([2, -3], [-1, 4]) == [-2, 11, -12]
+
+    # Repeated values:
+    # (2 + 2x + 2x^2)^2 = 4 + 8x + 12x^2 + 8x^3 + 4x^4
+    assert multiply_polynomials([2, 2, 2], [2, 2, 2]) == [
+        4, 8, 12, 8, 4
+    ]
+
+    # Zero polynomial:
+    assert multiply_polynomials([0, 0], [5, -2, 7]) == [0, 0, 0, 0]
+
+    # Single coefficients:
+    assert multiply_polynomials([7], [-3]) == [-21]
+
+    # Empty polynomial input:
+    assert multiply_polynomials([], [1, 2, 3]) == []
+    assert multiply_polynomials([1, 2, 3], []) == []
+
+    # Mixed positive and negative coefficients:
+    # (1 - x + x^2)(-2 + 3x)
+    # = -2 + 5x - 5x^2 + 3x^3
+    assert multiply_polynomials([1, -1, 1], [-2, 3]) == [
+        -2, 5, -5, 3
+    ]
+
+
+if __name__ == "__main__":
+    run_tests()
+```

@@ -1,0 +1,92 @@
+"""Per-image grayscale statistics."""
+
+from pathlib import Path
+
+import numpy as np
+from PIL import Image, UnidentifiedImageError
+
+
+def _to_gray_uint8(img: Image.Image) -> np.ndarray:
+    """Convert a PIL image to a 2-D uint8 grayscale array."""
+    if img.mode in ("I;16", "I;16L", "I;16B", "I"):
+        # 16/32-bit grayscale: scale down to 8 bits instead of clipping.
+        arr = np.asarray(img, dtype=np.uint32)
+        peak = 65535 if img.mode.startswith("I;16") else max(int(arr.max()), 255)
+        return (arr * 255 // peak).astype(np.uint8)
+    return np.asarray(img.convert("L"), dtype=np.uint8)
+
+
+def _median_from_histogram(hist: np.ndarray) -> float:
+    """Median of the pixel values described by a 256-bin histogram.
+
+    Matches np.median on the underlying pixels: for an even pixel count
+    it is the average of the two middle values.
+    """
+    n = int(hist.sum())
+    cum = np.cumsum(hist)
+    # Value at sorted position k is the first bin whose cumulative count > k.
+    lo = int(np.searchsorted(cum, (n - 1) // 2, side="right"))
+    hi = int(np.searchsorted(cum, n // 2, side="right"))
+    return (lo + hi) / 2.0
+
+
+def compute_statistics(input_dir, recursive=False):
+    """Compute grayscale statistics for every image in a directory.
+
+    Args:
+        input_dir: Path to a directory containing images.
+        recursive: If True, also search subdirectories.
+
+    Returns:
+        dict mapping each image's path (relative to input_dir, as a string)
+        to a dict with:
+            "histogram": np.ndarray of shape (256,), int64 pixel counts
+                         for intensities 0..255
+            "mean":      mean pixel intensity (float)
+            "median":    median pixel intensity (float), from the histogram
+            "std":       population standard deviation of intensity (float)
+
+    Files that are not readable images are skipped. Results are ordered
+    by path.
+    """
+    root = Path(input_dir)
+    if not root.is_dir():
+        raise NotADirectoryError(f"Not a directory: {input_dir}")
+
+    paths = sorted(p for p in (root.rglob("*") if recursive else root.iterdir())
+                   if p.is_file())
+
+    levels = np.arange(256, dtype=np.float64)
+    results = {}
+
+    for path in paths:
+        try:
+            with Image.open(path) as img:
+                gray = _to_gray_uint8(img)
+        except (UnidentifiedImageError, OSError):
+            continue  # not an image / corrupt file
+
+        hist = np.bincount(gray.ravel(), minlength=256).astype(np.int64)
+        total = hist.sum()
+        if total == 0:
+            continue
+
+        # Derive moments from the histogram: exact and memory-light.
+        mean = float((hist * levels).sum() / total)
+        var = float((hist * (levels - mean) ** 2).sum() / total)
+
+        results[str(path.relative_to(root))] = {
+            "histogram": hist,
+            "mean": mean,
+            "median": _median_from_histogram(hist),
+            "std": var ** 0.5,
+        }
+
+    return results
+
+
+if __name__ == "__main__":
+    import sys
+
+    for name, s in compute_statistics(sys.argv[1]).items():
+        print(f"{name}: mean={s['mean']:.2f} median={s['median']:.1f} std={s['std']:.2f}")

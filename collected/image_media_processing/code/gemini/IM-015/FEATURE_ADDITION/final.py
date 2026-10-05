@@ -1,0 +1,85 @@
+import os
+from pathlib import Path
+from PIL import Image
+
+IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.webp'}
+
+def split_channels(input_dir: str, output_dir: str, include_alpha: bool = False) -> None:
+    """
+    Reads images in input_dir and splits them into Red, Green, and Blue grayscale channels.
+    If include_alpha=True and the image contains an alpha channel, an additional 
+    '<stem>_A.png' grayscale image is generated.
+    """
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    for file_path in input_path.iterdir():
+        if file_path.is_file() and file_path.suffix.lower() in IMAGE_EXTENSIONS:
+            try:
+                with Image.open(file_path) as img:
+                    base_name = file_path.stem
+                    
+                    # Check if alpha channel processing is requested and available
+                    has_alpha = include_alpha and (
+                        'A' in img.getbands() or img.mode in ('RGBA', 'LA', 'PA')
+                    )
+
+                    if has_alpha:
+                        rgba_img = img.convert('RGBA')
+                        r, g, b, a = rgba_img.split()
+                        
+                        r.save(output_path / f"{base_name}_R.png")
+                        g.save(output_path / f"{base_name}_G.png")
+                        b.save(output_path / f"{base_name}_B.png")
+                        a.save(output_path / f"{base_name}_A.png")
+                    else:
+                        rgb_img = img.convert('RGB')
+                        r, g, b = rgb_img.split()
+
+                        r.save(output_path / f"{base_name}_R.png")
+                        g.save(output_path / f"{base_name}_G.png")
+                        b.save(output_path / f"{base_name}_B.png")
+
+                    print(f"Processed: {file_path.name}")
+            except Exception as e:
+                print(f"Error processing {file_path.name}: {e}")
+
+def merge_channels(
+    r_path: str,
+    g_path: str,
+    b_path: str,
+    output_path: str,
+    a_path: str | None = None
+) -> None:
+    """
+    Merges single-channel grayscale images (R, G, B, and optional A) into an RGB/RGBA image.
+    """
+    out_file = Path(output_path)
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with Image.open(r_path) as r_img, Image.open(g_path) as g_img, Image.open(b_path) as b_img:
+            r = r_img.convert('L')
+            g = g_img.convert('L')
+            b = b_img.convert('L')
+
+            if a_path:
+                with Image.open(a_path) as a_img:
+                    a = a_img.convert('L')
+                    
+                    if not (r.size == g.size == b.size == a.size):
+                        raise ValueError(f"Image dimensions do not match: R={r.size}, G={g.size}, B={b.size}, A={a.size}")
+                    
+                    merged_img = Image.merge('RGBA', (r, g, b, a))
+            else:
+                if not (r.size == g.size == b.size):
+                    raise ValueError(f"Image dimensions do not match: R={r.size}, G={g.size}, B={b.size}")
+                
+                merged_img = Image.merge('RGB', (r, g, b))
+
+            merged_img.save(out_file)
+            print(f"Merged channels saved to: {output_path}")
+
+    except Exception as e:
+        print(f"Error merging channels: {e}")

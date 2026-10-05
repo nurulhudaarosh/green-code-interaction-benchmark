@@ -1,0 +1,53 @@
+import csv
+import sys
+from collections import defaultdict
+
+def main():
+    if len(sys.argv) != 3:
+        print("Usage: python utility.py customers.csv transactions.csv")
+        return
+
+    customer_file = sys.argv[1]
+    transaction_file = sys.argv[2]
+
+    customers = {}
+
+    with open(customer_file, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+
+        for row in reader:
+            customer_id = row["customer_id"].strip()
+            customers[customer_id] = row
+
+    totals = defaultdict(float)
+
+    with open(transaction_file, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+
+        for row in reader:
+            transaction_id = row.get("transaction_id", "").strip()
+            customer_id = row.get("customer_id", "").strip()
+            amount_text = row.get("amount", "").strip()
+
+            if not transaction_id or customer_id not in customers:
+                continue
+
+            try:
+                amount = float(amount_text)
+            except ValueError:
+                continue
+
+            totals[customer_id] += amount
+
+    fieldnames = list(next(iter(customers.values())).keys()) + ["transaction_total"]
+
+    writer = csv.DictWriter(sys.stdout, fieldnames=fieldnames)
+    writer.writeheader()
+
+    for customer_id in sorted(customers):
+        row = customers[customer_id].copy()
+        row["transaction_total"] = totals.get(customer_id, 0)
+        writer.writerow(row)
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,114 @@
+## Problem Identification & Understanding
+
+The problem requires finding a subset of a given list of positive integers `nums` that sums to a target integer `S`. If multiple subsets achieve the target sum, we must resolve ties using two strict criteria:
+
+1. **Primary criterion:** Minimize the number of elements (cardinality) in the subset.
+2. **Secondary criterion:** Choose the lexicographically smallest list of 0-based indices corresponding to the selected elements.
+
+---
+
+## Key Constraints & Required Output
+
+* **Input:** A list of positive integers `nums` and a non-negative integer `target`.
+* **Constraints:**
+* Elements in `nums` are positive integers ($> 0$).
+* Subset indices must be unique (each element used at most once, 0/1 subset sum).
+
+
+* **Output:**
+* Returns a `list[int]` of indices sorted in ascending order that achieves the target sum, satisfying both optimization criteria.
+* Returns `None` (or an empty/failed indication) if no subset sums to `target`.
+
+
+
+---
+
+## Algorithm Description
+
+We use a dynamic programming approach for 0/1 Subset Sum tracking minimal subset cardinality and lexicographically smallest index paths.
+
+1. **State Definition:**
+`dp[s]` stores the optimal tuple `(count, index_tuple)` to achieve sum `s`, where:
+* `count` is the minimum number of elements used to form sum `s`.
+* `index_tuple` is the lexicographically smallest tuple of 0-based indices forming sum `s`.
+
+
+2. **Initialization:**
+* `dp[0] = (0, ())` (0 elements, empty index tuple for sum 0).
+* `dp[s] = None` for $1 \le s \le \text{target}$.
+
+
+3. **Transition:**
+Iterate through each element `nums[i]` with index `i` from $0$ to $N-1$:
+* For each possible sum $s$ from `target` down to `nums[i]` (iterating backwards to preserve 0/1 knapsack semantics):
+* If `dp[s - nums[i]]` exists:
+* Candidate for sum $s$: `(count + 1, index_tuple + (i,))`.
+* Update `dp[s]` if `dp[s]` is `None` OR if the candidate is strictly smaller than `dp[s]` (Python's tuple comparison natively compares `count` first, then lexicographically compares `index_tuple`).
+
+
+
+
+
+
+4. **Result:**
+`dp[target]` holds `(min_count, indices_tuple)`. Return `list(indices_tuple)` if reachable, otherwise `None`.
+
+---
+
+## Python Implementation
+
+```python
+def find_optimal_subset(nums: list[int], target: int) -> list[int] | None:
+    """
+    Finds a subset of positive integers from `nums` that sums to `target`.
+    
+    Optimizes by:
+    1. Fewest elements (minimal cardinality).
+    2. Lexicographically smallest list of 0-based indices.
+    
+    Returns the sorted list of indices, or None if no valid subset exists.
+    """
+    if target == 0:
+        return []
+    if target < 0:
+        return None
+
+    # dp[s] = (cardinality, tuple_of_indices) or None
+    dp: list[tuple[int, tuple[int, ...]] | None] = [None] * (target + 1)
+    dp[0] = (0, ())
+
+    for i, num in enumerate(nums):
+        if num > target:
+            continue
+        
+        # Traverse backwards for 0/1 knapsack
+        for s in range(target, num - 1, -1):
+            prev_state = dp[s - num]
+            if prev_state is not None:
+                cand_count = prev_state[0] + 1
+                cand_indices = prev_state[1] + (i,)
+                cand_state = (cand_count, cand_indices)
+
+                # Lexicographical comparison on tuple (count, indices)
+                if dp[s] is None or cand_state < dp[s]:
+                    dp[s] = cand_state
+
+    if dp[target] is None:
+        return None
+    
+    return list(dp[target][1])
+
+
+# Example Usage & Test
+if __name__ == "__main__":
+    test_nums = [3, 1, 4, 2, 2, 5]
+    test_target = 6
+    
+    result = find_optimal_subset(test_nums, test_target)
+    print(f"Numbers: {test_nums}")
+    print(f"Target: {test_target}")
+    print(f"Optimal Indices: {result}")
+    if result is not None:
+        print(f"Selected Values: {[test_nums[i] for i in result]}")
+
+```

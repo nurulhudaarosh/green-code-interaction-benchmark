@@ -1,0 +1,308 @@
+import csv
+import io
+import math
+from typing import List, Dict, Any, Optional
+
+
+class Student:
+    """Represents an individual student and calculates weighted/unweighted metrics."""
+
+    def __init__(
+        self,
+        student_id: str,
+        name: str,
+        scores: Dict[str, float],
+        weights: Optional[Dict[str, float]] = None
+    ):
+        self.student_id = student_id
+        self.name = name
+        self.scores = scores
+        self.weights = weights or {subj: 1.0 for subj in scores}
+        self.average = self._calculate_weighted_average()
+        self.grade = self._assign_grade()
+
+    def _calculate_weighted_average(self) -> float:
+        if not self.scores:
+            return 0.0
+
+        total_weighted_score = 0.0
+        total_weight = 0.0
+
+        for subj, score in self.scores.items():
+            w = self.weights.get(subj, 1.0)
+            total_weighted_score += score * w
+            total_weight += w
+
+        return total_weighted_score / total_weight if total_weight > 0 else 0.0
+
+    def _assign_grade(self) -> str:
+        avg = self.average
+        if avg >= 90:
+            return 'A'
+        elif avg >= 80:
+            return 'B'
+        elif avg >= 70:
+            return 'C'
+        elif avg >= 60:
+            return 'D'
+        else:
+            return 'F'
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.student_id,
+            "name": self.name,
+            "scores": self.scores,
+            "weighted_average": round(self.average, 2),
+            "grade": self.grade
+        }
+
+
+class SubjectAnalytics:
+    """Calculates statistical metrics for a single subject across valid student scores."""
+
+    def __init__(self, subject_name: str, scores: List[float]):
+        self.subject_name = subject_name
+        self.scores = scores
+        self.count = len(scores)
+        self.mean = sum(scores) / self.count if self.count > 0 else 0.0
+        self.median = self._calculate_median()
+        self.std_dev = self._calculate_std_dev()
+        self.min_score = min(scores) if scores else 0.0
+        self.max_score = max(scores) if scores else 0.0
+
+    def _calculate_median(self) -> float:
+        if not self.scores:
+            return 0.0
+        sorted_scores = sorted(self.scores)
+        n = len(sorted_scores)
+        mid = n // 2
+        if n % 2 == 0:
+            return (sorted_scores[mid - 1] + sorted_scores[mid]) / 2.0
+        return float(sorted_scores[mid])
+
+    def _calculate_std_dev(self) -> float:
+        if self.count <= 1:
+            return 0.0
+        variance = sum((x - self.mean) ** 2 for x in self.scores) / (self.count - 1)
+        return math.sqrt(variance)
+
+    def summary(self) -> Dict[str, Any]:
+        return {
+            "subject": self.subject_name,
+            "count": self.count,
+            "mean": round(self.mean, 2),
+            "median": round(self.median, 2),
+            "std_dev": round(self.std_dev, 2),
+            "min": round(self.min_score, 2),
+            "max": round(self.max_score, 2)
+        }
+
+
+class StudentPerformanceAnalyzer:
+    """Analyzer engine with score and weight validation."""
+
+    def __init__(
+        self,
+        min_score: float = 0.0,
+        max_score: float = 100.0,
+        weights: Optional[Dict[str, float]] = None
+    ):
+        self.min_score = min_score
+        self.max_score = max_score
+        self.weights: Dict[str, float] = weights or {}
+        self.students: List[Student] = []
+        self.subjects: List[str] = []
+        self.validation_errors: List[str] = []
+
+    def set_weights(self, weights: Dict[str, float]) -> None:
+        """Validates and sets subject weights."""
+        valid_weights = {}
+        for subj, weight in weights.items():
+            if not isinstance(weight, (int, float)) or math.isnan(weight):
+                self.validation_errors.append(f"Weight Error: Weight for '{subj}' must be a numeric value.")
+                continue
+            if weight <= 0:
+                self.validation_errors.append(f"Weight Error: Weight for '{subj}' must be strictly positive (got {weight}).")
+                continue
+            valid_weights[subj] = float(weight)
+
+        self.weights = valid_weights
+
+    def _validate_score(self, score_str: Any, student_id: str, subject: str) -> Optional[float]:
+        """Validates that a score is numeric and within [min_score, max_score]."""
+        if score_str is None or str(score_str).strip() == "":
+            self.validation_errors.append(
+                f"Missing Score: Student '{student_id}' is missing a score for subject '{subject}'."
+            )
+            return None
+
+        try:
+            score = float(score_str)
+            if math.isnan(score) or math.isinf(score):
+                raise ValueError("Score is NaN or Infinity.")
+        except (ValueError, TypeError):
+            self.validation_errors.append(
+                f"Invalid Score: Student '{student_id}' has non-numeric score '{score_str}' in '{subject}'."
+            )
+            return None
+
+        if score < self.min_score or score > self.max_score:
+            self.validation_errors.append(
+                f"Out-of-Bounds Score: Student '{student_id}' has score {score} in '{subject}' "
+                f"(Allowed range: [{self.min_score}, {self.max_score}])."
+            )
+            return None
+
+        return score
+
+    def load_csv_data(self, csv_data: str) -> None:
+        """Parses CSV data, strictly validating scores and applying weights."""
+        reader = csv.DictReader(io.StringIO(csv_data.strip()))
+        headers = reader.fieldnames or []
+        non_subject_cols = {'id', 'student_id', 'name', 'student_name'}
+        
+        self.subjects = [col for col in headers if col.lower() not in non_subject_cols]
+        self.students.clear()
+
+        # Fill default unit weight for any subject not explicitly given a weight
+        active_weights = {subj: self.weights.get(subj, 1.0) for subj in self.subjects}
+
+        for row_num, row in enumerate(reader, start=2):
+            student_id = row.get('id') or row.get('student_id') or f"ROW-{row_num}"
+            name = row.get('name') or row.get('student_name') or f"Unknown-{student_id}"
+
+            valid_scores = {}
+            for subj in self.subjects:
+                score_val = self._validate_score(row.get(subj), student_id, subj)
+                if score_val is not None:
+                    valid_scores[subj] = score_val
+
+            # Only add student if they have at least one valid subject score
+            if valid_scores:
+                self.students.append(Student(student_id, name, valid_scores, active_weights))
+            else:
+                self.validation_errors.append(
+                    f"Record Skipped: Student '{student_id}' ({name}) has no valid subject scores."
+                )
+
+    def get_class_average(self) -> float:
+        if not self.students:
+            return 0.0
+        return sum(s.average for s in self.students) / len(self.students)
+
+    def get_subject_analytics(self) -> Dict[str, Dict[str, Any]]:
+        analytics = {}
+        for subj in self.subjects:
+            scores = [s.scores[subj] for s in self.students if subj in s.scores]
+            subject_stat = SubjectAnalytics(subj, scores)
+            analytics[subj] = subject_stat.summary()
+        return analytics
+
+    def get_top_performers(self, count: int = 3) -> List[Student]:
+        return sorted(self.students, key=lambda s: s.average, reverse=True)[:count]
+
+    def get_grade_distribution(self) -> Dict[str, int]:
+        distribution = {'A': 0, 'B': 0, 'C': 0, 'D': 0, 'F': 0}
+        for student in self.students:
+            distribution[student.grade] += 1
+        return distribution
+
+    def generate_report(self) -> str:
+        """Generates a text summary including validation audit and weighted performance metrics."""
+        lines = []
+        lines.append("=" * 65)
+        lines.append("        STUDENT PERFORMANCE & VALIDATION REPORT")
+        lines.append("=" * 65)
+
+        # Audit Log
+        if self.validation_errors:
+            lines.append("\n" + "-" * 40)
+            lines.append("VALIDATION & AUDIT LOG")
+            lines.append("-" * 40)
+            for err in self.validation_errors:
+                lines.append(f" [!] {err}")
+        else:
+            lines.append("\n Validation Status: All data passed check with zero errors.")
+
+        if not self.students:
+            lines.append("\nNo valid student records available to summarize.")
+            return "\n".join(lines)
+
+        # Overview
+        lines.append("\n" + "-" * 40)
+        lines.append("CLASS SUMMARY")
+        lines.append("-" * 40)
+        lines.append(f"Valid Records Processed : {len(self.students)}")
+        lines.append(f"Overall Weighted Average: {self.get_class_average():.2f}%")
+
+        # Grade Distribution
+        lines.append("\n" + "-" * 40)
+        lines.append("GRADE DISTRIBUTION (Weighted)")
+        lines.append("-" * 40)
+        dist = self.get_grade_distribution()
+        for grade, num in dist.items():
+            pct = (num / len(self.students)) * 100
+            bar = "█" * int(pct // 5)
+            lines.append(f" Grade {grade} : {num:2d} students ({pct:5.1f}%) | {bar}")
+
+        # Subject Stats
+        lines.append("\n" + "-" * 65)
+        lines.append("SUBJECT PERFORMANCE ANALYTICS")
+        lines.append("-" * 65)
+        lines.append(f"{'Subject':<12} {'Weight':<8} {'Count':<6} {'Mean':<7} {'Median':<7} {'StdDev':<7} {'Min':<5} {'Max':<5}")
+        lines.append("-" * 65)
+
+        subj_stats = self.get_subject_analytics()
+        for subj, stats in subj_stats.items():
+            weight = self.weights.get(subj, 1.0)
+            lines.append(
+                f"{stats['subject']:<12} "
+                f"{weight:<8.2f} "
+                f"{stats['count']:<6d} "
+                f"{stats['mean']:<7.1f} "
+                f"{stats['median']:<7.1f} "
+                f"{stats['std_dev']:<7.1f} "
+                f"{stats['min']:<5.1f} "
+                f"{stats['max']:<5.1f}"
+            )
+
+        # Top Performers
+        lines.append("\n" + "-" * 40)
+        lines.append("TOP PERFORMERS")
+        lines.append("-" * 40)
+        top_students = self.get_top_performers(3)
+        for rank, s in enumerate(top_students, 1):
+            lines.append(f" {rank}. {s.name:<18} (ID: {s.student_id}) - Weighted Avg: {s.average:.2f}% [{s.grade}]")
+
+        lines.append("=" * 65)
+        return "\n".join(lines)
+
+
+# =====================================================================
+# DEMONSTRATION WITH INVALID SCORES AND WEIGHT VALIDATION
+# =====================================================================
+if __name__ == "__main__":
+    # CSV containing missing values, negative scores, out-of-bound scores, and non-numeric values
+    csv_data_with_errors = """id,name,Math,Science,English,History
+101,Alice Smith,95,92,88,91
+102,Bob Jones,-15,85,72,69
+103,Charlie Brown,62,ABSENT,65,70
+104,Diana Prince,105,96,94,99
+105,Evan Wright,85,89,,88
+106,Fiona Gallagher,52,45,60,50
+107,George Clark,73,76,70,75
+"""
+
+    analyzer = StudentPerformanceAnalyzer(min_score=0.0, max_score=100.0)
+
+    # Set subject weights (with one invalid non-positive weight to test validation)
+    analyzer.set_weights({
+        "Math": 2.0,       # Double weight
+        "Science": 1.5,
+        "English": 1.0,
+        "History": -0.5     # Invalid weight (triggers validation warning)
+    })
+
+    analyzer.load_csv_data(csv_data_with_errors)
+    print(analyzer.generate_report())

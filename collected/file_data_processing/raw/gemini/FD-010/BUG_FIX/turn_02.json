@@ -1,0 +1,11 @@
+{
+  "task_id": "FD-010",
+  "model": "gemini",
+  "interaction": "BUG_FIX",
+  "turn": 2,
+  "saved_at": "2026-09-29T22:52:50.110884+00:00",
+  "response_sha256": "4bd08eec52c05f5c09fa63b281eb9391bdc8dfbcd571e976770cdd55a10fd40b",
+  "code_sha256": "223d9ad6b465fbef50c3590a0bf7f264cced048a6160e3fb6b144c447059f961",
+  "raw_file": ".collection/raw/gemini/FD-010/BUG_FIX/turn_02.txt",
+  "code_file": ".collection/code/gemini/FD-010/BUG_FIX/final.py"
+}

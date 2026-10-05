@@ -1,0 +1,105 @@
+import math
+from typing import Dict, List, Tuple, Union
+
+def analyze_prime_range(
+    L: int, 
+    R: int, 
+    include_summary: bool = False
+) -> Union[Tuple[List[int], int], Dict[str, Union[List[int], int, Dict[str, int]]]]:
+    """
+    Analyzes primes in range [L, R] using a Segmented Sieve.
+    
+    If include_summary is False:
+        Returns original tuple: (primes, max_gap)
+    If include_summary is True:
+        Returns a dict containing 'primes', 'max_gap', and 'operation_summary'.
+    """
+    if R < 2 or L > R:
+        result_primes, result_gap = [], 0
+        if not include_summary:
+            return result_primes, result_gap
+        return {
+            "primes": result_primes,
+            "max_gap": result_gap,
+            "operation_summary": {
+                "base_sieve_iterations": 0,
+                "base_primes_count": 0,
+                "segment_sieve_operations": 0,
+                "total_operations": 0,
+            }
+        }
+
+    # Tracking counters
+    base_sieve_ops = 0
+    segment_sieve_ops = 0
+
+    # Step 1: Base Primes Sieve up to sqrt(R)
+    limit = math.isqrt(R)
+    base_is_prime = [True] * (limit + 1)
+    if limit >= 0:
+        base_is_prime[0] = False
+    if limit >= 1:
+        base_is_prime[1] = False
+
+    for i in range(2, math.isqrt(limit) + 1):
+        if base_is_prime[i]:
+            for j in range(i * i, limit + 1, i):
+                base_is_prime[j] = False
+                base_sieve_ops += 1
+
+    base_primes = [i for i in range(2, limit + 1) if base_is_prime[i]]
+
+    # Step 2: Segmented Sieve for [L, R]
+    segment_size = R - L + 1
+    segment_is_prime = [True] * segment_size
+
+    # Mark numbers < 2 as non-prime
+    for num in range(L, min(R + 1, 2)):
+        segment_is_prime[num - L] = False
+
+    # Mark multiples of base primes in [L, R]
+    for p in base_primes:
+        start = max(p * p, ((L + p - 1) // p) * p)
+        for j in range(start, R + 1, p):
+            segment_is_prime[j - L] = False
+            segment_sieve_ops += 1
+
+    # Step 3: Collect Primes & Compute Gap
+    primes = [L + i for i in range(segment_size) if segment_is_prime[i]]
+
+    max_gap = 0
+    if len(primes) >= 2:
+        max_gap = max(primes[i] - primes[i - 1] for i in range(1, len(primes)))
+
+    # Step 4: Format Output
+    if not include_summary:
+        return primes, max_gap
+
+    return {
+        "primes": primes,
+        "max_gap": max_gap,
+        "operation_summary": {
+            "base_sieve_iterations": base_sieve_ops,
+            "base_primes_count": len(base_primes),
+            "segment_sieve_operations": segment_sieve_ops,
+            "total_operations": base_sieve_ops + segment_sieve_ops,
+        }
+    }
+
+
+# --- Demonstrations ---
+if __name__ == "__main__":
+    L_val, R_val = 1, 100
+
+    # 1. Original Behavior (Backward Compatible)
+    orig_primes, orig_gap = analyze_prime_range(L_val, R_val)
+    print("Original Output:")
+    print(f"Primes: {orig_primes[:5]}... (Total {len(orig_primes)})")
+    print(f"Max Gap: {orig_gap}\n")
+
+    # 2. Extended Feature Behavior
+    summary_res = analyze_prime_range(L_val, R_val, include_summary=True)
+    print("Extended Feature Output:")
+    print(f"Primes Count: {len(summary_res['primes'])}")
+    print(f"Max Gap: {summary_res['max_gap']}")
+    print(f"Operation Summary: {summary_res['operation_summary']}")

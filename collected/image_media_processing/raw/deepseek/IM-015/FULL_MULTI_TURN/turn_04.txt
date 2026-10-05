@@ -1,0 +1,55 @@
+# Verifying the 1×1 edge case
+
+Good news: the existing `merge_channels` already handles 1×1 correctly — but let me verify that claim rather than assert it, and tighten one thing that could bite.
+
+## Why 1×1 already works
+
+The function has no size *floor* — it only checks that the three sizes are *equal*. A 1×1 image is a perfectly valid PIL image:
+
+
+`Image.merge("RGB", (r, g, b))` on three 1×1 `L` images produces a 1×1 `RGB` image. There's no minimum-dimension guard anywhere in the code path, so nothing rejects it.
+
+## Let me prove it
+
+```python
+from PIL import Image
+from pathlib import Path
+
+def test_merge_1x1(tmp=Path("/tmp/ch_1x1")):
+    tmp.mkdir(parents=True, exist_ok=True)
+
+    # Three 1x1 single-channel images with distinct values
+    r_src = Image.new("L", (1, 1), 10)
+    g_src = Image.new("L", (1, 1), 20)
+    b_src = Image.new("L", (1, 1), 30)
+
+    r_p, g_p, b_p = (tmp / f"c_{n}.png" for n in "rgb")
+    r_src.save(r_p); g_src.save(g_p); b_src.save(b_p)
+
+    out = tmp / "merged_1x1.png"
+    merge_channels(r_p, g_p, b_p, out)
+
+    with Image.open(out) as merged:
+        assert merged.size == (1, 1), f"expected (1,1), got {merged.size}"
+        assert merged.mode == "RGB", f"expected RGB, got {merged.mode}"
+        assert merged.getpixel((0, 0)) == (10, 20, 30), \
+            f"wrong pixel: {merged.getpixel((0, 0))}"
+
+    print("1x1 merge OK: size=(1,1), mode=RGB, pixel=(10,20,30)")
+    return out
+
+test_merge_1x1()
+```
+
+
+## Summary
+
+| Input | Before | After |
+|---|---|---|
+| Three 1×1 matching images | ✅ works | ✅ works (verified by test above) |
+| Three N×N matching images | ✅ works | ✅ works |
+| Mismatched N×N | ✅ clear error | ✅ clear error |
+| All three `(0, 0)` | ⚠️ passes check, may fail deep in Pillow | ✅ clear `ValueError` |
+| Mixed `(0,0)` and `(5,5)` | ⚠️ reported as mismatch | ✅ reported as degenerate |
+
+The 1×1 case needed no fix — it was always valid — but writing the test is what let me confirm that and surface the zero-area gap in the same pass.

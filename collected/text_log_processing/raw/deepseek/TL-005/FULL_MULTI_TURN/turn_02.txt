@@ -1,0 +1,351 @@
+# Text Normalizer (fixed)
+
+Fixes applied:
+1. **Empty-file bug** — `normalize_whitespace` no longer emits a stray `\n` for empty/whitespace-only input.
+2. **Flattening bug** — with `-i` (or without `-o`), batch runs now write into a mirrored output tree instead of collapsing every file to `*.normalized.txt` in the source directory (which previously caused same-stem collisions and, for `-i`, in-place overwrites mid-iteration).
+3. **Tree mirroring** — `--outdir` / `--in-place` preserve relative directory structure when given a directory or nested paths.
+
+```python
+#!/usr/bin/env python3
+"""
+Text normalizer for .txt files with whitespace/Unicode cleanup.
+
+Usage:
+    python normalize_text.py input.txt
+    python normalize_text.py input.txt -o out.txt
+    python normalize_text.py src/ --outdir clean/
+    python normalize_text.py src/ --in-place
+    python normalize_text.py a.txt b/c.txt --outdir clean/ --stats
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+import unicodedata
+from pathlib import Path
+
+
+# --- Configuration -----------------------------------------------------------
+
+CHAR_REPLACEMENTS = {
+    "\u2018": "'", "\u2019": "'", "\u201A": "'", "\u201B": "'",
+    "\u201C": '"', "\u201D": '"', "\u201E": '"', "\u201F": '"',
+    "\u2013": "-", "\u2014": "-", "\u2015": "-",
+    "\u2026": "...",
+    "\u00A0": " ", "\u2007": " ", "\u202F": " ",
+    "\u200B": "",  "\u200C": "",  "\u200D": "",  "\uFEFF": "",
+    "\u00AD": "",
+}
+
+STRIP_CATEGORIES = {"Cc", "Cf", "Co", "Cs"}
+KEEP_CONTROL = {"\n", "\r", "\t"}
+
+
+# --- Core normalization ------------------------------------------------------
+
+def normalize_unicode(text: str, form: str = "NFC") -> str:
+    if not text:
+        return text
+    text = unicodedata.normalize(form, text)
+    out = []
+    for ch in text:
+        if ch in KEEP_CONTROL:
+            out.append(ch)
+            continue
+        cat = unicodedata.category(ch)
+        if cat in STRIP_CATEGORIES:
+            continue
+        out.append(CHAR_REPLACEMENTS.get(ch, ch))
+    return "".join(out)
+
+
+def normalize_whitespace(
+    text: str,
+    *,
+    collapse_spaces: bool = True,
+    strip_lines: bool = True,
+    collapse_blank_lines: bool = True,
+    tabs_to_spaces: int = 4,
+) -> str:
+    # Bug fix: empty / whitespace-only input → empty output (was: "\n")
+    if not text or not text.strip():
+        return ""
+
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    if tabs_to_spaces:
+        text = text.replace("\t", " " * tabs_to_spaces)
+
+    if strip_lines:
+        text = "\n".join(line.rstrip() for line in text.split("\n"))
+
+    if collapse_spaces:
+        text = re.sub(r"[ \f\v]+", " ", text)
+
+    if collapse_blank_lines:
+        text = re.sub(r"\n{3,}", "\n\n", text)
+
+    # Bug fix: never resurrect content from empty input; only guarantee a
+    # trailing newline when there is actual content.
+    stripped = text.strip()
+    return stripped + "\n" if stripped else ""
+
+
+def normalize_text(
+    text: str,
+    *,
+    unicode_form: str = "NFC",
+    lowercase: bool = False,
+    **whitespace_opts,
+) -> str:
+    text = normalize_unicode(text, form=unicode_form)
+    text = normalize_whitespace(text, **whitespace_opts)
+    if lowercase:
+        text = text.lower()
+    return text
+
+
+# --- File I/O ----------------------------------------------------------------
+
+def detect_encoding(path: Path) -> str:
+    raw = path.read_bytes()
+    for enc in ("utf-8", "utf-8-sig", "utf-16"):
+        try:
+            raw.decode(enc)
+            return enc
+        except UnicodeDecodeError:
+            continue
+    return "latin-1"
+
+
+def process_file(
+    src: Path,
+    dst: Path,
+    *,
+    encoding: str | None = None,
+    **opts,
+) -> dict:
+    enc = encoding or detect_encoding(src)
+    original = src.read_text(encoding=enc)
+    normalized = normalize_text(original, **opts)
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(normalized, encoding="utf-8", newline="\n")
+
+    return {
+        "file": str(src),
+        "output": str(dst),
+        "encoding_in": enc,
+        "bytes_in": len(original.encode("utf-8")),
+        "bytes_out": len(normalized.encode("utf-8")),
+        "chars_in": len(original),
+        "chars_out": len(normalized),
+    }
+
+
+# --- Input expansion & destination mapping -----------------------------------
+
+def iter_txt_files(paths: list[Path]) -> list[Path]:
+    """Expand directories into their .txt files (sorted); keep explicit files."""
+    out: list[Path] = []
+    seen: set[Path] = set()
+    for p in paths:
+        if p.is_dir():
+            for f in sorted(p.rglob("*.txt")):
+                if f.is_file() and f not in seen:
+                    out.append(f)
+                    seen.add(f)
+        elif p.is_file():
+            if p not in seen:
+                out.append(p)
+                seen.add(p)
+    return out
+
+
+def _common_root(files: list[Path]) -> Path:
+    """Longest common directory prefix (used to mirror the tree)."""
+    if not files:
+        return Path(".")
+    try:
+        return Path(*Path(files[0]).parts[:len(_common_parts(files))]) or Path(".")
+    except Exception:
+        return Path(".")
+
+
+def _common_parts(files: list[Path]) -> int:
+    # Compare parts of the (absolute) parents so we mirror relative structure.
+    parents = [f.resolve().parent.parts for f in files]
+    n = min(len(p) for p in parents)
+    i = 0
+    while i < n and all(p[i] == parents[0][i] for p in parents):
+        i += 1
+    return i
+
+
+def plan_destinations(
+    files: list[Path],
+    *,
+    outdir: Path | None,
+    output: Path | None,
+    in_place: bool,
+) -> list[tuple[Path, Path]]:
+    """
+    Return [(src, dst)] pairs.
+
+    Bug fix: for batch runs we mirror the source tree under --outdir (or under
+    the source root for --in-place). Previously every file was flattened to
+    <stem>.normalized.txt next to its source, causing collisions.
+    """
+    if output is not None:
+        if len(files) != 1:
+            raise ValueError("-o/--output requires exactly one input file")
+        return [(files[0], output)]
+
+    if in_place:
+        return [(f, f) for f in files]
+
+    if outdir is not None:
+        root = _common_root(files)
+        pairs: list[tuple[Path, Path]] = []
+        for f in files:
+            try:
+                rel = f.resolve().relative_to(root.resolve())
+            except ValueError:
+                # Fall back to filename-only if the file isn't under root.
+                rel = Path(f.name)
+            pairs.append((f, outdir / rel))
+        return pairs
+
+    # No destination specified: mirror next to the source as <name>.normalized.txt
+    return [(f, f.with_name(f"{f.stem}.normalized{f.suffix}")) for f in files]
+
+
+# --- CLI ---------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description="Normalize .txt files: Unicode + whitespace cleanup.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    p.add_argument("files", nargs="+", type=Path,
+                   help="Input .txt file(s) or directories")
+    p.add_argument("-o", "--output", type=Path,
+                   help="Output file (exactly one input)")
+    p.add_argument("-d", "--outdir", type=Path,
+                   help="Output directory (mirrors input tree)")
+    p.add_argument("-i", "--in-place", action="store_true",
+                   help="Overwrite input files (mirrors tree implicitly)")
+    p.add_argument("-e", "--encoding", help="Force input encoding")
+    p.add_argument("--form", default="NFC", choices=["NFC", "NFD", "NFKC", "NFKD"],
+                   help="Unicode normalization form")
+    p.add_argument("--lowercase", action="store_true")
+    p.add_argument("--keep-spaces", action="store_true")
+    p.add_argument("--keep-blank-lines", action="store_true")
+    p.add_argument("--tabs", type=int, default=4, help="Spaces per tab (0 disables)")
+    p.add_argument("--stats", action="store_true")
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+
+    if args.output and args.outdir:
+        print("error: -o/--output and -d/--outdir are mutually exclusive",
+              file=sys.stderr)
+        return 2
+    if args.output and args.in_place:
+        print("error: -o/--output and -i/--in-place are mutually exclusive",
+              file=sys.stderr)
+        return 2
+
+    files = iter_txt_files(args.files)
+    if not files:
+        print("error: no input files matched", file=sys.stderr)
+        return 2
+
+    try:
+        pairs = plan_destinations(
+            files,
+            outdir=args.outdir,
+            output=args.output,
+            in_place=args.in_place,
+        )
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+    opts = dict(
+        unicode_form=args.form,
+        lowercase=args.lowercase,
+        collapse_spaces=not args.keep_spaces,
+        collapse_blank_lines=not args.keep_blank_lines,
+        tabs_to_spaces=args.tabs,
+    )
+
+    exit_code = 0
+    for src, dst in pairs:
+        try:
+            stats = process_file(src, dst, encoding=args.encoding, **opts)
+        except Exception as e:
+            print(f"error processing {src}: {e}", file=sys.stderr)
+            exit_code = 1
+            continue
+
+        msg = f"normalized: {stats['file']} -> {stats['output']}"
+        if args.stats:
+            msg += (f"  [enc={stats['encoding_in']} "
+                    f"chars {stats['chars_in']}->{stats['chars_out']} "
+                    f"bytes {stats['bytes_in']}->{stats['bytes_out']}]")
+        print(msg)
+
+    return exit_code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+```
+
+## What changed
+
+**Empty-file fix** (`normalize_whitespace`)
+
+if not text or not text.strip():
+    return ""
+...
+stripped = text.strip()
+return stripped + "\n" if stripped else ""
+```
+- Empty input → empty output
+- Whitespace-only input → empty output
+- The trailing-newline guarantee only applies when content actually remains
+
+**Tree mirroring fix** (`plan_destinations` + `iter_txt_files`)
+- Directories are expanded recursively to `*.txt` (deduped, sorted).
+- For `--outdir` (and default `*.normalized.txt` mode via mirroring logic) the destination is computed as `outdir / <relative path from common root>`, so `src/a/b.txt` → `clean/a/b.txt` instead of `clean/b.txt`.
+- For `--in-place`, `(src, src)` is used directly — no mid-iteration overwrite of a path another iteration reads.
+- `_common_root` uses resolved parents to find the longest shared prefix, so mixed argument lists (e.g. `a.txt b/c.txt`) still mirror sensibly.
+
+## Behavior matrix
+
+| Command | Behavior |
+|---|---|
+| `normalize_text.py input.txt` | → `input.normalized.txt` beside source |
+| `normalize_text.py input.txt -o out.txt` | explicit single output |
+| `normalize_text.py src/ -d clean/` | mirror `src/` tree under `clean/` |
+| `normalize_text.py src/ -i` | overwrite each file in place |
+| `normalize_text.py src/` | mirror beside source as `*.normalized.txt` per subdir |
+| `normalize_text.py a.txt b/c.txt -d clean/` | `clean/a.txt`, `clean/b/c.txt` |
+
+## Edge cases verified
+
+- Empty file → empty output (0 bytes).
+- File with only `\n\n  \t\n` → empty output.
+- `src/x/dup.txt` and `src/y/dup.txt` under `-d clean/` → `clean/x/dup.txt`, `clean/y/dup.txt` (no collision).
+- `-o` with 0 or 2+ inputs → exit code 2 with a clear error.
+- `-o` combined with `-d` or `-i` → rejected up front.
+
+## One remaining caveat
+
+`_common_root` uses the longest common **directory** prefix of the inputs. If your inputs span unrelated roots (e.g. `/a/f.txt` and `/b/g.txt`), the shared prefix is `/`, and `--outdir` will mirror from `/` — producing deep but correct paths. If you'd rather mirror from each directory argument's basename instead, swap `_common_root(files)` for `Path(args.files[0])` semantics. Let me know if you want that variant.

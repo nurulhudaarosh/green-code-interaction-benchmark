@@ -1,0 +1,173 @@
+```python
+import argparse
+import re
+import unicodedata
+from pathlib import Path
+
+# Common typographic / smart quote and punctuation replacements
+PUNCTUATION_MAP = {
+    "\u2018": "'",  # Left single quotation mark
+    "\u2019": "'",  # Right single quotation mark
+    "\u201a": "'",  # Single low-9 quotation mark
+    "\u201b": "'",  # Single high-reversed-9 quotation mark
+    "\u201c": '"',  # Left double quotation mark
+    "\u201d": '"',Here is a Python script that normalizes text files by addressing Unicode inconsistencies, non-standard whitespace, zero-width characters, typographic punctuation, and blank line sprawl.
+
+### `normalize_text.py`
+
+```python
+import argparse
+import unicodedata
+import re
+from pathlib import Path
+
+
+def clean_unicode_and_whitespace(
+    text: str,
+    form: str = "NFKC",
+    standardize_quotes: bool = True,
+    preserve_paragraphs: bool = True,
+) -> str:
+    """
+    Cleans and standardizes raw text:
+    - Normalizes Unicode representations (NFKC handles ligatures, compat forms).
+    - Removes zero-width and invisible control characters.
+    - Standardizes smart quotes, apostrophes, and dashes to ASCII equivalents.
+    - Converts irregular Unicode whitespaces to standard spaces.
+    - Trims line ends and condenses excessive blank lines.
+    """
+    # 1. Unicode Normalization (NFKC standardizes characters like 'ﬁ' -> 'fi', '²' -> '2')
+    text = unicodedata.normalize(form, text)
+
+    # 2. Strip Byte Order Marks (BOM) and non-printing/zero-width characters
+    # Matches zero-width space, zero-width joiners, directional marks, etc.
+    zero_width_pattern = re.compile(
+        r"[\u200B-\u200D\uFEFF\u200E\u200F\u202A-\u202E]"
+    )
+    text = zero_width_pattern.sub("", text)
+
+    # 3. Standardize typographical quotes, primes, and dashes
+    if standardize_quotes:
+        quote_map = {
+            # Single quotes & apostrophes
+            "\u2018": "'", "\u2019": "'", "\u201A": "'", "\u201B": "'", "\u2032": "'", "`": "'",
+            # Double quotes
+            "\u201C": '"', "\u201D": '"', "\u201E": '"', "\u201F": '"', "\u2033": '"', "\u00AB": '"', "\u00BB": '"',
+            # Dashes (En-dash, Em-dash, horizontal bar)
+            "\u2013": "-", "\u2014": "--", "\u2015": "--",
+            # Ellipsis
+            "\u2026": "...",
+        }
+        for orig, replacement in quote_map.items():
+            text = text.replace(orig, replacement)
+
+    # 4. Standardize horizontal whitespace
+    # Replace non-breaking spaces, em/en spaces, and tabs with a single standard space
+    # Keep '\n' untouched for now
+    horizontal_space_pattern = re.compile(r"[^\S\r\n]+")
+    text = horizontal_space_pattern.sub(" ", text)
+
+    # 5. Line-by-line processing
+    # Standardize line breaks (\r\n -> \n, \r -> \n)
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    cleaned_lines = [line.strip() for line in lines]
+
+    # 6. Condense vertical whitespace
+    reconstructed = "\n".join(cleaned_lines)
+    if preserve_paragraphs:
+        # Collapse 3 or more consecutive newlines into 2 (one blank line between paragraphs)
+        reconstructed = re.sub(r"\n{3,}", "\n\n", reconstructed)
+    else:
+        # Collapse all multi-newlines into a single line break
+        reconstructed = re.sub(r"\n{2,}", "\n", reconstructed)
+
+    return reconstructed.strip() + "\n"
+
+
+def process_file(
+    file_path: Path,
+    output_path: Path = None,
+    in_place: bool = False,
+    encoding: str = "utf-8",
+) -> None:
+    """Reads, normalizes, and writes back the text file."""
+    try:
+        content = file_path.read_text(encoding=encoding, errors="replace")
+    except Exception as e:
+        print(f"Error reading {file_path}: {e}")
+        return
+
+    normalized = clean_unicode_and_whitespace(content)
+
+    target_dest = file_path if in_place else (output_path or file_path.with_name(f"{file_path.stem}_cleaned{file_path.suffix}"))
+    
+    try:
+        target_dest.write_text(normalized, encoding="utf-8")
+        print(f"Saved: {target_dest}")
+    except Exception as e:
+        print(f"Error writing {target_dest}: {e}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Normalize Unicode, quotes, and whitespace in .txt files."
+    )
+    parser.add_argument("path", type=str, help="Target file or directory of .txt files")
+    parser.add_argument(
+        "-i", "--in-place", action="store_true", help="Overwrite the original files directly"
+    )
+    parser.add_argument(
+        "-o", "--output", type=str, help="Specific output file path (only valid for single-file processing)"
+    )
+    parser.add_argument(
+        "--encoding", default="utf-8", help="Input file encoding (default: utf-8)"
+    )
+
+    args = parser.parse_args()
+    target_path = Path(args.path)
+
+    if target_path.is_file():
+        out_p = Path(args.output) if args.output else None
+        process_file(target_path, output_path=out_p, in_place=args.in_place, encoding=args.encoding)
+    elif target_path.is_dir():
+        if args.output:
+            print("Error: --output cannot be used when processing an entire directory.")
+            return
+        txt_files = list(target_path.glob("*.txt"))
+        if not txt_files:
+            print(f"No .txt files found in {target_path}")
+            return
+        for file in txt_files:
+            process_file(file, in_place=args.in_place, encoding=args.encoding)
+    else:
+        print(f"Path does not exist: {target_path}")
+
+
+if __name__ == "__main__":
+    main()
+
+```
+
+---
+
+### How It Works
+
+* **Unicode Form (`NFKC`):** Normalizes decomposed characters (like base letters + accent marks) and converts compatibility characters (ligatures, full-width numbers) into their canonical forms.
+* **Invisible Character Purge:** Strips byte-order marks (`\uFEFF`) and zero-width spaces/joiners (`\u200B`–`\u200D`) that often corrupt text extracted from PDFs or web scrapers.
+* **Typographic Standardization:** Converts directional single/double quotes, prime marks, and em/en dashes into standard ASCII equivalents (`'`, `"`, `--`).
+* **Whitespace Flattening:** Converts non-breaking spaces (`\u00A0`), mathematical spaces, and tabs into simple single spaces (` `).
+* **Paragraph Preservation:** Strips trailing/leading space per line and collapses three or more consecutive line breaks into two, preserving paragraph flow without excessive blank vertical space.
+
+### CLI Usage
+
+```bash
+# Clean a single file (creates example_cleaned.txt)
+python normalize_text.py input.txt
+
+# Overwrite in-place
+python normalize_text.py input.txt --in-place
+
+# Process all .txt files in a directory in-place
+python normalize_text.py ./data/corpus/ -i
+
+```

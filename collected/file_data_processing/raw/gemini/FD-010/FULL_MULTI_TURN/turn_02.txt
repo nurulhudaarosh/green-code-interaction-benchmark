@@ -1,0 +1,137 @@
+```python
+import json
+from typing import Any, Dict, List, Tuple
+
+
+def process_inventory(data: Any) -> Tuple[List[Dict[str, Any]], int]:
+    """
+    Processes nested product JSON data while gracefully handling and skipping malformed entries:
+    1. Validates top-level payload structure.
+    2. Skips and counts malformed product dictionaries.
+    3. Validates required product fields ('id', 'name', 'warehouses').
+    4. Validates nested warehouse entries ('location', 'stock').
+    5. Retains zero stock (`stock == 0`), while ignoring negative stock or malformed entries.
+    6. Flattens valid warehouse entries and sorts the output by product ID, then warehouse location.
+
+    :param data: Input list of product dictionaries or a parsed JSON structure.
+    :return: Tuple containing (flattened_records_list, total_invalid_or_malformed_product_count)
+    """
+    flattened_inventory: List[Dict[str, Any]] = []
+    invalid_product_count = 0
+
+    if not isinstance(data, list):
+        # If the root data structure itself is malformed, treat as unprocessable
+        return [], 1
+
+    for product in data:
+        try:
+            # 1. Validate top-level product dict format
+            if not isinstance(product, dict):
+                invalid_product_count += 1
+                continue
+
+            product_id = product.get("id")
+            product_name = product.get("name")
+            warehouses = product.get("warehouses")
+
+            # Validate core product fields
+            if (
+                product_id is None
+                or not isinstance(product_name, str)
+                or not product_name.strip()
+                or not isinstance(warehouses, list)
+            ):
+                invalid_product_count += 1
+                continue
+
+            product_has_valid_warehouse = False
+
+            # 2. Iterate and validate nested warehouses
+            for wh in warehouses:
+                if not isinstance(wh, dict):
+                    continue
+
+                location = wh.get("location")
+                stock = wh.get("stock")
+
+                # Validate required warehouse fields; allow stock == 0, reject negative or non-numeric stock
+                if (
+                    not isinstance(location, str)
+                    or not location.strip()
+                    or stock is None
+                    or isinstance(stock, bool)  # bool is a subclass of int in Python
+                    or not isinstance(stock, (int, float))
+                    or stock < 0
+                ):
+                    continue
+
+                flattened_inventory.append(
+                    {
+                        "product_id": product_id,
+                        "product_name": product_name,
+                        "location": location,
+                        "stock": stock,
+                    }
+                )
+                product_has_valid_warehouse = True
+
+            # Count as invalid if a product contains no valid, non-negative warehouse records
+            if not product_has_valid_warehouse:
+                invalid_product_count += 1
+
+        except Exception:
+            # Catch unexpected malformed structures to prevent process termination
+            invalid_product_count += 1
+            continue
+
+    # 3. Sort flattened output by product_id, then location
+    flattened_inventory.sort(key=lambda x: (x["product_id"], x["location"]))
+
+    return flattened_inventory, invalid_product_count
+
+
+# ==========================================
+# Example Usage & Verification
+# ==========================================
+if __name__ == "__main__":
+    raw_json = """
+    [
+        {
+            "id": 202,
+            "name": "Monitor Arm",
+            "warehouses": [
+                {"location": "US-East", "stock": 10},
+                {"location": "US-West", "stock": 0}
+            ]
+        },
+        "this is a corrupted string entry, not a dict",
+        {
+            "id": 201,
+            "name": "USB-C Cable",
+            "warehouses": [
+                {"location": "EU-West", "stock": 100},
+                {"location": "US-East", "stock": 0},
+                {"location": "Corrupted-WH", "stock": -10}
+            ]
+        },
+        {
+            "id": 203,
+            "name": null,
+            "warehouses": [{"location": "US-East", "stock": 5}]
+        },
+        {
+            "id": 204,
+            "name": "Broken Warehouse Structure",
+            "warehouses": "invalid_warehouses_value"
+        }
+    ]
+    """
+
+    products_data = json.loads(raw_json)
+    flattened_records, invalid_count = process_inventory(products_data)
+
+    print(f"Skipped / Invalid Products Count: {invalid_count}\n")
+    print("Flattened & Sorted Inventory:")
+    print(json.dumps(flattened_records, indent=2))
+
+```

@@ -1,0 +1,202 @@
+import re
+import string
+from collections import Counter
+from typing import List, Tuple, Set, Optional
+
+
+# ----------------------------------------------------------------------
+# Built-in stopword list (common English stopwords)
+# ----------------------------------------------------------------------
+DEFAULT_STOPWORDS: Set[str] = {
+    "a", "about", "above", "after", "again", "against", "all", "am", "an",
+    "and", "any", "are", "aren't", "as", "at", "be", "because", "been",
+    "before", "being", "below", "between", "both", "but", "by", "can't",
+    "cannot", "could", "couldn't", "did", "didn't", "do", "does", "doesn't",
+    "doing", "don't", "down", "during", "each", "few", "for", "from",
+    "further", "had", "hadn't", "has", "hasn't", "have", "haven't",
+    "having", "he", "he'd", "he'll", "he's", "her", "here", "here's",
+    "hers", "herself", "him", "himself", "his", "how", "how's", "i",
+    "i'd", "i'll", "i'm", "i've", "if", "in", "into", "is", "isn't",
+    "it", "it's", "its", "itself", "let's", "me", "more", "most",
+    "mustn't", "my", "myself", "no", "nor", "not", "of", "off", "on",
+    "once", "only", "or", "other", "ought", "our", "ours", "ourselves",
+    "out", "over", "own", "same", "shan't", "she", "she'd", "she'll",
+    "she's", "should", "shouldn't", "so", "some", "such", "than",
+    "that", "that's", "the", "their", "theirs", "them", "themselves",
+    "then", "there", "there's", "these", "they", "they'd", "they'll",
+    "they're", "they've", "this", "those", "through", "to", "too",
+    "under", "until", "up", "very", "was", "wasn't", "we", "we'd",
+    "we'll", "we're", "we've", "were", "weren't", "what", "what's",
+    "when", "when's", "where", "where's", "which", "while", "who",
+    "who's", "whom", "why", "why's", "with", "won't", "would",
+    "wouldn't", "you", "you'd", "you'll", "you're", "you've", "your",
+    "yours", "yourself", "yourselves",
+}
+
+
+# ----------------------------------------------------------------------
+# Tokenization
+# ----------------------------------------------------------------------
+def tokenize(text: str) -> List[str]:
+    """
+    Convert text to lowercase, remove punctuation, and split into words.
+    Uses a regex that keeps only alphabetic characters and apostrophes
+    (apostrophes are kept so contractions can be filtered as stopwords).
+
+    Examples:
+        "Hello, world!" -> ["hello", "world"]
+        "Don't stop."   -> ["don't", "stop"]
+    """
+    text = text.lower()
+    # Replace any character that is not a-z, A-Z, or apostrophe with a space
+    text = re.sub(r"[^a-z']", " ", text)
+    return text.split()
+
+
+# ----------------------------------------------------------------------
+# Frequency analysis
+# ----------------------------------------------------------------------
+def word_frequency(
+    text: str,
+    stopwords: Optional[Set[str]] = None,
+    top_k: int = 10,
+    filter_stopwords: bool = True,
+    min_word_length: int = 1,
+) -> List[Tuple[str, int]]:
+    """
+    Compute the top-k most frequent unigrams after stopword filtering.
+
+    Args:
+        text:              Input text to analyze.
+        stopwords:         Set of words to exclude. If None, uses DEFAULT_STOPWORDS.
+        top_k:             Number of top results to return.
+        filter_stopwords:  If False, stopword filtering is skipped entirely.
+        min_word_length:   Minimum character length for a word to be counted.
+
+    Returns:
+        A list of (word, count) tuples sorted by descending frequency.
+        Ties are broken alphabetically for deterministic output.
+    """
+    if stopwords is None:
+        stopwords = DEFAULT_STOPWORDS
+
+    tokens = tokenize(text)
+
+    filtered = []
+    for token in tokens:
+        # Remove trailing/leading apostrophes (e.g. "'hello'" -> "hello")
+        token = token.strip("'")
+        if not token:
+            continue
+        if len(token) < min_word_length:
+            continue
+        if filter_stopwords and token in stopwords:
+            continue
+        filtered.append(token)
+
+    counter = Counter(filtered)
+
+    # Sort by count descending, then word ascending for stable ties
+    sorted_items = sorted(counter.items(), key=lambda x: (-x[1], x[0]))
+
+    return sorted_items[:top_k]
+
+
+# ----------------------------------------------------------------------
+# Pretty printing
+# ----------------------------------------------------------------------
+def print_results(results: List[Tuple[str, int]], total_unique: int = 0) -> None:
+    """Print a nicely formatted table of results."""
+    if not results:
+        print("  (no words found after filtering)")
+        return
+
+    max_word_len = max(len(word) for word, _ in results)
+    max_count_len = max(len(str(count)) for _, count in results)
+    word_width = max(max_word_len, 6)
+    count_width = max(max_count_len, 5)
+
+    print(f"  {'Rank':<5} {'Word':<{word_width}} {'Count':>{count_width}}")
+    print(f"  {'-'*5} {'-'*word_width} {'-'*count_width}")
+    for rank, (word, count) in enumerate(results, start=1):
+        print(f"  {rank:<5} {word:<{word_width}} {count:>{count_width}}")
+
+    if total_unique:
+        print(f"\n  (unique words after filtering: {total_unique})")
+
+
+# ----------------------------------------------------------------------
+# Demo
+# ----------------------------------------------------------------------
+if __name__ == "__main__":
+    sample_text = """
+    The quick brown fox jumps over the lazy dog. The dog barks, and the fox runs away.
+    A quick brown dog outpaces a quick fox! Don't you think the fox is quick?
+    The lazy dog sleeps while the quick brown fox watches. It's a classic tale.
+    Data science is fun. Data analysis with Python is powerful and fun.
+    """
+
+    print("=" * 65)
+    print("WORD FREQUENCY ANALYZER — stopword filtering + top-k unigrams")
+    print("=" * 65)
+
+    # --- Example 1: with stopword filtering ---
+    print("\n📌 Example 1: Top 8 words (stopwords filtered)")
+    print("-" * 65)
+    results = word_frequency(
+        sample_text,
+        stopwords=DEFAULT_STOPWORDS,
+        top_k=8,
+        filter_stopwords=True,
+    )
+    print_results(results)
+
+    # --- Example 2: without stopword filtering ---
+    print("\n📌 Example 2: Top 8 words (NO stopword filtering)")
+    print("-" * 65)
+    results_no_filter = word_frequency(
+        sample_text,
+        top_k=8,
+        filter_stopwords=False,
+    )
+    print_results(results_no_filter)
+
+    # --- Example 3: custom stopwords ---
+    print("\n📌 Example 3: Top 5 words (custom stopwords: fox, dog, quick)")
+    print("-" * 65)
+    custom_stops = {"fox", "dog", "quick"}
+    results_custom = word_frequency(
+        sample_text,
+        stopwords=custom_stops,
+        top_k=5,
+        filter_stopwords=True,
+    )
+    print_results(results_custom)
+
+    # --- Example 4: interactive mode ---
+    print("\n" + "=" * 65)
+    print("INTERACTIVE MODE")
+    print("=" * 65)
+    try:
+        user_text = input("\nEnter some text (or press Enter to skip): ").strip()
+        if user_text:
+            try:
+                k = int(input("How many top words? (default 10): ") or "10")
+            except ValueError:
+                k = 10
+            use_stop = input("Filter stopwords? (y/n, default y): ").strip().lower()
+            use_stop = use_stop != "n"
+
+            result = word_frequency(
+                user_text,
+                stopwords=DEFAULT_STOPWORDS,
+                top_k=k,
+                filter_stopwords=use_stop,
+            )
+            print("\nResults:")
+            print_results(result)
+    except (EOFError, KeyboardInterrupt):
+        print("\n(Interactive mode skipped.)")
+
+    print("\n" + "=" * 65)
+    print("Done.")

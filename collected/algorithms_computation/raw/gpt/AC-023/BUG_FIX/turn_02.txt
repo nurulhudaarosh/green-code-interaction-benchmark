@@ -1,0 +1,253 @@
+The defect is that deterministic ordering must be enforced **without changing the meaning of the threshold query**. A small example with equal-weight edges/queries can expose inconsistent processing if ordering is not explicit.
+
+```python
+# Threshold Connectivity Tracker
+#
+# Problem:
+# Given an undirected weighted graph and several weight thresholds q,
+# consider only edges whose weight <= q. For every q, return:
+#   (number_of_connected_components, largest_component_size)
+#
+# Expected behavior:
+# - Vertices with no active edges count as individual components.
+# - An edge is active exactly when edge_weight <= threshold.
+# - Answers must be returned in the same order as the input queries.
+# - Equal thresholds must produce identical results.
+# - Equal-weight edges must be processed deterministically.
+# - Return exactly the required result with deterministic tie handling.
+# - Use the required algorithm: sort edges and queries by threshold,
+#   then incrementally union edges.
+# - Use only the Python standard library.
+#
+# ------------------------------------------------------------
+# Bug demonstration
+# ------------------------------------------------------------
+#
+# A faulty implementation might sort only by threshold and use an
+# unstable/implicit processing order for equal values, or process only
+# one edge per threshold. The latter is a concrete correctness defect:
+#
+# n = 3
+# edges = [
+#     (0, 1, 5),
+#     (1, 2, 5),
+# ]
+# queries = [5]
+#
+# Both edges satisfy weight <= 5, so the correct graph is:
+#     0 -- 1 -- 2
+#
+# Correct result:
+#     [(1, 3)]
+#
+# A buggy implementation that fails to consume ALL edges with weight
+# <= the current threshold could incorrectly return:
+#     [(2, 2)]
+#
+# The fix is to advance through every edge satisfying:
+#     edge_weight <= query_threshold
+# before recording the query result.
+#
+# ------------------------------------------------------------
+# Correct implementation
+# ------------------------------------------------------------
+
+from typing import List, Tuple
+
+
+def threshold_connectivity_tracker(
+    n: int,
+    edges: List[Tuple[int, int, int]],
+    queries: List[int],
+) -> List[Tuple[int, int]]:
+    """
+    For each threshold q, return:
+        (number_of_connected_components, largest_component_size)
+
+    An edge (u, v, w) is active iff w <= q.
+
+    The output order matches the input query order.
+    """
+
+    if n < 0:
+        raise ValueError("n must be non-negative")
+
+    for u, v, _ in edges:
+        if not (0 <= u < n and 0 <= v < n):
+            raise ValueError("edge vertex out of range")
+
+    # DSU initialization.
+    parent = list(range(n))
+    component_size = [1] * n
+
+    component_count = n
+    largest_component = 1 if n > 0 else 0
+
+    def find(x: int) -> int:
+        """Find representative with path compression."""
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(u: int, v: int) -> None:
+        """Merge two components if they are different."""
+        nonlocal component_count, largest_component
+
+        ru = find(u)
+        rv = find(v)
+
+        if ru == rv:
+            return
+
+        # Deterministic union-by-size.
+        # On equal sizes, the smaller representative becomes the root.
+        if component_size[ru] < component_size[rv]:
+            ru, rv = rv, ru
+        elif component_size[ru] == component_size[rv] and ru > rv:
+            ru, rv = rv, ru
+
+        parent[rv] = ru
+        component_size[ru] += component_size[rv]
+
+        component_count -= 1
+        largest_component = max(
+            largest_component,
+            component_size[ru],
+        )
+
+    # Sort edges by threshold first.
+    # u and v are deterministic tie-breakers for equal weights.
+    sorted_edges = sorted(
+        edges,
+        key=lambda edge: (edge[2], edge[0], edge[1]),
+    )
+
+    # Sort queries by threshold and then original index.
+    # The original index guarantees deterministic handling of
+    # repeated thresholds while allowing results to be restored.
+    sorted_queries = sorted(
+        enumerate(queries),
+        key=lambda item: (item[1], item[0]),
+    )
+
+    answers: List[Tuple[int, int]] = [None] * len(queries)
+
+    edge_index = 0
+
+    for query_index, threshold in sorted_queries:
+        # IMPORTANT:
+        # Consume EVERY edge whose weight is <= this threshold.
+        while (
+            edge_index < len(sorted_edges)
+            and sorted_edges[edge_index][2] <= threshold
+        ):
+            u, v, _ = sorted_edges[edge_index]
+            union(u, v)
+            edge_index += 1
+
+        answers[query_index] = (
+            component_count,
+            largest_component,
+        )
+
+    return answers
+
+
+# ------------------------------------------------------------
+# Tests
+# ------------------------------------------------------------
+
+def run_tests() -> None:
+    # 1. Defect example: all edges at the same threshold must be used.
+    n = 3
+    edges = [
+        (0, 1, 5),
+        (1, 2, 5),
+    ]
+    queries = [5]
+
+    assert threshold_connectivity_tracker(n, edges, queries) == [
+        (1, 3)
+    ]
+
+    # 2. Queries must be returned in their original order.
+    n = 5
+    edges = [
+        (0, 1, 2),
+        (1, 2, 4),
+        (3, 4, 6),
+        (2, 3, 8),
+    ]
+    queries = [8, 0, 6, 2, 4]
+
+    assert threshold_connectivity_tracker(n, edges, queries) == [
+        (1, 5),  # q = 8
+        (5, 1),  # q = 0
+        (2, 3),  # q = 6
+        (4, 2),  # q = 2
+        (3, 3),  # q = 4
+    ]
+
+    # 3. Repeated queries must have identical results.
+    n = 4
+    edges = [
+        (0, 1, 3),
+        (2, 3, 3),
+    ]
+    queries = [3, 3, 3]
+
+    assert threshold_connectivity_tracker(n, edges, queries) == [
+        (2, 2),
+        (2, 2),
+        (2, 2),
+    ]
+
+    # 4. Edges with weight above q must not be included.
+    n = 3
+    edges = [
+        (0, 1, 2),
+        (1, 2, 10),
+    ]
+
+    assert threshold_connectivity_tracker(3, edges, [2]) == [
+        (2, 2)
+    ]
+
+    # 5. Repeated edges and self-loops must not change connectivity
+    # incorrectly.
+    n = 3
+    edges = [
+        (0, 1, 1),
+        (0, 1, 1),
+        (1, 1, 1),
+    ]
+
+    assert threshold_connectivity_tracker(3, edges, [1]) == [
+        (2, 2)
+    ]
+
+    # 6. Empty graph.
+    assert threshold_connectivity_tracker(4, [], [0, 10]) == [
+        (4, 1),
+        (4, 1),
+    ]
+
+    # 7. Zero-vertex graph.
+    assert threshold_connectivity_tracker(0, [], [0]) == [
+        (0, 0)
+    ]
+
+    # 8. Empty query list.
+    assert threshold_connectivity_tracker(
+        3,
+        [(0, 1, 1)],
+        [],
+    ) == []
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()
+```

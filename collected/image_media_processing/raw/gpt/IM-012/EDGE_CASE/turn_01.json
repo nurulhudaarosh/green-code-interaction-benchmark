@@ -1,0 +1,11 @@
+{
+  "task_id": "IM-012",
+  "model": "gpt",
+  "interaction": "EDGE_CASE",
+  "turn": 1,
+  "saved_at": "2026-10-04T20:44:09.365980+00:00",
+  "response_sha256": "8d514050f74cd69f7444620a790fe5422bac3ed91ab0098678369419ff916e2e",
+  "code_sha256": "89facdbfa26849bf711503f54ca0ba59ec9007b17b3065df7a3a6ed09788c1b2",
+  "raw_file": ".collection/raw/gpt/IM-012/EDGE_CASE/turn_01.txt",
+  "code_file": ".collection/code/gpt/IM-012/EDGE_CASE/initial.py"
+}

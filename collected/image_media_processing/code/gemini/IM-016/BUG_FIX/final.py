@@ -1,0 +1,84 @@
+import os
+import glob
+import numpy as np
+from PIL import Image
+
+def sobel_edges(input_dir: str, output_dir: str) -> None:
+    """
+    Computes Sobel edge detection using explicit horizontal (Gx) and vertical (Gy)
+    gradient convolutions and saves the clipped gradient magnitude as grayscale PNGs.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Gx detects horizontal changes across columns (x-derivative)
+    Gx = np.array([
+        [-1,  0,  1],
+        [-2,  0,  2],
+        [-1,  0,  1]
+    ], dtype=np.float64)
+    
+    # Gy detects vertical changes across rows (y-derivative)
+    Gy = np.array([
+        [-1, -2, -1],
+        [ 0,  0,  0],
+        [ 1,  2,  1]
+    ], dtype=np.float64)
+    
+    # Supported image formats
+    extensions = ('*.png', '*.jpg', '*.jpeg', '*.bmp', '*.tiff', '*.webp')
+    image_paths = []
+    for ext in extensions:
+        image_paths.extend(glob.glob(os.path.join(input_dir, ext)))
+        image_paths.extend(glob.glob(os.path.join(input_dir, ext.upper())))
+
+    for img_path in sorted(set(image_paths)):
+        with Image.open(img_path) as img:
+            gray = np.array(img.convert('L'), dtype=np.float64)
+        
+        # Zero-pad image borders by 1 pixel for valid 3x3 convolution
+        padded = np.pad(gray, pad_width=1, mode='edge')
+        
+        # Extract 3x3 sliding windows
+        shape = (gray.shape[0], gray.shape[1], 3, 3)
+        strides = (padded.strides[0], padded.strides[1], padded.strides[0], padded.strides[1])
+        windows = np.lib.stride_tricks.as_strided(padded, shape=shape, strides=strides)
+        
+        # Explicit convolution
+        grad_x = np.sum(windows * Gx, axis=(2, 3))  # Horizontal derivative
+        grad_y = np.sum(windows * Gy, axis=(2, 3))  # Vertical derivative
+        
+        # Compute gradient magnitude
+        magnitude = np.hypot(grad_x, grad_y)
+        
+        # Clip to [0, 255] range and cast to uint8
+        magnitude_clipped = np.clip(magnitude, 0, 255).astype(np.uint8)
+        
+        # Save output image as grayscale PNG
+        base_name = os.path.splitext(os.path.basename(img_path))[0]
+        out_path = os.path.join(output_dir, f"{base_name}_edges.png")
+        
+        Image.fromarray(magnitude_clipped).save(out_path)
+
+def verify_vertical_edge_response():
+    """Synthetic test confirming a vertical line produces non-zero Gx and zero Gy."""
+    # Create 8x8 synthetic image with a sharp vertical edge down the middle
+    synthetic_img = np.zeros((8, 8), dtype=np.float64)
+    synthetic_img[:, 4:] = 255.0
+    
+    padded = np.pad(synthetic_img, pad_width=1, mode='edge')
+    shape = (8, 8, 3, 3)
+    strides = (padded.strides[0], padded.strides[1], padded.strides[0], padded.strides[1])
+    windows = np.lib.stride_tricks.as_strided(padded, shape=shape, strides=strides)
+    
+    Gx = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=np.float64)
+    Gy = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=np.float64)
+    
+    grad_x = np.sum(windows * Gx, axis=(2, 3))
+    grad_y = np.sum(windows * Gy, axis=(2, 3))
+    
+    assert np.max(np.abs(grad_x)) > 0, "Gx should respond strongly to vertical edge"
+    assert np.allclose(grad_y, 0), "Gy should be strictly 0 for purely vertical edge"
+    print("Verification passed: Vertical edge produces strong Gx and zero Gy.")
+
+if __name__ == "__main__":
+    verify_vertical_edge_response()

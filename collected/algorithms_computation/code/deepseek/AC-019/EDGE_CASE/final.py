@@ -1,0 +1,219 @@
+import sys
+
+# 32-bit signed int max, used for the "largest value" boundary test.
+INT32_MAX = 2**31 - 1
+
+
+def find_min_cost_path(cost_matrix):
+    """
+    Minimum-cost path from top-left to bottom-right, moving only right or down.
+
+    Tie-breaking rule (deterministic): when the cost from above equals the cost
+    from the left, prefer the path coming FROM ABOVE.
+
+    Returns:
+        (minimum_cost: int, path: list[tuple[int, int]])
+        For empty input, returns (0, []).
+    """
+    # --- Boundary: empty matrix or empty first row -------------------------
+    if not cost_matrix or not cost_matrix[0]:
+        return 0, []
+
+    rows = len(cost_matrix)
+    cols = len(cost_matrix[0])
+
+    # --- Boundary: 1x1 grid ------------------------------------------------
+    if rows == 1 and cols == 1:
+        return cost_matrix[0][0], [(0, 0)]
+
+    # DP table and predecessor table
+    dp = [[0] * cols for _ in range(rows)]
+    predecessor = [[None] * cols for _ in range(rows)]
+
+    # --- Base cell ---------------------------------------------------------
+    dp[0][0] = cost_matrix[0][0]
+
+    # --- Boundary: first row (only right moves) ----------------------------
+    for j in range(1, cols):
+        dp[0][j] = dp[0][j - 1] + cost_matrix[0][j]
+        predecessor[0][j] = (0, j - 1)
+
+    # --- Boundary: first column (only down moves) --------------------------
+    for i in range(1, rows):
+        dp[i][0] = dp[i - 1][0] + cost_matrix[i][0]
+        predecessor[i][0] = (i - 1, 0)
+
+    # --- Interior cells ----------------------------------------------------
+    for i in range(1, rows):
+        row_i = cost_matrix[i]
+        dp_im1 = dp[i - 1]
+        dp_i = dp[i]
+        pred_i = predecessor[i]
+        pred_im1 = predecessor[i - 1]
+        for j in range(1, cols):
+            from_above = dp_im1[j]
+            from_left = dp_i[j - 1]
+            # Deterministic tie-break: '<=' prefers ABOVE on ties.
+            if from_above <= from_left:
+                dp_i[j] = from_above + row_i[j]
+                pred_i[j] = (i - 1, j)
+            else:
+                dp_i[j] = from_left + row_i[j]
+                pred_i[j] = (i, j - 1)
+
+    # --- Reconstruct path --------------------------------------------------
+    path = []
+    cur = (rows - 1, cols - 1)
+    while cur is not None:
+        path.append(cur)
+        r, c = cur
+        cur = predecessor[r][c]
+    path.reverse()
+
+    return dp[rows - 1][cols - 1], path
+
+
+def print_matrix_and_path(cost_matrix, min_cost, path):
+    """Helper: print matrix, min cost, path, and path-value check."""
+    print("Cost Matrix:")
+    if not cost_matrix:
+        print("  <empty>")
+    else:
+        for row in cost_matrix:
+            print("  ", row)
+    print(f"\nMinimum Cost: {min_cost}")
+    if path:
+        print(f"Path: {' -> '.join(f'({r},{c})' for r, c in path)}")
+        path_values = [cost_matrix[r][c] for r, c in path]
+        print(f"Path values: {' + '.join(map(str, path_values))} = {sum(path_values)}")
+    else:
+        print("Path: <none>")
+
+
+def _assert(name, got, expected):
+    status = "PASS" if got == expected else "FAIL"
+    print(f"[{status}] {name}")
+    if got != expected:
+        print(f"       got:      {got}")
+        print(f"       expected: {expected}")
+    return got == expected
+
+
+def run_boundary_tests():
+    all_ok = True
+
+    # (1) Empty matrix ------------------------------------------------------
+    all_ok &= _assert("empty matrix", find_min_cost_path([]), (0, []))
+
+    # (2) Empty first row ---------------------------------------------------
+    all_ok &= _assert("empty first row", find_min_cost_path([[]]), (0, []))
+
+    # (3) 1x1 matrix --------------------------------------------------------
+    all_ok &= _assert("1x1 matrix", find_min_cost_path([[7]]), (7, [(0, 0)]))
+
+    # (4) 1xN single row (only right moves) ---------------------------------
+    m = [[1, 2, 3, 4]]
+    all_ok &= _assert(
+        "1xN single row",
+        find_min_cost_path(m),
+        (10, [(0, 0), (0, 1), (0, 2), (0, 3)]),
+    )
+
+    # (5) Nx1 single column (only down moves) -------------------------------
+    m = [[1], [2], [3], [4]]
+    all_ok &= _assert(
+        "Nx1 single column",
+        find_min_cost_path(m),
+        (10, [(0, 0), (1, 0), (2, 0), (3, 0)]),
+    )
+
+    # (6) Largest value cells (INT32_MAX) — no overflow, correct sum --------
+    m = [[INT32_MAX, INT32_MAX], [INT32_MAX, INT32_MAX]]
+    expected_cost = INT32_MAX * 3  # 3 cells on the optimal (all-equal) path
+    expected_path = [(0, 0), (0, 1), (1, 1)]  # tie-break: prefer above at (1,1)
+    all_ok &= _assert(
+        "INT32_MAX cells (no overflow, deterministic tie)",
+        find_min_cost_path(m),
+        (expected_cost, expected_path),
+    )
+
+    # (7) Maximum-size grid (1000x1000 of cost 1) ---------------------------
+    n = 1000
+    m = [[1] * n for _ in range(n)]
+    cost, path = find_min_cost_path(m)
+    all_ok &= _assert(
+        "1000x1000 all-ones grid (cost & length)",
+        (cost, len(path)),
+        (2 * n - 1, 2 * n - 1),
+    )
+    cost2, path2 = find_min_cost_path(m)
+    all_ok &= _assert(
+        "1000x1000 determinism (identical path)",
+        (cost, path) == (cost2, path2),
+        True,
+    )
+    expected_tie_path = [(0, j) for j in range(n)] + [(i, n - 1) for i in range(1, n)]
+    all_ok &= _assert(
+        "1000x1000 tie-break path (right along top, then down)",
+        path,
+        expected_tie_path,
+    )
+
+    # (8) All-zero grid (every path optimal; tie-break must decide) ---------
+    m = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+    expected_path = [(0, 0), (0, 1), (0, 2), (1, 2), (2, 2)]
+    all_ok &= _assert(
+        "all-zero grid (deterministic tie-break)",
+        find_min_cost_path(m),
+        (0, expected_path),
+    )
+
+    # (9) Uniform non-zero grid --------------------------------------------
+    m = [[5, 5, 5], [5, 5, 5], [5, 5, 5]]
+    expected_path = [(0, 0), (0, 1), (0, 2), (1, 2), (2, 2)]
+    all_ok &= _assert(
+        "uniform 5s grid (deterministic tie-break)",
+        find_min_cost_path(m),
+        (25, expected_path),
+    )
+
+    # (10) Zero corners with expensive interior -----------------------------
+    m = [
+        [0, 9, 9, 0],
+        [9, 9, 9, 9],
+        [0, 9, 9, 0],
+    ]
+    cost, path = find_min_cost_path(m)
+    all_ok &= _assert(
+        "zero corners / expensive interior (cost)",
+        cost,
+        27,
+    )
+    legal = path[0] == (0, 0) and path[-1] == (2, 3)
+    for (r1, c1), (r2, c2) in zip(path, path[1:]):
+        if not ((r2 == r1 and c2 == c1 + 1) or (c2 == c1 and r2 == r1 + 1)):
+            legal = False
+            break
+    all_ok &= _assert("zero corners / expensive interior (legal path)", legal, True)
+
+    return all_ok
+
+
+if __name__ == "__main__":
+    print("=" * 60)
+    print("Boundary-value tests for Minimum-Cost Grid Path")
+    print("=" * 60)
+    ok = run_boundary_tests()
+    print("=" * 60)
+    print("ALL TESTS PASSED" if ok else "SOME TESTS FAILED")
+    print("=" * 60)
+
+    # Demonstrate the preserved original output format on a sample.
+    print("\nSample output (original format):")
+    matrix = [
+        [1, 3, 1],
+        [1, 5, 1],
+        [4, 2, 1],
+    ]
+    cost, path = find_min_cost_path(matrix)
+    print_matrix_and_path(matrix, cost, path)

@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""
+Per-sensor hourly time-series gap filler.
+
+- Sorts readings per sensor by timestamp.
+- Fills missing *interior* hourly timestamps (never extrapolates before the
+  first or after the last reading of a sensor) via linear interpolation.
+- Marks inserted rows with `interpolated=True` (original rows: False).
+- Deterministic output: stable ordering, fixed float formatting, fixed
+  column order, LF line endings, no dependence on input row order.
+
+Input CSV columns : sensor_id, timestamp, value
+Output CSV columns: sensor_id, timestamp, value, interpolated
+
+Usage:
+    python fill_gaps.py input.csv output.csv
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import math
+import sys
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+from typing import Dict, Iterable, List, Tuple
+
+HOUR = timedelta(hours=1)
+FIELDNAMES = ["sensor_id", "timestamp", "value", "interpolated"]
+
+Reading = Tuple[datetime, float]
+
+
+def parse_timestamp(text: str) -> datetime:
+    """Parse ISO-8601 into a tz-aware UTC datetime (naive input is assumed UTC)."""
+    text = text.strip()
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    dt = datetime.fromisoformat(text)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def format_timestamp(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def format_value(value: float) -> str:
+    # repr() gives the shortest round-trippable form -> deterministic.
+    # Normalize negative zero.
+    if value == 0:
+        value = 0.0
+    return repr(float(value))
+
+
+def dedupe_and_sort(readings: Iterable[Reading]) -> List[Reading]:
+    """
+    Sort by timestamp. Duplicate timestamps are collapsed to the mean of
+    their values, which is independent of input order.
+    """
+    buckets: Dict[datetime, List[float]] = defaultdict(list)
+    for ts, val in readings:
+        buckets[ts].append(val)
+    out: List[Reading] = []
+    for ts in sorted(buckets):
+        vals = sorted(buckets[ts])  # sorted so the sum is order-independent
+        out.append((ts, math.fsum(vals) / len(vals)))
+    return out
+
+
+def interpolate_sensor(readings: List[Reading]) -> List[Tuple[datetime, float, bool]]:
+    """
+    Return [(timestamp, value, interpolated)] with interior hourly gaps filled.
+    Only timestamps on the hourly grid anchored at each reading's own offset
+    are inserted; if consecutive readings are not a whole number of hours
+    apart, the gap is filled from the earlier reading in 1h steps up to (but
+    excluding) the next reading.
+    """
+    result: List[Tuple[datetime, float, bool]] = []
+    for i, (ts, val) in enumerate(readings):
+        result.append((ts, val, False))
+        if i + 1 == len(readings):
+            break
+        next_ts, next_val = readings[i + 1]
+        span = (next_ts - ts).total_seconds()
+        if span <= HOUR.total_seconds():
+            continue
+        k = 1
+        while True:
+            cur = ts + k * HOUR
+            if cur >= next_ts:
+                break
+            frac = (cur - ts).total_seconds() / span
+            result.append((cur, val + (next_val - val) * frac, True))
+            k += 1
+    return result
+
+
+def read_input(path: str) -> Dict[str, List[Reading]]:
+    data: Dict[str, List[Reading]] = defaultdict(list)
+    with open(path, newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        missing = {"sensor_id", "timestamp", "value"} - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError(f"Input missing required columns: {sorted(missing)}")
+        for lineno, row in enumerate(reader, start=2):
+            raw = (row["value"] or "").strip()
+            if raw == "":
+                continue  # blank reading -> treated as missing
+            try:
+                value = float(raw)
+                ts = parse_timestamp(row["timestamp"])
+            except ValueError as exc:
+                raise ValueError(f"Line {lineno}: {exc}") from exc
+            if not math.isfinite(value):
+                continue  # NaN/inf treated as missing
+            data[row["sensor_id"].strip()].append((ts, value))
+    return data
+
+
+def process(data: Dict[str, List[Reading]]) -> List[dict]:
+    rows: List[dict] = []
+    for sensor_id in sorted(data):
+        cleaned = dedupe_and_sort(data[sensor_id])
+        for ts, val, inserted in interpolate_sensor(cleaned):
+            rows.append(
+                {
+                    "sensor_id": sensor_id,
+                    "timestamp": format_timestamp(ts),
+                    "value": format_value(val),
+                    "interpolated": "true" if inserted else "false",
+                }
+            )
+    return rows
+
+
+def write_output(path: str, rows: List[dict]) -> None:
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=FIELDNAMES, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def main(argv: List[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
+    parser.add_argument("input", help="input CSV path")
+    parser.add_argument("output", help="output CSV path")
+    args = parser.parse_args(argv)
+
+    try:
+        data = read_input(args.input)
+        rows = process(data)
+        write_output(args.output, rows)
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

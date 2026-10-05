@@ -1,0 +1,72 @@
+from pathlib import Path
+
+from PIL import Image, ImageOps
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
+
+
+def letterbox_resize(input_dir, output_dir, target_size, pad_color=(0, 0, 0),
+                     align="center"):
+    """Resize every image in input_dir to exactly target_size, preserving
+    aspect ratio and padding the rest with pad_color.
+
+    Args:
+        input_dir:   directory containing images (non-recursive).
+        output_dir:  directory to write results to (created if missing).
+        target_size: (width, height) tuple, or a single int for a square.
+        pad_color:   color of the padding, e.g. (0, 0, 0).
+        align:       where the content sits on the canvas: "center" (default)
+                     or "top-left".
+
+    Returns:
+        List of output file paths.
+    """
+    if isinstance(target_size, int):
+        target_size = (target_size, target_size)
+    tw, th = target_size
+    if align not in ("center", "top-left"):
+        raise ValueError('align must be "center" or "top-left"')
+    if tw <= 0 or th <= 0:
+        raise ValueError("target_size must be positive")
+
+    in_dir, out_dir = Path(input_dir), Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    written = []
+    for path in sorted(in_dir.iterdir()):
+        if path.suffix.lower() not in IMAGE_EXTS:
+            continue
+
+        with Image.open(path) as im:
+            im = ImageOps.exif_transpose(im)  # respect camera orientation
+            has_alpha = im.mode in ("RGBA", "LA") or "transparency" in im.info
+            mode = "RGBA" if has_alpha else "RGB"
+            im = im.convert(mode)
+
+            w, h = im.size
+            scale = min(tw / w, th / h)
+            nw = min(tw, max(1, round(w * scale)))
+            nh = min(th, max(1, round(h * scale)))
+            resized = im.resize((nw, nh), Image.LANCZOS)
+
+            color = tuple(pad_color)
+            if mode == "RGBA" and len(color) == 3:
+                color += (255,)
+            elif mode == "RGB":
+                color = color[:3]
+
+            canvas = Image.new(mode, (tw, th), color)
+            if align == "center":
+                offset = ((tw - nw) // 2, (th - nh) // 2)
+            else:  # "top-left"
+                offset = (0, 0)
+            canvas.paste(resized, offset)
+
+            out_path = out_dir / path.name
+            # JPEG can't store alpha
+            if mode == "RGBA" and path.suffix.lower() in (".jpg", ".jpeg"):
+                out_path = out_path.with_suffix(".png")
+            canvas.save(out_path)
+            written.append(out_path)
+
+    return written

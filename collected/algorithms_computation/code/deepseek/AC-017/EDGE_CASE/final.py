@@ -1,0 +1,168 @@
+import math
+from typing import Optional, Tuple, List
+
+
+# ---------------------------------------------------------------------------
+# Prime Range Analyzer
+#
+# Given an interval [L, R], find all primes in the interval and return the
+# largest gap between consecutive primes. If fewer than 2 primes exist, return
+# None. On ties, the first occurrence (smallest starting prime) wins.
+#
+# Constraints:
+#   - Interval width (R - L) is bounded -> segmented sieving is practical.
+#   - R may be large (e.g., up to 10^12), but (R - L) is small.
+#   - Deterministic; standard library only; no network/APIs/randomness.
+#
+# Handled difficult valid cases:
+#   1. Smallest permitted input:  L=2,  R=2         -> None (only 1 prime)
+#   2. Smallest interval w/ gap:  L=2,  R=3         -> (1, 2, 3)
+#   3. L < 2 (clamped to 2):      L=-10, R=10       -> (2, 3, 5)
+#   4. Empty interval:            L>R               -> None
+#   5. No primes in range:        L=8, R=10         -> None
+#   6. Single prime in range:     L=7, R=7          -> None
+#   7. Disconnected/sparse:       large R, small win-> correct via segmented
+#   8. Tie-breaking:              equal max gaps    -> first occurrence wins
+#   9. Negative L only:           L=-50, R=1        -> None
+#  10. Large R boundary:          R=10^12, small win-> no overflow
+# ---------------------------------------------------------------------------
+
+
+def simple_sieve(limit: int) -> List[int]:
+    """Return list of primes up to limit using Sieve of Eratosthenes."""
+    if limit < 2:
+        return []
+    is_prime = bytearray([1]) * (limit + 1)
+    is_prime[0] = is_prime[1] = 0
+    for i in range(2, int(limit ** 0.5) + 1):
+        if is_prime[i]:
+            start = i * i
+            is_prime[start : limit + 1 : i] = bytearray(
+                len(range(start, limit + 1, i))
+            )
+    return [i for i in range(2, limit + 1) if is_prime[i]]
+
+
+def segmented_sieve_primes(L: int, R: int) -> List[int]:
+    """Return list of primes in [L, R] using segmented sieve.
+
+    Handles:
+      - L > R  -> []
+      - R < 2  -> []
+      - L < 2  -> clamped up to 2
+    """
+    if L > R or R < 2:
+        return []
+    L = max(L, 2)  # no primes below 2
+
+    limit = math.isqrt(R) + 1
+    base_primes = simple_sieve(limit)
+
+    size = R - L + 1
+    is_prime = bytearray([1]) * size
+
+    for p in base_primes:
+        # First multiple of p >= L (skip p itself when p is in range)
+        start = max(p * p, ((L + p - 1) // p) * p)
+        for multiple in range(start, R + 1, p):
+            is_prime[multiple - L] = 0
+
+    return [L + i for i in range(size) if is_prime[i]]
+
+
+def largest_prime_gap(L: int, R: int) -> Optional[Tuple[int, int, int]]:
+    """Return (gap, prime1, prime2) for the largest gap in [L, R].
+
+    Rules:
+      - If L > R or R < 2, return None.
+      - If fewer than 2 primes, return None.
+      - On ties, return the first occurrence (smallest starting prime).
+    """
+    if L > R or R < 2:
+        return None
+
+    primes = segmented_sieve_primes(L, R)
+    if len(primes) < 2:
+        return None
+
+    max_gap = -1
+    best_pair: Optional[Tuple[int, int]] = None
+    for i in range(1, len(primes)):
+        gap = primes[i] - primes[i - 1]
+        if gap > max_gap:  # strict > preserves first occurrence on ties
+            max_gap = gap
+            best_pair = (primes[i - 1], primes[i])
+
+    assert best_pair is not None
+    return (max_gap, best_pair[0], best_pair[1])
+
+
+# ---------------------------------------------------------------------------
+# Test Suite
+# ---------------------------------------------------------------------------
+
+def run_tests() -> None:
+    # Case 1: smallest permitted input, single prime
+    assert largest_prime_gap(2, 2) is None
+
+    # Case 2: smallest interval with a gap
+    assert largest_prime_gap(2, 3) == (1, 2, 3)
+
+    # Case 3: L < 2 clamped
+    # primes in [2,10] = [2,3,5,7]; gaps: 1,2,2 -> first max gap = 2 (3->5)
+    assert largest_prime_gap(-10, 10) == (2, 3, 5)
+
+    # Case 4: empty interval (L > R)
+    assert largest_prime_gap(10, 5) is None
+
+    # Case 5: no primes in range
+    assert largest_prime_gap(8, 10) is None
+
+    # Case 6: single prime in range
+    assert largest_prime_gap(7, 7) is None
+
+    # Case 7: disconnected / sparse structure (large R, small window)
+    res = largest_prime_gap(1_000_000, 1_000_100)
+    assert res is not None
+    gap, p1, p2 = res
+    assert p2 - p1 == gap
+    assert 1_000_000 <= p1 < p2 <= 1_000_100
+
+    # Case 8: tie-breaking (first occurrence wins)
+    # primes in [2,20]: 2,3,5,7,11,13,17,19
+    # gaps: 1,2,2,4,2,4,2 -> max = 4, first at (7,11)
+    assert largest_prime_gap(2, 20) == (4, 7, 11)
+
+    # Case 9: negative L only, no primes
+    assert largest_prime_gap(-50, 1) is None
+
+    # Case 10: large R boundary (small window)
+    res = largest_prime_gap(10**12 - 100, 10**12)
+    if res is not None:
+        gap, p1, p2 = res
+        assert p2 - p1 == gap
+        assert 10**12 - 100 <= p1 < p2 <= 10**12
+
+    # Extra sanity checks
+    assert largest_prime_gap(10, 50) == (6, 23, 29)
+    assert largest_prime_gap(0, 2) == (1, 2, 3)   # clamp + smallest gap
+    assert largest_prime_gap(2, 2) is None
+
+    print("All tests passed.")
+
+
+# ---------------------------------------------------------------------------
+# Demo (preserves original output)
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    L, R = 10, 50
+    result = largest_prime_gap(L, R)
+    if result:
+        gap, p1, p2 = result
+        print(f"Primes in [{L}, {R}]: {segmented_sieve_primes(L, R)}")
+        print(f"Largest gap: {gap} between {p1} and {p2}")
+    else:
+        print(f"Fewer than 2 primes in [{L}, {R}]")
+
+    run_tests()

@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+import argparse
+import unicodedata
+import re
+from pathlib import Path
+
+
+def normalize_text(text: str) -> str:
+    """
+    Applies standard text normalization:
+    - Normalizes Unicode to NFKC form (resolves full-width/compatibility characters)
+    - Replaces smart quotes and em/en dashes with ASCII equivalents
+    - Replaces internal tabs and multiple whitespace with a single space
+    - Strips trailing/leading whitespace per line
+    - Collapses 3+ consecutive newlines down to 2
+    """
+    # 1. Unicode NFKC normalization
+    text = unicodedata.normalize("NFKC", text)
+
+    # 2. Standardize common curly quotes, apostrophes, and dashes
+    replacements = {
+        "“": '"', "”": '"', "„": '"',
+        "‘": "'", "’": "'", "‚": "'",
+        "—": "-", "–": "-",
+        "\r\n": "\n", "\r": "\n"
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    # 3. Clean line by line: collapse horizontal whitespace and strip ends
+    cleaned_lines = [
+        re.sub(r"[ \t]+", " ", line).strip()
+        for line in text.split("\n")
+    ]
+    text = "\n".join(cleaned_lines)
+
+    # 4. Collapse runs of more than two consecutive newlines into two
+    text = re.sub(r"\n{3,}", "\n\n", text)
+
+    return text.strip() + "\n"
+
+
+def process_directory(input_dir: Path, output_dir: Path, encoding: str = "utf-8"):
+    if not input_dir.is_dir():
+        raise NotADirectoryError(f"Source directory not found: {input_dir}")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    txt_files = list(input_dir.glob("*.txt"))
+
+    if not txt_files:
+        print(f"No .txt files found in '{input_dir}'.")
+        return
+
+    processed_count = 0
+    for file_path in txt_files:
+        dest_path = output_dir / file_path.name
+        try:
+            raw_text = file_path.read_text(encoding=encoding, errors="replace")
+            cleaned = normalize_text(raw_text)
+            dest_path.write_text(cleaned, encoding="utf-8")
+            processed_count += 1
+            print(f"[OK] {file_path.name} -> {dest_path.name}")
+        except Exception as e:
+            print(f"[ERROR] Failed to process {file_path.name}: {e}")
+
+    print(f"\nDone: {processed_count}/{len(txt_files)} files written to '{output_dir}'.")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Normalize and clean all .txt files from a source directory into an output directory."
+    )
+    parser.add_argument("src", type=Path, help="Input directory containing .txt files")
+    parser.add_argument("dest", type=Path, help="Output directory to save cleaned files")
+    parser.add_argument(
+        "--encoding",
+        default="utf-8",
+        help="Input file encoding (defaults to utf-8; invalid bytes replaced safely)",
+    )
+
+    args = parser.parse_args()
+    process_directory(args.src, args.dest, encoding=args.encoding)
+
+
+if __name__ == "__main__":
+    main()

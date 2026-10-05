@@ -1,0 +1,27 @@
+import re
+from collections import Counter
+
+_TOKEN_RE = re.compile(r"[^\W\d_]+(?:'[^\W\d_]+)*", re.UNICODE)
+
+
+def tokenize(text, lowercase=True):
+    if lowercase:
+        text = text.lower()
+    return _TOKEN_RE.findall(text)
+
+
+def unigram_analyzer(text, k=10, lowercase=True, stopwords=None):
+    """Returns (top_k, total_tokens). top_k is a list of (word, count)."""
+    tokens = tokenize(text, lowercase)
+    if stopwords:
+        tokens = [t for t in tokens if t not in stopwords]
+    counts = Counter(tokens)
+    top_k = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[: max(k, 0)]
+    return top_k, len(tokens)
+
+
+if __name__ == "__main__":
+    sample = "The cat sat on the mat. The dog didn't sit; the cat did."
+    top, total = unigram_analyzer(sample, k=3)
+    print(top)    # [('the', 4), ('cat', 2), ("didn't", 1)]
+    print(total)  # 13

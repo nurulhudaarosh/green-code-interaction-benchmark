@@ -1,0 +1,159 @@
+## Original Problem Restatement
+
+**Minimum-Cost Grid Path:** Given a non-negative `m × n` cost matrix, find the minimum total cost to travel from cell `(0, 0)` to cell `(m-1, n-1)` using only **right** and **down** moves.
+
+**Existing required outputs (must remain unchanged):**
+1. **Minimum cost** — an integer, the minimum total path cost.
+2. **Optimal path** — an ordered list of `(row, col)` coordinates from `(0, 0)` to `(m-1, n-1)`.
+
+**Existing requirements (must remain unchanged):**
+- Movement restricted to right `(i, j+1)` and down `(i+1, j)`.
+- Path must start at `(0, 0)` and end at `(m-1, n-1)`.
+- Costs are non-negative.
+- Use **dynamic programming with predecessor coordinates** and **deterministic tie handling**: on a tie (`dp[i-1][j] == dp[i][j-1]`), prefer the predecessor `(i-1, j)` (a **down** move into the current cell). This makes the returned path reproducible.
+- Standard library only; no network, APIs, external services, randomness, or human interaction.
+- Edge cases: single cell, single row, single column, rectangular validation, non-negative validation.
+
+## New Feature
+
+Add an **optional** `operation_summary` field to the result. When requested, it contains a deterministic, useful summary of the computation. For this task, the summary reports the **number of major computational decisions/operations** made by the algorithm.
+
+**Definition of "major computational decisions/operations"** (deterministic, reproducible):
+- Each cell in the DP table that is *filled by a comparison of two predecessors* counts as one decision. Only interior cells `(i, j)` with `i ≥ 1` and `j ≥ 1` qualify.
+- The base cell `(0, 0)`, the first row, and the first column are forced (single predecessor, no decision), so they contribute `0`.
+- Total decisions = `(m - 1) * (n - 1)`.
+
+We also record a small breakdown so the summary is genuinely useful:
+- `decisions`: number of tie/compare decisions among two predecessors (interior cells).
+- `tie_decisions`: number of those decisions where the two candidates were equal (exercising the deterministic tie rule).
+- `forced_cells`: cells filled with a single predecessor (first row + first column + base cell).
+
+**Backward compatibility:** When the feature is not requested (default), the function returns exactly the original two values — `(min_cost, path)` — with no behavior change.
+
+## Corrected Implementation With Optional Operation Summary
+
+```python
+from typing import List, Tuple, Optional, Dict, Any
+
+
+def min_cost_path(
+    cost: List[List[int]],
+    return_operation_summary: bool = False,
+) -> Tuple[int, List[Tuple[int, int]]] | Tuple[int, List[Tuple[int, int]], Dict[str, Any]]:
+    """
+    Minimum-cost path from top-left to bottom-right, moving only right or down.
+
+    Tie rule (deterministic): when dp[i-1][j] == dp[i][j-1], prefer the
+    predecessor (i-1, j), i.e. the move *into* (i, j) is a DOWN move.
+
+    Returns:
+        (min_cost, path)                                  by default
+        (min_cost, path, operation_summary)               if return_operation_summary=True
+
+    operation_summary keys:
+        decisions      : interior cells where two predecessors were compared
+        tie_decisions  : those comparisons that were ties
+        forced_cells   : cells filled from a single predecessor (base + row0 + col0)
+    """
+    if not cost or not cost[0]:
+        raise ValueError("Cost matrix must be non-empty")
+    m, n = len(cost), len(cost[0])
+    if any(len(row) != n for row in cost):
+        raise ValueError("Cost matrix must be rectangular")
+    if any(c < 0 for row in cost for c in row):
+        raise ValueError("Costs must be non-negative")
+
+    dp = [[0] * n for _ in range(m)]
+    pred: List[List[Optional[Tuple[int, int]]]] = [[None] * n for _ in range(m)]
+
+    decisions = 0
+    tie_decisions = 0
+    forced_cells = 0
+
+    # Base cell: forced, no decision.
+    dp[0][0] = cost[0][0]
+    forced_cells += 1
+
+    # First row: forced (only left predecessor).
+    for j in range(1, n):
+        dp[0][j] = dp[0][j - 1] + cost[0][j]
+        pred[0][j] = (0, j - 1)
+        forced_cells += 1
+
+    # First column: forced (only top predecessor).
+    for i in range(1, m):
+        dp[i][0] = dp[i - 1][0] + cost[i][0]
+        pred[i][0] = (i - 1, 0)
+        forced_cells += 1
+
+    # Interior cells: each is a major decision between two predecessors.
+    for i in range(1, m):
+        for j in range(1, n):
+            from_top = dp[i - 1][j]
+            from_left = dp[i][j - 1]
+            decisions += 1
+            if from_top <= from_left:          # tie -> prefer DOWN into (i, j)
+                if from_top == from_left:
+                    tie_decisions += 1
+                dp[i][j] = from_top + cost[i][j]
+                pred[i][j] = (i - 1, j)
+            else:
+                dp[i][j] = from_left + cost[i][j]
+                pred[i][j] = (i, j - 1)
+
+    # Reconstruct path.
+    path: List[Tuple[int, int]] = []
+    cur: Optional[Tuple[int, int]] = (m - 1, n - 1)
+    while cur is not None:
+        path.append(cur)
+        cur = pred[cur[0]][cur[1]]
+    path.reverse()
+
+    if not return_operation_summary:
+        return dp[m - 1][n - 1], path
+
+    operation_summary: Dict[str, Any] = {
+        "decisions": decisions,
+        "tie_decisions": tie_decisions,
+        "forced_cells": forced_cells,
+    }
+    return dp[m - 1][n - 1], path, operation_summary
+
+
+if __name__ == "__main__":
+    # Original behavior: exactly two values, unchanged.
+    g = [[0, 1], [1, 0]]
+    c, p = min_cost_path(g)
+    assert c == 1 and p == [(0, 0), (0, 1), (1, 1)], (c, p)
+    print("default (2-tuple):", c, p)
+
+    # Feature requested: 3-tuple with operation_summary.
+    c, p, s = min_cost_path(g, return_operation_summary=True)
+    assert c == 1 and p == [(0, 0), (0, 1), (1, 1)], (c, p)
+    assert s == {"decisions": 1, "tie_decisions": 1, "forced_cells": 3}, s
+    print("with summary:    ", c, p, s)
+
+    # Classic example.
+    g2 = [[1, 3, 1], [1, 5, 1], [4, 2, 1]]
+    c2, p2, s2 = min_cost_path(g2, return_operation_summary=True)
+    assert c2 == 7, c2
+    assert s2["decisions"] == (3 - 1) * (3 - 1) == 4, s2
+    print("example:         ", c2, p2, s2)
+
+    # Edge cases: original outputs preserved; summaries deterministic.
+    assert min_cost_path([[42]]) == (42, [(0, 0)])
+    assert min_cost_path([[42]], True)[2] == {
+        "decisions": 0, "tie_decisions": 0, "forced_cells": 1,
+    }
+    assert min_cost_path([[1, 2, 3]]) == (6, [(0, 0), (0, 1), (0, 2)])
+    assert min_cost_path([[1], [2], [3]]) == (6, [(0, 0), (1, 0), (2, 0)])
+    print("edge cases OK")
+```
+
+## Compatibility and Correctness Notes
+
+- **Original fields unchanged:** With `return_operation_summary=False` (the default), the function returns exactly `(min_cost, path)` as before — same values, same order, same types.
+- **Original requirements unchanged:** DP with predecessor coordinates, right/down moves only, deterministic tie rule (tie ⇒ predecessor `(i-1, j)`, a down move into the cell), non-negative validation, rectangular validation, and edge-case handling all remain identical.
+- **New feature is additive and opt-in:** Passing `return_operation_summary=True` adds a third element, a dict with `decisions`, `tie_decisions`, and `forced_cells`.
+- **Determinism of the summary:** `decisions = (m-1)(n-1)` is a closed-form function of the shape; `tie_decisions` and `forced_cells` are computed from the same deterministic DP pass, so identical inputs always yield identical summaries.
+- **No external dependencies:** Standard library only; no randomness, network, or interaction.

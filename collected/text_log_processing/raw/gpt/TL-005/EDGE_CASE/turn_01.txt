@@ -1,0 +1,86 @@
+```python
+from pathlib import Path
+import re
+import unicodedata
+
+
+def normalize_corpus(input_dir, output_dir, lowercase=False):
+    """
+    Normalize every .txt file recursively.
+
+    Normalization:
+      - Unicode NFC normalization
+      - Collapse all whitespace runs to a single space
+      - Strip leading/trailing whitespace
+      - Optional lowercasing
+
+    The directory tree is mirrored under output_dir.
+
+    Returns:
+        {
+            "files": [...],
+            "total": {
+                "files": int,
+                "input_chars": int,
+                "output_chars": int,
+                "changed": int,
+                "empty": int
+            }
+        }
+    """
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+
+    stats = {
+        "files": [],
+        "total": {
+            "files": 0,
+            "input_chars": 0,
+            "output_chars": 0,
+            "changed": 0,
+            "empty": 0,
+        },
+    }
+
+    for src in input_dir.rglob("*.txt"):
+        relative = src.relative_to(input_dir)
+        dst = output_dir / relative
+        dst.parent.mkdir(parents=True, exist_ok=True)
+
+        # Read safely, including empty files.
+        text = src.read_text(encoding="utf-8")
+
+        # Unicode normalization.
+        normalized = unicodedata.normalize("NFC", text)
+
+        # Collapse all whitespace, including newlines/tabs.
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+
+        # Optional lowercasing.
+        if lowercase:
+            normalized = normalized.lower()
+
+        dst.write_text(normalized, encoding="utf-8")
+
+        input_chars = len(text)
+        output_chars = len(normalized)
+        changed = text != normalized
+
+        file_stats = {
+            "file": str(relative),
+            "input_chars": input_chars,
+            "output_chars": output_chars,
+            "changed": changed,
+            "empty": not normalized,
+        }
+
+        stats["files"].append(file_stats)
+
+        stats["total"]["files"] += 1
+        stats["total"]["input_chars"] += input_chars
+        stats["total"]["output_chars"] += output_chars
+        stats["total"]["changed"] += int(changed)
+        stats["total"]["empty"] += int(not normalized)
+
+    return stats
+```

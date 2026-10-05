@@ -1,0 +1,369 @@
+# Multi-Stage Resource Allocation
+
+## Original problem restatement
+
+We are given a **multi-stage resource allocation** problem:
+
+- There are `S` stages, indexed `0 .. S-1`.
+- In each stage `i`, there is a list of `n_i` options. Each option `j` has:
+  - `cost[i][j]` — budget consumption (non-negative integer)
+  - `mem[i][j]` — memory consumption (non-negative integer)
+  - `score[i][j]` — score gained (integer, may be negative)
+- We must choose **exactly one option per stage**.
+- Total budget used must be `<= B`.
+- Total memory used must be `<= M`.
+- We maximize total score.
+- Ties are broken by choosing the **lexicographically smallest choice vector** of option indices `(j_0, j_1, ..., j_{S-1})`.
+
+Output:
+1. Maximum total score
+2. The chosen option index for each stage (space-separated)
+3. Total budget used and total memory used
+
+---
+
+## Explicit handling of valid difficult cases
+
+### Case 1: Smallest permitted input
+
+The smallest meaningful input is:
+
+- `S = 0` (no stages)
+- Then the only valid choice is the empty vector `[]`
+- Total score = `0`
+- Total budget used = `0`
+- Total memory used = `0`
+
+This must not crash and must produce a well-defined output.
+
+Also valid:
+
+- `S = 1`, with one option
+- `B = 0`, `M = 0`
+- Option with `cost = 0`, `mem = 0`
+
+### Case 2: Empty / disconnected structures where allowed
+
+Disconnected / degenerate structures can appear as:
+
+- **Empty option list for a stage**: `n_i = 0`
+  - If `S > 0` and any stage has no options, the instance is **infeasible**.
+  - We must detect this and report infeasibility deterministically.
+- **Options that individually exceed `B` or `M`** — effectively disconnected from the feasible region.
+- **All stages empty because `S = 0`** — this is the empty structure, which is feasible with score `0`.
+
+We handle infeasibility explicitly by outputting a sentinel line. The original problem assumes feasibility, but a robust solution must not silently produce garbage.
+
+Chosen infeasibility convention:
+
+```
+INFEASIBLE
+```
+
+followed by no choice vector and no usage line — or, to preserve output shape, we can output:
+
+```
+INFEASIBLE
+-1
+-1 -1
+```
+
+To keep the original output shape intact (3 lines), we use:
+
+- Line 1: `INFEASIBLE`
+- Line 2: `-1`
+- Line 3: `-1 -1`
+
+This preserves the 3-line output contract while clearly signaling infeasibility.
+
+### Case 3: Tie-breaking preserved
+
+Even in edge cases:
+
+- If `S = 0`, the choice vector is empty, and it is trivially the lexicographically smallest.
+- If multiple options yield the same score at a stage, the smallest index is chosen first, preserving lexicographic minimality.
+
+---
+
+## Updated algorithm
+
+Same suffix DP as before, with explicit guards:
+
+1. If `S == 0`: output `0`, empty line, `0 0`.
+2. If any stage has `n_i == 0`: output `INFEASIBLE`, `-1`, `-1 -1`.
+3. Otherwise run the suffix DP.
+4. If `suf[0][B][M]` is the `-inf` sentinel, output infeasibility.
+5. Otherwise reconstruct greedily forward for lexicographic minimality.
+
+---
+
+## Python implementation
+
+```python
+import sys
+
+NEG_INF = -10**18
+INFEASIBLE = "INFEASIBLE"
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+
+    S = int(next(it))
+    B = int(next(it))
+    M = int(next(it))
+
+    # Case: smallest permitted input (no stages)
+    if S == 0:
+        # Empty choice vector, zero score, zero usage
+        print(0)
+        print("")          # empty choice line
+        print(0, 0)
+        return
+
+    cost = []
+    mem = []
+    score = []
+
+    for _ in range(S):
+        n = int(next(it))
+        c_row = []
+        m_row = []
+        s_row = []
+        for _ in range(n):
+            c = int(next(it))
+            m = int(next(it))
+            sc = int(next(it))
+            c_row.append(c)
+            m_row.append(m)
+            s_row.append(sc)
+        cost.append(c_row)
+        mem.append(m_row)
+        score.append(s_row)
+
+    # Case: empty / disconnected structure -> any stage with no options is infeasible
+    for i in range(S):
+        if len(cost[i]) == 0:
+            print(INFEASIBLE)
+            print(-1)
+            print(-1, -1)
+            return
+
+    # Suffix DP: suf[i][b][m] = best score from stages i..S-1
+    suf = [None] * (S + 1)
+    suf[S] = [[0] * (M + 1) for _ in range(B + 1)]
+
+    for i in range(S - 1, -1, -1):
+        nxt = suf[i + 1]
+        cur = [[NEG_INF] * (M + 1) for _ in range(B + 1)]
+        opts = list(zip(cost[i], mem[i], score[i]))
+
+        for b in range(B + 1):
+            cur_b = cur[b]
+            for m in range(M + 1):
+                best = NEG_INF
+                for c, mm, sc in opts:
+                    if c <= b and mm <= m:
+                        val = sc + nxt[b - c][m - mm]
+                        if val > best:
+                            best = val
+                cur_b[m] = best
+        suf[i] = cur
+
+    best_score = suf[0][B][M]
+
+    # Case: no feasible assignment exists
+    if best_score == NEG_INF:
+        print(INFEASIBLE)
+        print(-1)
+        print(-1, -1)
+        return
+
+    # Deterministic lexicographically smallest reconstruction
+    rem_b = B
+    rem_m = M
+    choices = []
+
+    for i in range(S):
+        chosen = -1
+        for j, (c, mm, sc) in enumerate(zip(cost[i], mem[i], score[i])):
+            if c <= rem_b and mm <= rem_m:
+                if sc + suf[i + 1][rem_b - c][rem_m - mm] == suf[i][rem_b][rem_m]:
+                    chosen = j
+                    break
+        if chosen == -1:
+            # Should not happen if best_score is feasible, but guard anyway
+            print(INFEASIBLE)
+            print(-1)
+            print(-1, -1)
+            return
+        choices.append(chosen)
+        rem_b -= cost[i][chosen]
+        rem_m -= mem[i][chosen]
+
+    used_b = B - rem_b
+    used_m = M - rem_m
+
+    print(best_score)
+    print(" ".join(map(str, choices)))
+    print(used_b, used_m)
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## Tests for the difficult cases
+
+### Test 1: Smallest permitted input (`S = 0`)
+
+Input:
+```
+0 10 10
+```
+
+Expected output:
+```
+0
+
+0 0
+```
+
+(The second line is empty — the empty choice vector.)
+
+---
+
+### Test 2: Single stage, single option, zero resources
+
+Input:
+```
+1 0 0
+1
+0 0 7
+```
+
+Expected output:
+```
+7
+0
+0 0
+```
+
+---
+
+### Test 3: Infeasible because one stage has no options
+
+Input:
+```
+2 5 5
+1
+1 1 10
+0
+```
+
+Expected output:
+```
+INFEASIBLE
+-1
+-1 -1
+```
+
+---
+
+### Test 4: Infeasible because all options exceed limits
+
+Input:
+```
+1 1 1
+2
+2 0 100
+0 2 100
+```
+
+Expected output:
+```
+INFEASIBLE
+-1
+-1 -1
+```
+
+---
+
+### Test 5: Tie-breaking — lexicographically smallest vector
+
+Input:
+```
+2 3 3
+2
+1 1 5
+1 1 5
+2
+1 1 5
+1 1 5
+```
+
+Both options in each stage are identical in score and resources. The lexicographically smallest choice vector is `(0, 0)`.
+
+Expected output:
+```
+10
+0 0
+2 2
+```
+
+---
+
+### Test 6: Negative scores, still feasible
+
+Input:
+```
+1 2 2
+2
+1 1 -1
+2 2 -5
+```
+
+Best is the first option (score `-1` beats `-5`), lexicographically smallest among ties is `0`.
+
+Expected output:
+```
+-1
+0
+1 1
+```
+
+---
+
+### Test 7: Empty structure with `S = 0` and zero limits
+
+Input:
+```
+0 0 0
+```
+
+Expected output:
+```
+0
+
+0 0
+```
+
+---
+
+## Correctness notes for the difficult cases
+
+- **`S = 0`**: No stages means exactly one (empty) choice vector, score `0`, usage `0`. This is the smallest valid input and is handled before any DP.
+- **Empty option list in any stage**: There is no way to pick exactly one option, so the instance is infeasible. Detected before DP.
+- **Disconnected / unreachable options**: Options whose `cost > B` or `mem > M` are automatically skipped in DP. If all options are unreachable, `suf[0][B][M]` stays `NEG_INF` and infeasibility is reported.
+- **Tie-breaking**: Reconstruction still scans option indices in increasing order at each stage from stage `0` forward, so the lexicographically smallest optimal vector is always produced.
+- **Output contract**: Every branch produces exactly three lines, preserving the original output shape even in infeasible or empty cases.
+
+## Complexity
+
+- Time: `O(S * B * M * N)`, where `N` is max options per stage.
+- Space: `O(S * B * M)`.
+
+Both are unchanged from the original formulation; the edge-case handling adds only `O(S)` pre-checks.

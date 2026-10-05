@@ -1,0 +1,35 @@
+id="q8m4z2"
+import re
+
+
+def dedup_lines(in_path, out_path, mode="exact"):
+    if mode not in ("exact", "normalized"):
+        raise ValueError("mode must be 'exact' or 'normalized'")
+
+    seen = set()
+    total = 0
+    unique = 0
+
+    def normalize(line):
+        return re.sub(r"\s+", " ", line.strip().lower())
+
+    with open(in_path, "r", encoding="utf-8", newline="") as infile, \
+         open(out_path, "w", encoding="utf-8", newline="") as outfile:
+
+        for line in infile:
+            total += 1
+
+            key = line if mode == "exact" else normalize(line)
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+            outfile.write(line)
+            unique += 1
+
+    return {
+        "total": total,
+        "unique": unique,
+        "removed": total - unique
+    }

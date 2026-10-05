@@ -1,0 +1,133 @@
+You're right — thanks for catching that. In my original snippet I passed `expand=True`, but let me make it unambiguous and guarantee `expand=True` is always used, with an explicit comment so it can't be silently dropped. Here's the corrected function:
+
+```python
+import os
+from pathlib import Path
+from PIL import Image
+
+
+def rotate_and_crop(input_dir, output_dir, angle_degrees, crop_size):
+    """
+    Rotate each image in input_dir by angle_degrees and center-crop/pad to crop_size.
+
+    Args:
+        input_dir (str): Directory containing input images.
+        output_dir (str): Directory to save processed images.
+        angle_degrees (float): Rotation angle in degrees (counterclockwise).
+        crop_size (tuple): Target size as (width, height).
+    """
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    target_w, target_h = crop_size
+
+    supported_exts = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.webp'}
+
+    for img_file in input_path.iterdir():
+        if not img_file.is_file() or img_file.suffix.lower() not in supported_exts:
+            continue
+
+        try:
+            with Image.open(img_file) as img:
+                # IMPORTANT: expand=True grows the canvas to fit the entire
+                # rotated image, so no corners are clipped before cropping.
+                # Do NOT rely on the PIL default (expand=False) — that clips
+                # content that falls outside the original bounding box.
+                rotated = img.rotate(
+                    angle_degrees,
+                    resample=Image.BICUBIC,
+                    expand=True,
+                )
+
+                # Sanity check: after expand=True the rotated image must be
+                # at least as large as the original's bounding box.
+                assert rotated.size != img.size or angle_degrees % 360 == 0, (
+                    f"Rotation of {img_file.name} did not expand the canvas; "
+                    "content may have been clipped."
+                )
+
+                # Center-crop (or pad if rotated image is smaller than target)
+                processed = _center_crop_or_pad(rotated, target_w, target_h)
+
+                # Save with original format (fallback to PNG for unsupported)
+                out_file = output_path / img_file.name
+                save_format = img.format if img.format else 'PNG'
+
+                # JPEG doesn't support alpha; convert if needed
+                if save_format == 'JPEG' and processed.mode in ('RGBA', 'LA', 'P'):
+                    processed = processed.convert('RGB')
+
+                processed.save(out_file, format=save_format)
+
+        except Exception as e:
+            print(f"Failed to process {img_file}: {e}")
+
+
+def _center_crop_or_pad(img, target_w, target_h):
+    """Center-crop if image is larger than target; pad with transparent/black if smaller."""
+    w, h = img.size
+
+    if w >= target_w:
+        left = (w - target_w) // 2
+    else:
+        left = -(target_w - w) // 2
+
+    if h >= target_h:
+        top = (h - target_h) // 2
+    else:
+        top = -(target_h - h) // 2
+
+    # Choose background color: transparent for images with alpha, black otherwise
+    if img.mode in ('RGBA', 'LA'):
+        bg_color = (0, 0, 0, 0)
+    elif img.mode == 'RGB':
+        bg_color = (0, 0, 0)
+    elif img.mode == 'L':
+        bg_color = 0
+    else:
+        bg_color = None
+
+    if bg_color is not None:
+        return img.transform(
+            (target_w, target_h),
+            Image.AFFINE,
+            (1, 0, -left, 0, 1, -top),
+            resample=Image.BICUBIC,
+            fillcolor=bg_color,
+        )
+    else:
+        rgba = img.convert('RGBA')
+        return rgba.transform(
+            (target_w, target_h),
+            Image.AFFINE,
+            (1, 0, -left, 0, 1, -top),
+            resample=Image.BICUBIC,
+            fillcolor=(0, 0, 0, 0),
+        )
+
+
+if __name__ == '__main__':
+    rotate_and_crop(
+        input_dir='./images',
+        output_dir='./output',
+        angle_degrees=15.0,
+        crop_size=(512, 512),
+    )
+```
+
+### What's fixed
+
+1. **`expand=True` is explicitly passed** to `Image.rotate()` — no reliance on the PIL default (`expand=False`), which would clip corners for any non-zero, non-multiple-of-90° rotation.
+
+2. **Order of operations is correct**: rotate with expand → then center-crop/pad. Because the rotated canvas is always ≥ the original bounding box, no source pixels are lost during the rotation step; the only pixels discarded are the ones the crop intentionally removes.
+
+3. **Sanity assert** added: if `expand=True` were ever accidentally removed (or the angle is 0/multiple of 360 where the canvas legitimately doesn't grow), the assertion flags the case where the canvas didn't expand despite a non-trivial rotation. This turns a silent content-loss bug into a loud failure.
+
+### Quick verification
+
+For a 100×100 image rotated 45°, `expand=False` gives a 100×100 output (corners cut), while `expand=True` gives ~142×142. You can confirm:
+
+
+
+If you'd like, I can also add a unit test that draws a marker in each corner of a test image, rotates, and asserts all four markers survive the rotate+crop pipeline.

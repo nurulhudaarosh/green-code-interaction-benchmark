@@ -1,0 +1,136 @@
+def min_cost_path(cost_matrix):
+    """
+    Find minimum cost path from top-left to bottom-right moving only right or down.
+    Returns (min_cost, path) where path is list of (row, col) tuples.
+    """
+    if not cost_matrix or not cost_matrix[0]:
+        return 0, []
+    
+    m, n = len(cost_matrix), len(cost_matrix[0])
+    
+    # dp[i][j] = minimum cost to reach cell (i, j)
+    dp = [[0] * n for _ in range(m)]
+    
+    # predecessor[i][j] = (prev_i, prev_j) or None for start
+    predecessor = [[None] * n for _ in range(m)]
+    
+    # Initialize first cell
+    dp[0][0] = cost_matrix[0][0]
+    
+    # Initialize first row (can only come from left)
+    for j in range(1, n):
+        dp[0][j] = dp[0][j-1] + cost_matrix[0][j]
+        predecessor[0][j] = (0, j-1)
+    
+    # Initialize first column (can only come from above)
+    for i in range(1, m):
+        dp[i][0] = dp[i-1][0] + cost_matrix[i][0]
+        predecessor[i][0] = (i-1, 0)
+    
+    # Fill the rest of the DP table
+    for i in range(1, m):
+        for j in range(1, n):
+            from_top = dp[i-1][j]
+            from_left = dp[i][j-1]
+            
+            # Deterministic tie-breaking: prefer from_top when equal
+            # (This choice is arbitrary but must be consistent)
+            if from_top <= from_left:
+                dp[i][j] = from_top + cost_matrix[i][j]
+                predecessor[i][j] = (i-1, j)
+            else:
+                dp[i][j] = from_left + cost_matrix[i][j]
+                predecessor[i][j] = (i, j-1)
+    
+    # Reconstruct path from bottom-right to top-left
+    path = []
+    current = (m-1, n-1)
+    
+    while current is not None:
+        path.append(current)
+        current = predecessor[current[0]][current[1]]
+    
+    # Reverse to get path from start to end
+    path.reverse()
+    
+    return dp[m-1][n-1], path
+
+
+def print_matrix_and_path(cost_matrix, min_cost, path):
+    """Helper to visualize the matrix and path."""
+    print("Cost Matrix:")
+    for row in cost_matrix:
+        print("  ", row)
+    
+    print(f"\nMinimum Cost: {min_cost}")
+    print(f"Optimal Path: {path}")
+    
+    # Create a visual representation of the path
+    m, n = len(cost_matrix), len(cost_matrix[0])
+    path_set = set(path)
+    
+    print("\nPath visualization (X = path cell):")
+    for i in range(m):
+        row_str = "  "
+        for j in range(n):
+            if (i, j) in path_set:
+                row_str += f"[{cost_matrix[i][j]:2d}]"
+            else:
+                row_str += f" {cost_matrix[i][j]:2d} "
+        print(row_str)
+
+
+# Test cases
+if __name__ == "__main__":
+    # Test case 1: Simple 3x3 matrix
+    matrix1 = [
+        [1, 3, 1],
+        [1, 5, 1],
+        [4, 2, 1]
+    ]
+    
+    print("=" * 50)
+    print("TEST CASE 1")
+    print("=" * 50)
+    cost1, path1 = min_cost_path(matrix1)
+    print_matrix_and_path(matrix1, cost1, path1)
+    
+    # Test case 2: Matrix with ties
+    matrix2 = [
+        [1, 1, 1],
+        [1, 1, 1],
+        [1, 1, 1]
+    ]
+    
+    print("\n" + "=" * 50)
+    print("TEST CASE 2 (All ties - tests deterministic behavior)")
+    print("=" * 50)
+    cost2, path2 = min_cost_path(matrix2)
+    print_matrix_and_path(matrix2, cost2, path2)
+    
+    # Test case 3: Single cell
+    matrix3 = [[5]]
+    
+    print("\n" + "=" * 50)
+    print("TEST CASE 3 (Single cell)")
+    print("=" * 50)
+    cost3, path3 = min_cost_path(matrix3)
+    print_matrix_and_path(matrix3, cost3, path3)
+    
+    # Test case 4: 1xN matrix
+    matrix4 = [[1, 2, 3, 4]]
+    
+    print("\n" + "=" * 50)
+    print("TEST CASE 4 (1xN matrix)")
+    print("=" * 50)
+    cost4, path4 = min_cost_path(matrix4)
+    print_matrix_and_path(matrix4, cost4, path4)
+    
+    # Test case 5: Nx1 matrix
+    matrix5 = [[1], [2], [3], [4]]
+    
+    print("\n" + "=" * 50)
+    print("TEST CASE 5 (Nx1 matrix)")
+    print("=" * 50)
+    cost5, path5 = min_cost_path(matrix5)
+    print_matrix_and_path(matrix5, cost5, path5)

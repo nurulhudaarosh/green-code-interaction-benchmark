@@ -1,0 +1,72 @@
+```python
+from pathlib import Path
+from PIL import Image
+
+
+def analyze_brightness(input_dir, custom_thresholds=None):
+    """
+    Analyze brightness statistics for every valid image in input_dir.
+
+    Args:
+        input_dir: Directory containing images.
+        custom_thresholds: Optional tuple (dark_max, bright_min)
+            overriding the default classification boundaries (85, 170).
+
+    Returns:
+        List of dictionaries containing per-channel means, grayscale
+        brightness, and brightness classification.
+    """
+    dark_max, bright_min = (
+        custom_thresholds if custom_thresholds is not None else (85, 170)
+    )
+
+    if dark_max >= bright_min:
+        raise ValueError("dark_max must be less than bright_min")
+
+    input_dir = Path(input_dir)
+    results = []
+
+    valid_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
+
+    for path in sorted(input_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in valid_extensions:
+            continue
+
+        try:
+            with Image.open(path) as img:
+                rgb = img.convert("RGB")
+
+                # Per-channel means
+                r, g, b = rgb.split()
+                r_mean = sum(r.getdata()) / r.size
+                g_mean = sum(g.getdata()) / g.size
+                b_mean = sum(b.getdata()) / b.size
+
+                # True perceptual grayscale brightness
+                grayscale = rgb.convert("L")
+                brightness = sum(grayscale.getdata()) / grayscale.size
+
+                # Classification using custom or default thresholds
+                if brightness < dark_max:
+                    classification = "dark"
+                elif brightness >= bright_min:
+                    classification = "bright"
+                else:
+                    classification = "normal"
+
+                results.append({
+                    "filename": path.name,
+                    "r_mean": r_mean,
+                    "g_mean": g_mean,
+                    "b_mean": b_mean,
+                    "brightness": brightness,
+                    "classification": classification,
+                })
+
+        except (OSError, ValueError):
+            continue
+
+    return results
+```
+
+For example, `analyze_brightness("images", custom_thresholds=(70, 190))` classifies brightness `< 70` as **dark**, `70–<190` as **normal**, and `≥190` as **bright**.

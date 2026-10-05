@@ -1,0 +1,185 @@
+#!/usr/bin/env python3
+"""
+Flatten nested product JSON into sorted warehouse-level rows.
+
+Expected input (a list of products, or {"products": [...]}):
+
+[
+  {
+    "product_id": "P-100",
+    "name": "Widget",
+    "category": "Hardware",            # optional
+    "warehouses": [
+      {"warehouse_id": "W-2", "location": "Berlin", "stock": 0},
+      {"warehouse_id": "W-1", "location": "Austin", "stock": 25}
+    ]
+  }
+]
+
+Rules:
+  * A product is MALFORMED if it is not an object, has a missing/blank or
+    non-scalar `product_id`, a missing/blank `name`, or `warehouses` is not
+    a list. Malformed products are skipped and counted; processing continues.
+  * Processing of each product is isolated: any unexpected error while
+    handling one product marks only that product as malformed. No partial
+    rows from a failed product are kept.
+  * A warehouse entry is VALID if it is an object with a non-empty scalar
+    `warehouse_id` and an integer `stock` >= 0 (bool is rejected).
+    Zero stock is kept. Invalid entries are skipped and counted separately.
+  * Output rows are sorted by (product_id, warehouse_id).
+"""
+
+import argparse
+import csv
+import json
+import sys
+from typing import Any
+
+REQUIRED_PRODUCT_FIELDS = ("product_id", "name", "warehouses")
+REQUIRED_WAREHOUSE_FIELDS = ("warehouse_id", "stock")
+
+
+def _is_missing(value: Any) -> bool:
+    """None or blank string counts as missing; 0 and False do not."""
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _is_valid_id(value: Any) -> bool:
+    """IDs must be a non-blank string or a non-bool integer."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    return isinstance(value, str) and bool(value.strip())
+
+
+def is_valid_product(product: Any) -> bool:
+    if not isinstance(product, dict):
+        return False
+    if any(_is_missing(product.get(f)) for f in REQUIRED_PRODUCT_FIELDS):
+        return False
+    if not _is_valid_id(product["product_id"]):
+        return False
+    return isinstance(product["warehouses"], list)
+
+
+def is_valid_warehouse(entry: Any) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    if any(_is_missing(entry.get(f)) for f in REQUIRED_WAREHOUSE_FIELDS):
+        return False
+    if not _is_valid_id(entry["warehouse_id"]):
+        return False
+    stock = entry["stock"]
+    # bool is a subclass of int, so exclude it explicitly
+    return isinstance(stock, int) and not isinstance(stock, bool) and stock >= 0
+
+
+def load_products(path: str) -> list:
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    if isinstance(data, dict) and isinstance(data.get("products"), list):
+        return data["products"]
+    if isinstance(data, list):
+        return data
+    raise ValueError("Top-level JSON must be a list or an object with a 'products' list.")
+
+
+def flatten_product(product: Any) -> tuple[list[dict], int]:
+    """
+    Flatten one product. Returns (rows, invalid_warehouse_count).
+    Raises ValueError if the product is malformed.
+    """
+    if not is_valid_product(product):
+        raise ValueError("malformed product")
+
+    rows: list[dict] = []
+    bad_entries = 0
+    for entry in product["warehouses"]:
+        if not is_valid_warehouse(entry):
+            bad_entries += 1
+            continue
+        rows.append(
+            {
+                "product_id": product["product_id"],
+                "name": product["name"],
+                "category": product.get("category"),
+                "warehouse_id": entry["warehouse_id"],
+                "location": entry.get("location"),
+                "stock": entry["stock"],  # zero is preserved
+            }
+        )
+    return rows, bad_entries
+
+
+def flatten_products(products: list) -> tuple[list[dict], dict]:
+    """Return (sorted_rows, stats). Never aborts because of a bad product."""
+    rows: list[dict] = []
+    stats = {
+        "total_products": len(products),
+        "invalid_products": 0,
+        "invalid_warehouse_entries": 0,
+        "rows": 0,
+    }
+
+    for product in products:
+        try:
+            # Rows are staged per product so a failure can't leave partial output.
+            product_rows, bad_entries = flatten_product(product)
+        except Exception:  # malformed or unexpected: skip, count, keep going
+            stats["invalid_products"] += 1
+            continue
+        rows.extend(product_rows)
+        stats["invalid_warehouse_entries"] += bad_entries
+
+    # str() keeps sorting safe if ids are a mix of ints and strings
+    rows.sort(key=lambda r: (str(r["product_id"]), str(r["warehouse_id"])))
+    stats["rows"] = len(rows)
+    return rows, stats
+
+
+def write_csv(rows: list[dict], out) -> None:
+    fields = ["product_id", "name", "category", "warehouse_id", "location", "stock"]
+    writer = csv.DictWriter(out, fieldnames=fields)
+    writer.writeheader()
+    writer.writerows(rows)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Flatten nested product/warehouse JSON.")
+    parser.add_argument("input", help="Path to input JSON file")
+    parser.add_argument("-o", "--output", help="Output file (default: stdout)")
+    parser.add_argument("--format", choices=("json", "csv"), default="json")
+    args = parser.parse_args()
+
+    try:
+        products = load_products(args.input)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(f"Error reading input: {exc}", file=sys.stderr)
+        return 1
+
+    rows, stats = flatten_products(products)
+
+    out = open(args.output, "w", encoding="utf-8", newline="") if args.output else sys.stdout
+    try:
+        if args.format == "csv":
+            write_csv(rows, out)
+        else:
+            json.dump(rows, out, indent=2)
+            out.write("\n")
+    finally:
+        if out is not sys.stdout:
+            out.close()
+
+    print(
+        f"Products: {stats['total_products']} | "
+        f"malformed products skipped: {stats['invalid_products']} | "
+        f"invalid warehouse entries skipped: {stats['invalid_warehouse_entries']} | "
+        f"rows written: {stats['rows']}",
+        file=sys.stderr,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

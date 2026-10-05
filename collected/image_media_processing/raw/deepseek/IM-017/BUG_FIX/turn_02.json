@@ -1,0 +1,11 @@
+{
+  "task_id": "IM-017",
+  "model": "deepseek",
+  "interaction": "BUG_FIX",
+  "turn": 2,
+  "saved_at": "2026-10-04T23:30:13.169874+00:00",
+  "response_sha256": "306ad730751e0ca0dab4c20e269a5fe5d8ca9683b136a63fa39559f10be78842",
+  "code_sha256": "e10d442248c7eb635664de05032202639acd9249197c68d63e060736eb965ab8",
+  "raw_file": ".collection/raw/deepseek/IM-017/BUG_FIX/turn_02.txt",
+  "code_file": ".collection/code/deepseek/IM-017/BUG_FIX/final.py"
+}

@@ -1,0 +1,111 @@
+### Problem Restatement & Requirements
+
+**Original Problem:**
+Compute the exact product of two integer polynomials $A(x) = \sum_{i=0}^{m-1} a_i x^i$ and $B(x) = \sum_{j=0}^{n-1} b_j x^j$. The input coefficients are represented as lists/arrays in ascending order of degree (index $k$ corresponds to $x^k$). Coefficients can be positive, negative, or zero.
+
+**Original Required Outputs:**
+
+* A deterministic Python implementation using only the standard library.
+* Calculation of exact integer coefficients $c_k = \sum_{i} a_i b_{k-i}$ for the product polynomial $C(x) = A(x) \cdot B(x)$.
+* Handling edge cases such as empty input lists (representing zero polynomials).
+
+---
+
+### Additional Feature Specification
+
+**Feature:** Operational Summary (`operation_summary`)
+
+* When requested (via a flag/parameter `include_summary=True`), the function returns a structure (e.g., a dictionary) containing:
+1. `coefficients`: The exact output polynomial coefficient list.
+2. `operation_summary`: A summary dictionary tracking key deterministic metrics of the calculation:
+* `input_degrees`: Degrees of non-empty input polynomials ($m-1$ and $n-1$).
+* `output_degree`: Degree of the product polynomial ($m+n-2$).
+* `multiplications`: Total number of scalar element-wise multiplications performed ($m \cdot n$).
+* `additions`: Total number of accumulation additions performed ($m \cdot n$).
+
+
+
+
+* When `include_summary=False` (default), the function maintains exact backwards compatibility by returning solely the output coefficient list.
+
+---
+
+### Python Implementation
+
+```python
+from typing import List, Dict, Any, Union
+
+def multiply_polynomials(
+    a: List[int], 
+    b: List[int], 
+    include_summary: bool = False
+) -> Union[List[int], Dict[str, Any]]:
+    """
+    Multiplies two integer polynomials using direct discrete convolution.
+    Optionally returns a computational operation summary.
+
+    :param a: Coefficient list of the first polynomial [a0, a1, ...]
+    :param b: Coefficient list of the second polynomial [b0, b1, ...]
+    :param include_summary: If True, returns dict with coefficients and operation_summary.
+                            If False, returns only the coefficient list.
+    :return: List of product coefficients or a dictionary with coefficients and metadata.
+    """
+    # Handle empty polynomial edge cases
+    if not a or not b:
+        coefficients = []
+        summary = {
+            "input_degrees": (-1, -1),
+            "output_degree": -1,
+            "multiplications": 0,
+            "additions": 0,
+            "is_empty": True
+        }
+        return {"coefficients": coefficients, "operation_summary": summary} if include_summary else coefficients
+
+    m, n = len(a), len(b)
+    result_len = m + n - 1
+    result = [0] * result_len
+
+    # Track operational counts
+    multiplication_count = 0
+    addition_count = 0
+
+    for i in range(m):
+        for j in range(n):
+            result[i + j] += a[i] * b[j]
+            multiplication_count += 1
+            addition_count += 1
+
+    if include_summary:
+        summary = {
+            "input_degrees": (m - 1, n - 1),
+            "output_degree": result_len - 1,
+            "multiplications": multiplication_count,
+            "additions": addition_count,
+            "is_empty": False
+        }
+        return {
+            "coefficients": result,
+            "operation_summary": summary
+        }
+
+    return result
+
+
+# Example Usage & Verification:
+if __name__ == "__main__":
+    poly1 = [1, 2, -3]  # 1 + 2x - 3x^2
+    poly2 = [-4, 5]     # -4 + 5x
+
+    # 1. Default Behavior (Backwards Compatible)
+    coeffs_only = multiply_polynomials(poly1, poly2)
+    print("Coefficients only:", coeffs_only)
+    # Output: [-4, -3, 22, -15]
+
+    # 2. Summary Request Enabled
+    full_result = multiply_polynomials(poly1, poly2, include_summary=True)
+    print("\nWith Summary Output:")
+    print("Coefficients:", full_result["coefficients"])
+    print("Summary:", full_result["operation_summary"])
+
+```

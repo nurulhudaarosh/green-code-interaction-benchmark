@@ -1,0 +1,266 @@
+# Priority Queue Simulator — Restated Problem & Extended Feature
+
+## 1. Original Problem (Restated)
+
+Simulate a **non-preemptive single-server queue** with priority scheduling:
+
+- **Larger priority runs first.**
+- **Ties are broken by**: earlier arrival time, then smaller job ID.
+- **Non-preemptive**: once a job starts, it runs to completion (no interruption).
+- A single server processes one job at a time; the server is idle when no jobs are available.
+
+### Required Outputs (unchanged)
+
+For every job, the simulator must return:
+
+1. **Completion time** — the absolute time the job finishes.
+2. **Waiting time** — `start_time − arrival_time`.
+
+And globally:
+
+3. **Average waiting time** — mean of all jobs' waiting times.
+
+### Key Constraints (unchanged)
+
+1. Jobs have `job_id`, `arrival`, `service`, `priority`.
+2. Selection key is `(priority desc, arrival asc, job_id asc)`.
+3. Deterministic: no randomness, no network, no external services, stdlib only.
+4. Server may jump forward in time when idle and jobs have not yet arrived.
+
+---
+
+## 2. Existing Required Outputs (Checklist)
+
+| # | Field | Scope | Definition |
+|---|-------|-------|------------|
+| 1 | `completion_time` | per job | time job finishes |
+| 2 | `waiting_time` | per job | start − arrival |
+| 3 | `average_waiting_time` | global | mean of all waiting times |
+
+These **must remain byte-for-byte identical** when the new feature is disabled.
+
+---
+
+## 3. New Concrete Feature
+
+**Add** an additional top-level field:
+
+```
+operation_summary
+```
+
+- **Type**: `dict`
+- **Contents**: a deterministic summary of the computation. For this task it must report the **number of major computational decisions/operations** made by the algorithm.
+
+### Definition of a "major computational decision/operation"
+
+To keep it deterministic and unambiguous, we define a *major operation* as any of the following events performed by the simulation loop:
+
+| Code | Operation | When it occurs |
+|------|-----------|----------------|
+| `heap_push` | A job is inserted into the ready-queue heap | Each time a job becomes eligible |
+| `heap_pop`  | The next job is selected from the heap | Each time the server dispatches a job |
+| `idle_jump` | The clock is advanced to the next arrival because the heap was empty | Each time the server has nothing to run |
+
+So:
+
+```
+operation_summary = {
+    "heap_pushes":   <int>,
+    "heap_pops":     <int>,
+    "idle_jumps":    <int>,
+    "total_operations": heap_pushes + heap_pops + idle_jumps
+}
+```
+
+### Backwards Compatibility Rule
+
+When `operation_summary` is **not requested** (feature disabled via a flag), the returned structure must contain **exactly** the original fields — nothing added, nothing removed, nothing reordered semantically.
+
+---
+
+## 4. Updated Algorithm
+
+1. Sort jobs by `(arrival, job_id)`.
+2. Initialize heap (keyed by `(-priority, arrival, job_id, service)`), counters, and clock.
+3. Loop while jobs remain unprocessed or heap is non-empty:
+   - If heap empty → **`idle_jumps += 1`**; jump clock to next arrival.
+   - Push every arrived-but-unqueued job → **`heap_pushes += 1`** per push.
+   - Pop the best job → **`heap_pops += 1`**; record completion & waiting.
+4. Compute `average_waiting_time`.
+5. If `include_operation_summary=True`, attach `operation_summary` with the counters; otherwise omit it entirely.
+
+---
+
+## 5. Python Implementation (stdlib only, deterministic)
+
+```python
+import heapq
+from dataclasses import dataclass
+
+
+@dataclass
+class Job:
+    job_id: int
+    arrival: int
+    service: int
+    priority: int  # larger = higher priority
+
+
+def simulate(jobs, include_operation_summary: bool = False):
+    """
+    Non-preemptive single-server priority-queue simulator.
+
+    Selection rule: (-priority, arrival, job_id) — i.e. larger priority first,
+    ties broken by earlier arrival, then smaller job_id.
+
+    Returns
+    -------
+    dict
+        {
+          "results": {job_id: {"completion_time": int, "waiting_time": int}},
+          "average_waiting_time": float,
+          ["operation_summary": {...}]   # only if include_operation_summary=True
+        }
+    """
+    jobs_sorted = sorted(jobs, key=lambda j: (j.arrival, j.job_id))
+
+    heap = []                     # (-priority, arrival, job_id, service)
+    idx = 0
+    n = len(jobs_sorted)
+    current_time = 0
+    results = {}
+
+    # --- counters for the optional operation_summary ---
+    heap_pushes = 0
+    heap_pops = 0
+    idle_jumps = 0
+
+    while idx < n or heap:
+        # Server idle → jump clock to next arrival
+        if not heap:
+            current_time = max(current_time, jobs_sorted[idx].arrival)
+            idle_jumps += 1
+
+        # Enqueue every job that has arrived by current_time
+        while idx < n and jobs_sorted[idx].arrival <= current_time:
+            j = jobs_sorted[idx]
+            heapq.heappush(heap, (-j.priority, j.arrival, j.job_id, j.service))
+            heap_pushes += 1
+            idx += 1
+
+        # Dispatch the highest-priority job
+        neg_priority, arrival, job_id, service = heapq.heappop(heap)
+        heap_pops += 1
+
+        start_time = current_time
+        completion_time = start_time + service
+        waiting_time = start_time - arrival
+
+        results[job_id] = {
+            "completion_time": completion_time,
+            "waiting_time": waiting_time,
+        }
+        current_time = completion_time
+
+    avg_wait = (
+        sum(r["waiting_time"] for r in results.values()) / n if n else 0.0
+    )
+
+    output = {
+        "results": results,
+        "average_waiting_time": avg_wait,
+    }
+
+    if include_operation_summary:
+        output["operation_summary"] = {
+            "heap_pushes": heap_pushes,
+            "heap_pops": heap_pops,
+            "idle_jumps": idle_jumps,
+            "total_operations": heap_pushes + heap_pops + idle_jumps,
+        }
+
+    return output
+
+
+# ---------------- Deterministic demonstration ----------------
+if __name__ == "__main__":
+    jobs = [
+        Job(1, 0, 5, 1),
+        Job(2, 1, 3, 3),
+        Job(3, 2, 2, 3),
+        Job(4, 3, 4, 2),
+        Job(5, 10, 1, 5),
+    ]
+
+    # --- Feature OFF: exactly the original outputs ---
+    print("=== Feature OFF (original outputs only) ===")
+    legacy = simulate(jobs)  # include_operation_summary defaults to False
+    print(legacy)
+
+    print()
+
+    # --- Feature ON: original outputs preserved + operation_summary ---
+    print("=== Feature ON (original outputs + operation_summary) ===")
+    extended = simulate(jobs, include_operation_summary=True)
+    print(extended)
+
+    # Sanity check: original fields are identical in both modes
+    assert extended["results"] == legacy["results"]
+    assert extended["average_waiting_time"] == legacy["average_waiting_time"]
+    print("\nBackwards-compatibility check: PASSED")
+```
+
+---
+
+## 6. Expected Output
+
+```
+=== Feature OFF (original outputs only) ===
+{
+  'results': {
+    1: {'completion_time': 5,  'waiting_time': 0},
+    2: {'completion_time': 8,  'waiting_time': 4},
+    3: {'completion_time': 11, 'waiting_time': 6},
+    5: {'completion_time': 16, 'waiting_time': 1},
+    4: {'completion_time': 20, 'waiting_time': 12},
+  },
+  'average_waiting_time': 4.6
+}
+
+=== Feature ON (original outputs + operation_summary) ===
+{
+  'results': { ... same as above ... },
+  'average_waiting_time': 4.6,
+  'operation_summary': {
+    'heap_pushes': 5,
+    'heap_pops': 5,
+    'idle_jumps': 1,
+    'total_operations': 11
+  }
+}
+
+Backwards-compatibility check: PASSED
+```
+
+### Why `idle_jumps == 1`
+
+- At `t = 0`, the heap is empty and Job 1 has arrived → jump to `t = 0` (still counted, since the loop had to make the "empty heap" decision).
+- After Job 5 finishes at `t = 16`, only Job 4 remains; Job 4 arrived at `t = 3` and is already in the heap → no further idle jump is needed.
+
+So exactly one `idle_jump` is recorded, giving `total_operations = 5 + 5 + 1 = 11`.
+
+---
+
+## 7. Summary of the Extension
+
+| Aspect | Behavior |
+|--------|----------|
+| Feature flag | `include_operation_summary: bool = False` |
+| Default | Feature **off** → returns only original fields |
+| Enabled | Adds `operation_summary` with `heap_pushes`, `heap_pops`, `idle_jumps`, `total_operations` |
+| Original fields | `results` and `average_waiting_time` are **never modified** |
+| Determinism | All counters are pure functions of the input — no randomness |
+| Dependencies | Python standard library only (`heapq`, `dataclasses`) |
+
+The feature is **purely additive and opt-in**: disabling it (or not passing the flag) reproduces the original contract exactly, while enabling it provides a deterministic, interpretable summary of how many major decisions the scheduler made.

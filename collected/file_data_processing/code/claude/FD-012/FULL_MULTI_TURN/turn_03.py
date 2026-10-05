@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+"""
+Offline text analyzer.
+
+Recursively reads .txt files under one or more paths, case-folds alphabetic
+words, and reports, per word:
+  - total occurrences: every occurrence in every document is counted
+  - document frequency: the number of distinct documents containing the word
+    (a word repeated many times in one document contributes exactly 1)
+
+Ranking is deterministic:
+  1. document frequency (descending)
+  2. total occurrences (descending)
+  3. word (ascending, by Unicode code point)
+
+Usage:
+    python text_analyzer.py PATH [PATH ...] [--top N] [--min-count N]
+                            [--encoding ENC] [--format table|csv|json]
+                            [--output FILE]
+"""
+
+import argparse
+import csv
+import json
+import os
+import sys
+import unicodedata
+from collections import Counter
+from typing import Iterable, Iterator, List, Tuple
+
+
+def iter_txt_files(paths: Iterable[str]) -> Iterator[str]:
+    """Yield .txt files in sorted order, recursing into directories."""
+    seen = set()
+    for root_path in paths:
+        if os.path.isfile(root_path):
+            candidates = [root_path] if root_path.lower().endswith(".txt") else []
+        elif os.path.isdir(root_path):
+            candidates = []
+            for dirpath, dirnames, filenames in os.walk(root_path):
+                dirnames.sort()  # deterministic traversal
+                for name in sorted(filenames):
+                    if name.lower().endswith(".txt"):
+                        candidates.append(os.path.join(dirpath, name))
+        else:
+            print(f"warning: skipping missing path: {root_path}", file=sys.stderr)
+            continue
+        for path in candidates:
+            real = os.path.realpath(path)
+            if real not in seen:
+                seen.add(real)
+                yield path
+
+
+def read_text(path: str, encoding: str) -> str:
+    """Read a file, tolerating undecodable bytes."""
+    with open(path, "r", encoding=encoding, errors="replace") as f:
+        return f.read()
+
+
+def tokenize(text: str) -> Iterator[str]:
+    """
+    Yield case-folded words made purely of alphabetic characters.
+
+    A word is a maximal run of Unicode letters (str.isalpha). Everything
+    else (digits, punctuation, whitespace, apostrophes, hyphens) separates
+    words. Text is NFKC-normalized before case-folding so that visually
+    equivalent forms count as the same word.
+    """
+    text = unicodedata.normalize("NFKC", text).casefold()
+    buf: List[str] = []
+    for ch in text:
+        if ch.isalpha():
+            buf.append(ch)
+        elif buf:
+            yield "".join(buf)
+            buf.clear()
+    if buf:
+        yield "".join(buf)
+
+
+def analyze(paths: Iterable[str], encoding: str = "utf-8") -> Tuple[Counter, Counter, int]:
+    """
+    Return (total_counts, document_frequency, number_of_documents).
+
+    For each document:
+      - total_counts gains the full per-document count of each word
+        (repeats all count).
+      - document_frequency gains exactly 1 for each distinct word in the
+        document, regardless of how many times it repeats.
+    """
+    total: Counter = Counter()
+    docfreq: Counter = Counter()
+    n_docs = 0
+    for path in iter_txt_files(paths):
+        try:
+            text = read_text(path, encoding)
+        except (OSError, LookupError) as exc:
+            print(f"warning: cannot read {path}: {exc}", file=sys.stderr)
+            continue
+        n_docs += 1
+        doc_counts = Counter(tokenize(text))   # word -> occurrences in this doc
+        total.update(doc_counts)               # adds ALL occurrences
+        docfreq.update(set(doc_counts))        # adds 1 per distinct word
+    return total, docfreq, n_docs
+
+
+def rank(total: Counter, docfreq: Counter, min_count: int = 1) -> List[Tuple[int, str, int, int]]:
+    """
+    Return [(rank, word, total, docfreq)] ordered by:
+    document frequency desc, total occurrences desc, word asc.
+    """
+    items = [(w, c, docfreq[w]) for w, c in total.items() if c >= min_count]
+    items.sort(key=lambda t: (-t[2], -t[1], t[0]))
+    return [(i, w, c, d) for i, (w, c, d) in enumerate(items, start=1)]
+
+
+def write_output(rows, n_docs: int, fmt: str, out) -> None:
+    if fmt == "json":
+        payload = {
+            "documents": n_docs,
+            "words": [
+                {"rank": r, "word": w, "document_frequency": d, "total": c}
+                for r, w, c, d in rows
+            ],
+        }
+        json.dump(payload, out, ensure_ascii=False, indent=2)
+        out.write("\n")
+    elif fmt == "csv":
+        writer = csv.writer(out, lineterminator="\n")
+        writer.writerow(["rank", "word", "document_frequency", "total"])
+        for r, w, c, d in rows:
+            writer.writerow([r, w, d, c])
+    else:
+        width = max([len(w) for _, w, _, _ in rows] + [4])
+        out.write(f"{'rank':>6}  {'word':<{width}}  {'docs':>8}  {'total':>10}\n")
+        for r, w, c, d in rows:
+            out.write(f"{r:>6}  {w:<{width}}  {d:>8}  {c:>10}\n")
+        out.write(f"\ndocuments analyzed: {n_docs}, distinct words listed: {len(rows)}\n")
+
+
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser(description="Offline recursive .txt word analyzer.")
+    p.add_argument("paths", nargs="+", help="files or directories to scan")
+    p.add_argument("--top", type=int, default=0, help="show only the top N words (0 = all)")
+    p.add_argument("--min-count", type=int, default=1, help="minimum total occurrences")
+    p.add_argument("--encoding", default="utf-8", help="input encoding (default: utf-8)")
+    p.add_argument("--format", choices=["table", "csv", "json"], default="table")
+    p.add_argument("--output", help="write results to this file instead of stdout")
+    args = p.parse_args(argv)
+
+    total, docfreq, n_docs = analyze(args.paths, args.encoding)
+    rows = rank(total, docfreq, args.min_count)
+    if args.top > 0:
+        rows = rows[: args.top]
+
+    if args.output:
+        with open(args.output, "w", encoding="utf-8", newline="") as f:
+            write_output(rows, n_docs, args.format, f)
+    else:
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except AttributeError:
+            pass
+        write_output(rows, n_docs, args.format, sys.stdout)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

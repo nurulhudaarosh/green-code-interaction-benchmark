@@ -1,0 +1,26 @@
+The code I posted doesn't use Pillow. `read_tags` parses the PNG chunk stream directly (`tEXt`, `zTXt` and `iTXt`), so there's no `img.info.get('text', {})` in it, and it already returns every embedded text chunk. You may be thinking of a different implementation. Your diagnosis of that pattern is right, though:
+
+- `img.info` has no `'text'` key. Pillow flattens text chunks into `info` as `key -> value`, so `info.get('text', {})` returns `{}` unless a tag is literally named `text`.
+- `img.text` is the correct API, but it holds only the chunks Pillow has parsed. Chunks placed after the image data (like the ones `embed_tags` writes before `IEND`) are read only after `load()`. Recent Pillow versions trigger that load inside the `text` property, but older ones don't.
+
+If you want a Pillow-based reader, this version is correct on all versions:
+
+```python
+from PIL import Image
+
+
+def read_tags(image_path: str) -> dict[str, str]:
+    """Return all PNG text-chunk key/value pairs (tEXt, zTXt, iTXt)."""
+    with Image.open(image_path) as img:
+        if img.format != "PNG":
+            raise ValueError("Not a PNG file")
+        img.load()  # text chunks after IDAT are only parsed once the image is loaded
+        return {str(k): str(v) for k, v in img.text.items()}
+```
+
+Caveats:
+- `img.load()` decodes the pixels, which my chunk-parsing `read_tags` avoids. Use Pillow's `Image.open` plus `img.text` when you want convenience, and the raw parser when you want speed or minimal dependencies.
+- If the file has duplicate keys, `img.text` keeps one value per key, so the result can differ slightly from my version.
+- If you also write with Pillow, use `PngInfo.add_text(key, value)` and pass `pnginfo=` to `img.save()`. Pillow picks `tEXt` or `iTXt` based on whether the text is Latin-1, but the save re-encodes the pixels and may drop other ancillary chunks.
+
+If you're seeing missing tags with the code I gave you, send me the file or the output and I'll track it down. The `embed_tags`/`read_tags` pair there round-trips both ASCII and UTF-8 values.

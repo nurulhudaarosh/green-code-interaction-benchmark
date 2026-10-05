@@ -1,0 +1,67 @@
+from pathlib import Path
+from PIL import Image
+
+
+def split_channels(input_dir, output_dir):
+    """
+    Split every RGB image in input_dir into separate R, G, and B
+    grayscale images.
+
+    Output files:
+        filename_R.png
+        filename_G.png
+        filename_B.png
+    """
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    valid_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
+
+    for path in input_dir.iterdir():
+        if not path.is_file() or path.suffix.lower() not in valid_extensions:
+            continue
+
+        with Image.open(path) as img:
+            img = img.convert("RGB")
+
+            r, g, b = img.split()
+
+            stem = path.stem
+            r.save(output_dir / f"{stem}_R.png")
+            g.save(output_dir / f"{stem}_G.png")
+            b.save(output_dir / f"{stem}_B.png")
+
+
+def merge_channels(r_path, g_path, b_path, output_path):
+    """
+    Merge three grayscale R, G, and B images into one RGB image.
+    """
+    with Image.open(r_path) as r_img, \
+         Image.open(g_path) as g_img, \
+         Image.open(b_path) as b_img:
+
+        r = r_img.convert("L")
+        g = g_img.convert("L")
+        b = b_img.convert("L")
+
+        # Ensure all channels have identical dimensions
+        if not (r.size == g.size == b.size):
+            raise ValueError(
+                f"Channel dimensions must match: "
+                f"R={r.size}, G={g.size}, B={b.size}"
+            )
+
+        merged = Image.merge("RGB", (r, g, b))
+        merged.save(output_path)
+
+
+# Example:
+# split_channels("input_images", "channels")
+#
+# merge_channels(
+#     "channels/image_R.png",
+#     "channels/image_G.png",
+#     "channels/image_B.png",
+#     "reconstructed.png"
+# )

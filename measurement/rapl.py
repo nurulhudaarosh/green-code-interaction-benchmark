@@ -1,9 +1,4 @@
-"""Intel RAPL energy measurement (joules) with safe fallback.
 
-Reads energy_uj counters from /sys/class/powercap/intel-rapl*. Returns None
-when RAPL is unavailable (e.g. Colab / non-Intel), so callers always get a
-JSON-serializable result.
-"""
 
 import time
 from pathlib import Path

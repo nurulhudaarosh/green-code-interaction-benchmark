@@ -1,0 +1,11 @@
+{
+  "task_id": "TL-004",
+  "model": "claude",
+  "interaction": "EDGE_CASE",
+  "turn": 1,
+  "saved_at": "2026-10-05T05:44:09.343314+00:00",
+  "response_sha256": "016897a9601c629d5967ce8ee2b572688d2e103047788f0b6bc08b50848f6b2e",
+  "code_sha256": "9fb233f1e6047df4452c217001b5d4869189678f764489b80838315ac0b1046a",
+  "raw_file": ".collection/raw/claude/TL-004/EDGE_CASE/turn_01.txt",
+  "code_file": ".collection/code/claude/TL-004/EDGE_CASE/initial.py"
+}

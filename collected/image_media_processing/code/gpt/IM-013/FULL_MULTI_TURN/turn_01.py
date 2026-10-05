@@ -1,0 +1,76 @@
+from pathlib import Path
+from PIL import Image
+
+
+def build_contact_sheet(input_dir, output_path, thumb_size, columns):
+    """
+    Create a contact sheet by tiling all valid images in input_dir
+    into a grid with a fixed number of columns.
+
+    Args:
+        input_dir: Directory containing input images.
+        output_path: Path for the output contact sheet.
+        thumb_size: (width, height) of each thumbnail cell.
+        columns: Number of columns in the grid.
+
+    Returns:
+        (number_of_images, number_of_columns)
+    """
+    input_dir = Path(input_dir)
+    output_path = Path(output_path)
+
+    if columns <= 0:
+        raise ValueError("columns must be greater than 0")
+
+    thumb_w, thumb_h = thumb_size
+    if thumb_w <= 0 or thumb_h <= 0:
+        raise ValueError("thumb_size dimensions must be greater than 0")
+
+    valid_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}
+
+    images = []
+
+    for path in sorted(input_dir.iterdir()):
+        if path.suffix.lower() not in valid_extensions:
+            continue
+
+        try:
+            with Image.open(path) as img:
+                img = img.convert("RGB")
+                img.thumbnail((thumb_w, thumb_h))
+                images.append((path.name, img.copy()))
+        except (OSError, ValueError):
+            # Skip files that are not valid/readable images.
+            continue
+
+    n = len(images)
+
+    # Ceiling division so a partial final row is included.
+    rows = (n + columns - 1) // columns
+
+    # Minimal valid output for an empty directory.
+    if n == 0:
+        sheet = Image.new("RGB", (1, 1), "white")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        sheet.save(output_path)
+        return 0, columns
+
+    sheet_w = columns * thumb_w
+    sheet_h = rows * thumb_h
+
+    sheet = Image.new("RGB", (sheet_w, sheet_h), "white")
+
+    for i, (_, img) in enumerate(images):
+        row = i // columns
+        col = i % columns
+
+        # Center the thumbnail inside its cell.
+        x = col * thumb_w + (thumb_w - img.width) // 2
+        y = row * thumb_h + (thumb_h - img.height) // 2
+
+        sheet.paste(img, (x, y))
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(output_path)
+
+    return n, columns

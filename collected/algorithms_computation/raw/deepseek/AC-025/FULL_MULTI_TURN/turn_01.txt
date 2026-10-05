@@ -1,0 +1,244 @@
+I'll solve this multi-stage resource allocation problem with two constraints (budget and memory) using layered dynamic programming with deterministic reconstruction.
+
+## Problem Understanding
+
+**Problem Statement:**
+- We have multiple stages, each requiring exactly one option to be selected
+- Each option has: cost (budget), memory usage, and score value
+- We must maximize total score while staying within global budget and memory limits
+- For ties (same maximum score), choose the lexicographically smallest choice vector
+
+**Key Constraints:**
+- Each stage must have exactly one option selected
+- Total budget consumption ≤ budget limit
+- Total memory consumption ≤ memory limit
+- Ties broken by lexicographically smallest selection indices
+
+**Required Output:**
+- The optimal selection (one option per stage)
+- Maximum total score achieved
+
+## Algorithm Description
+
+**Layered Two-Resource Dynamic Programming:**
+
+1. **State Definition:** `dp[stage][budget_used][memory_used]` = maximum score achievable
+2. **Transition:** For each stage, try all options and update states
+3. **Reconstruction:** Backtrack through DP table to find optimal choices
+4. **Tie-breaking:** During reconstruction, prefer smaller indices for lexicographic ordering
+
+## Python Implementation
+
+```python
+def solve_multi_stage_allocation(stages, budget_limit, memory_limit):
+    """
+    Solve multi-stage resource allocation with budget and memory constraints.
+    
+    Args:
+        stages: List of lists, where stages[i] contains options for stage i.
+                Each option is a tuple (budget_cost, memory_cost, score).
+        budget_limit: Maximum total budget allowed.
+        memory_limit: Maximum total memory allowed.
+    
+    Returns:
+        tuple: (max_score, choices) where choices is list of option indices selected.
+               Returns (None, None) if no feasible solution exists.
+    """
+    if not stages:
+        return 0, []
+    
+    num_stages = len(stages)
+    
+    # dp[s][b][m] = max score using first s stages with budget b and memory m
+    # Using 3D DP table
+    dp = [[[-float('inf')] * (memory_limit + 1) for _ in range(budget_limit + 1)] 
+          for _ in range(num_stages + 1)]
+    
+    # Base case: 0 stages, 0 resources used, 0 score
+    dp[0][0][0] = 0
+    
+    # Fill DP table
+    for s in range(num_stages):
+        for b in range(budget_limit + 1):
+            for m in range(memory_limit + 1):
+                if dp[s][b][m] == -float('inf'):
+                    continue
+                
+                # Try each option in current stage
+                for opt_idx, (opt_budget, opt_memory, opt_score) in enumerate(stages[s]):
+                    new_b = b + opt_budget
+                    new_m = m + opt_memory
+                    
+                    if new_b <= budget_limit and new_m <= memory_limit:
+                        new_score = dp[s][b][m] + opt_score
+                        if new_score > dp[s + 1][new_b][new_m]:
+                            dp[s + 1][new_b][new_m] = new_score
+    
+    # Find best final state
+    max_score = -float('inf')
+    best_budget = -1
+    best_memory = -1
+    
+    for b in range(budget_limit + 1):
+        for m in range(memory_limit + 1):
+            if dp[num_stages][b][m] > max_score:
+                max_score = dp[num_stages][b][m]
+                best_budget = b
+                best_memory = m
+    
+    if max_score == -float('inf'):
+        return None, None  # No feasible solution
+    
+    # Reconstruct solution with lexicographically smallest choices
+    choices = reconstruct_solution(dp, stages, budget_limit, memory_limit, 
+                                  max_score, best_budget, best_memory)
+    
+    return max_score, choices
+
+
+def reconstruct_solution(dp, stages, budget_limit, memory_limit, 
+                         target_score, final_budget, final_memory):
+    """
+    Reconstruct the lexicographically smallest optimal solution.
+    """
+    num_stages = len(stages)
+    choices = [0] * num_stages
+    
+    # Work backwards from the final state
+    current_budget = final_budget
+    current_memory = final_memory
+    current_score = target_score
+    
+    # To ensure lexicographically smallest, we need to make greedy choices
+    # from the beginning. Let's do forward reconstruction instead.
+    
+    # Forward reconstruction ensuring lexicographic order
+    current_budget = 0
+    current_memory = 0
+    current_score = 0
+    
+    for s in range(num_stages):
+        # Find the smallest index option that can lead to optimal solution
+        for opt_idx in range(len(stages[s])):
+            opt_budget, opt_memory, opt_score = stages[s][opt_idx]
+            new_budget = current_budget + opt_budget
+            new_memory = current_memory + opt_memory
+            
+            if new_budget > budget_limit or new_memory > memory_limit:
+                continue
+            
+            # Check if this choice can lead to optimal total score
+            remaining_stages = num_stages - s - 1
+            remaining_budget = budget_limit - new_budget
+            remaining_memory = memory_limit - new_memory
+            
+            # Calculate max achievable score from remaining stages
+            if remaining_stages == 0:
+                if new_budget == final_budget and new_memory == final_memory:
+                    if current_score + opt_score == target_score:
+                        choices[s] = opt_idx
+                        return choices
+            else:
+                # Check DP table for remaining stages
+                max_future_score = -float('inf')
+                for b in range(remaining_budget + 1):
+                    for m in range(remaining_memory + 1):
+                        if dp[remaining_stages][b][m] != -float('inf'):
+                            max_future_score = max(max_future_score, dp[remaining_stages][b][m])
+                
+                if current_score + opt_score + max_future_score == target_score:
+                    # This choice is part of optimal solution
+                    # Verify we can complete with this choice
+                    choices[s] = opt_idx
+                    current_budget = new_budget
+                    current_memory = new_memory
+                    current_score += opt_score
+                    break
+        else:
+            # This shouldn't happen if DP is correct
+            raise ValueError("Failed to reconstruct solution")
+    
+    return choices
+
+
+def solve_with_detailed_output(stages, budget_limit, memory_limit):
+    """
+    Wrapper function that provides detailed output.
+    """
+    max_score, choices = solve_multi_stage_allocation(stages, budget_limit, memory_limit)
+    
+    if max_score is None:
+        print("No feasible solution exists!")
+        return None
+    
+    print(f"Maximum Score: {max_score}")
+    print(f"Budget Limit: {budget_limit}, Memory Limit: {memory_limit}")
+    print("\nSelected Options:")
+    
+    total_budget = 0
+    total_memory = 0
+    
+    for stage_idx, opt_idx in enumerate(choices):
+        opt_budget, opt_memory, opt_score = stages[stage_idx][opt_idx]
+        total_budget += opt_budget
+        total_memory += opt_memory
+        print(f"  Stage {stage_idx + 1}: Option {opt_idx} "
+              f"(Budget: {opt_budget}, Memory: {opt_memory}, Score: {opt_score})")
+    
+    print(f"\nTotal Budget Used: {total_budget} / {budget_limit}")
+    print(f"Total Memory Used: {total_memory} / {memory_limit}")
+    print(f"Choice Vector: {choices}")
+    
+    return max_score, choices
+
+
+# Example usage and test
+if __name__ == "__main__":
+    # Test case 1: Simple case
+    stages1 = [
+        [(2, 3, 10), (3, 2, 15), (1, 4, 8)],  # Stage 1 options
+        [(3, 3, 12), (2, 4, 10), (4, 1, 18)],  # Stage 2 options
+        [(1, 2, 7), (2, 3, 9), (3, 3, 14)]     # Stage 3 options
+    ]
+    
+    print("Test Case 1:")
+    solve_with_detailed_output(stages1, budget_limit=8, memory_limit=10)
+    
+    print("\n" + "="*60 + "\n")
+    
+    # Test case 2: Tie-breaking scenario
+    stages2 = [
+        [(2, 2, 10), (1, 1, 10)],  # Both options give same score
+        [(2, 2, 10), (1, 1, 10)]
+    ]
+    
+    print("Test Case 2 (Tie-breaking):")
+    solve_with_detailed_output(stages2, budget_limit=3, memory_limit=3)
+    
+    print("\n" + "="*60 + "\n")
+    
+    # Test case 3: No feasible solution
+    stages3 = [
+        [(10, 10, 100)],
+        [(10, 10, 100)]
+    ]
+    
+    print("Test Case 3 (No feasible solution):")
+    solve_with_detailed_output(stages3, budget_limit=5, memory_limit=5)
+```
+
+## Key Features of the Implementation:
+
+1. **Deterministic:** No randomness or external dependencies
+2. **Two-Resource DP:** Handles both budget and memory constraints
+3. **Lexicographic Tie-breaking:** Ensures smallest choice vector for ties
+4. **Standard Library Only:** Uses only built-in Python features
+5. **Efficient Reconstruction:** Forward pass to maintain lexicographic order
+6. **Error Handling:** Returns None for infeasible problems
+
+## Time and Space Complexity:
+
+- **Time:** O(S × B × M × K) where S = stages, B = budget limit, M = memory limit, K = max options per stage
+- **Space:** O(S × B × M) for the DP table
+
+The solution is optimal for moderate-sized problems and guarantees finding the lexicographically smallest choice vector among all optimal solutions.

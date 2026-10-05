@@ -1,0 +1,51 @@
+import pandas as pd
+
+
+def process_sensor_readings(df: pd.DataFrame) -> pd.DataFrame:
+    """Sorts sensor readings, linearly interpolates every missing interior hourly
+
+    timestamp per sensor, marks filled rows, and returns a deterministic DataFrame.
+
+    Expected input columns: ['sensor_id', 'timestamp', 'value']
+    """
+    df = df.copy()
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+
+    # Ensure initial deterministic order
+    df = df.sort_values(by=["sensor_id", "timestamp"]).reset_index(drop=True)
+
+    processed_groups = []
+
+    for sensor_id, group in df.groupby("sensor_id", sort=True):
+        group = group.set_index("timestamp")
+
+        # Generate complete hourly sequence between min and max interior timestamps
+        full_time_range = pd.date_range(
+            start=group.index.min(), end=group.index.max(), freq="1h"
+        )
+
+        # Reindex group to inject missing hourly timestamps
+        reindexed = group.reindex(full_time_range)
+        reindexed["sensor_id"] = sensor_id
+
+        # Mark rows as filled if they were introduced during reindexing
+        reindexed["is_filled"] = reindexed["value"].isna()
+
+        # Perform linear interpolation along the hourly time series
+        reindexed["value"] = reindexed["value"].interpolate(method="time")
+
+        reindexed = reindexed.reset_index().rename(
+            columns={"index": "timestamp"}
+        )
+        processed_groups.append(reindexed)
+
+    # Combine all sensors and enforce deterministic output sorting
+    result = pd.concat(processed_groups, ignore_index=True)
+    result = result.sort_values(
+        by=["sensor_id", "timestamp"]
+    ).reset_index(drop=True)
+
+    # Reorder columns explicitly
+    result = result[["sensor_id", "timestamp", "value", "is_filled"]]
+
+    return result

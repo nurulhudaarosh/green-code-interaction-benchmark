@@ -1,0 +1,131 @@
+The crash typically comes from one of these:
+
+1. **`int(size_raw)` on `'-'`** — already handled in the previous version, but easy to miss if the regex captures size differently (e.g. trailing whitespace or `-` glued to something).
+2. **`m.group(...)` inside the filter after a partial match** — if the regex uses optional groups, a "match" can still be missing fields.
+3. **A regex that only matches the prefix** (no `$` anchor) so corrupted lines still "match" and then blow up later.
+4. **Non-integer size values** like `"-"`, `""`, or `"123abc"`.
+5. **Unicode decode errors** on binary garbage lines.
+
+Here's a hardened version that never raises on a single bad line:
+
+```python
+import re
+import csv
+
+# Anchored regex; the trailing $ (via \Z) prevents partial matches on
+# corrupted lines that merely start out looking valid.
+LOG_RE = re.compile(
+    r'^(?P<ip>\S+)\s+'
+    r'\S+\s+'
+    r'\S+\s+'
+    r'\[(?P<timestamp>[^\]]+)\]\s+'
+    r'"(?P<method>\S+)\s+'
+    r'(?P<url>\S+)\s+'
+    r'[^"]*"\s+'
+    r'(?P<status>\d{3})\s+'
+    r'(?P<size>\S+)'
+    r'\s*\Z'
+)
+
+
+def convert_access_log(in_path, out_path, methods, status_classes):
+    """
+    Parse an Apache-style access log into a filtered CSV.
+
+    - size '-' is treated as 0
+    - malformed lines are skipped and counted, never raising
+    - returns {'written': int, 'skipped': int}
+    """
+    methods_set = set(methods)
+    status_classes_set = set(status_classes)
+
+    written = 0
+    skipped = 0
+
+    with open(in_path, 'r', encoding='utf-8', errors='replace') as fin, \
+         open(out_path, 'w', newline='', encoding='utf-8') as fout:
+
+        writer = csv.writer(fout)
+        writer.writerow(
+            ['ip', 'timestamp', 'method', 'url',
+             'status', 'statusClass', 'size']
+        )
+
+        for line in fin:
+            try:
+                row = _parse_line(line)
+            except Exception:
+                # Any unexpected error on a single line is treated as
+                # malformed so the loop keeps going.
+                skipped += 1
+                continue
+
+            if row is None:
+                skipped += 1
+                continue
+
+            ip, timestamp, method, url, status, size = row
+
+            # Filtering (empty containers = allow all).
+            if methods_set and method not in methods_set:
+                continue
+
+            status_class = status[0] + 'xx'
+            if status_classes_set and status_class not in status_classes_set:
+                continue
+
+            writer.writerow(
+                [ip, timestamp, method, url, status, status_class, size]
+            )
+            written += 1
+
+    return {'written': written, 'skipped': skipped}
+
+
+def _parse_line(line):
+    """
+    Return (ip, timestamp, method, url, status, size) or None if the
+    line is malformed. Never raises for expected bad input.
+    """
+    if not line:
+        return None
+
+    line = line.rstrip('\r\n')
+    if not line:
+        return None
+
+    m = LOG_RE.match(line)
+    if not m:
+        return None
+
+    ip = m.group('ip')
+    timestamp = m.group('timestamp')
+    method = m.group('method')
+    url = m.group('url')
+    status = m.group('status')
+    size_raw = m.group('size')
+
+    # size: '-' -> 0, otherwise must parse as an int.
+    if size_raw == '-' or size_raw == '':
+        size = 0
+    else:
+        try:
+            size = int(size_raw)
+        except (TypeError, ValueError):
+            return None
+
+    return ip, timestamp, method, url, status, size
+```
+
+What changed and why it fixes the crashes:
+
+- **`_parse_line` returns `None` instead of raising.** Every "this line is bad" path (empty line, regex miss, unparsable size) is a return, not an exception.
+- **`int()` is wrapped in `try/except (TypeError, ValueError)`.** `size_raw` might be `'-'`, `''`, `'123abc'`, or even `None` if a future regex change makes the group optional — all handled.
+- **`'-'` and `''` explicitly map to `0`** before the `int()` attempt, so `-` never reaches `int`.
+- **The regex is anchored with `\s*\Z`.** Without an end anchor, a truncated line like `1.2.3.4 - - [x] "GET / HTTP/1.1" 200` (missing size) could match the prefix and then fail later. Anchoring forces a clean miss → `skipped += 1`.
+- **`errors='replace'` on `open`.** Binary garbage in the log won't raise `UnicodeDecodeError`.
+- **Outer `try/except Exception` around `_parse_line`.** Defensive belt-and-braces: any unforeseen failure on one line still just increments `skipped` and continues.
+- **Filters happen *after* a successful parse.** Previously, if a bad line happened to match the regex partially and then errored inside the filter block, the whole conversion aborted. Now a bad line can never reach the filter stage.
+- **`\r\n` stripped too**, so Windows-style logs don't leave a trailing `\r` in `size` and break `int()`.
+
+Counters: `written` = rows actually emitted; `skipped` = lines that failed to parse. Well-formed lines that are filtered out by `methods`/`status_classes` are counted in neither, matching the earlier contract.

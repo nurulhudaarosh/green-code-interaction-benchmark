@@ -1,0 +1,171 @@
+import re
+from collections import defaultdict
+from typing import Dict, List, Set, Tuple
+
+# -----------------------------------------------------------------------------
+# 1. Normalization Functions
+# -----------------------------------------------------------------------------
+
+def normalize_name(name: str) -> str:
+    """Strip whitespace and convert to uppercase."""
+    if not name:
+        return ""
+    return re.sub(r"[^\w\s]", "", name).strip().upper()
+
+def normalize_postal_code(postal_code: str) -> str:
+    """Normalize postal/zip code (alphanumeric, uppercase)."""
+    if not postal_code:
+        return ""
+    return re.sub(r"[^A-Za-z0-9]", "", postal_code).upper()
+
+def normalize_email(email: str) -> str:
+    """Lowercase and strip whitespace from email addresses."""
+    if not email:
+        return ""
+    return email.strip().lower()
+
+def normalize_phone(phone: str) -> str:
+    """Extract digits only. Standardizes to last 10 digits for domestic comparison."""
+    if not phone:
+        return ""
+    digits = re.sub(r"\D", "", phone)
+    # If standard 10-digit or 11-digit with country code '1', extract the last 10 digits
+    if len(digits) >= 10:
+        return digits[-10:]
+    return digits
+
+# -----------------------------------------------------------------------------
+# 2. Blocking & Matching Core Engine
+# -----------------------------------------------------------------------------
+
+class RecordMatcher:
+    def __init__(self, records: List[Dict[str, str]], postal_prefix_len: int = 3):
+        self.records = records
+        self.postal_prefix_len = postal_prefix_len
+        self.normalized_records = []
+        self._prepare_records()
+
+    def _prepare_records(self):
+        """Precompute normalized fields and blocking keys for each record."""
+        for rec in self.records:
+            surname = normalize_name(rec.get("last_name", ""))
+            postal = normalize_postal_code(rec.get("postal_code", ""))
+            
+            # Form blocking key: First letter of surname + Postal prefix
+            surname_initial = surname[0] if surname else "?"
+            postal_prefix = postal[:self.postal_prefix_len] if postal else "UNK"
+            block_key = f"{surname_initial}_{postal_prefix}"
+
+            self.normalized_records.append({
+                "id": rec.get("id"),
+                "raw": rec,
+                "block_key": block_key,
+                "email": normalize_email(rec.get("email", "")),
+                "phone": normalize_phone(rec.get("phone", ""))
+            })
+
+    def match_records(self) -> List[Set[str]]:
+        """
+        Group records by blocking key, then form clusters within each block
+        based on exact match of normalized email OR phone.
+        """
+        # Step 1: Partition record indices by Block Key
+        blocks: Dict[str, List[int]] = defaultdict(list)
+        for idx, rec in enumerate(self.normalized_records):
+            blocks[rec["block_key"]].append(idx)
+
+        # Disjoint-Set / Union-Find structure to group linked records
+        parent = list(range(len(self.normalized_records)))
+
+        def find(i: int) -> int:
+            if parent[i] == i:
+                return i
+            parent[i] = find(parent[i])
+            return parent[i]
+
+        def union(i: int, j: int):
+            root_i = find(i)
+            root_j = find(j)
+            if root_i != root_j:
+                parent[root_j] = root_i
+
+        # Step 2: Perform pairwise exact matching within each block
+        for block_key, record_indices in blocks.items():
+            # In-block indices for quick lookups
+            email_index: Dict[str, List[int]] = defaultdict(list)
+            phone_index: Dict[str, List[int]] = defaultdict(list)
+
+            for idx in record_indices:
+                rec = self.normalized_records[idx]
+                if rec["email"]:
+                    email_index[rec["email"]].append(idx)
+                if rec["phone"]:
+                    phone_index[rec["phone"]].append(idx)
+
+            # Union records sharing the same normalized email
+            for email, indices in email_index.items():
+                first_idx = indices[0]
+                for other_idx in indices[1:]:
+                    union(first_idx, other_idx)
+
+            # Union records sharing the same normalized phone number
+            for phone, indices in phone_index.items():
+                first_idx = indices[0]
+                for other_idx in indices[1:]:
+                    union(first_idx, other_idx)
+
+        # Step 3: Collect connected components (clusters of matched IDs)
+        clusters: Dict[int, Set[str]] = defaultdict(set)
+        for idx, rec in enumerate(self.normalized_records):
+            root = find(idx)
+            clusters[root].add(rec["id"])
+
+        return list(clusters.values())
+
+
+# -----------------------------------------------------------------------------
+# 3. Example Run
+# -----------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    sample_dataset = [
+        {
+            "id": "REC_001",
+            "first_name": "John",
+            "last_name": "Doe",
+            "postal_code": "90210",
+            "email": "john.doe@example.com",
+            "phone": "+1 (555) 019-2831"
+        },
+        {
+            "id": "REC_002",
+            "first_name": "Jonathan",
+            "last_name": "Doe",
+            "postal_code": "90210-1234",
+            "email": "JOHNDOE@example.com",  # Matches REC_001 on Email & Block (D_902)
+            "phone": "5550001111"
+        },
+        {
+            "id": "REC_003",
+            "first_name": "J.",
+            "last_name": "Doe",
+            "postal_code": "90211",          # Different Block (D_902 vs D_902) -> Match on Phone
+            "email": "other@example.com",
+            "phone": "555-019-2831"          # Matches REC_001 on Phone
+        },
+        {
+            "id": "REC_004",
+            "first_name": "Alice",
+            "last_name": "Smith",
+            "postal_code": "10001",
+            "email": "alice@company.com",
+            "phone": "212-555-9999"
+        }
+    ]
+
+    matcher = RecordMatcher(sample_dataset, postal_prefix_len=3)
+    matched_groups = matcher.match_records()
+
+    print("--- Duplicate Record Clusters ---")
+    for group in matched_groups:
+        print(f"Group: {sorted(list(group))}")

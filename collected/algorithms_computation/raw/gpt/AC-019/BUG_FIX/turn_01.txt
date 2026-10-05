@@ -1,0 +1,196 @@
+## 1. Problem Understanding
+
+We are given a **non-negative cost matrix**. Starting at the **top-left cell** `(0, 0)`, we can move only:
+
+* **Right** → `(r, c + 1)`
+* **Down** → `(r + 1, c)`
+
+The goal is to reach the **bottom-right cell** `(rows-1, cols-1)` while minimizing the sum of the costs of all visited cells.
+
+We need to return:
+
+1. The **minimum total cost**
+2. **One deterministic optimal path** from start to destination
+
+---
+
+## 2. Key Constraints
+
+* The matrix contains **non-negative costs**.
+* Movement is restricted to **right or down**.
+* The starting cell and destination cell are included in the total cost.
+* There may be multiple optimal paths.
+* The solution must therefore use a **deterministic tie-breaking rule** so the same input always produces the same path.
+* Use only the **Python standard library**.
+* No randomness, network access, APIs, external services, or user interaction.
+
+### Required Output
+
+Return:
+
+```text
+(minimum_cost, path)
+```
+
+where `path` is a list of `(row, column)` coordinates.
+
+---
+
+## 3. Algorithm — Dynamic Programming
+
+Let:
+
+```text
+dp[r][c] = minimum cost required to reach cell (r, c)
+```
+
+For every cell `(r, c)`, the only possible predecessors are:
+
+* `(r-1, c)` — from above
+* `(r, c-1)` — from the left
+
+Therefore:
+
+```text
+dp[r][c] = cost[r][c] + min(dp[r-1][c], dp[r][c-1])
+```
+
+Along with `dp`, maintain:
+
+```text
+parent[r][c]
+```
+
+which stores the predecessor coordinate used to reach that cell optimally.
+
+### Deterministic tie handling
+
+If the cost from above and left is equal, we always choose **the predecessor from above**.
+
+This makes the selected path deterministic.
+
+After filling the DP table, start at the bottom-right cell and repeatedly follow `parent` coordinates backward until `(0, 0)`. Reverse the resulting list to obtain the path from start to finish.
+
+---
+
+## 4. Deterministic Python Implementation
+
+```python
+from typing import List, Tuple
+
+
+def minimum_cost_path(
+    cost: List[List[int]],
+) -> Tuple[int, List[Tuple[int, int]]]:
+    """
+    Return the minimum cost and one deterministic optimal path.
+
+    Movement is allowed only right or down.
+
+    Tie-breaking rule:
+        If moving from above and from the left gives the same cost,
+        choose the cell from above.
+    """
+
+    if not cost or not cost[0]:
+        raise ValueError("Cost matrix must not be empty.")
+
+    rows = len(cost)
+    cols = len(cost[0])
+
+    # Validate that the matrix is rectangular and non-negative.
+    for row in cost:
+        if len(row) != cols:
+            raise ValueError("Cost matrix must be rectangular.")
+        if any(value < 0 for value in row):
+            raise ValueError("All costs must be non-negative.")
+
+    # dp[r][c] = minimum cost to reach (r, c)
+    dp = [[0] * cols for _ in range(rows)]
+
+    # parent[r][c] = predecessor coordinate
+    parent = [[None] * cols for _ in range(rows)]
+
+    # Starting cell
+    dp[0][0] = cost[0][0]
+
+    # First row: can only come from the left.
+    for c in range(1, cols):
+        dp[0][c] = dp[0][c - 1] + cost[0][c]
+        parent[0][c] = (0, c - 1)
+
+    # First column: can only come from above.
+    for r in range(1, rows):
+        dp[r][0] = dp[r - 1][0] + cost[r][0]
+        parent[r][0] = (r - 1, 0)
+
+    # Fill the remaining cells.
+    for r in range(1, rows):
+        for c in range(1, cols):
+            from_above = dp[r - 1][c]
+            from_left = dp[r][c - 1]
+
+            # Deterministic tie-breaking:
+            # choose ABOVE when costs are equal.
+            if from_above <= from_left:
+                dp[r][c] = from_above + cost[r][c]
+                parent[r][c] = (r - 1, c)
+            else:
+                dp[r][c] = from_left + cost[r][c]
+                parent[r][c] = (r, c - 1)
+
+    # Reconstruct the path from bottom-right to top-left.
+    path = []
+    current = (rows - 1, cols - 1)
+
+    while current is not None:
+        path.append(current)
+        r, c = current
+        current = parent[r][c]
+
+    # Reverse to obtain top-left -> bottom-right.
+    path.reverse()
+
+    return dp[rows - 1][cols - 1], path
+
+
+# Example
+if __name__ == "__main__":
+    matrix = [
+        [1, 3, 1],
+        [1, 5, 1],
+        [4, 2, 1],
+    ]
+
+    minimum_cost, path = minimum_cost_path(matrix)
+
+    print("Minimum cost:", minimum_cost)
+    print("Path:", path)
+```
+
+### Example Output
+
+```text
+Minimum cost: 7
+Path: [(0, 0), (0, 1), (0, 2), (1, 2), (2, 2)]
+```
+
+The selected path has cost:
+
+```text
+1 + 3 + 1 + 1 + 1 = 7
+```
+
+### Complexity
+
+For an `R × C` matrix:
+
+* **Time:** `O(R × C)`
+* **Space:** `O(R × C)`
+
+The extra `parent` table is necessary because the problem explicitly requires returning the actual optimal path, not just its cost.
+
+Refine the path solver
+
+* Add deterministic test cases
+* Reduce memory usage

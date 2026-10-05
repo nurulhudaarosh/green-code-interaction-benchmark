@@ -1,0 +1,110 @@
+Here is the complete Python implementation using `PIL` (Pillow) and `imagehash` for computing average hash, along with a standard Union-Find (Disjoint Set Union) data structure for transitive grouping.
+
+### Requirements
+
+```bash
+pip install Pillow imagehash
+
+```
+
+### Python Code
+
+```python
+import os
+from collections import defaultdict
+from pathlib import Path
+from PIL import Image
+import imagehash
+
+
+class UnionFind:
+    """Disjoint Set Union (DSU) to group transitive fuzzy duplicate images."""
+
+    def __init__(self):
+        self.parent = {}
+
+    def find(self, item):
+        if item not in self.parent:
+            self.parent[item] = item
+            return item
+        if self.parent[item] != item:
+            self.parent[item] = self.find(self.parent[item])  # Path compression
+        return self.parent[item]
+
+    def union(self, item1, item2):
+        root1 = self.find(item1)
+        root2 = self.find(item2)
+        if root1 != root2:
+            self.parent[root1] = root2
+
+
+def find_fuzzy_duplicates(input_dir, hash_size=8, max_hamming=5):
+    """
+    Finds and groups fuzzy duplicate images in input_dir using average hashing (aHash)
+    and transitive Union-Find clustering.
+
+    :param input_dir: Path to directory containing images
+    :param hash_size: Size of the average hash grid (default 8 for 64-bit hash)
+    :param max_hamming: Maximum Hamming distance threshold for fuzzy duplicate detection
+    :return: List of sets, where each set contains file paths of transitive duplicate images
+    """
+    input_path = Path(input_dir)
+    image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff"}
+
+    # 1. Gather images and compute average hash for each
+    hashes = {}
+    valid_paths = []
+
+    for file_path in input_path.rglob("*"):
+        if file_path.is_file() and file_path.suffix.lower() in image_extensions:
+            try:
+                with Image.open(file_path) as img:
+                    # Compute average hash (aHash)
+                    ahash = imagehash.average_hash(img, hash_size=hash_size)
+                    hashes[str(file_path)] = ahash
+                    valid_paths.append(str(file_path))
+            except Exception as e:
+                print(f"Skipping unreadable image {file_path}: {e}")
+
+    if not valid_paths:
+        return []
+
+    uf = UnionFind()
+
+    # 2. Compare pairs and apply transitive union-find grouping
+    num_images = len(valid_paths)
+    for i in range(num_images):
+        path1 = valid_paths[i]
+        hash1 = hashes[path1]
+        for j in range(i + 1, num_images):
+            path2 = valid_paths[j]
+            hash2 = hashes[path2]
+
+            # Calculate Hamming distance between two hashes
+            if (hash1 - hash2) <= max_hamming:
+                uf.union(path1, path2)
+
+    # 3. Collect groups by root parent
+    clusters = defaultdict(list)
+    for path in valid_paths:
+        root = uf.find(path)
+        clusters[root].append(path)
+
+    # Filter out singletons (only return actual duplicate groups containing >= 2 images)
+    duplicate_groups = [set(group) for group in clusters.values() if len(group) > 1]
+
+    return duplicate_groups
+
+
+if __name__ == "__main__":
+    # Example usage:
+    directory = "./images"
+    duplicates = find_fuzzy_duplicates(directory, hash_size=8, max_hamming=5)
+
+    print(f"Found {len(duplicates)} duplicate cluster(s):")
+    for idx, group in enumerate(duplicates, start=1):
+        print(f"\nGroup {idx}:")
+        for filepath in group:
+            print(f"  - {filepath}")
+
+```

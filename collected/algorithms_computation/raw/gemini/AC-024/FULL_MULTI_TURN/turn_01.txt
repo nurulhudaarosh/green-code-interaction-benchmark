@@ -1,0 +1,83 @@
+### Problem Understanding
+
+The goal is to solve the interval partitioning/scheduling problem where intervals must be assigned room IDs such that no two overlapping intervals share the same room. A room becomes available as soon as its previous interval ends (end time $\le$ next start time). We need to minimize the total number of rooms used and return an array containing the assigned room ID for each original interval in its initial order.
+
+---
+
+### Key Constraints & Required Output
+
+* **Input:** A list of intervals, each defined by `[start, end]`, along with its original index.
+* **Overlap Condition:** Two intervals overlap if $\text{start}_2 < \text{end}_1$. Reuse is allowed when $\text{start}_2 \ge \text{end}_1$.
+* **Goal:** Minimize the number of rooms used.
+* **Output:** An array/list of room IDs corresponding to the input intervals in their original order (e.g., indexed $0$ to $N-1$).
+
+---
+
+### Algorithm Description
+
+1. **Sort:** Keep track of original indices and sort intervals by their start time.
+2. **Min-Heap:** Maintain a priority queue (min-heap) storing `(end_time, room_id)` for currently active rooms.
+3. **Track Room Allocation:**
+* For each interval `[start, end, original_index]`:
+* If the min-heap is not empty and its smallest `end_time` $\le$ `start`, pop that room and reuse its `room_id`.
+* Otherwise, assign a new `room_id` (incrementing total rooms count).
+* Push `(end, room_id)` back onto the heap.
+* Record the assigned `room_id` at `original_index`.
+
+
+
+
+4. **Return Results:** Return the array of room assignments.
+
+---
+
+### Python Implementation
+
+```python
+import heapq
+
+def solve_interval_partitioning(intervals):
+    """
+    Assigns every interval a room ID to minimize total rooms and avoid overlaps.
+    
+    :param intervals: List of tuples/lists [start, end]
+    :return: List of room IDs corresponding to original interval positions
+    """
+    if not intervals:
+        return []
+    
+    # Store intervals with their original index: (start, end, original_index)
+    indexed_intervals = [(start, end, i) for i, (start, end) in enumerate(intervals)]
+    
+    # Sort primarily by start time
+    indexed_intervals.sort(key=lambda x: x[0])
+    
+    # Min-heap storing tuples: (end_time, room_id)
+    heap = []
+    
+    # Track room assignments for the original ordering
+    assignments = [0] * len(intervals)
+    next_room_id = 0
+    
+    for start, end, orig_idx in indexed_intervals:
+        # Reuse room if the earliest available room ends at or before current start
+        if heap and heap[0][0] <= start:
+            _, room_id = heapq.heappop(heap)
+        else:
+            room_id = next_room_id
+            next_room_id += 1
+            
+        assignments[orig_idx] = room_id
+        heapq.heappush(heap, (end, room_id))
+        
+    return assignments
+
+
+# Example Usage
+if __name__ == "__main__":
+    example_intervals = [[0, 30], [5, 10], [15, 20], [5, 15]]
+    result = solve_interval_partitioning(example_intervals)
+    print("Intervals:", example_intervals)
+    print("Room Assignments:", result)
+
+```

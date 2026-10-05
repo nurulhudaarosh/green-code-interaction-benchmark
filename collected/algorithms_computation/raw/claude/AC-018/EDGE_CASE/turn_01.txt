@@ -1,0 +1,72 @@
+## Problem
+
+Given two integer polynomials, each represented as a coefficient array `a` and `b` (index `i` holds the coefficient of `x^i`), compute their product exactly and return its coefficient array. Coefficients can be negative, and Python's arbitrary-precision integers keep every result exact.
+
+## Key constraints and required output
+
+- **Input:** two lists of integers, `a` (length n) and `b` (length m), lowest degree first.
+- **Output:** a list of length `n + m - 1` where `result[k] = Σ a[i]·b[k-i]`.
+- **Exactness:** integer arithmetic only, no floats or FFT rounding.
+- **Edge cases:** if either input is empty, the product is the zero polynomial, so return `[]`. Zero coefficients are preserved (no trimming of trailing zeros) so the output length is always `n + m - 1`.
+- **Environment:** standard library only, deterministic, no network or interaction.
+
+## Algorithm
+
+Direct coefficient convolution: for every pair `(i, j)`, add `a[i] * b[j]` into `result[i + j]`. This is O(n·m) time and O(n + m) space. It is simple, exact, and fast enough for the size limits assumed here. Skipping zero coefficients of `a` is a cheap optimization for sparse inputs.
+
+## Implementation
+
+```python
+from typing import List
+
+
+def multiply_polynomials(a: List[int], b: List[int]) -> List[int]:
+    """Return the exact coefficient array of the product of polynomials a and b.
+
+    a[i] is the coefficient of x^i. Result has length len(a) + len(b) - 1,
+    or [] if either input is empty.
+    """
+    if not a or not b:
+        return []
+
+    result = [0] * (len(a) + len(b) - 1)
+    for i, ai in enumerate(a):
+        if ai == 0:
+            continue  # nothing to contribute
+        for j, bj in enumerate(b):
+            result[i + j] += ai * bj
+    return result
+
+
+def _self_test() -> None:
+    # (1 + 2x)(3 - x) = 3 + 5x - 2x^2
+    assert multiply_polynomials([1, 2], [3, -1]) == [3, 5, -2]
+    # (x - 1)(x + 1) = -1 + 0x + x^2
+    assert multiply_polynomials([-1, 1], [1, 1]) == [-1, 0, 1]
+    # Constant times polynomial
+    assert multiply_polynomials([5], [1, -2, 3]) == [5, -10, 15]
+    # Zero polynomial keeps length
+    assert multiply_polynomials([0, 0], [1, 2]) == [0, 0, 0]
+    # Empty input
+    assert multiply_polynomials([], [1, 2]) == []
+    # Big integers stay exact
+    big = 10**30
+    assert multiply_polynomials([big], [big]) == [big * big]
+
+
+if __name__ == "__main__":
+    _self_test()
+    print(multiply_polynomials([1, 2, 3], [4, -5, 6]))  # [4, 3, 8, -3, 18]
+```
+
+## Verification example
+
+For `a = [1, 2, 3]` and `b = [4, -5, 6]`:
+
+- `x^0`: 1·4 = 4
+- `x^1`: 1·(-5) + 2·4 = 3
+- `x^2`: 1·6 + 2·(-5) + 3·4 = 8
+- `x^3`: 2·6 + 3·(-5) = -3
+- `x^4`: 3·6 = 18
+
+Result: `[4, 3, 8, -3, 18]`, which matches the code's output.

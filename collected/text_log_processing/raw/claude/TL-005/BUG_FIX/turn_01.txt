@@ -1,0 +1,58 @@
+```python
+import re
+import unicodedata
+from pathlib import Path
+
+_WS = re.compile(r"\s+")
+
+
+def normalize_corpus(input_dir, output_dir, lowercase=False):
+    """Normalize every .txt file under input_dir (NFC, whitespace collapse,
+    optional lowercase) and write it to the same relative path under output_dir.
+    Returns the number of files processed."""
+    src_root = Path(input_dir).resolve()
+    dst_root = Path(output_dir).resolve()
+
+    if not src_root.is_dir():
+        raise NotADirectoryError(f"input_dir not found: {src_root}")
+
+    dst_root.mkdir(parents=True, exist_ok=True)
+    count = 0
+
+    for path in sorted(src_root.rglob("*")):
+        # Skip the output tree if it lives inside the input tree
+        if dst_root == path or dst_root in path.parents:
+            continue
+
+        rel = path.relative_to(src_root)
+        target = dst_root / rel
+
+        if path.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+
+        if path.suffix.lower() != ".txt":
+            continue
+
+        text = path.read_text(encoding="utf-8")
+        text = unicodedata.normalize("NFC", text)
+        if lowercase:
+            text = text.lower()
+        text = _WS.sub(" ", text).strip()
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+        count += 1
+
+    return count
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) < 3:
+        sys.exit("usage: python normalize_corpus.py INPUT_DIR OUTPUT_DIR [--lower]")
+    n = normalize_corpus(sys.argv[1], sys.argv[2], "--lower" in sys.argv[3:])
+    print(f"Normalized {n} file(s)")
+
+```

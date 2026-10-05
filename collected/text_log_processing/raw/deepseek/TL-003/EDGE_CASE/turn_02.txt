@@ -1,0 +1,126 @@
+Here's the implementation with explicit handling and verification for those edge cases:
+
+```python
+import re
+import unicodedata
+from collections import OrderedDict
+from typing import Iterable, List, Tuple, Callable, Union
+
+
+def _normalize(line: str) -> str:
+    line = unicodedata.normalize("NFKC", line)
+    line = line.strip()
+    line = re.sub(r"\s+", " ", line)
+    return line.casefold()
+
+
+def _strip_line_ending(line: str) -> str:
+    """Strip at most one trailing line ending (\\n, \\r\\n, or \\r)."""
+    if line.endswith("\r\n"):
+        return line[:-2]
+    if line.endswith("\n") or line.endswith("\r"):
+        return line[:-1]
+    return line
+
+
+def dedup_lines(
+    lines: Iterable[str],
+    mode: str = "exact",
+    keep: str = "first",
+    return_counts: bool = True,
+) -> Union[List[Tuple[str, int]], List[str]]:
+    """Deduplicate lines while preserving order.
+
+    Edge cases handled:
+      * Empty input -> empty result.
+      * Single line -> one entry with count 1.
+      * All lines identical -> one entry with count == number of lines.
+      * Trailing newlines (\\n, \\r\\n, \\r) are stripped per line.
+      * Blank lines are deduplicated like any other line.
+    """
+    if mode not in ("exact", "normalized"):
+        raise ValueError(f"mode must be 'exact' or 'normalized', got {mode!r}")
+    if keep not in ("first", "last"):
+        raise ValueError(f"keep must be 'first' or 'last', got {keep!r}")
+
+    key_fn: Callable[[str], str] = (lambda s: s) if mode == "exact" else _normalize
+
+    buckets: "OrderedDict[str, list]" = OrderedDict()
+
+    for raw in lines:
+        line = _strip_line_ending(raw)
+        key = key_fn(line)
+        bucket = buckets.get(key)
+        if bucket is None:
+            buckets[key] = [line, 1]
+        else:
+            bucket[1] += 1
+            if keep == "last":
+                bucket[0] = line
+
+    if return_counts:
+        return [(rep, count) for rep, count in buckets.values()]
+    return [rep for rep, _ in buckets.values()]
+```
+
+### Edge-case verification
+
+
+def run(label, lines, **kw):
+    result = dedup_lines(lines, **kw)
+    print(f"{label:<38} -> {result}")
+    return result
+
+
+# 1. Empty input
+assert run("empty list", []) == []
+assert run("empty list (no counts)", [], return_counts=False) == []
+assert run("empty iterable", iter([])) == []
+
+# Empty lines from a file's splitlines()
+assert run("empty text -> splitlines", "".splitlines()) == []
+# Empty text iterated line-by-line yields nothing either
+assert run("empty text iterated", list("".splitlines())) == []
+
+# 2. Single-line file
+assert run("single line", ["only\n"]) == [("only", 1)]
+assert run("single line, no newline", ["only"]) == [("only", 1)]
+assert run("single blank line", ["\n"]) == [("", 1)]
+assert run("single line (no counts)", ["only\n"], return_counts=False) == ["only"]
+
+# 3. All lines identical (exact mode)
+assert run("all identical exact", ["a", "a", "a", "a"]) == [("a", 4)]
+
+# All identical once line endings are normalized by splitlines()
+data = "same\nsame\nsame\n"
+assert run("all identical w/ newlines", data.splitlines()) == [("same", 3)]
+
+# 4. All identical after normalization
+mixed = ["Hello", "hello", "HELLO", "  hello  ", "hello\n"]
+assert run("all identical normalized", mixed, mode="normalized") == [("Hello", 5)]
+assert run("all identical normalized, keep=last",
+           mixed, mode="normalized", keep="last") == [("hello", 5)]
+
+# 5. Empty file vs. file with only a newline — different results
+assert run("truly empty file", []) == []
+assert run("file with one blank line", "\n".splitlines()) == [("", 1)]
+```
+
+### What each edge case exercises
+
+| Case | Behavior | Why it's correct |
+|------|----------|------------------|
+| Empty input `[]` | Returns `[]` | Loop body never runs; `buckets` stays empty. Works for lists, generators, and `file` objects alike. |
+| Empty string `""` via `splitlines()` | Returns `[]` | `"".splitlines()` is `[]`, not `[""]` — no phantom blank line. |
+| Single line `["only\n"]` | `[("only", 1)]` | `_strip_line_ending` removes the `\n`; one insertion yields count 1. |
+| Single blank line `["\n"]` | `[("", 1)]` | Legitimate blank line is preserved; only the newline is stripped. |
+| All identical, exact `["a","a","a","a"]` | `[("a", 4)]` | Same key on every iteration; count increments to 4. |
+| All identical, normalized | `[("Hello", 5)]` | All variants hash to `"hello"`; representative is the first-seen spelling (`keep="first"`). |
+| `keep="last"` on identical set | Representative = last spelling, count unchanged | Count accumulates regardless of which representative is kept. |
+
+### Additional guarantees worth noting
+
+- **Blank lines are not silently dropped.** `"\n".splitlines()` → `[""]`, and the function returns `[("", 1)]`. If you *want* to drop blanks, filter before calling: `dedup_lines(l for l in lines if l.strip())`.
+- **Generators and file handles work without materialization.** `for raw in lines` consumes lazily; memory is O(unique lines).
+- **`\r\n` and lone `\r` are stripped correctly.** `_strip_line_ending` checks `\r\n` first so Windows-style endings don't leave a stray `\r` in the representative.
+- **Counts always equal the number of input lines that map to the key**, whether or not a representative was replaced by `keep="last"`. This means `sum(count for _, count in dedup_lines(...)) == number_of_input_lines` holds for every edge case above — a useful invariant to assert in tests.

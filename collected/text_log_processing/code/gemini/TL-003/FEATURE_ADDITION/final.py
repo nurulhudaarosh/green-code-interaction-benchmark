@@ -1,0 +1,79 @@
+from collections import Counter
+from typing import Dict, Iterable, Literal, Tuple
+import re
+
+def deduplicate_lines(
+    input_lines: Iterable[str],
+    output_path: str | None = None,
+    mode: Literal['exact', 'normalized'] = 'exact'
+) -> Tuple[list[str], Dict[str, int]]:
+    """
+    Removes duplicate lines while preserving original order and writes output.
+
+    Args:
+        input_lines: An iterable of strings (e.g., list or open file object).
+        output_path: Optional path to write unique lines to disk.
+        mode: 
+            - 'exact': Compares raw lines as-is.
+            - 'normalized': Compares stripped, lowercased, and whitespace-collapsed forms.
+
+    Returns:
+        A tuple of (unique_lines, counts_dict), where:
+          - unique_lines: List of raw strings as they first appeared.
+          - counts_dict: Mapping of each unique raw line to its total count.
+    """
+    if mode not in ('exact', 'normalized'):
+        raise ValueError("mode must be either 'exact' or 'normalized'")
+
+    def normalize(text: str) -> str:
+        # Strip leading/trailing whitespace, collapse internal runs of whitespace to a single space, lowercase
+        return " ".join(text.split()).lower()
+
+    seen_keys: set[str] = set()
+    unique_lines: list[str] = []
+    counts: Counter[str] = Counter()
+
+    out_file = open(output_path, "w", encoding="utf-8") if output_path else None
+
+    try:
+        for raw_line in input_lines:
+            key = raw_line if mode == 'exact' else normalize(raw_line)
+            counts[key] += 1
+
+            if key not in seen_keys:
+                seen_keys.add(key)
+                unique_lines.append(raw_line)
+                if out_file:
+                    out_file.write(raw_line)
+    finally:
+        if out_file:
+            out_file.close()
+
+    # Map counts to the representative unique raw lines
+    representative_counts = {
+        line: counts[line if mode == 'exact' else normalize(line)]
+        for line in unique_lines
+    }
+
+    return unique_lines, representative_counts
+
+
+if __name__ == "__main__":
+    sample_data = [
+        "  Apple   Pie \n",
+        "banana\n",
+        "apple pie\n",
+        "APPLE   PIE\n",
+        "banana\n",
+        "Orange\n",
+    ]
+
+    print("--- Exact Mode ---")
+    u_exact, c_exact = deduplicate_lines(sample_data, mode='exact')
+    for line, count in c_exact.items():
+        print(f"{repr(line)} -> count: {count}")
+
+    print("\n--- Normalized Mode ---")
+    u_norm, c_norm = deduplicate_lines(sample_data, mode='normalized')
+    for line, count in c_norm.items():
+        print(f"{repr(line)} -> count: {count}")

@@ -1,0 +1,52 @@
+import heapq
+
+def simulate_priority_queue(jobs):
+    """
+    Simulates a non-preemptive single-server priority queue with deterministic tie-breaking.
+    
+    Tie-breaking order:
+      1. Higher priority (larger numerical value)
+      2. Earlier arrival time
+      3. Smaller job ID
+    """
+    # Sort initial arrivals by arrival time, then by job ID
+    sorted_jobs = sorted(jobs, key=lambda x: (x['arrival'], x['id']))
+    
+    n = len(sorted_jobs)
+    job_idx = 0
+    current_time = 0
+    
+    ready_queue = []  # Heap storing: (-priority, arrival, job_id, duration)
+    results = {}
+    total_waiting_time = 0
+
+    while job_idx < n or ready_queue:
+        # Jump current_time forward if server is idle and no jobs are ready
+        if not ready_queue and current_time < sorted_jobs[job_idx]['arrival']:
+            current_time = sorted_jobs[job_idx]['arrival']
+        
+        # Enqueue ALL jobs that have arrived up to current_time BEFORE popping
+        while job_idx < n and sorted_jobs[job_idx]['arrival'] <= current_time:
+            job = sorted_jobs[job_idx]
+            heapq.heappush(
+                ready_queue, 
+                (-job['priority'], job['arrival'], job['id'], job['duration'])
+            )
+            job_idx += 1
+
+        # Process the highest-priority available job
+        neg_prio, arrival, job_id, duration = heapq.heappop(ready_queue)
+        
+        start_time = current_time
+        waiting_time = start_time - arrival
+        completion_time = start_time + duration
+        current_time = completion_time
+        
+        total_waiting_time += waiting_time
+        results[job_id] = {
+            'completion_time': completion_time,
+            'waiting_time': waiting_time
+        }
+
+    avg_waiting_time = total_waiting_time / n if n > 0 else 0.0
+    return results, avg_waiting_time

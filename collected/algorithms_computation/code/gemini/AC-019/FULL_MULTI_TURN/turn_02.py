@@ -1,0 +1,66 @@
+"""
+Minimum-Cost Grid Path Solver with Dynamic Programming
+
+Problem:
+Given an m x n non-negative cost matrix, find the minimum path cost 
+from (0, 0) to (m-1, n-1) moving only Right or Down, and return one 
+deterministic optimal path.
+
+Algorithm:
+1. Dynamic Programming with a 2D state table `dp[i][j]` storing minimum cumulative costs.
+2. Predecessor table `parent[i][j]` storing parent coordinates for deterministic backtracking.
+3. Explicit tie-handling: When cost from LEFT equals cost from UP, prioritize LEFT.
+"""
+
+
+def min_path_cost(grid: list[list[int]]) -> tuple[int, list[tuple[int, int]]]:
+    if not grid or not grid[0]:
+        return 0, []
+
+    m, n = len(grid), len(grid[0])
+
+    dp = [[0] * n for _ in range(m)]
+    parent = [[None] * n for _ in range(m)]
+
+    dp[0][0] = grid[0][0]
+
+    # Initialize top row
+    for j in range(1, n):
+        dp[0][j] = dp[0][j - 1] + grid[0][j]
+        parent[0][j] = (0, j - 1)
+
+    # Initialize left column
+    for i in range(1, m):
+        dp[i][0] = dp[i - 1][0] + grid[i][0]
+        parent[i][0] = (i - 1, 0)
+
+    # Fill DP table with explicit deterministic tie handling
+    for i in range(1, m):
+        for j in range(1, n):
+            from_up = dp[i - 1][j]
+            from_left = dp[i][j - 1]
+
+            # Prioritize LEFT over UP on equality
+            if from_left <= from_up:
+                dp[i][j] = grid[i][j] + from_left
+                parent[i][j] = (i, j - 1)
+            else:
+                dp[i][j] = grid[i][j] + from_up
+                parent[i][j] = (i - 1, j)
+
+    # Reconstruct optimal path from parent matrix
+    path = []
+    curr = (m - 1, n - 1)
+    while curr is not None:
+        path.append(curr)
+        curr = parent[curr[0]][curr[1]]
+
+    path.reverse()
+    return dp[m - 1][n - 1], path
+
+
+if __name__ == "__main__":
+    example_grid = [[1, 2], [2, 1]]
+    cost, path = min_path_cost(example_grid)
+    print("Cost:", cost)
+    print("Path:", path)

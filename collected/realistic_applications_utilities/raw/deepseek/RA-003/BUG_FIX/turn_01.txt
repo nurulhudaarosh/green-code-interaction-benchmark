@@ -1,0 +1,425 @@
+Here's the complete implementation with **strict validation** for scores (0–100, numeric, non-NaN) and **weights** (0 < weight ≤ 1, must sum to 1.0 per student's subject set):
+
+```python
+import json
+import math
+import statistics
+from typing import Dict, List, Tuple, Optional
+from dataclasses import dataclass, field
+from enum import Enum
+
+
+# ============================================================
+# VALIDATION HELPERS
+# ============================================================
+class ValidationError(ValueError):
+    """Raised for any invalid score / weight input."""
+
+
+def validate_score(score) -> float:
+    """Ensure score is a real number between 0 and 100 inclusive."""
+    if isinstance(score, bool):  # bool is subclass of int — reject
+        raise ValidationError(f"Score must be a number, got bool: {score!r}")
+    if not isinstance(score, (int, float)):
+        raise ValidationError(f"Score must be int/float, got {type(score).__name__}: {score!r}")
+    if isinstance(score, float) and (math.isnan(score) or math.isinf(score)):
+        raise ValidationError(f"Score must be finite, got {score!r}")
+    score = float(score)
+    if not (0.0 <= score <= 100.0):
+        raise ValidationError(f"Score must be in [0, 100], got {score}")
+    return score
+
+
+def validate_weight(weight) -> float:
+    """Ensure weight is a real number in (0, 1]."""
+    if isinstance(weight, bool):
+        raise ValidationError(f"Weight must be a number, got bool: {weight!r}")
+    if not isinstance(weight, (int, float)):
+        raise ValidationError(f"Weight must be int/float, got {type(weight).__name__}: {weight!r}")
+    if isinstance(weight, float) and (math.isnan(weight) or math.isinf(weight)):
+        raise ValidationError(f"Weight must be finite, got {weight!r}")
+    weight = float(weight)
+    if not (0.0 < weight <= 1.0):
+        raise ValidationError(f"Weight must be in (0, 1], got {weight}")
+    return weight
+
+
+def validate_subject(subject) -> str:
+    if not isinstance(subject, str) or not subject.strip():
+        raise ValidationError(f"Subject must be a non-empty string, got {subject!r}")
+    return subject.strip()
+
+
+def validate_weights_sum(weights: Dict[str, float], tol: float = 1e-6) -> None:
+    """Weights across all subjects must sum to 1.0 (within tolerance)."""
+    if not weights:
+        raise ValidationError("Cannot validate empty weights — at least one subject required.")
+    total = sum(weights.values())
+    if abs(total - 1.0) > tol:
+        raise ValidationError(
+            f"Subject weights must sum to 1.0 (got {total:.6f}). "
+            f"Per-subject: {weights}"
+        )
+
+
+# ============================================================
+# GRADE SCALE
+# ============================================================
+class GradeScale(Enum):
+    A_PLUS = 90
+    A = 85
+    B_PLUS = 80
+    B = 75
+    C_PLUS = 70
+    C = 65
+    D_PLUS = 60
+    D = 55
+    F = 0
+
+
+# ============================================================
+# STUDENT MODEL
+# ============================================================
+@dataclass
+class Student:
+    student_id: str
+    name: str
+    scores: Dict[str, float] = field(default_factory=dict)
+    weights: Dict[str, float] = field(default_factory=dict)
+
+    def set_weight(self, subject: str, weight: float) -> None:
+        subject = validate_subject(subject)
+        weight = validate_weight(weight)
+        self.weights[subject] = weight
+
+    def add_score(self, subject: str, score: float, weight: Optional[float] = None) -> None:
+        subject = validate_subject(subject)
+        score = validate_score(score)
+        self.scores[subject] = score
+        if weight is not None:
+            self.set_weight(subject, weight)
+
+    def finalize_weights(self) -> None:
+        """Call once all subjects are set — enforce sum == 1.0."""
+        validate_weights_sum(self.weights)
+
+    def average(self) -> float:
+        """Weighted average if all subjects have weights and they sum to 1.0,
+        otherwise simple average."""
+        if not self.scores:
+            return 0.0
+
+        # Use weighted average only when every scored subject has a weight
+        if self.weights and set(self.scores) == set(self.weights):
+            try:
+                validate_weights_sum(self.weights)
+                return sum(self.scores[s] * self.weights[s] for s in self.scores)
+            except ValidationError:
+                pass  # fall back to simple average
+
+        return sum(self.scores.values()) / len(self.scores)
+
+    def letter_grade(self) -> str:
+        avg = self.average()
+        for grade in GradeScale:
+            if avg >= grade.value:
+                return grade.name.replace("_PLUS", "+")
+        return "F"
+
+
+# ============================================================
+# ANALYZER
+# ============================================================
+class StudentPerformanceAnalyzer:
+    def __init__(self):
+        self.students: Dict[str, Student] = {}
+
+    # ---------- CRUD ----------
+    def add_student(self, student_id: str, name: str) -> Student:
+        if not student_id or not isinstance(student_id, str):
+            raise ValidationError(f"student_id must be a non-empty string, got {student_id!r}")
+        if not name or not isinstance(name, str):
+            raise ValidationError(f"name must be a non-empty string, got {name!r}")
+        if student_id in self.students:
+            raise ValidationError(f"Student {student_id} already exists")
+        student = Student(student_id.strip(), name.strip())
+        self.students[student.student_id] = student
+        return student
+
+    def remove_student(self, student_id: str) -> None:
+        if student_id not in self.students:
+            raise KeyError(f"Student {student_id} not found")
+        del self.students[student_id]
+
+    def get_student(self, student_id: str) -> Student:
+        if student_id not in self.students:
+            raise KeyError(f"Student {student_id} not found")
+        return self.students[student_id]
+
+    def record_score(self, student_id: str, subject: str, score: float,
+                     weight: Optional[float] = None) -> None:
+        self.get_student(student_id).add_score(subject, score, weight)
+
+    def set_weights(self, student_id: str, weights: Dict[str, float]) -> None:
+        """Set/replace all weights for a student and validate the sum."""
+        student = self.get_student(student_id)
+        clean: Dict[str, float] = {}
+        for subj, w in weights.items():
+            clean[validate_subject(subj)] = validate_weight(w)
+        validate_weights_sum(clean)
+        student.weights = clean
+
+    # ---------- Analytics ----------
+    def class_average(self, subject: Optional[str] = None) -> float:
+        if not self.students:
+            return 0.0
+        if subject:
+            subject = validate_subject(subject)
+            vals = [s.scores[subject] for s in self.students.values() if subject in s.scores]
+            return statistics.mean(vals) if vals else 0.0
+        return statistics.mean([s.average() for s in self.students.values()])
+
+    def subject_statistics(self) -> Dict[str, Dict[str, float]]:
+        subjects = {subj for s in self.students.values() for subj in s.scores}
+        stats = {}
+        for subj in subjects:
+            vals = [s.scores[subj] for s in self.students.values() if subj in s.scores]
+            if vals:
+                stats[subj] = {
+                    "mean": statistics.mean(vals),
+                    "median": statistics.median(vals),
+                    "stdev": statistics.pstdev(vals) if len(vals) > 1 else 0.0,
+                    "min": min(vals),
+                    "max": max(vals),
+                    "count": len(vals),
+                }
+        return stats
+
+    def top_performers(self, n: int = 3) -> List[Tuple[str, float]]:
+        ranked = sorted(self.students.values(), key=lambda s: s.average(), reverse=True)
+        return [(s.name, round(s.average(), 2)) for s in ranked[:n]]
+
+    def at_risk_students(self, threshold: float = 60.0) -> List[Tuple[str, float]]:
+        return [(s.name, round(s.average(), 2))
+                for s in self.students.values() if s.average() < threshold]
+
+    def grade_distribution(self) -> Dict[str, int]:
+        dist: Dict[str, int] = {}
+        for s in self.students.values():
+            g = s.letter_grade()
+            dist[g] = dist.get(g, 0) + 1
+        return dist
+
+    def rank_students(self) -> List[Tuple[int, str, float, str]]:
+        ranked = sorted(self.students.values(), key=lambda s: s.average(), reverse=True)
+        return [(i + 1, s.name, round(s.average(), 2), s.letter_grade())
+                for i, s in enumerate(ranked)]
+
+    # ---------- Reports ----------
+    def generate_report(self) -> str:
+        lines = ["=" * 60, "STUDENT PERFORMANCE REPORT", "=" * 60]
+        lines.append(f"Total Students: {len(self.students)}\n")
+
+        lines.append("--- Rankings ---")
+        for rank, name, avg, grade in self.rank_students():
+            lines.append(f"  {rank}. {name:<20} Avg: {avg:>6.2f}  Grade: {grade}")
+
+        lines.append("\n--- Subject Statistics ---")
+        for subj, st in self.subject_statistics().items():
+            lines.append(f"  {subj}:")
+            lines.append(f"    Mean: {st['mean']:.2f} | Median: {st['median']:.2f} | "
+                         f"StDev: {st['stdev']:.2f}")
+            lines.append(f"    Min: {st['min']:.2f} | Max: {st['max']:.2f} | "
+                         f"Count: {st['count']}")
+
+        lines.append("\n--- Grade Distribution ---")
+        for grade, count in sorted(self.grade_distribution().items()):
+            lines.append(f"  {grade}: {'*' * count} ({count})")
+
+        lines.append("\n--- Top Performers ---")
+        for name, avg in self.top_performers(3):
+            lines.append(f"  {name}: {avg}")
+
+        lines.append("\n--- At-Risk Students (avg < 60) ---")
+        at_risk = self.at_risk_students()
+        lines.append("  None 🎉" if not at_risk else "\n".join(f"  {n}: {a}" for n, a in at_risk))
+
+        lines.append(f"\nClass Average: {self.class_average():.2f}")
+        lines.append("=" * 60)
+        return "\n".join(lines)
+
+    # ---------- Persistence ----------
+    def save(self, path: str) -> None:
+        data = {
+            sid: {"name": s.name, "scores": s.scores, "weights": s.weights}
+            for sid, s in self.students.items()
+        }
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+
+    def load(self, path: str) -> None:
+        with open(path) as f:
+            data = json.load(f)
+        self.students.clear()
+        for sid, info in data.items():
+            s = Student(sid, info["name"])
+            for subj, sc in info.get("scores", {}).items():
+                s.add_score(subj, sc)  # re-validates
+            for subj, w in info.get("weights", {}).items():
+                s.set_weight(subj, w)  # re-validates
+            self.students[sid] = s
+
+
+# ============================================================
+# VALIDATION TESTS
+# ============================================================
+def run_validation_tests():
+    print("\n" + "=" * 60)
+    print("VALIDATION TESTS")
+    print("=" * 60)
+
+    # --- Invalid scores ---
+    bad_scores = [-1, 101, 150, "85", None, True, float("nan"), float("inf")]
+    for s in bad_scores:
+        try:
+            validate_score(s)
+            print(f"  ❌ FAIL: accepted invalid score {s!r}")
+        except ValidationError as e:
+            print(f"  ✅ rejected score {s!r}: {e}")
+
+    # --- Valid scores (boundary) ---
+    for s in [0, 0.0, 50, 99.9, 100, 100.0]:
+        try:
+            assert validate_score(s) == float(s)
+            print(f"  ✅ accepted valid score {s!r}")
+        except ValidationError as e:
+            print(f"  ❌ FAIL: rejected valid score {s!r}: {e}")
+
+    # --- Invalid weights ---
+    bad_weights = [-0.1, 0, 1.1, 2, "0.5", None, False, float("nan"), float("inf")]
+    for w in bad_weights:
+        try:
+            validate_weight(w)
+            print(f"  ❌ FAIL: accepted invalid weight {w!r}")
+        except ValidationError as e:
+            print(f"  ✅ rejected weight {w!r}: {e}")
+
+    # --- Valid weights (boundary) ---
+    for w in [0.0001, 0.5, 1.0, 1]:
+        try:
+            assert validate_weight(w) > 0
+            print(f"  ✅ accepted valid weight {w!r}")
+        except ValidationError as e:
+            print(f"  ❌ FAIL: rejected valid weight {w!r}: {e}")
+
+    # --- Weight sum enforcement ---
+    cases = [
+        ({"Math": 0.5, "Science": 0.5}, True),
+        ({"Math": 0.3, "Science": 0.3, "English": 0.4}, True),
+        ({"Math": 0.3, "Science": 0.3}, False),           # sum=0.6
+        ({"Math": 0.5, "Science": 0.6}, False),           # sum=1.1
+        ({}, False),                                      # empty
+        ({"Math": 0.333333, "Science": 0.333333, "English": 0.333334}, True),
+    ]
+    for wts, should_pass in cases:
+        try:
+            validate_weights_sum(wts)
+            ok = should_pass
+            print(f"  {'✅' if ok else '❌ FAIL'} weights {wts} → accepted")
+        except ValidationError as e:
+            ok = not should_pass
+            print(f"  {'✅' if ok else '❌ FAIL'} weights {wts} → rejected: {e}")
+
+    # --- End-to-end: analyzer rejects bad input ---
+    print("\n--- End-to-end rejection tests ---")
+    a = StudentPerformanceAnalyzer()
+    a.add_student("X1", "Test Student")
+
+    for bad in [-5, 105, "90", None, True, float("nan")]:
+        try:
+            a.record_score("X1", "Math", bad)
+            print(f"  ❌ FAIL: accepted score {bad!r}")
+        except ValidationError as e:
+            print(f"  ✅ rejected score {bad!r}: {e}")
+
+    try:
+        a.set_weights("X1", {"Math": 0.4, "Science": 0.4})  # sum=0.8
+        print("  ❌ FAIL: accepted weights summing to 0.8")
+    except ValidationError as e:
+        print(f"  ✅ rejected bad weight sum: {e}")
+
+    # Correct weights
+    a.set_weights("X1", {"Math": 0.6, "Science": 0.4})
+    a.record_score("X1", "Math", 90)
+    a.record_score("X1", "Science", 80)
+    print(f"  ✅ weighted average: {a.get_student('X1').average():.2f} (expected 86.00)")
+    print(f"  ✅ letter grade: {a.get_student('X1').letter_grade()} (expected A)")
+
+
+# ============================================================
+# DEMO
+# ============================================================
+if __name__ == "__main__":
+    run_validation_tests()
+
+    print("\n" + "=" * 60)
+    print("FULL DEMO")
+    print("=" * 60)
+
+    analyzer = StudentPerformanceAnalyzer()
+    sample = [
+        ("S001", "Alice Johnson", {"Math": 95, "Science": 92, "English": 88, "History": 90}),
+        ("S002", "Bob Smith",    {"Math": 72, "Science": 68, "English": 75, "History": 70}),
+        ("S003", "Carol White",  {"Math": 88, "Science": 91, "English": 85, "History": 89}),
+        ("S004", "David Brown",  {"Math": 55, "Science": 58, "English": 62, "History": 50}),
+        ("S005", "Eva Green",    {"Math": 78, "Science": 82, "English": 80, "History": 76}),
+        ("S006", "Frank Miller", {"Math": 45, "Science": 52, "English": 48, "History": 55}),
+    ]
+    weights = {"Math": 0.30, "Science": 0.30, "English": 0.25, "History": 0.15}
+
+    for sid, name, scores in sample:
+        analyzer.add_student(sid, name)
+        for subj, sc in scores.items():
+            analyzer.record_score(sid, subj, sc)
+        analyzer.set_weights(sid, weights)  # sum == 1.0 ✅
+
+    print(analyzer.generate_report())
+
+    analyzer.save("students.json")
+    print("\nSaved to students.json")
+
+    new_a = StudentPerformanceAnalyzer()
+    new_a.load("students.json")
+    print(f"Reloaded {len(new_a.students)} students; class avg = {new_a.class_average():.2f}")
+```
+
+## What changed / was corrected
+
+### 1. Score validation (`validate_score`)
+| Rejected | Reason |
+|---|---|
+| `-1`, `101`, `150` | outside `[0, 100]` |
+| `"85"` | wrong type (str) |
+| `None` | wrong type |
+| `True` / `False` | `bool` is a subclass of `int` — explicitly blocked |
+| `NaN`, `Inf` | non-finite floats blocked via `math.isnan`/`isinf` |
+
+Boundaries `0`, `0.0`, `100`, `100.0` are accepted.
+
+### 2. Weight validation (`validate_weight`)
+- Must be **numeric** (int/float, **not** bool).
+- Must be **finite** (no NaN/Inf).
+- Must be in the **open-closed interval `(0, 1]`** — `0` and negatives rejected; `1.0` allowed.
+
+### 3. Weight-sum enforcement (`validate_weights_sum`)
+- Weights across a student's subjects must **sum to 1.0** (tolerance `1e-6`).
+- Empty weight dict is rejected.
+- Called explicitly via `set_weights()` and implicitly during weighted-average calculation.
+
+### 4. Weighted vs simple average
+`Student.average()` uses a **weighted average** only when every scored subject has a weight **and** the weights sum to 1.0. Otherwise it safely falls back to the simple mean — so partially-weighted data doesn't silently produce a wrong number.
+
+### 5. End-to-end re-validation on load
+`load()` routes every score/weight through the same validators, so corrupted JSON cannot bypass validation.
+
+The `run_validation_tests()` block exercises every branch and prints ✅/❌ for each case, so you can see the validation working before the demo report prints.

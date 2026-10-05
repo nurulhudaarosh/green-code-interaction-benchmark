@@ -1,0 +1,183 @@
+```python
+#!/usr/bin/env python3
+"""
+Flatten nested product JSON into warehouse-level rows.
+
+Expected input (a list, or an object with a "products" list):
+
+[
+  {
+    "id": "P-100",
+    "name": "Widget",
+    "category": "Tools",              # optional
+    "warehouses": [
+      {"warehouse_id": "W-2", "location": "Berlin", "stock": 0},
+      {"warehouse_id": "W-1", "location": "Paris",  "stock": 15}
+    ]
+  }
+]
+
+Rules:
+  * A product is INVALID if it isn't an object, or "id", "name" or "warehouses"
+    is missing/empty/wrong type ("warehouses" must be a list). Invalid products
+    are counted and produce no rows.
+  * A warehouse entry is VALID if it is an object with a non-empty "warehouse_id"
+    and an integer "stock" >= 0. Invalid entries are skipped (and counted
+    separately) without invalidating the whole product.
+  * Zero stock is kept.
+  * Output rows are sorted by (product_id, warehouse_id).
+"""
+
+import argparse
+import csv
+import json
+import sys
+from typing import Any
+
+PRODUCT_REQUIRED = ("id", "name", "warehouses")
+WAREHOUSE_REQUIRED = ("warehouse_id", "stock")
+
+FIELDNAMES = [
+    "product_id", "product_name", "category",
+    "warehouse_id", "location", "stock",
+]
+
+
+def _is_present(value: Any) -> bool:
+    """A value counts as present if it's not None and not a blank string.
+    Note: 0 and False-like numerics are NOT treated as missing."""
+    if value is None:
+        return False
+    if isinstance(value, str) and not value.strip():
+        return False
+    return True
+
+
+def is_valid_product(product: Any) -> bool:
+    if not isinstance(product, dict):
+        return False
+    if not all(_is_present(product.get(k)) for k in PRODUCT_REQUIRED):
+        return False
+    return isinstance(product["warehouses"], list)
+
+
+def is_valid_warehouse(entry: Any) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    if not all(_is_present(entry.get(k)) for k in WAREHOUSE_REQUIRED):
+        return False
+    stock = entry["stock"]
+    # bool is a subclass of int, so exclude it explicitly
+    return isinstance(stock, int) and not isinstance(stock, bool) and stock >= 0
+
+
+def flatten_products(data: Any) -> dict:
+    """
+    Returns:
+        {
+          "rows": [...sorted flat rows...],
+          "invalid_products": int,
+          "skipped_warehouses": int,
+          "total_products": int,
+        }
+    """
+    if isinstance(data, dict) and isinstance(data.get("products"), list):
+        products = data["products"]
+    elif isinstance(data, list):
+        products = data
+    else:
+        raise ValueError('Top-level JSON must be a list or an object with a "products" list.')
+
+    rows = []
+    invalid_products = 0
+    skipped_warehouses = 0
+
+    for product in products:
+        if not is_valid_product(product):
+            invalid_products += 1
+            continue
+
+        for wh in product["warehouses"]:
+            if not is_valid_warehouse(wh):
+                skipped_warehouses += 1
+                continue
+            rows.append({
+                "product_id": product["id"],
+                "product_name": product["name"],
+                "category": product.get("category"),
+                "warehouse_id": wh["warehouse_id"],
+                "location": wh.get("location"),
+                "stock": wh["stock"],  # zero is preserved
+            })
+
+    # str() keys keep sorting safe when ids mix ints and strings
+    rows.sort(key=lambda r: (str(r["product_id"]), str(r["warehouse_id"])))
+
+    return {
+        "rows": rows,
+        "invalid_products": invalid_products,
+        "skipped_warehouses": skipped_warehouses,
+        "total_products": len(products),
+    }
+
+
+def load_json(path: str) -> Any:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def write_csv(rows: list, out) -> None:
+    writer = csv.DictWriter(out, fieldnames=FIELDNAMES)
+    writer.writeheader()
+    writer.writerows(rows)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Flatten nested product/warehouse JSON.")
+    parser.add_argument("input", help="Path to input JSON file")
+    parser.add_argument("-o", "--output", help="Output file (default: stdout)")
+    parser.add_argument("--format", choices=("json", "csv"), default="json")
+    args = parser.parse_args()
+
+    try:
+        result = flatten_products(load_json(args.input))
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    out = open(args.output, "w", encoding="utf-8", newline="") if args.output else sys.stdout
+    try:
+        if args.format == "csv":
+            write_csv(result["rows"], out)
+        else:
+            json.dump(result["rows"], out, indent=2)
+            out.write("\n")
+    finally:
+        if out is not sys.stdout:
+            out.close()
+
+    print(
+        f"Processed {result['total_products']} products: "
+        f"{len(result['rows'])} rows, "
+        f"{result['invalid_products']} invalid products, "
+        f"{result['skipped_warehouses']} invalid warehouse entries skipped.",
+        file=sys.stderr,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+Since you didn't give a schema, I assumed the following, and each is easy to change at the top of the file:
+
+- **Product fields:** `id`, `name` and a `warehouses` list are required. A product missing any of them is counted as invalid.
+- **Warehouse fields:** `warehouse_id` and a non-negative integer `stock` are required.
+- **Bad warehouse entries:** These are skipped and counted separately, so one bad entry doesn't discard the whole product.
+- **Zero stock:** Presence checks use `is None` rather than truthiness, so `stock: 0` is kept.
+- **Sorting:** Rows are sorted by `product_id`, then `warehouse_id`.
+
+Usage: `python flatten.py products.json --format csv -o out.csv`
+
+If your JSON uses different field names, or you'd rather have a product with any bad warehouse entry count as invalid, tell me and I'll adjust it.

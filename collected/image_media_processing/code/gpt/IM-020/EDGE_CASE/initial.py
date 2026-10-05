@@ -1,0 +1,60 @@
+from pathlib import Path
+from PIL import Image
+import numpy as np
+
+
+def analyze_brightness(input_dir):
+    """
+    Analyze brightness statistics for every valid image in input_dir.
+
+    Returns:
+        list of dictionaries containing:
+        - filename
+        - r_mean
+        - g_mean
+        - b_mean
+        - brightness: grayscale (perceptual) mean
+        - classification: dark / normal / bright
+    """
+    input_dir = Path(input_dir)
+    results = []
+
+    for image_path in sorted(input_dir.iterdir()):
+        if not image_path.is_file():
+            continue
+
+        try:
+            with Image.open(image_path) as img:
+                # Convert to RGB for consistent per-channel statistics.
+                rgb = img.convert("RGB")
+                rgb_array = np.asarray(rgb, dtype=np.float32)
+
+                r_mean = float(rgb_array[:, :, 0].mean())
+                g_mean = float(rgb_array[:, :, 1].mean())
+                b_mean = float(rgb_array[:, :, 2].mean())
+
+                # Convert to true grayscale (perceptual luminance weighting).
+                gray = rgb.convert("L")
+                brightness = float(np.asarray(gray, dtype=np.float32).mean())
+
+                if brightness < 85:
+                    classification = "dark"
+                elif brightness > 170:
+                    classification = "bright"
+                else:
+                    classification = "normal"
+
+                results.append({
+                    "filename": image_path.name,
+                    "r_mean": r_mean,
+                    "g_mean": g_mean,
+                    "b_mean": b_mean,
+                    "brightness": brightness,
+                    "classification": classification,
+                })
+
+        except (OSError, ValueError):
+            # Skip files that are not valid/readable images.
+            continue
+
+    return results

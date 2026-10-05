@@ -1,0 +1,298 @@
+import argparse
+import os
+import re
+import shutil
+import unicodedata
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass
+class ProcessingStats:
+    files_processed: int = 0
+    files_skipped: int = 0
+    files_copied: int = 0
+    files_failed: int = 0
+    empty_dirs_mirrored: int = 0
+    bytes_in: int = 0
+    bytes_out: int = 0
+    lines_in: int = 0
+    lines_out: int = 0
+
+
+def clean_unicode_and_whitespace(
+    text: str,
+    form: str = "NFKC",
+    standardize_quotes: bool = True,
+    preserve_paragraphs: bool = True,
+    keep_indentation: bool = False,
+    to_lowercase: bool = False,
+) -> str:
+    """
+    Cleans and standardizes raw text:
+    - Normalizes Unicode representations via unicodedata.
+    - Strips zero-width and invisible control characters.
+    - Standardizes typographic quotes and dashes.
+    - Applies Unicode-aware case folding if lowercase is enabled.
+    - Preserves or condenses horizontal/vertical whitespace safely.
+    """
+    if not text:
+        return ""
+
+    # 1. Unicode Normalization
+    text = unicodedata.normalize(form, text)
+
+    # 2. Case Folding
+    if to_lowercase:
+        text = text.casefold()
+
+    # 3. Strip BOM and invisible/zero-width marks
+    zero_width_pattern = re.compile(
+        r"[\u200B-\u200D\uFEFF\u200E\u200F\u202A-\u202E]"
+    )
+    text = zero_width_pattern.sub("", text)
+
+    # 4. Standardize typographic quotes, primes, and dashes
+    if standardize_quotes:
+        quote_map = {
+            "\u2018": "'", "\u2019": "'", "\u201A": "'", "\u201B": "'", "\u2032": "'", "`": "'",
+            "\u201C": '"', "\u201D": '"', "\u201E": '"', "\u201F": '"', "\u2033": '"', "\u00AB": '"', "\u00BB": '"',
+            "\u2013": "-", "\u2014": "--", "\u2015": "--",
+            "\u2026": "...",
+        }
+        for orig, replacement in quote_map.items():
+            text = text.replace(orig, replacement)
+
+    # Standardize line endings early
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    # 5. Horizontal whitespace normalization per line
+    lines = text.split("\n")
+    processed_lines = []
+    h_space_pattern = re.compile(r"[^\S\n\r]+")
+
+    for line in lines:
+        if keep_indentation:
+            l_stripped = line.lstrip(" \t")
+            indent = line[: len(line) - len(l_stripped)]
+            internal_cleaned = h_space_pattern.sub(" ", l_stripped).rstrip()
+            processed_lines.append(f"{indent}{internal_cleaned}" if internal_cleaned else "")
+        else:
+            cleaned = h_space_pattern.sub(" ", line).strip()
+            processed_lines.append(cleaned)
+
+    # 6. Condense vertical whitespace
+    reconstructed = "\n".join(processed_lines)
+    if preserve_paragraphs:
+        reconstructed = re.sub(r"\n{3,}", "\n\n", reconstructed)
+    else:
+        reconstructed = re.sub(r"\n{2,}", "\n", reconstructed)
+
+    reconstructed = reconstructed.strip()
+    return f"{reconstructed}\n" if reconstructed else ""
+
+
+def process_file(
+    file_path: Path,
+    target_dest: Path,
+    stats: ProcessingStats,
+    encoding: str = "utf-8",
+    keep_indentation: bool = False,
+    to_lowercase: bool = False,
+) -> None:
+    """Reads, normalizes, writes output, and accumulates statistics."""
+    try:
+        content = file_path.read_text(encoding=encoding, errors="replace")
+    except Exception as e:
+        print(f"[ERROR] Reading {file_path}: {e}")
+        stats.files_failed += 1
+        return
+
+    in_bytes = len(content.encode("utf-8"))
+    in_lines = len(content.splitlines())
+
+    normalized = clean_unicode_and_whitespace(
+        content,
+        keep_indentation=keep_indentation,
+        to_lowercase=to_lowercase,
+    )
+
+    out_bytes = len(normalized.encode("utf-8"))
+    out_lines = len(normalized.splitlines())
+
+    try:
+        target_dest.parent.mkdir(parents=True, exist_ok=True)
+        target_dest.write_text(normalized, encoding="utf-8")
+        
+        stats.files_processed += 1
+        stats.bytes_in += in_bytes
+        stats.bytes_out += out_bytes
+        stats.lines_in += in_lines
+        stats.lines_out += out_lines
+
+        byte_diff = out_bytes - in_bytes
+        sign = "+" if byte_diff > 0 else ""
+        print(f"[NORMALIZED] {file_path} -> {target_dest} ({sign}{byte_diff} B)")
+    except Exception as e:
+        print(f"[ERROR] Writing {target_dest}: {e}")
+        stats.files_failed += 1
+
+
+def handle_other_file(
+    file_path: Path,
+    target_dest: Path,
+    stats: ProcessingStats,
+    copy_other: bool,
+) -> None:
+    """Skips or copies non-.txt files without modifying them."""
+    if copy_other:
+        try:
+            target_dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(file_path, target_dest)
+            stats.files_copied += 1
+            print(f"[COPIED]     {file_path} -> {target_dest}")
+        except Exception as e:
+            print(f"[ERROR] Copying {file_path}: {e}")
+            stats.files_failed += 1
+    else:
+        stats.files_skipped += 1
+
+
+def print_report(stats: ProcessingStats) -> None:
+    """Prints a structured summary of the normalization run."""
+    byte_reduction = stats.bytes_in - stats.bytes_out
+    byte_pct = (byte_reduction / stats.bytes_in * 100) if stats.bytes_in else 0.0
+
+    line_reduction = stats.lines_in - stats.lines_out
+    line_pct = (line_reduction / stats.lines_in * 100) if stats.lines_in else 0.0
+
+    print("\n" + "=" * 50)
+    print("               NORMALIZATION REPORT               ")
+    print("=" * 50)
+    print(f"Files Processed (.txt) : {stats.files_processed}")
+    print(f"Non-.txt Copied        : {stats.files_copied}")
+    print(f"Non-.txt Skipped       : {stats.files_skipped}")
+    print(f"Empty Dirs Mirrored    : {stats.empty_dirs_mirrored}")
+    print(f"Failures / Errors      : {stats.files_failed}")
+    print("-" * 50)
+    print(f"Total Bytes In         : {stats.bytes_in:,} B")
+    print(f"Total Bytes Out        : {stats.bytes_out:,} B")
+    print(f"Bytes Saved            : {byte_reduction:,} B ({byte_pct:.2f}%)")
+    print("-" * 50)
+    print(f"Total Lines In         : {stats.lines_in:,}")
+    print(f"Total Lines Out        : {stats.lines_out:,}")
+    print(f"Lines Reduced          : {line_reduction:,} ({line_pct:.2f}%)")
+    print("=" * 50)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Normalize text files with empty dir mirroring, non-txt handling, and cleanup stats."
+    )
+    parser.add_argument("path", type=str, help="Source target file or directory")
+    parser.add_argument(
+        "-o", "--output", type=str, help="Destination file or output root directory (mirrors source tree)"
+    )
+    parser.add_argument(
+        "-i", "--in-place", action="store_true", help="Overwrite the original files in-place"
+    )
+    parser.add_argument(
+        "-l", "--lowercase", action="store_true", help="Convert text to lowercase using Unicode case-folding"
+    )
+    parser.add_argument(
+        "--copy-other", action="store_true", help="Copy non-.txt files into output tree instead of skipping them"
+    )
+    parser.add_argument(
+        "--keep-indent", action="store_true", help="Preserve line indentation while normalizing internal whitespace"
+    )
+    parser.add_argument(
+        "--encoding", default="utf-8", help="Input file encoding (default: utf-8)"
+    )
+
+    args = parser.parse_args()
+    source_path = Path(args.path).resolve()
+
+    if not source_path.exists():
+        print(f"Source path does not exist: {source_path}")
+        return
+
+    if not args.in_place and not args.output:
+        print("Specify either --in-place (-i) or an --output (-o) destination directory/file.")
+        return
+
+    stats = ProcessingStats()
+
+    # Single-file mode
+    if source_path.is_file():
+        target_dest = source_path if args.in_place else Path(args.output).resolve()
+        if source_path.suffix.lower() == ".txt":
+            process_file(
+                source_path,
+                target_dest,
+                stats=stats,
+                encoding=args.encoding,
+                keep_indentation=args.keep_indent,
+                to_lowercase=args.lowercase,
+            )
+        else:
+            if args.in_place:
+                print(f"[SKIPPED] Non-.txt file in-place: {source_path}")
+                stats.files_skipped += 1
+            else:
+                handle_other_file(source_path, target_dest, stats, args.copy_other)
+        print_report(stats)
+        return
+
+    # Directory traversal using os.walk to capture empty folders and full tree contents
+    output_root = source_path if args.in_place else Path(args.output).resolve()
+
+    for root, dirs, files in os.walk(source_path):
+        current_dir = Path(root)
+
+        # Mirror empty directories when outputting to a new location
+        if not args.in_place and not dirs and not files:
+            rel_dir = current_dir.relative_to(source_path)
+            target_empty_dir = output_root / rel_dir
+            if not target_empty_dir.exists():
+                target_empty_dir.mkdir(parents=True, exist_ok=True)
+                stats.empty_dirs_mirrored += 1
+                print(f"[EMPTY DIR]  {current_dir} -> {target_empty_dir}")
+
+        for filename in files:
+            file_path = current_dir / filename
+            is_txt = file_path.suffix.lower() == ".txt"
+
+            if args.in_place:
+                target_dest = file_path
+                if is_txt:
+                    process_file(
+                        file_path,
+                        target_dest,
+                        stats=stats,
+                        encoding=args.encoding,
+                        keep_indentation=args.keep_indent,
+                        to_lowercase=args.lowercase,
+                    )
+                else:
+                    stats.files_skipped += 1
+            else:
+                rel_path = file_path.relative_to(source_path)
+                target_dest = output_root / rel_path
+
+                if is_txt:
+                    process_file(
+                        file_path,
+                        target_dest,
+                        stats=stats,
+                        encoding=args.encoding,
+                        keep_indentation=args.keep_indent,
+                        to_lowercase=args.lowercase,
+                    )
+                else:
+                    handle_other_file(file_path, target_dest, stats, args.copy_other)
+
+    print_report(stats)
+
+
+if __name__ == "__main__":
+    main()

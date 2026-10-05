@@ -1,0 +1,121 @@
+### Problem Restatement & Required Outputs
+
+**Original Problem:**
+Assign each interval in an input list to a room ID such that overlapping intervals never share a room. A room can be reused by a new interval if its previous interval ends at or before the new interval's start time ($\text{end} \le \text{start}$). The solution must:
+
+1. Minimize the total number of rooms used.
+2. Return an array/list of room IDs corresponding to the original intervals in their original input order.
+3. Handle tie-breaking deterministically (specifically, reusing the smallest available `room_id` when multiple rooms are free).
+
+**New Feature Request:**
+Add support for returning an optional `operation_summary` dictionary detailing the number of major computational decisions/operations performed by the algorithm (e.g., sorting comparisons, room frees, room allocations, and room reuses).
+
+* When `include_summary=False` (or default), return strictly the original list of room IDs.
+* When `include_summary=True`, return a dictionary containing both the original `room_assignments` list and the `operation_summary` structure.
+
+---
+
+### Implementation with `operation_summary` Support
+
+```python
+import heapq
+
+def solve_interval_partitioning(intervals, include_summary=False):
+    """
+    Assigns every interval a room ID to minimize total rooms without overlapping.
+    
+    :param intervals: List of tuples/lists [start, end]
+    :param include_summary: Bool, if True returns a dict containing assignments and operation summary.
+    :return: List of room IDs if include_summary is False, 
+             else dict with 'room_assignments' and 'operation_summary'.
+    """
+    if not intervals:
+        result = []
+        if not include_summary:
+            return result
+        return {
+            "room_assignments": result,
+            "operation_summary": {
+                "total_intervals": 0,
+                "rooms_created": 0,
+                "room_reuses": 0,
+                "room_releases": 0,
+                "total_decisions": 0
+            }
+        }
+    
+    # Store intervals with their original index: (start, end, original_index)
+    # Sort deterministically by start time, end time, then original index
+    indexed_intervals = sorted(
+        [(start, end, i) for i, (start, end) in enumerate(intervals)],
+        key=lambda x: (x[0], x[1], x[2])
+    )
+    
+    # Min-heap of busy rooms: (end_time, room_id)
+    busy_rooms = []
+    
+    # Min-heap of available room IDs for deterministic smallest-ID reuse
+    free_rooms = []
+    
+    assignments = [0] * len(intervals)
+    next_room_id = 0
+    
+    # Counters for operation summary
+    room_releases = 0
+    room_reuses = 0
+    rooms_created = 0
+    
+    for start, end, orig_idx in indexed_intervals:
+        # Move all rooms that have finished by `start` from busy_rooms to free_rooms
+        while busy_rooms and busy_rooms[0][0] <= start:
+            _, freed_room_id = heapq.heappop(busy_rooms)
+            heapq.heappush(free_rooms, freed_room_id)
+            room_releases += 1
+            
+        # Reuse smallest available room_id if any free room exists
+        if free_rooms:
+            room_id = heapq.heappop(free_rooms)
+            room_reuses += 1
+        else:
+            room_id = next_room_id
+            next_room_id += 1
+            rooms_created += 1
+            
+        assignments[orig_idx] = room_id
+        heapq.heappush(busy_rooms, (end, room_id))
+
+    if not include_summary:
+        return assignments
+
+    # Detailed operational summary
+    summary = {
+        "total_intervals": len(intervals),
+        "rooms_created": rooms_created,
+        "room_reuses": room_reuses,
+        "room_releases": room_releases,
+        "total_decisions": len(intervals) + room_releases
+    }
+
+    return {
+        "room_assignments": assignments,
+        "operation_summary": summary
+    }
+
+
+# Verification & Demonstration
+if __name__ == "__main__":
+    test_intervals = [[0, 10], [0, 5], [5, 7], [10, 15]]
+    
+    # Standard call (Original requirement unchanged)
+    standard_output = solve_interval_partitioning(test_intervals)
+    print("Default Call Output:")
+    print(standard_output)
+    print()
+    
+    # Call with feature enabled
+    summary_output = solve_interval_partitioning(test_intervals, include_summary=True)
+    print("Feature Enabled Call Output:")
+    import json
+    print(json.dumps(summary_output, indent=2))
+
+```

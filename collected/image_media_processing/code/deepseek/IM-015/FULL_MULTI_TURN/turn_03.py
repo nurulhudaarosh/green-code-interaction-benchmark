@@ -1,0 +1,106 @@
+from pathlib import Path
+from PIL import Image
+import sys
+
+
+def split_channels(input_dir, output_dir, include_alpha=False):
+    """
+    Split every image in `input_dir` into separate R, G, B grayscale images,
+    saving them into `output_dir` as <stem>_R.png, <stem>_G.png, <stem>_B.png.
+
+    If `include_alpha` is True AND the source image has an alpha channel,
+    a fourth <stem>_A.png is also written.
+
+    Returns a list of tuples: (source_path, dict_of_channel_paths)
+    where dict_of_channel_paths has keys "R", "G", "B" and optionally "A".
+    """
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if not input_dir.is_dir():
+        raise NotADirectoryError(f"Not a directory: {input_dir}")
+
+    extensions = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+    results = []
+
+    for src in sorted(input_dir.iterdir()):
+        if not src.is_file() or src.suffix.lower() not in extensions:
+            continue
+
+        with Image.open(src) as img:
+            # Preserve alpha only if requested AND present in the source.
+            has_alpha = include_alpha and img.mode in ("RGBA", "LA", "PA") \
+                        or (include_alpha and "transparency" in img.info)
+
+            if has_alpha:
+                rgba = img.convert("RGBA")
+                r, g, b, a = rgba.split()   # each is mode "L"
+                channels = {"R": r, "G": g, "B": b, "A": a}
+            else:
+                rgb = img.convert("RGB")
+                r, g, b = rgb.split()
+                channels = {"R": r, "G": g, "B": b}
+
+            base = output_dir / src.stem
+            paths = {}
+            for suffix, ch_img in channels.items():
+                ch_path = base.with_name(f"{base.name}_{suffix}.png")
+                ch_img.save(ch_path)
+                paths[suffix] = ch_path
+
+        results.append((src, paths))
+        written = ", ".join(p.name for p in paths.values())
+        print(f"split: {src.name} -> {written}")
+
+    return results
+
+
+def merge_channels(r_path, g_path, b_path, output_path, a_path=None):
+    """
+    Recombine three single-channel (grayscale) images into an RGB image.
+    If `a_path` is given, merge into an RGBA image instead.
+    All provided inputs must have identical dimensions.
+    """
+    r_path, g_path, b_path = Path(r_path), Path(g_path), Path(b_path)
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if a_path is not None:
+        a_path = Path(a_path)
+
+    with Image.open(r_path) as r_img, \
+         Image.open(g_path) as g_img, \
+         Image.open(b_path) as b_img:
+
+        r = r_img.convert("L")
+        g = g_img.convert("L")
+        b = b_img.convert("L")
+        bands = [r, g, b]
+        names = ["R", "G", "B"]
+
+        if a_path is not None:
+            with Image.open(a_path) as a_img:
+                a = a_img.convert("L")
+                bands.append(a)
+                names.append("A")
+
+        # --- explicit, early, descriptive validation ---
+        sizes = {name: img.size for name, img in zip(names, bands)}
+        if len(set(sizes.values())) > 1:
+            from collections import Counter
+            counts = Counter(sizes.values())
+            majority, _ = counts.most_common(1)[0]
+            odd = [n for n, sz in sizes.items() if sz != majority]
+            detail = ", ".join(f"{n}={sz}" for n, sz in sizes.items())
+            raise ValueError(
+                f"Channel size mismatch (channels {', '.join(odd)} differ): {detail}"
+            )
+
+        mode = "RGBA" if a_path is not None else "RGB"
+        merged = Image.merge(mode, tuple(bands))
+        merged.save(output_path)
+
+    print(f"merged: {', '.join(p.name for p in [r_path, g_path, b_path])} "
+          f"{'+ ' + a_path.name + ' ' if a_path else ''}-> {output_path.name}")
+    return output_path

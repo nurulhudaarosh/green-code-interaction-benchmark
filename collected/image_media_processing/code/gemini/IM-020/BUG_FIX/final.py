@@ -1,0 +1,71 @@
+from pathlib import Path
+import cv2
+import numpy as np
+import pandas as pd
+
+
+def analyze_brightness(
+    input_dir: str | Path,
+    dark_threshold: float = 85.0,
+    bright_threshold: float = 170.0,
+    valid_extensions: tuple[str, ...] = (
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".bmp",
+        ".tiff",
+        ".webp",
+    ),
+) -> pd.DataFrame:
+    """Analyzes all images in a directory for per-channel means, overall grayscale
+
+    brightness (L-mode conversion), and dark/normal/bright classification.
+    """
+    dir_path = Path(input_dir)
+    if not dir_path.is_dir():
+        raise ValueError(f"Directory not found: {input_dir}")
+
+    results = []
+
+    # Find all supported image files recursively
+    image_paths = [
+        p
+        for p in dir_path.rglob("*")
+        if p.suffix.lower() in valid_extensions and p.is_file()
+    ]
+
+    for path in image_paths:
+        # Read image in BGR color space
+        img = cv2.imread(str(path))
+        if img is None:
+            continue  # Skip unreadable or corrupted image files
+
+        # Per-channel RGB means (cv2 reads as BGR)
+        b_mean, g_mean, r_mean = cv2.mean(img)[:3]
+
+        # Convert image directly to single-channel grayscale ('L' mode equivalent)
+        gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        
+        # Calculate mean brightness of the actual grayscale image
+        overall_brightness = float(cv2.mean(gray_img)[0])
+
+        # Classification
+        if overall_brightness < dark_threshold:
+            classification = "dark"
+        elif overall_brightness > bright_threshold:
+            classification = "bright"
+        else:
+            classification = "normal"
+
+        results.append(
+            {
+                "file_path": str(path.relative_to(dir_path)),
+                "red_mean": round(r_mean, 2),
+                "green_mean": round(g_mean, 2),
+                "blue_mean": round(b_mean, 2),
+                "brightness": round(overall_brightness, 2),
+                "classification": classification,
+            }
+        )
+
+    return pd.DataFrame(results)

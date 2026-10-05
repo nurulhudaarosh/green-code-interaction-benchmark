@@ -1,0 +1,557 @@
+# Text Normalizer (with lowercase + stats report)
+
+Both features were already partially present; this revision makes them first-class:
+
+- **Lowercase** is Unicode-aware (uses `str.casefold()` via `--casefold` for proper locale-insensitive folding, or `str.lower()` via `--lowercase` for simple lowering).
+- **Stats report** is now a structured summary — totals, per-file table, byte/char deltas, and per-replacement counts. Emitted to stdout (or a file with `--stats-file`) and can be toggled with `--stats` / `--stats-only`.
+
+```python
+#!/usr/bin/env python3
+"""
+Text normalizer for .txt files with whitespace/Unicode cleanup,
+lowercasing, and a structured stats report.
+
+Usage:
+    python normalize_text.py input.txt --stats
+    python normalize_text.py src/ --outdir clean/ --lowercase --stats
+    python normalize_text.py src/ --outdir clean/ --casefold --stats-only
+    python normalize_text.py src/ --outdir clean/ --stats-file report.txt
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+import unicodedata
+from collections import Counter
+from dataclasses import dataclass, field
+from pathlib import Path
+
+
+# --- Configuration -----------------------------------------------------------
+
+CHAR_REPLACEMENTS = {
+    "\u2018": "'", "\u2019": "'", "\u201A": "'", "\u201B": "'",
+    "\u201C": '"', "\u201D": '"', "\u201E": '"', "\u201F": '"',
+    "\u2013": "-", "\u2014": "-", "\u2015": "-",
+    "\u2026": "...",
+    "\u00A0": " ", "\u2007": " ", "\u202F": " ",
+    "\u200B": "",  "\u200C": "",  "\u200D": "",  "\uFEFF": "",
+    "\u00AD": "",
+}
+
+STRIP_CATEGORIES = {"Cc", "Cf", "Co", "Cs"}
+KEEP_CONTROL = {"\n", "\r", "\t"}
+
+
+# --- Stats containers --------------------------------------------------------
+
+@dataclass
+class NormalizeStats:
+    """Per-file counts accumulated during normalization."""
+    replacements: Counter = field(default_factory=Counter)
+    stripped: Counter = field(default_factory=Counter)
+    collapsed_space_runs: int = 0
+    collapsed_blank_line_runs: int = 0
+    tabs_converted: int = 0
+    line_endings_normalized: int = 0
+    case_folded_chars: int = 0
+
+
+@dataclass
+class FileReport:
+    src: Path
+    dst: Path
+    encoding_in: str
+    chars_in: int
+    chars_out: int
+    bytes_in: int
+    bytes_out: int
+    stats: NormalizeStats
+
+    @property
+    def char_delta(self) -> int:
+        return self.chars_out - self.chars_in
+
+    @property
+    def byte_delta(self) -> int:
+        return self.bytes_out - self.bytes_in
+
+
+# --- Core normalization ------------------------------------------------------
+
+def normalize_unicode(
+    text: str,
+    form: str = "NFC",
+    stats: NormalizeStats | None = None,
+) -> str:
+    if not text:
+        return text
+    text = unicodedata.normalize(form, text)
+
+    out = []
+    for ch in text:
+        if ch in KEEP_CONTROL:
+            out.append(ch)
+            continue
+        cat = unicodedata.category(ch)
+        if cat in STRIP_CATEGORIES:
+            if stats is not None:
+                stats.stripped[f"U+{ord(ch):04X}"] += 1
+            continue
+        if ch in CHAR_REPLACEMENTS:
+            if stats is not None:
+                stats.replacements[f"U+{ord(ch):04X}"] += 1
+            out.append(CHAR_REPLACEMENTS[ch])
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def normalize_whitespace(
+    text: str,
+    *,
+    collapse_spaces: bool = True,
+    strip_lines: bool = True,
+    collapse_blank_lines: bool = True,
+    tabs_to_spaces: int = 4,
+    stats: NormalizeStats | None = None,
+) -> str:
+    if not text or not text.strip():
+        return ""
+
+    before = text
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    if stats is not None and text != before:
+        stats.line_endings_normalized += (
+            before.count("\r\n") + before.count("\r")
+        )
+
+    if tabs_to_spaces:
+        n_tabs = text.count("\t")
+        if n_tabs:
+            if stats is not None:
+                stats.tabs_converted += n_tabs
+            text = text.replace("\t", " " * tabs_to_spaces)
+
+    if strip_lines:
+        text = "\n".join(line.rstrip() for line in text.split("\n"))
+
+    if collapse_spaces:
+        new_text, n = re.subn(r"[ \f\v]{2,}", " ", text)
+        if stats is not None:
+            stats.collapsed_space_runs += n
+        text = new_text
+
+    if collapse_blank_lines:
+        new_text, n = re.subn(r"\n{3,}", "\n\n", text)
+        if stats is not None:
+            stats.collapsed_blank_line_runs += n
+        text = new_text
+
+    stripped = text.strip()
+    return stripped + "\n" if stripped else ""
+
+
+def apply_case(text: str, mode: str, stats: NormalizeStats | None = None) -> str:
+    if mode == "none" or not text:
+        return text
+    folded = text.casefold() if mode == "casefold" else text.lower()
+    if stats is not None:
+        stats.case_folded_chars += sum(
+            1 for a, b in zip(text, folded) if a != b
+        ) + abs(len(text) - len(folded))
+    return folded
+
+
+def normalize_text(
+    text: str,
+    *,
+    unicode_form: str = "NFC",
+    case_mode: str = "none",           # "none" | "lower" | "casefold"
+    stats: NormalizeStats | None = None,
+    **whitespace_opts,
+) -> str:
+    text = normalize_unicode(text, form=unicode_form, stats=stats)
+    text = normalize_whitespace(text, stats=stats, **whitespace_opts)
+    text = apply_case(text, case_mode, stats=stats)
+    return text
+
+
+# --- File I/O ----------------------------------------------------------------
+
+def detect_encoding(path: Path) -> str:
+    raw = path.read_bytes()
+    for enc in ("utf-8", "utf-8-sig", "utf-16"):
+        try:
+            raw.decode(enc)
+            return enc
+        except UnicodeDecodeError:
+            continue
+    return "latin-1"
+
+
+def process_file(
+    src: Path,
+    dst: Path,
+    *,
+    encoding: str | None = None,
+    **opts,
+) -> FileReport:
+    enc = encoding or detect_encoding(src)
+    original = src.read_text(encoding=enc)
+
+    stats = NormalizeStats()
+    normalized = normalize_text(original, stats=stats, **opts)
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(normalized, encoding="utf-8", newline="\n")
+
+    return FileReport(
+        src=src,
+        dst=dst,
+        encoding_in=enc,
+        chars_in=len(original),
+        chars_out=len(normalized),
+        bytes_in=len(original.encode("utf-8")),
+        bytes_out=len(normalized.encode("utf-8")),
+        stats=stats,
+    )
+
+
+# --- Input expansion & destination mapping -----------------------------------
+
+def iter_txt_files(paths: list[Path]) -> list[Path]:
+    out: list[Path] = []
+    seen: set[Path] = set()
+    for p in paths:
+        if p.is_dir():
+            for f in sorted(p.rglob("*.txt")):
+                if f.is_file() and f not in seen:
+                    out.append(f)
+                    seen.add(f)
+        elif p.is_file():
+            if p not in seen:
+                out.append(p)
+                seen.add(p)
+    return out
+
+
+def _common_parts(files: list[Path]) -> int:
+    parents = [f.resolve().parent.parts for f in files]
+    n = min(len(p) for p in parents)
+    i = 0
+    while i < n and all(p[i] == parents[0][i] for p in parents):
+        i += 1
+    return i
+
+
+def _common_root(files: list[Path]) -> Path:
+    if not files:
+        return Path(".")
+    parts = Path(files[0]).resolve().parent.parts[:_common_parts(files)]
+    return Path(*parts) if parts else Path(".")
+
+
+def plan_destinations(
+    files: list[Path],
+    *,
+    outdir: Path | None,
+    output: Path | None,
+    in_place: bool,
+) -> list[tuple[Path, Path]]:
+    if output is not None:
+        if len(files) != 1:
+            raise ValueError("-o/--output requires exactly one input file")
+        return [(files[0], output)]
+
+    if in_place:
+        return [(f, f) for f in files]
+
+    if outdir is not None:
+        root = _common_root(files)
+        pairs: list[tuple[Path, Path]] = []
+        for f in files:
+            try:
+                rel = f.resolve().relative_to(root.resolve())
+            except ValueError:
+                rel = Path(f.name)
+            pairs.append((f, outdir / rel))
+        return pairs
+
+    return [(f, f.with_name(f"{f.stem}.normalized{f.suffix}")) for f in files]
+
+
+# --- Stats report ------------------------------------------------------------
+
+def _human_delta(n: int) -> str:
+    return f"+{n}" if n >= 0 else str(n)
+
+
+def format_report(
+    reports: list[FileReport],
+    *,
+    case_mode: str,
+    unicode_form: str,
+    elapsed_s: float | None = None,
+) -> str:
+    lines: list[str] = []
+    lines.append("=" * 72)
+    lines.append("NORMALIZATION REPORT")
+    lines.append("=" * 72)
+    lines.append(f"Files processed : {len(reports)}")
+    lines.append(f"Unicode form    : {unicode_form}")
+    lines.append(f"Case mode       : {case_mode}")
+    if elapsed_s is not None:
+        lines.append(f"Elapsed         : {elapsed_s:.3f}s")
+    lines.append("")
+
+    # Per-file table
+    lines.append("-" * 72)
+    lines.append(f"{'FILE':<40} {'CHARS':>12} {'BYTES':>12}")
+    lines.append("-" * 72)
+    for r in reports:
+        name = str(r.src)
+        if len(name) > 39:
+            name = "…" + name[-38:]
+        chars = f"{r.chars_in}->{r.chars_out} ({_human_delta(r.char_delta)})"
+        bytes_ = f"{r.bytes_in}->{r.bytes_out} ({_human_delta(r.byte_delta)})"
+        lines.append(f"{name:<40} {chars:>12} {bytes_:>12}")
+    lines.append("-" * 72)
+    lines.append("")
+
+    # Totals
+    t_chars_in = sum(r.chars_in for r in reports)
+    t_chars_out = sum(r.chars_out for r in reports)
+    t_bytes_in = sum(r.bytes_in for r in reports)
+    t_bytes_out = sum(r.bytes_out for r in reports)
+    lines.append("TOTALS")
+    lines.append(f"  chars : {t_chars_in} -> {t_chars_out} "
+                 f"({_human_delta(t_chars_out - t_chars_in)})")
+    lines.append(f"  bytes : {t_bytes_in} -> {t_bytes_out} "
+                 f"({_human_delta(t_bytes_out - t_bytes_in)})")
+    lines.append("")
+
+    # Aggregate transformation counters
+    agg = NormalizeStats()
+    for r in reports:
+        agg.replacements.update(r.stats.replacements)
+        agg.stripped.update(r.stats.stripped)
+        agg.collapsed_space_runs += r.stats.collapsed_space_runs
+        agg.collapsed_blank_line_runs += r.stats.collapsed_blank_line_runs
+        agg.tabs_converted += r.stats.tabs_converted
+        agg.line_endings_normalized += r.stats.line_endings_normalized
+        agg.case_folded_chars += r.stats.case_folded_chars
+
+    lines.append("TRANSFORMATIONS")
+    lines.append(f"  line endings normalized      : {agg.line_endings_normalized}")
+    lines.append(f"  tabs expanded                : {agg.tabs_converted}")
+    lines.append(f"  space runs collapsed         : {agg.collapsed_space_runs}")
+    lines.append(f"  blank-line runs collapsed    : {agg.collapsed_blank_line_runs}")
+    lines.append(f"  characters case-folded       : {agg.case_folded_chars}")
+
+    if agg.replacements:
+        lines.append("  character replacements       :")
+        for cp, n in agg.replacements.most_common():
+            try:
+                ch = chr(int(cp[2:], 16))
+                disp = repr(ch)
+            except Exception:
+                disp = "?"
+            lines.append(f"      {cp} {disp:<8} x{n}")
+
+    if agg.stripped:
+        lines.append("  characters stripped          :")
+        for cp, n in agg.stripped.most_common():
+            lines.append(f"      {cp:<8} x{n}")
+
+    lines.append("=" * 72)
+    return "\n".join(lines) + "\n"
+
+
+# --- CLI ---------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description="Normalize .txt files: Unicode + whitespace cleanup.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    p.add_argument("files", nargs="+", type=Path,
+                   help="Input .txt file(s) or directories")
+    p.add_argument("-o", "--output", type=Path,
+                   help="Output file (exactly one input)")
+    p.add_argument("-d", "--outdir", type=Path,
+                   help="Output directory (mirrors input tree)")
+    p.add_argument("-i", "--in-place", action="store_true",
+                   help="Overwrite input files")
+    p.add_argument("-e", "--encoding", help="Force input encoding")
+    p.add_argument("--form", default="NFC", choices=["NFC", "NFD", "NFKC", "NFKD"],
+                   help="Unicode normalization form")
+
+    case_group = p.add_mutually_exclusive_group()
+    case_group.add_argument("--lowercase", action="store_true",
+                            help="Lowercase output (str.lower)")
+    case_group.add_argument("--casefold", action="store_true",
+                            help="Casefold output (Unicode-aware, for search/index)")
+
+    p.add_argument("--keep-spaces", action="store_true")
+    p.add_argument("--keep-blank-lines", action="store_true")
+    p.add_argument("--tabs", type=int, default=4, help="Spaces per tab (0 disables)")
+
+    p.add_argument("--stats", action="store_true",
+                   help="Print a stats report after processing")
+    p.add_argument("--stats-only", action="store_true",
+                   help="Print only the stats report (suppress per-file lines)")
+    p.add_argument("--stats-file", type=Path,
+                   help="Also write the stats report to this file")
+    p.add_argument("--quiet", action="store_true",
+                   help="Suppress per-file progress lines")
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+
+    if args.output and args.outdir:
+        print("error: -o/--output and -d/--outdir are mutually exclusive",
+              file=sys.stderr)
+        return 2
+    if args.output and args.in_place:
+        print("error: -o/--output and -i/--in-place are mutually exclusive",
+              file=sys.stderr)
+        return 2
+
+    files = iter_txt_files(args.files)
+    if not files:
+        print("error: no input files matched", file=sys.stderr)
+        return 2
+
+    try:
+        pairs = plan_destinations(
+            files, outdir=args.outdir, output=args.output, in_place=args.in_place,
+        )
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+    case_mode = "casefold" if args.casefold else ("lower" if args.lowercase else "none")
+
+    opts = dict(
+        unicode_form=args.form,
+        case_mode=case_mode,
+        collapse_spaces=not args.keep_spaces,
+        collapse_blank_lines=not args.keep_blank_lines,
+        tabs_to_spaces=args.tabs,
+    )
+
+    import time
+    t0 = time.perf_counter()
+
+    reports: list[FileReport] = []
+    exit_code = 0
+    show_progress = not (args.quiet or args.stats_only)
+
+    for src, dst in pairs:
+        try:
+            rep = process_file(src, dst, encoding=args.encoding, **opts)
+        except Exception as e:
+            print(f"error processing {src}: {e}", file=sys.stderr)
+            exit_code = 1
+            continue
+        reports.append(rep)
+
+        if show_progress:
+            msg = f"normalized: {rep.src} -> {rep.dst}"
+            if args.stats:
+                msg += (f"  [enc={rep.encoding_in} "
+                        f"chars {rep.chars_in}->{rep.chars_out} "
+                        f"bytes {rep.bytes_in}->{rep.bytes_out}]")
+            print(msg)
+
+    elapsed = time.perf_counter() - t0
+
+    if (args.stats or args.stats_only or args.stats_file) and reports:
+        report = format_report(
+            reports,
+            case_mode=case_mode,
+            unicode_form=args.form,
+            elapsed_s=elapsed,
+        )
+        sys.stdout.write(report)
+        if args.stats_file:
+            args.stats_file.parent.mkdir(parents=True, exist_ok=True)
+            args.stats_file.write_text(report, encoding="utf-8")
+            if not args.stats_only:
+                print(f"stats written: {args.stats_file}")
+
+    return exit_code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+```
+
+## Lowercase option
+
+Two mutually exclusive flags:
+
+| Flag | Method | When to use |
+|---|---|---|
+| `--lowercase` | `str.lower()` | Display / reading copy |
+| `--casefold` | `str.casefold()` | Search indexes, dedup, keys |
+
+`casefold` is the Unicode-correct choice for caseless comparison (e.g. `"ß".casefold() == "ss"`, `"İ".casefold()` handles Turkish dotted-I properly). `lower` is what most people expect for a "lowercase this text" button. The `case_folded_chars` counter in the report counts characters whose case actually changed, so a file that's already lowercase shows `0`.
+
+## Stats report
+
+Triggered by `--stats`, `--stats-only`, or `--stats-file PATH`. Sample output:
+
+```
+========================================================================
+NORMALIZATION REPORT
+========================================================================
+Files processed : 3
+Unicode form    : NFC
+Case mode       : casefold
+Elapsed         : 0.004s
+
+------------------------------------------------------------------------
+FILE                                          CHARS         BYTES
+------------------------------------------------------------------------
+src/a.txt                                 1420->1385 (-35)   1493->1401 (-92)
+src/sub/b.txt                               88->86 (-2)     91->88 (-3)
+src/sub/c.txt                                0->0 (+0)       0->0 (+0)
+------------------------------------------------------------------------
+
+TOTALS
+  chars : 1508 -> 1471 (-37)
+  bytes : 1584 -> 1489 (-95)
+
+TRANSFORMATIONS
+  line endings normalized      : 4
+  tabs expanded                : 12
+  space runs collapsed         : 37
+  blank-line runs collapsed    : 2
+  characters case-folded       : 812
+  character replacements       :
+      U+2019 ’        x14
+      U+2014 —        x3
+      U+00A0          x9
+  characters stripped          :
+      U+200B   x2
+========================================================================
+```
+
+## Wiring notes
+
+- `NormalizeStats` is threaded through `normalize_unicode`, `normalize_whitespace`, and `apply_case` as an optional argument — pass `None` to skip bookkeeping (useful if you import these as library functions without wanting the counter overhead).
+- Counters use Unicode code-point labels (`U+2019`) so reports are ASCII-safe and sortable, with the literal glyph shown alongside in the report body.
+- `--stats-file` writes the same report to disk; `--stats-only` suppresses progress lines so you can pipe the report cleanly (`... --stats-only > report.txt`).
+- `--quiet` suppresses progress but keeps `--stats` output.
+
+## Caveats
+
+- The `characters case-folded` count compares character-by-character up to the shorter length plus any length delta — correct for the common case, but `ß → ss` (length-changing) is counted as the length delta, not as one "changed" character. If you need precise per-grapheme change counts, that requires a grapheme segmenter (`regex` module or `grapheme` package).
+- Elapsed time covers the whole pipeline including I/O, not just pure normalization — fine for a rough sense, not a microbenchmark.
+- If a file fails mid-batch, it's excluded from the report but still increments the exit code; the report header reflects only successfully processed files.

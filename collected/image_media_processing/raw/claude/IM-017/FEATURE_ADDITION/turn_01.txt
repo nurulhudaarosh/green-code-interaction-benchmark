@@ -1,0 +1,105 @@
+```python
+"""Embed and read custom string key/value metadata in PNG text chunks.
+
+Pure standard library. Pixel data is never decoded or re-encoded: new
+chunks are spliced in before IEND, so the image stays byte-identical.
+Values are stored as iTXt chunks (UTF-8), so any Unicode string works.
+"""
+import struct
+import zlib
+
+PNG_SIG = b"\x89PNG\r\n\x1a\n"
+TEXT_TYPES = (b"tEXt", b"zTXt", b"iTXt")
+
+
+def _chunks(data):
+    """Yield (type, payload) for each chunk in a PNG byte string."""
+    if data[:8] != PNG_SIG:
+        raise ValueError("Not a PNG file")
+    pos = 8
+    while pos < len(data):
+        length, ctype = struct.unpack(">I4s", data[pos:pos + 8])
+        payload = data[pos + 8:pos + 8 + length]
+        if len(payload) != length:
+            raise ValueError("Truncated PNG chunk")
+        yield ctype, payload
+        pos += 12 + length  # length + type + payload + CRC
+
+
+def _pack(ctype, payload):
+    crc = zlib.crc32(ctype + payload) & 0xFFFFFFFF
+    return struct.pack(">I", len(payload)) + ctype + payload + struct.pack(">I", crc)
+
+
+def _parse_text(ctype, payload):
+    """Return (key, value) for a tEXt/zTXt/iTXt payload."""
+    key, _, rest = payload.partition(b"\x00")
+    key = key.decode("latin-1")
+    if ctype == b"tEXt":
+        return key, rest.decode("latin-1")
+    if ctype == b"zTXt":  # rest = method byte + zlib data
+        return key, zlib.decompress(rest[1:]).decode("latin-1")
+    flag, _method = rest[0], rest[1]  # iTXt
+    _lang, _, rest = rest[2:].partition(b"\x00")
+    _trans, _, text = rest.partition(b"\x00")
+    if flag:
+        text = zlib.decompress(text)
+    return key, text.decode("utf-8")
+
+
+def _check_key(key):
+    if not isinstance(key, str):
+        raise TypeError("Keys must be strings")
+    try:
+        raw = key.encode("latin-1")
+    except UnicodeEncodeError:
+        raise ValueError(f"Key {key!r} must be Latin-1") from None
+    if not 1 <= len(raw) <= 79 or key != key.strip() or "\x00" in key:
+        raise ValueError(
+            f"Invalid key {key!r}: need 1-79 chars, no NULs, no leading/trailing spaces"
+        )
+    return raw
+
+
+def embed_tags(input_path, output_path, tags):
+    """Copy a PNG to output_path with `tags` (dict[str, str]) stored in iTXt chunks.
+
+    Existing text chunks with the same keys are replaced; all others are kept.
+    """
+    new = []
+    for key, value in tags.items():
+        if not isinstance(value, str):
+            raise TypeError(f"Value for {key!r} must be a string")
+        payload = _check_key(key) + b"\x00\x00\x00\x00\x00" + value.encode("utf-8")
+        new.append(_pack(b"iTXt", payload))
+
+    with open(input_path, "rb") as f:
+        data = f.read()
+
+    out = [PNG_SIG]
+    inserted = False
+    for ctype, payload in _chunks(data):
+        if ctype == b"IEND":
+            out.extend(new)
+            inserted = True
+        elif ctype in TEXT_TYPES and _parse_text(ctype, payload)[0] in tags:
+            continue  # replaced by the new value
+        out.append(_pack(ctype, payload))
+    if not inserted:
+        raise ValueError("PNG has no IEND chunk")
+
+    with open(output_path, "wb") as f:
+        f.write(b"".join(out))
+
+
+def read_tags(image_path):
+    """Return all tEXt/zTXt/iTXt metadata in the PNG as a dict[str, str]."""
+    with open(image_path, "rb") as f:
+        data = f.read()
+    return {
+        k: v
+        for ctype, payload in _chunks(data)
+        if ctype in TEXT_TYPES
+        for k, v in [_parse_text(ctype, payload)]
+    }
+```

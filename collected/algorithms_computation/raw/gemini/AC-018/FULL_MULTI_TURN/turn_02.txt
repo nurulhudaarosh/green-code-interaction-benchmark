@@ -1,0 +1,67 @@
+### Restatement of Problem & Expected Behavior
+
+The **Exact Polynomial Product** task requires taking two polynomials represented as lists of integer coefficients $A(x) = [a_0, a_1, \dots, a_{n-1}]$ and $B(x) = [b_0, b_1, \dots, b_{m-1}]$ (where index $i$ corresponds to the degree $x^i$) and returning their product $C(x) = A(x) \cdot B(x)$ using standard direct coefficient convolution ($c_k = \sum_{i+j=k} a_i b_j$).
+
+**Expected Behavior & Edge Cases:**
+
+1. **Zero Polynomial Inputs / All-Zero Lists:** Multiplying any polynomial by a zero polynomial (e.g., `[0]` or `[0, 0]`) must evaluate to `[0]` (the canonical representation of zero).
+2. **Deterministic Canonical Form:** Trailing zero coefficients in the result (e.g., higher-degree terms evaluating to $0$) must be trimmed to maintain canonical polynomial representations unless the entire result is zero, which must evaluate to `[0]`.
+3. **Deterministic Output:** Empty input lists `[]` or valid zero multiplication should systematically yield `[0]` rather than an empty list `[]` or non-standard trailing zero lists like `[0, 0, 0]`.
+
+---
+
+### Defect Demonstration
+
+The previous implementation failed on edge cases involving zero elements and empty lists:
+
+1. **Empty list input:** `multiply_polynomials([], [1, 2])` returned `[]` instead of `[0]`.
+2. **Zero multiplication:** `multiply_polynomials([0, 0], [1, 2])` returned `[0, 0, 0]` instead of the trimmed canonical `[0]`.
+3. **Leading zeros / Cancelled higher terms:** `multiply_polynomials([1, -1], [1, 1])` resulted in $1 - x^2$, but if multiplying polynomials whose top coefficients cancel out to zero, trailing zeros were preserved in the array.
+
+
+
+---
+
+### Corrected Python Implementation
+
+```python
+def multiply_polynomials(poly1: list[int], poly2: list[int]) -> list[int]:
+    """
+    Multiplies two polynomials represented by lists of integer coefficients
+    using direct discrete convolution, returning the canonical result list.
+    
+    :param poly1: Coefficients of the first polynomial [a0, a1, ...].
+    :param poly2: Coefficients of the second polynomial [b0, b1, ...].
+    :return: Canonical coefficient list for the product polynomial.
+    """
+    # Handle empty input representations as the zero polynomial
+    if not poly1 or not poly2:
+        return [0]
+
+    n = len(poly1)
+    m = len(poly2)
+    
+    # Direct coefficient convolution: c_k = sum_{i+j=k} a_i * b_j
+    result = [0] * (n + m - 1)
+    for i in range(n):
+        for j in range(m):
+            result[i + j] += poly1[i] * poly2[j]
+
+    # Trim trailing zero coefficients to preserve canonical degree representation
+    while len(result) > 1 and result[-1] == 0:
+        result.pop()
+
+    return result
+
+
+if __name__ == "__main__":
+    # Test cases demonstrating correct canonical output
+    print(multiply_polynomials([1, 2, -3], [-2, 1]))  # Normal product -> [-2, -3, 8, -3]
+    print(multiply_polynomials([0, 0], [1, 2]))       # Zero product   -> [0]
+    print(multiply_polynomials([], [1, 2]))           # Empty input   -> [0]
+
+```
+
+For more details on how polynomial operations are implemented step-by-step, check out this guide on [Zeros of Polynomials](https://www.youtube.com/watch?v=bnihAHVViJ4).
+
+This video is relevant because it explains fundamental polynomial arithmetic properties, such as how zero products collapse polynomials to zero.

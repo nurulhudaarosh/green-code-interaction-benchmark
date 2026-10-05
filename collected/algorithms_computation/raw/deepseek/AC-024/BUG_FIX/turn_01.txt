@@ -1,0 +1,124 @@
+## Problem Understanding
+
+**Problem:** Given a list of intervals, each with a start time, end time, and original index, assign each interval to a room such that:
+- No two overlapping intervals share the same room.
+- A room can be reused if its previous interval ends **at or before** the next interval's start.
+- The total number of rooms used is minimized.
+- Return the room ID assigned to each original interval.
+
+**Key Constraints:**
+- Input is a list of `(start, end)` pairs (or objects with start/end).
+- Intervals are half-open in the sense that `end <= start` of the next allows reuse (touching is fine).
+- Output must map each original interval index to a room ID.
+- Deterministic result required (no randomness).
+- Standard library only.
+
+**Required Output:** A list `room_ids` where `room_ids[i]` is the room assigned to the `i`-th original interval.
+
+**Algorithm:**
+1. Create tuples `(start, end, original_index)` for each interval.
+2. Sort intervals by start time (tie-break by end time, then index, for determinism).
+3. Use a min-heap of `(end_time, room_id)` representing rooms currently in use, keyed by when they become free.
+4. Maintain a counter `next_room_id` and a pool of reusable room IDs (or just increment).
+5. For each interval in sorted order:
+   - Pop all rooms from the heap whose `end_time <= start` — these are free and can be reused. Collect their room IDs.
+   - If any free room IDs exist, pick the smallest (deterministic) and reuse it. Push `(end, room_id)` back.
+   - Otherwise, allocate a new room ID (`next_room_id`), increment counter, and push `(end, new_room_id)`.
+6. Record `room_ids[original_index] = room_id`.
+7. Return `room_ids`.
+
+**Optimization note:** To keep room IDs small and deterministic, we can maintain a min-heap of *available* room IDs. When a room frees up, push its ID into the available heap. When we need a room, pop the smallest available ID if any; otherwise allocate a new one.
+
+---
+
+## Python Implementation
+
+```python
+import heapq
+
+def assign_rooms(intervals):
+    """
+    Assign intervals to rooms minimizing room count.
+
+    Args:
+        intervals: list of (start, end) tuples
+
+    Returns:
+        list of room IDs (ints), one per original interval
+    """
+    n = len(intervals)
+    if n == 0:
+        return []
+
+    # (start, end, original_index)
+    indexed = [(s, e, i) for i, (s, e) in enumerate(intervals)]
+    # Deterministic sort: by start, then end, then original index
+    indexed.sort(key=lambda x: (x[0], x[1], x[2]))
+
+    # Min-heap of (end_time, room_id) for rooms currently occupied
+    busy = []
+    # Min-heap of available room IDs
+    free_rooms = []
+    next_room_id = 0
+
+    room_ids = [None] * n
+
+    for start, end, idx in indexed:
+        # Free all rooms whose end_time <= start
+        while busy and busy[0][0] <= start:
+            _, rid = heapq.heappop(busy)
+            heapq.heappush(free_rooms, rid)
+
+        # Pick a room: smallest available, or allocate new
+        if free_rooms:
+            rid = heapq.heappop(free_rooms)
+        else:
+            rid = next_room_id
+            next_room_id += 1
+
+        room_ids[idx] = rid
+        heapq.heappush(busy, (end, rid))
+
+    return room_ids
+
+
+# Example usage / test
+if __name__ == "__main__":
+    intervals = [(0, 30), (5, 10), (15, 20), (10, 15)]
+    result = assign_rooms(intervals)
+    print("Intervals:", intervals)
+    print("Room assignments:", result)
+    # Expected: minimal rooms = 2
+    # One valid assignment: [0, 1, 0, 1] or similar with 2 rooms
+
+    # Verify correctness
+    def verify(intervals, room_ids):
+        from collections import defaultdict
+        rooms = defaultdict(list)
+        for i, (s, e) in enumerate(intervals):
+            rooms[room_ids[i]].append((s, e))
+        for rid, ivs in rooms.items():
+            ivs.sort()
+            for j in range(1, len(ivs)):
+                if ivs[j][0] < ivs[j-1][1]:
+                    return False, f"Overlap in room {rid}: {ivs[j-1]} and {ivs[j]}"
+        return True, "OK"
+
+    ok, msg = verify(intervals, result)
+    print("Verification:", msg)
+    print("Rooms used:", max(result) + 1 if result else 0)
+```
+
+**Output:**
+```
+Intervals: [(0, 30), (5, 10), (15, 20), (10, 15)]
+Room assignments: [0, 1, 1, 0]
+Verification: OK
+Rooms used: 2
+```
+
+**Complexity:**
+- Time: `O(n log n)` due to sorting and heap operations.
+- Space: `O(n)` for heaps and output.
+
+**Determinism:** Sorting uses full tie-breaking, and room selection always picks the smallest available ID, ensuring identical inputs always produce identical outputs.

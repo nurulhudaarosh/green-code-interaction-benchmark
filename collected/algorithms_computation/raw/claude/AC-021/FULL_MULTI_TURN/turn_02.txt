@@ -1,0 +1,45 @@
+I'll restate the spec, then test the current code against a brute-force oracle before claiming a defect.## Problem restated
+
+Given positive integers `nums` and a target `T ≥ 0`, return the ascending 0-based index list of a subset summing exactly to `T` such that:
+1. it has the **fewest elements**,
+2. among equal-size subsets, its index list is **lexicographically smallest**,
+3. `None` if no subset works, and `[]` if `T = 0`.
+
+Each element is used at most once, and the output is deterministic.
+
+## Defect investigation
+
+I tested the previous implementation against a brute-force oracle (20,000 random cases with elements 1–8, up to 9 items, target 0–30). **It produced 0 mismatches.** I could not demonstrate a wrong answer on valid input. The count-first, then lexicographic tuple comparison is sound, and the descending-sum loop correctly enforces 0/1 use. For example, `[1,2,3,4], T=5` correctly returns `[0,3]`.
+
+So the "does not enforce the rule" report doesn't reproduce for valid inputs. I did find two real defects, which I fixed:
+
+1. **Silent input handling.** The old code skipped non-positive elements with `continue`. For `[-2, 5, 3], T=3` it quietly returned `[2]`, hiding a spec violation instead of reporting it. Non-integer input like `2.5` was likewise not rejected.
+2. **Complexity claim was wrong.** Building `(i,) + prev[1]` copies a tuple on every update, so the cost was O(n·T·k), not the stated O(n·T), where k is the subset size.
+
+## Correction
+
+- Validate inputs up front: `ValueError` for a non-positive element or negative target, `TypeError` for non-integers.
+- Replace tuple copying with persistent linked nodes `(count, index, parent)`, so each update is O(1).
+- The tie-break needs only counts. Items are processed last to first, so index `i` is smaller than every index already in `dp[s]`. On equal counts the new candidate is therefore always lexicographically smaller, and the update rule is `new_count <= old_count`.
+
+The full code is in the tool output above (`fixed.py`). The core loop is:
+
+```python
+for i in range(len(nums) - 1, -1, -1):
+    a = nums[i]
+    if a > target:
+        continue
+    for s in range(target, a - 1, -1):
+        if not reach[s - a]:
+            continue
+        prev = dp[s - a]
+        prev_count = prev[0] if prev else 0
+        cur = dp[s]
+        if not reach[s] or prev_count + 1 <= cur[0]:
+            dp[s] = (prev_count + 1, i, prev)
+            reach[s] = True
+```
+
+The fixed version passes the original six examples, an extra tie case (`[2,3,1,4], T=5 → [0,1]`), 30,000 randomized comparisons against brute force, and the invalid-input checks. It uses only the standard library. The random seed is fixed and used only in the self-test, so the solver itself is fully deterministic.
+
+If you have a specific input where you saw a wrong result, send it and I'll trace it directly.

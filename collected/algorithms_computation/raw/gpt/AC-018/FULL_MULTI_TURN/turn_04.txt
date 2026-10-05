@@ -1,0 +1,252 @@
+```python
+# Exact Polynomial Product
+#
+# Original problem:
+# Given two integer polynomials represented by coefficient arrays in
+# ascending order of degree, multiply them exactly and return the
+# coefficient array of the product. Coefficients may be negative.
+#
+# Original required output:
+# - Return the exact coefficient array of A(x) * B(x).
+# - Coefficients are ordered by increasing degree, with the constant
+#   coefficient first.
+# - If either input is empty, return [].
+#
+# Existing requirements:
+# - Use direct coefficient convolution.
+# - Keep the computation deterministic.
+# - The quadratic O(n*m) computation is practical under the constraints.
+# - Use only the Python standard library.
+# - No network access, APIs, external services, randomness, or human
+#   interaction.
+# - When the optional operation-summary feature is disabled, return only
+#   the original coefficient array.
+# - When enabled, preserve the original coefficient array and additionally
+#   return the deterministic operation summary.
+#
+# Difficult cases explicitly handled:
+#
+# 1. Repeated values:
+#    Repeated coefficients are treated as separate coefficients according
+#    to their polynomial positions. Every pair (i, j) contributes to
+#    result[i + j], even when coefficient values are identical.
+#
+# 2. Deterministic ties:
+#    Polynomial multiplication has no optimization or selection tie to
+#    resolve. If several products contribute to the same result position,
+#    all contributions are accumulated. The fixed nested-loop order
+#    (increasing i, then increasing j) makes the computation deterministic.
+#    Thus no arbitrary tie-breaking rule is introduced.
+#
+# Optional operation_summary:
+# If include_operation_summary=True, the result contains:
+#   "coefficients": the exact product coefficient array
+#   "operation_summary": {
+#       "convolution_operations": number of coefficient-pair products
+#   }
+#
+# The number of convolution operations is:
+#   len(a) * len(b)
+# for non-empty inputs, and 0 if either input is empty.
+#
+# Time: O(n*m)
+# Space: O(n + m) for the result.
+
+
+from typing import List, Union, Dict, Any
+
+
+def multiply_polynomials(
+    a: List[int],
+    b: List[int],
+    include_operation_summary: bool = False
+) -> Union[List[int], Dict[str, Any]]:
+    """Multiply two integer polynomials exactly using direct convolution."""
+
+    if not a or not b:
+        coefficients = []
+
+        if include_operation_summary:
+            return {
+                "coefficients": coefficients,
+                "operation_summary": {
+                    "convolution_operations": 0
+                }
+            }
+
+        return coefficients
+
+    result = [0] * (len(a) + len(b) - 1)
+    operation_count = 0
+
+    # Fixed deterministic traversal:
+    # first coefficient index i, then coefficient index j.
+    for i in range(len(a)):
+        for j in range(len(b)):
+            result[i + j] += a[i] * b[j]
+            operation_count += 1
+
+    if include_operation_summary:
+        return {
+            "coefficients": result,
+            "operation_summary": {
+                "convolution_operations": operation_count
+            }
+        }
+
+    return result
+
+
+def run_tests() -> None:
+    # ---------------------------------------------------------------
+    # Original/basic behavior
+    # ---------------------------------------------------------------
+
+    # (1 + 2x)(3 + 4x) = 3 + 10x + 8x^2
+    assert multiply_polynomials([1, 2], [3, 4]) == [
+        3, 10, 8
+    ]
+
+    # Negative coefficients:
+    # (2 - 3x)(-1 + 4x) = -2 + 11x - 12x^2
+    assert multiply_polynomials([2, -3], [-1, 4]) == [
+        -2, 11, -12
+    ]
+
+    # Empty inputs.
+    assert multiply_polynomials([], [1, 2, 3]) == []
+    assert multiply_polynomials([1, 2, 3], []) == []
+
+    # Single coefficient.
+    assert multiply_polynomials([7], [-3]) == [-21]
+
+    # Zero coefficients.
+    assert multiply_polynomials([0, 0], [5, -2, 7]) == [
+        0, 0, 0, 0
+    ]
+
+    # ---------------------------------------------------------------
+    # Difficult case 1: repeated values
+    # ---------------------------------------------------------------
+
+    # A(x) = 2 + 2x + 2x^2
+    # B(x) = 2 + 2x + 2x^2
+    #
+    # Every repeated coefficient still represents a different
+    # polynomial position.
+    #
+    # Product:
+    #   4 + 8x + 12x^2 + 8x^3 + 4x^4
+    assert multiply_polynomials(
+        [2, 2, 2],
+        [2, 2, 2]
+    ) == [
+        4, 8, 12, 8, 4
+    ]
+
+    # Repeated negative values.
+    #
+    # (-1 - x - x^2)(-1 - x)
+    # = 1 + 2x + 2x^2 + x^3
+    assert multiply_polynomials(
+        [-1, -1, -1],
+        [-1, -1]
+    ) == [
+        1, 2, 2, 1
+    ]
+
+    # Repeated values mixed with zeros.
+    assert multiply_polynomials(
+        [3, 0, 3],
+        [2, 2]
+    ) == [
+        6, 6, 6, 6
+    ]
+
+    # ---------------------------------------------------------------
+    # Difficult case 2: deterministic ties
+    # ---------------------------------------------------------------
+    #
+    # Several coefficient products can contribute to the same output
+    # coefficient. There is no choice between them: all contributions
+    # must be accumulated.
+    #
+    # For:
+    #   (1 + x + x^2)(1 + x + x^2)
+    #
+    # x^2 receives three contributions:
+    #   (1*x^2) + (x*x) + (x^2*1) = 3
+    #
+    # The deterministic result is:
+    #   [1, 2, 3, 2, 1]
+    assert multiply_polynomials(
+        [1, 1, 1],
+        [1, 1, 1]
+    ) == [
+        1, 2, 3, 2, 1
+    ]
+
+    # Same mathematical input repeated in the same order must always
+    # produce exactly the same result.
+    a = [4, -2, 4, -2]
+    b = [3, 3, -1]
+
+    expected = multiply_polynomials(a, b)
+
+    for _ in range(5):
+        assert multiply_polynomials(a, b) == expected
+
+    # Reversing the input arrays is NOT a tie-breaking operation.
+    # It represents different polynomials, so the result may differ.
+    # This confirms that coefficient positions, not just values, matter.
+    assert multiply_polynomials(
+        [1, 2],
+        [3, 4]
+    ) == [3, 10, 8]
+
+    # ---------------------------------------------------------------
+    # Optional operation_summary remains deterministic
+    # ---------------------------------------------------------------
+
+    summary = multiply_polynomials(
+        [1, 1, 1],
+        [1, 1, 1],
+        include_operation_summary=True
+    )
+
+    assert summary == {
+        "coefficients": [1, 2, 3, 2, 1],
+        "operation_summary": {
+            "convolution_operations": 9
+        }
+    }
+
+    repeated_summary = multiply_polynomials(
+        [2, 2, 2],
+        [2, 2, 2],
+        include_operation_summary=True
+    )
+
+    assert repeated_summary == {
+        "coefficients": [4, 8, 12, 8, 4],
+        "operation_summary": {
+            "convolution_operations": 9
+        }
+    }
+
+    # Empty input still performs zero convolution operations.
+    assert multiply_polynomials(
+        [],
+        [1, 1],
+        include_operation_summary=True
+    ) == {
+        "coefficients": [],
+        "operation_summary": {
+            "convolution_operations": 0
+        }
+    }
+
+
+if __name__ == "__main__":
+    run_tests()
+```

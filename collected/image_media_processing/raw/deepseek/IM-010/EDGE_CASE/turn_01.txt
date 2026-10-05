@@ -1,0 +1,131 @@
+Here's a robust implementation of `rotate_and_crop` that handles rotation and center-crops/pads images to an exact size:
+
+```python
+import os
+import cv2
+import numpy as np
+from pathlib import Path
+
+
+def rotate_and_crop(input_dir, output_dir, angle_degrees, crop_size):
+    """
+    Rotate each image in input_dir by angle_degrees and center-crop/pad to crop_size.
+    
+    Args:
+        input_dir (str): Directory containing input images.
+        output_dir (str): Directory to save processed images.
+        angle_degrees (float): Rotation angle in degrees (counter-clockwise).
+        crop_size (tuple or int): Target size as (width, height) or single int for square.
+    """
+    # Normalize crop_size to (width, height)
+    if isinstance(crop_size, int):
+        crop_w, crop_h = crop_size, crop_size
+    else:
+        crop_w, crop_h = crop_size
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    valid_exts = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp'}
+
+    for filename in os.listdir(input_dir):
+        src_path = os.path.join(input_dir, filename)
+        if not os.path.isfile(src_path):
+            continue
+        ext = Path(filename).suffix.lower()
+        if ext not in valid_exts:
+            continue
+
+        img = cv2.imread(src_path, cv2.IMREAD_UNCHANGED)
+        if img is None:
+            print(f"Skipping unreadable file: {src_path}")
+            continue
+
+        rotated = _rotate_image(img, angle_degrees)
+        result = _center_crop_or_pad(rotated, crop_w, crop_h)
+
+        dst_path = os.path.join(output_dir, filename)
+        cv2.imwrite(dst_path, result)
+
+
+def _rotate_image(img, angle_degrees):
+    """Rotate image about its center, expanding canvas so nothing is clipped."""
+    h, w = img.shape[:2]
+    center = (w / 2.0, h / 2.0)
+
+    # Compute the bounding box of the rotated image
+    angle_rad = np.deg2rad(angle_degrees)
+    cos_a, sin_a = abs(np.cos(angle_rad)), abs(np.sin(angle_rad))
+    new_w = int(np.ceil(w * cos_a + h * sin_a))
+    new_h = int(np.ceil(w * sin_a + h * cos_a))
+
+    # Adjust rotation matrix so the rotated image is centered in the new canvas
+    M = cv2.getRotationMatrix2D(center, angle_degrees, 1.0)
+    M[0, 2] += (new_w / 2.0) - center[0]
+    M[1, 2] += (new_h / 2.0) - center[1]
+
+    # Pick border mode based on channel count
+    if img.ndim == 3 and img.shape[2] == 4:
+        border_value = (0, 0, 0, 0)  # transparent for RGBA
+    elif img.ndim == 3:
+        border_value = (0, 0, 0)
+    else:
+        border_value = 0
+
+    return cv2.warpAffine(
+        img, M, (new_w, new_h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=border_value,
+    )
+
+
+def _center_crop_or_pad(img, target_w, target_h):
+    """Center-crop if larger than target, otherwise pad with zeros."""
+    h, w = img.shape[:2]
+
+    # Pad if smaller
+    pad_w = max(0, target_w - w)
+    pad_h = max(0, target_h - h)
+    if pad_w or pad_h:
+        top = pad_h // 2
+        bottom = pad_h - top
+        left = pad_w // 2
+        right = pad_w - left
+
+        if img.ndim == 3:
+            pad_value = [0] * img.shape[2]
+            img = cv2.copyMakeBorder(
+                img, top, bottom, left, right,
+                cv2.BORDER_CONSTANT, value=pad_value
+            )
+        else:
+            img = cv2.copyMakeBorder(
+                img, top, bottom, left, right,
+                cv2.BORDER_CONSTANT, value=0
+            )
+        h, w = img.shape[:2]
+
+    # Center crop
+    x = (w - target_w) // 2
+    y = (h - target_h) // 2
+    return img[y:y + target_h, x:x + target_w]
+```
+
+### Key behaviors
+
+1. **Rotation without clipping** — The canvas is expanded to the rotated bounding box, and the rotation matrix is shifted so the image stays centered. Border is filled with zeros (transparent for RGBA).
+
+2. **Center crop/pad** — If the rotated image is larger than `crop_size`, it's center-cropped; if smaller (in either dimension), it's zero-padded first. This guarantees the output is *exactly* `crop_size`.
+
+3. **Channel-aware padding** — Handles grayscale, BGR, and BGRA inputs correctly.
+
+### Example usage
+
+
+
+### Notes / possible tweaks
+
+- **Interpolation**: `INTER_LINEAR` is a good default. Use `INTER_CUBIC` for upscaling quality or `INTER_NEAREST` for masks/labels.
+- **JPEG can't store alpha** — if you rotate RGBA images and save as `.jpg`, cv2 will drop the alpha channel silently. Convert to PNG or composite onto a background if needed.
+- **Angle sign** — OpenCV rotates counter-clockwise for positive angles with `getRotationMatrix2D`. Flip the sign if your convention differs.
+- **Non-image files** are skipped; unsupported extensions are ignored.

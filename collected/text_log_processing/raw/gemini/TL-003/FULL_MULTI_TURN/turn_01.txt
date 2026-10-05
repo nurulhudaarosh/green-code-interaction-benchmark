@@ -1,0 +1,63 @@
+Here is a Python script using `collections.Counter` to track line frequencies while preserving insertion order (standard in Python 3.7+ dictionaries).
+
+```python
+import sys
+from collections import Counter
+
+def deduplicate_with_counts(input_stream, output_stream):
+    """
+    Reads lines from input_stream, counts duplicates, and writes
+    each unique line prefixed by its occurrence count in first-seen order.
+    """
+    counts = Counter()
+
+    for line in input_stream:
+        # Strip trailing newlines/carriage returns to cleanly handle blank lines
+        clean_line = line.rstrip('\r\n')
+        counts[clean_line] += 1
+
+    for line, count in counts.items():
+        output_stream.write(f"{count:>7} {line}\n")
+
+if __name__ == "__main__":
+    # Reads from standard input (pipe/redirect) and writes to standard output
+    deduplicate_with_counts(sys.stdin, sys.stdout)
+
+```
+
+### Usage
+
+**From command line via stdin:**
+
+```bash
+cat input.txt | python dedupe.py > output.txt
+
+```
+
+**Example Input:**
+
+```text
+apple
+banana
+apple
+orange
+banana
+apple
+
+```
+
+**Example Output:**
+
+```text
+      3 apple
+      2 banana
+      1 orange
+
+```
+
+### Handling Massive Files (Memory Optimization)
+
+If the dataset is too large to hold all unique keys in memory:
+
+1. **Hash the lines:** Store `Counter[hash(line)]` in memory, writing non-duplicate records to an index table.
+2. **Two-pass disk approach:** First pass reads line hashes to count frequencies, second pass streams the file, emits the line when first encountered alongside its count from the table, and tracks emitted hashes in an external bloom filter or compact bitset.

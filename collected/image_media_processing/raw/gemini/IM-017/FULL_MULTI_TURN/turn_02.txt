@@ -1,0 +1,51 @@
+In Pillow, `PngImagePlugin` automatically populates the `img.text` dictionary with all `tEXt`, `zTXt`, and `iTXt` metadata chunks when opening a PNG image, whereas `img.info` contains standard image parameters and can omit custom text chunks depending on the Pillow version and how chunks are parsed.
+
+Here is the corrected code using `img.text`:
+
+```python
+from PIL import Image
+from PIL.PngImagePlugin import PngInfo
+
+def embed_tags(input_path: str, output_path: str, tags: dict[str, str]) -> None:
+    """
+    Embeds custom key/value string metadata into a PNG file.
+    
+    :param input_path: Path to the source image.
+    :param output_path: Path to save the new image with embedded metadata.
+    :param tags: Dictionary containing string key-value pairs to embed.
+    """
+    with Image.open(input_path) as img:
+        meta = PngInfo()
+        
+        # Preserve existing text chunks loaded in img.text
+        if hasattr(img, "text"):
+            for key, value in img.text.items():
+                meta.add_text(str(key), str(value))
+                
+        # Embed or overwrite with new tags
+        for key, value in tags.items():
+            meta.add_text(str(key), str(value))
+            
+        img.save(output_path, "PNG", pnginfo=meta)
+
+
+def read_tags(image_path: str) -> dict[str, str]:
+    """
+    Reads text metadata chunks (tEXt, zTXt, iTXt) from a PNG file via img.text.
+    
+    :param image_path: Path to the PNG image.
+    :return: Dictionary containing key/value metadata strings.
+    """
+    with Image.open(image_path) as img:
+        # img.text holds all decoded PNG text chunk key-value pairs
+        if hasattr(img, "text") and isinstance(img.text, dict):
+            return {str(k): str(v) for k, v in img.text.items()}
+        
+        # Fallback to img.info for non-PNG formats or unusual edge cases
+        return {
+            str(k): str(v) 
+            for k, v in img.info.items() 
+            if isinstance(v, str)
+        }
+
+```

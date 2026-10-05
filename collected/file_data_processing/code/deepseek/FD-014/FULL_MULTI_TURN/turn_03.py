@@ -1,0 +1,375 @@
+"""
+Offline Customer Record Matcher
+--------------------------------
+Two-phase matching with real blocking (no full cross-product) and
+deterministic best-match selection per record.
+
+  Phase 1 - Blocking: index records under tagged block keys
+      * ("name_zip", "<surname-initial>|<postal-prefix>")
+      * ("email",    "<normalized email>")
+      * ("phone",    "<normalized phone (last 10 digits)>")
+    Only records sharing a block key become candidates.
+
+  Phase 2 - Verification: for each candidate pair, confirm a true match
+    by exact normalized email or phone equality.
+
+  Phase 3 - Selection: when one record has several matching candidates,
+    choose the best one using a deterministic rule:
+       1. Reason priority:  email+phone  >  email  >  phone
+       2. Tiebreak:         lowest right-side record ID
+    Every record receives at most one best match. Pairs are symmetrized
+    so the relationship is consistent from both sides.
+
+Pure standard library, no network required.
+"""
+
+from __future__ import annotations
+
+import csv
+import re
+import unicodedata
+from dataclasses import dataclass, field
+from collections import defaultdict
+from typing import Iterable, Iterator
+
+
+# ---------------------------------------------------------------------------
+# Normalization helpers
+# ---------------------------------------------------------------------------
+
+_NON_DIGIT = re.compile(r"\D+")
+_WS = re.compile(r"\s+")
+
+
+def normalize_email(value: str | None) -> str:
+    if not value:
+        return ""
+    return value.strip().lower()
+
+
+def normalize_phone(value: str | None) -> str:
+    """Return the last 10 digits (handles +1, dashes, parens, extensions)."""
+    if not value:
+        return ""
+    digits = _NON_DIGIT.sub("", value)
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
+def normalize_name(value: str | None) -> str:
+    """Strip accents, lowercase, remove punctuation/extra whitespace."""
+    if not value:
+        return ""
+    value = unicodedata.normalize("NFKD", value)
+    value = "".join(c for c in value if not unicodedata.combining(c))
+    value = value.lower()
+    value = re.sub(r"[^a-z\s\-']", " ", value)
+    return _WS.sub(" ", value).strip()
+
+
+def surname_initial(surname: str | None) -> str:
+    s = normalize_name(surname)
+    return s[0] if s else ""
+
+
+def postal_prefix(postal: str | None, length: int = 3) -> str:
+    """Take first `length` alphanumeric characters of the postal code (uppercased)."""
+    if not postal:
+        return ""
+    cleaned = re.sub(r"[^A-Za-z0-9]", "", postal).upper()
+    return cleaned[:length]
+
+
+# ---------------------------------------------------------------------------
+# Record model
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Customer:
+    id: str
+    first_name: str = ""
+    last_name: str = ""
+    email: str = ""
+    phone: str = ""
+    postal: str = ""
+
+    # Derived / cached fields
+    _n_email: str = field(default="", init=False, repr=False)
+    _n_phone: str = field(default="", init=False, repr=False)
+    _surname_initial: str = field(default="", init=False, repr=False)
+    _postal_prefix: str = field(default="", init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._n_email = normalize_email(self.email)
+        self._n_phone = normalize_phone(self.phone)
+        self._surname_initial = surname_initial(self.last_name)
+        self._postal_prefix = postal_prefix(self.postal)
+
+    @property
+    def n_email(self) -> str:
+        return self._n_email
+
+    @property
+    def n_phone(self) -> str:
+        return self._n_phone
+
+    @property
+    def surname_initial(self) -> str:
+        return self._surname_initial
+
+    @property
+    def postal_prefix(self) -> str:
+        return self._postal_prefix
+
+    # ---- Block keys -----------------------------------------------------
+
+    def block_keys(self) -> list[tuple[str, str]]:
+        keys: list[tuple[str, str]] = []
+        if self._surname_initial and self._postal_prefix:
+            keys.append(("name_zip", f"{self._surname_initial}|{self._postal_prefix}"))
+        if self._n_email:
+            keys.append(("email", self._n_email))
+        if self._n_phone:
+            keys.append(("phone", self._n_phone))
+        return keys
+
+
+# ---------------------------------------------------------------------------
+# Match representation
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Match:
+    a: Customer
+    b: Customer
+    reason: str  # "email" | "phone" | "email+phone"
+
+    # Higher = better. Used for selection.
+    _REASON_RANK = {"email+phone": 3, "email": 2, "phone": 1}
+
+    def rank(self) -> int:
+        return self._REASON_RANK.get(self.reason, 0)
+
+
+# ---------------------------------------------------------------------------
+# Matching engine
+# ---------------------------------------------------------------------------
+
+class CustomerMatcher:
+    """
+    1. Index records by block key.
+    2. Generate candidate pairs only within blocks.
+    3. Verify each candidate pair (exact email / phone).
+    4. Select the best match per record: email+phone > email > phone,
+       then lowest right-side ID.
+    """
+
+    def __init__(self) -> None:
+        self._blocks: dict[tuple[str, str], list[Customer]] = defaultdict(list)
+        self._all: list[Customer] = []
+
+    # ----- indexing -----
+
+    def add(self, customer: Customer) -> None:
+        self._all.append(customer)
+        for key in customer.block_keys():
+            self._blocks[key].append(customer)
+
+    def extend(self, customers: Iterable[Customer]) -> None:
+        for c in customers:
+            self.add(c)
+
+    # ----- candidate generation (inside-block only) -----
+
+    def _candidate_pairs(self) -> Iterator[tuple[Customer, Customer]]:
+        seen: set[tuple[str, str]] = set()
+        for bucket in self._blocks.values():
+            n = len(bucket)
+            if n < 2:
+                continue
+            for i in range(n):
+                a = bucket[i]
+                for j in range(i + 1, n):
+                    b = bucket[j]
+                    if a.id == b.id:
+                        continue
+                    pair = (a.id, b.id) if a.id < b.id else (b.id, a.id)
+                    if pair in seen:
+                        continue
+                    seen.add(pair)
+                    yield a, b
+
+    # ----- verification -----
+
+    @staticmethod
+    def _reason(a: Customer, b: Customer) -> str | None:
+        email_hit = bool(a.n_email) and a.n_email == b.n_email
+        phone_hit = bool(a.n_phone) and a.n_phone == b.n_phone
+        if email_hit and phone_hit:
+            return "email+phone"
+        if email_hit:
+            return "email"
+        if phone_hit:
+            return "phone"
+        return None
+
+    # ----- selection -----
+
+    @staticmethod
+    def _best_for(
+        record: Customer,
+        candidates: list[Match],
+    ) -> Match | None:
+        """
+        Pick the best match for `record`:
+          - Reason priority: email+phone > email > phone
+          - Then lowest OTHER-side ID (string sort)
+        """
+        if not candidates:
+            return None
+
+        def other(m: Match) -> Customer:
+            return m.b if m.a.id == record.id else m.a
+
+        return max(
+            candidates,
+            key=lambda m: (m.rank(), _neg_id(other(m).id)),
+        )
+
+
+def _neg_id(s: str) -> tuple:
+    """
+    Sort helper: 'lowest ID first' when used with max().
+    Returns a tuple that inverts lexicographic order.
+    """
+    # Simple inversion: map each char to (255 - ord) so larger becomes smaller.
+    return tuple(255 - ord(c) for c in s)
+
+
+class BestMatchSelector:
+    """
+    Wraps CustomerMatcher to produce, for each record, at most one best
+    match, with deterministic tiebreaks and symmetric results.
+    """
+
+    def __init__(self, matcher: CustomerMatcher) -> None:
+        self._matcher = matcher
+
+    def best_matches(self) -> list[Match]:
+        # 1) Gather all verified matches.
+        all_matches: list[Match] = []
+        for a, b, in self._matcher._candidate_pairs():
+            reason = self._matcher._reason(a, b)
+            if reason:
+                all_matches.append(Match(a=a, b=b, reason=reason))
+
+        # 2) Bucket by left-side record.
+        by_left: dict[str, list[Match]] = defaultdict(list)
+        for m in all_matches:
+            by_left[m.a.id].append(m)
+
+        # 3) Choose best per left-side record.
+        chosen: dict[str, Match] = {}
+        for rid, cands in by_left.items():
+            record = cands[0].a
+            best = CustomerMatcher._best_for(record, cands)
+            if best is not None:
+                chosen[rid] = best
+
+        # 4) Symmetrize: keep a match only if it's the chosen one from
+        #    BOTH sides (respecting the direction-independent rule).
+        #    Build a lookup from the right side too.
+        by_right: dict[str, list[Match]] = defaultdict(list)
+        for m in all_matches:
+            by_right[m.b.id].append(m)
+
+        final: list[Match] = []
+        seen_pairs: set[tuple[str, str]] = set()
+        for rid, m in chosen.items():
+            other_id = m.b.id if m.a.id == rid else m.a.id
+
+            # Determine best from other side as well.
+            other_cands = by_left.get(other_id, [])
+            other_best = (
+                CustomerMatcher._best_for(other_cands[0].a, other_cands)
+                if other_cands else None
+            )
+
+            # Accept if both sides mutually prefer each other (by the
+            # deterministic rule), OR if only one side has candidates.
+            if other_best is not None:
+                other_other_id = (
+                    other_best.b.id if other_best.a.id == other_id
+                    else other_best.a.id
+                )
+                if other_other_id != rid:
+                    continue  # conflict: other side prefers someone else
+
+            pair_key = (
+                (rid, other_id) if rid < other_id else (other_id, rid)
+            )
+            if pair_key in seen_pairs:
+                continue
+            seen_pairs.add(pair_key)
+            final.append(m)
+
+        return final
+
+
+# ---------------------------------------------------------------------------
+# CSV loader (adjust column names as needed)
+# ---------------------------------------------------------------------------
+
+def load_customers_from_csv(path: str) -> list[Customer]:
+    customers: list[Customer] = []
+    with open(path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for i, row in enumerate(reader):
+            customers.append(
+                Customer(
+                    id=row.get("id") or f"row-{i}",
+                    first_name=row.get("first_name", "") or "",
+                    last_name=row.get("last_name", "") or "",
+                    email=row.get("email", "") or "",
+                    phone=row.get("phone", "") or "",
+                    postal=row.get("postal", "") or "",
+                )
+            )
+    return customers
+
+
+# ---------------------------------------------------------------------------
+# Demo
+# ---------------------------------------------------------------------------
+
+def _demo() -> None:
+    customers = [
+        # "1" matches "2" (email+phone) and "5" (email only). Prefer "2".
+        Customer("1", "Jane", "Smith", "jane.smith@example.com", "416-555-1234", "M5V 2T6"),
+        Customer("2", "J.",   "Smith", "JANE.SMITH@example.com ", "(416) 555-1234", "M5V 3A1"),
+        Customer("5", "Jane", "Smyth", "jane.smith@example.com", "",             "M5V 9Z9"),
+
+        # "4" matches "6" (phone only) and "7" (email only). Prefer "7".
+        Customer("4", "Alice","Jones", "alice@example.com",     "+1 416 555 1234", "K1A 0B1"),
+        Customer("6", "Carl", "Brown", "carl@example.com",      "4165551234",      "L5B 2C3"),
+        Customer("7", "Al.",  "Jones", "ALICE@example.com",     "",                "K1A 0B1"),
+
+        # "8" matches "9" and "10" with the same reason ("email").
+        # Lowest right-side ID wins -> "9".
+        Customer("8", "Sam",  "Lee",   "sam@example.com",  "", "T2X 1A1"),
+        Customer("9", "S.",   "Lee",   "sam@example.com",  "", "T2X 1A1"),
+        Customer("10","S.",   "Lee",   "sam@example.com",  "", "T2X 1A1"),
+    ]
+
+    matcher = CustomerMatcher()
+    matcher.extend(customers)
+    selector = BestMatchSelector(matcher)
+    matches = selector.best_matches()
+
+    print(f"Found {len(matches)} best match(es):\n")
+    for m in sorted(matches, key=lambda x: (x.a.id, x.b.id)):
+        print(f"  [{m.reason:11s}] {m.a.id} ({m.a.first_name} {m.a.last_name})"
+              f"  <->  {m.b.id} ({m.b.first_name} {m.b.last_name})")
+
+
+if __name__ == "__main__":
+    _demo()

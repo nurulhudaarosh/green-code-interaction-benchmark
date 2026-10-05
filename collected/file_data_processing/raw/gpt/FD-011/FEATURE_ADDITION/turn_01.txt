@@ -1,0 +1,101 @@
+```python
+import csv
+import sys
+from datetime import datetime, timedelta
+
+
+def parse_timestamp(value):
+    return datetime.fromisoformat(value.strip())
+
+
+def interpolate(start_value, end_value, steps, position):
+    return start_value + (end_value - start_value) * position / steps
+
+
+def process(input_file, output_file):
+    with open(input_file, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+        fieldnames = reader.fieldnames
+
+    if not fieldnames or "sensor" not in fieldnames or "timestamp" not in fieldnames or "value" not in fieldnames:
+        raise ValueError("Input must contain sensor, timestamp, and value columns.")
+
+    grouped = {}
+
+    for row in rows:
+        sensor = row["sensor"]
+        timestamp = parse_timestamp(row["timestamp"])
+        value = float(row["value"])
+
+        grouped.setdefault(sensor, []).append({
+            "sensor": sensor,
+            "timestamp": timestamp,
+            "value": value,
+            "inserted": row.get("inserted", "false")
+        })
+
+    output_rows = []
+
+    for sensor in sorted(grouped):
+        readings = sorted(
+            grouped[sensor],
+            key=lambda r: (r["timestamp"], r["value"])
+        )
+
+        for i in range(len(readings) - 1):
+            current = readings[i]
+            next_reading = readings[i + 1]
+
+            output_rows.append(current)
+
+            difference = next_reading["timestamp"] - current["timestamp"]
+
+            if difference.total_seconds() > 3600 and difference.total_seconds() % 3600 == 0:
+                steps = int(difference.total_seconds() // 3600)
+
+                for step in range(1, steps):
+                    timestamp = current["timestamp"] + timedelta(hours=step)
+                    value = interpolate(
+                        current["value"],
+                        next_reading["value"],
+                        steps,
+                        step
+                    )
+
+                    output_rows.append({
+                        "sensor": sensor,
+                        "timestamp": timestamp,
+                        "value": value,
+                        "inserted": "true"
+                    })
+
+        if readings:
+            output_rows.append(readings[-1])
+
+    output_rows.sort(
+        key=lambda r: (r["sensor"], r["timestamp"])
+    )
+
+    output_fields = ["sensor", "timestamp", "value", "inserted"]
+
+    with open(output_file, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=output_fields)
+        writer.writeheader()
+
+        for row in output_rows:
+            writer.writerow({
+                "sensor": row["sensor"],
+                "timestamp": row["timestamp"].isoformat(),
+                "value": f"{row['value']:.10g}",
+                "inserted": row["inserted"]
+            })
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: python script.py input.csv output.csv")
+        sys.exit(1)
+
+    process(sys.argv[1], sys.argv[2])
+```

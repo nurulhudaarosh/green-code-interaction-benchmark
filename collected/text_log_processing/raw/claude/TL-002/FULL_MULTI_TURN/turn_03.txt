@@ -1,0 +1,129 @@
+`log_to_csv.py` now has method and status-class filters, as function parameters and as CLI flags. I ran each combination against the sample log and the counts came out as expected.
+
+
+logs_to_csv(lines, "out.csv", methods=["GET", "POST"], status_classes=["4xx", "5xx"])
+
+python log_to_csv.py access.log out.csv --method GET POST --status-class 4xx 5xx
+```
+
+- **Matching:** method matching is case-insensitive. Status classes can be written `4xx`, `4XX` or `4`. Leaving a filter out means no filtering on that field.
+- **Return value:** `logs_to_csv` now returns `(written, skipped, filtered)`. Unparseable lines still count as skipped, and lines that parse but fail a filter count as filtered. If you unpack the old two-value return, update that call.
+- **Empty methods:** malformed request lines like `"-" 408` have an empty method. They are dropped by any `--method` filter and kept when you filter only by status class.
+
+```python
+import csv
+import re
+from typing import Iterable, Optional
+
+# Apache/Nginx Common + Combined Log Format, tolerant of "-" fields,
+# malformed request lines ("-" / 408s) and a missing bytes field.
+LOG_RE = re.compile(
+    r'^(?P<ip>\S+) (?P<ident>\S+) (?P<user>\S+) '
+    r'\[(?P<timestamp>[^\]]+)\] '
+    r'"(?P<request>.*?)" '
+    r'(?P<status>\d{3})(?: (?P<bytes>\d+|-))?'
+    r'(?: "(?P<referrer>[^"]*)" "(?P<user_agent>.*)")?\s*$'
+)
+
+FIELDS = [
+    "ip", "ident", "user", "timestamp", "method", "path", "protocol",
+    "status", "statusClass", "bytes", "referrer", "user_agent",
+]
+
+
+def status_class(status: int) -> str:
+    return f"{status // 100}xx"
+
+
+def parse_line(line) -> Optional[dict]:
+    """Return a record dict, or None if the line can't be parsed."""
+    try:
+        if isinstance(line, bytes):
+            line = line.decode("utf-8", errors="replace")
+        m = LOG_RE.match(line.strip())
+        if not m:
+            return None
+        rec = m.groupdict()
+        parts = (rec.pop("request") or "").split(" ")
+        rec["method"] = parts[0] if len(parts) >= 2 else ""
+        rec["path"] = parts[1] if len(parts) >= 2 else ""
+        rec["protocol"] = parts[2] if len(parts) >= 3 else ""
+        status = int(rec["status"])
+        rec["status"] = status
+        rec["statusClass"] = status_class(status)
+        b = rec["bytes"]
+        rec["bytes"] = int(b) if b and b != "-" else 0
+        rec["referrer"] = rec["referrer"] or ""
+        rec["user_agent"] = rec["user_agent"] or ""
+        return rec
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+def _norm_methods(methods: Optional[Iterable[str]]) -> Optional[set]:
+    return {m.strip().upper() for m in methods} if methods else None
+
+
+def _norm_classes(classes: Optional[Iterable]) -> Optional[set]:
+    """Accept '4xx', '4XX' or 4 and normalize to '4xx'."""
+    if not classes:
+        return None
+    out = set()
+    for c in classes:
+        c = str(c).strip().lower()
+        out.add(c if c.endswith("xx") else f"{c[:1]}xx")
+    return out
+
+
+def logs_to_csv(
+    lines: Iterable,
+    out_path: str,
+    methods: Optional[Iterable[str]] = None,
+    status_classes: Optional[Iterable] = None,
+) -> tuple[int, int, int]:
+    """Parse log lines and write matching records to CSV.
+
+    methods:        e.g. ["GET", "POST"]; None/empty = all methods.
+    status_classes: e.g. ["4xx", "5xx"] (or [4, 5]); None/empty = all.
+
+    Returns (written, skipped, filtered). Blank lines are ignored,
+    unparseable lines count as skipped, parsed-but-excluded as filtered.
+    """
+    want_methods = _norm_methods(methods)
+    want_classes = _norm_classes(status_classes)
+    written = skipped = filtered = 0
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=FIELDS)
+        writer.writeheader()
+        for line in lines:
+            if not line or not line.strip():
+                continue
+            rec = parse_line(line)
+            if rec is None:
+                skipped += 1
+                continue
+            if want_methods and rec["method"].upper() not in want_methods:
+                filtered += 1
+                continue
+            if want_classes and rec["statusClass"] not in want_classes:
+                filtered += 1
+                continue
+            writer.writerow(rec)
+            written += 1
+    return written, skipped, filtered
+
+
+if __name__ == "__main__":
+    import argparse
+
+    ap = argparse.ArgumentParser(description="Convert access logs to CSV.")
+    ap.add_argument("src")
+    ap.add_argument("dst")
+    ap.add_argument("--method", nargs="+", help="e.g. GET POST")
+    ap.add_argument("--status-class", nargs="+", help="e.g. 4xx 5xx")
+    a = ap.parse_args()
+
+    with open(a.src, encoding="utf-8", errors="replace") as f:
+        w, s, fl = logs_to_csv(f, a.dst, a.method, a.status_class)
+    print(f"written={w} skipped={s} filtered={fl}")
+```

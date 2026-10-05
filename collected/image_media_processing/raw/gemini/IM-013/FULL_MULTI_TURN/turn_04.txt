@@ -1,0 +1,145 @@
+Here is the updated function. It handles empty directories gracefully by bypassing row-based math, creating a minimal $1 \times 1$ fallback canvas (or a padded single-row image), saving it to `output_path`, and returning the tuple `(0, columns)`. For non-empty directories, it returns `(rows, columns)`.
+
+```python
+import os
+from PIL import Image, ImageDraw, ImageFont
+
+
+def build_contact_sheet(
+    input_dir: str,
+    output_path: str,
+    thumb_size: tuple[int, int] = (150, 150),
+    columns: int = 4,
+    padding: int = 10,
+    bg_color: str | tuple[int, int, int] = "white",
+    label: bool = False,
+    label_height: int = 24,
+    text_color: str | tuple[int, int, int] = "black",
+) -> tuple[int, int]:
+    """Tiles all images from `input_dir` into a grid contact sheet.
+
+    Args:
+        input_dir: Directory containing input images.
+        output_path: File path where the contact sheet image will be saved.
+        thumb_size: (width, height) bounding box for each thumbnail image.
+        columns: Fixed number of columns in the grid.
+        padding: Pixel spacing between cells and outer borders.
+        bg_color: Background color for the contact sheet.
+        label: If True, draws filename captions beneath each thumbnail.
+        label_height: Additional pixel height reserved for the text strip when label=True.
+        text_color: Font color for image captions.
+
+    Returns:
+        tuple[int, int]: (rows, columns) grid dimensions of the generated contact sheet.
+    """
+    valid_extensions = (
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".bmp",
+        ".webp",
+        ".tiff",
+        ".gif",
+    )
+
+    # 1. Collect all image paths from input directory
+    image_paths = []
+    if os.path.exists(input_dir):
+        image_paths = [
+            os.path.join(input_dir, f)
+            for f in sorted(os.listdir(input_dir))
+            if f.lower().endswith(valid_extensions)
+        ]
+
+    # 2. Edge Case: Handle 0 valid images without raising an exception
+    if not image_paths:
+        # Create a minimal valid image (1x1 pixel) filled with bg_color
+        minimal_img = Image.new("RGB", (1, 1), color=bg_color)
+        minimal_img.save(output_path)
+        print(f"No valid images found in '{input_dir}'. Saved minimal output to '{output_path}'.")
+        return (0, columns)
+
+    cell_w, thumb_h = thumb_size
+    cell_h = thumb_h + (label_height if label else 0)
+
+    num_images = len(image_paths)
+    rows = (num_images + columns - 1) // columns
+
+    # 3. Compute canvas dimensions including padding
+    canvas_w = columns * cell_w + (columns + 1) * padding
+    canvas_h = rows * cell_h + (rows + 1) * padding
+
+    contact_sheet = Image.new("RGB", (canvas_w, canvas_h), color=bg_color)
+    draw = ImageDraw.Draw(contact_sheet) if label else None
+    font = ImageFont.load_default()
+
+    def fit_text(text: str, max_w: int, draw_obj, font_obj) -> str:
+        bbox = draw_obj.textbbox((0, 0), text, font=font_obj)
+        if (bbox[2] - bbox[0]) <= max_w:
+            return text
+
+        ellipsis = "..."
+        for i in range(len(text) - 1, 0, -1):
+            truncated = text[:i] + ellipsis
+            bbox = draw_obj.textbbox((0, 0), truncated, font=font_obj)
+            if (bbox[2] - bbox[0]) <= max_w:
+                return truncated
+        return ellipsis
+
+    # 4. Process each image and paste into grid position
+    for idx, img_path in enumerate(image_paths):
+        row = idx // columns
+        col = idx % columns
+
+        cell_x = padding + col * (cell_w + padding)
+        cell_y = padding + row * (cell_h + padding)
+
+        try:
+            with Image.open(img_path) as img:
+                if img.mode in ("RGBA", "P"):
+                    img = img.convert("RGBA")
+                    bg = Image.new("RGBA", img.size, bg_color)
+                    img = Image.alpha_composite(bg, img).convert("RGB")
+                else:
+                    img = img.convert("RGB")
+
+                img.thumbnail((cell_w, thumb_h), Image.Resampling.LANCZOS)
+
+                offset_x = cell_x + (cell_w - img.width) // 2
+                offset_y = cell_y + (thumb_h - img.height) // 2
+
+                contact_sheet.paste(img, (offset_x, offset_y))
+
+                if label:
+                    filename = os.path.basename(img_path)
+                    caption = fit_text(filename, cell_w, draw, font)
+
+                    text_bbox = draw.textbbox((0, 0), caption, font=font)
+                    text_w = text_bbox[2] - text_bbox[0]
+                    text_h = text_bbox[3] - text_bbox[1]
+
+                    text_x = cell_x + (cell_w - text_w) // 2
+                    text_y = cell_y + thumb_h + (label_height - text_h) // 2
+
+                    draw.text(
+                        (text_x, text_y),
+                        caption,
+                        fill=text_color,
+                        font=font,
+                    )
+
+        except Exception as e:
+            print(f"Warning: Skipping unreadable image '{img_path}': {e}")
+
+    # 5. Save final contact sheet
+    contact_sheet.save(output_path)
+    print(f"Successfully created contact sheet with {num_images} images at '{output_path}'")
+
+    return (rows, columns)
+
+```
+
+### Updates Made
+
+* **Zero-Image Guard:** If `image_paths` is empty (or the directory doesn't exist), it writes a minimal 1x1 pixel image using `bg_color` directly to `output_path`.
+* **Return Value:** Returns `(0, columns)` when no valid images are present, and `(rows, columns)` when images are processed.

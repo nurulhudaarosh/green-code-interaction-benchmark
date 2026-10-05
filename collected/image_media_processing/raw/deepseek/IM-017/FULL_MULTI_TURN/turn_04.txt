@@ -1,0 +1,36 @@
+# Handling the empty-tags edge case
+
+The key insight: `embed_tags(path, out, {})` should still produce a valid PNG, and `read_tags(out)` should return `{}` cleanly. The subtlety is that we must **not** clobber pre-existing tags when the new dict is empty — "embed nothing new" shouldn't mean "strip everything."
+
+## Updated Pillow `embed_tags`
+
+```python
+from PIL import Image
+from PIL.PngImagePlugin import PngInfo
+
+
+def embed_tags(input_path, output_path, tags=None, compress_level=6):
+    """
+    Write key/value string tags into PNG text chunks.
+
+    An empty (or None) `tags` dict is a valid no-op overlay: the output is
+    written successfully and any pre-existing text chunks are preserved.
+    """
+    if tags is None:
+        tags = {}
+    if not isinstance(tags, dict):
+        raise TypeError("tags must be a dict")
+    if not isinstance(compress_level, int) or not (0 <= compress_level <= 9):
+        raise ValueError("compress_level must be an int in 0..9")
+
+    with Image.open(input_path) as img:
+        meta = PngInfo()
+        # Always carry forward existing text chunks...
+        for k, v in (img.text or {}).items():
+            meta.add_text(str(k), str(v))
+        # ...then overlay the new tags. An empty dict leaves them untouched.
+        for k, v in tags.items():
+            meta.add_text(str(k), str(v))
+
+        img.save(output_path, "PNG", pnginfo=meta, compress_level=compress_level)
+```

@@ -1,0 +1,67 @@
+```python
+from pathlib import Path
+from PIL import Image
+import numpy as np
+
+
+def analyze_brightness(input_dir):
+    """
+    Analyze brightness for every valid image in input_dir.
+
+    Returns:
+        dict: {
+            filename: {
+                "channel_means": {"R": ..., "G": ..., "B": ...},
+                "grayscale_brightness": ...,
+                "classification": "dark" | "normal" | "bright"
+            }
+        }
+    """
+    input_dir = Path(input_dir)
+
+    results = {}
+
+    for path in sorted(input_dir.iterdir()):
+        if not path.is_file():
+            continue
+
+        try:
+            with Image.open(path) as img:
+                # Convert to RGB so grayscale, RGB, RGBA, etc. are handled uniformly.
+                rgb = np.asarray(img.convert("RGB"), dtype=np.float32)
+
+                # Per-channel means.
+                channel_means = {
+                    "R": float(rgb[:, :, 0].mean()),
+                    "G": float(rgb[:, :, 1].mean()),
+                    "B": float(rgb[:, :, 2].mean()),
+                }
+
+                # Standard luminance-based grayscale brightness.
+                grayscale = (
+                    0.299 * rgb[:, :, 0]
+                    + 0.587 * rgb[:, :, 1]
+                    + 0.114 * rgb[:, :, 2]
+                )
+                brightness = float(grayscale.mean())
+
+                # Classification using the 0-255 brightness scale.
+                if brightness < 85:
+                    classification = "dark"
+                elif brightness > 170:
+                    classification = "bright"
+                else:
+                    classification = "normal"
+
+                results[path.name] = {
+                    "channel_means": channel_means,
+                    "grayscale_brightness": brightness,
+                    "classification": classification,
+                }
+
+        except (OSError, ValueError):
+            # Ignore files that Pillow cannot read as images.
+            continue
+
+    return results
+```

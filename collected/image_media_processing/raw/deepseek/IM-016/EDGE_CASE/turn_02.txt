@@ -1,0 +1,85 @@
+Here's the updated implementation. The key changes:
+
+1. **Explicit edge-replication padding** is applied before convolution (for all image sizes), so the border pixels are also processed rather than left as zero.
+2. **The `sliding_window_view` path is guarded** so it only runs when the padded image is at least 3×3 — which is always true after padding, even for a 1×N or N×1 input.
+3. **The output shape is derived from the padded array**, so a 1×W input produces a 1×W output, not an error.
+
+```python
+import os
+import numpy as np
+from PIL import Image
+
+
+def _pad_edge_replicate(arr, pad=1):
+    """
+    Pad a 2D array by `pad` pixels on each side using edge replication
+    (i.e., the border pixel value is repeated outward). Works for arrays
+    whose dimensions are >= 1.
+    """
+    return np.pad(arr, ((pad, pad), (pad, pad)), mode="edge")
+
+
+def sobel_edges(input_dir, output_dir):
+    """
+    Apply Sobel edge detection to every image in input_dir,
+    saving the gradient magnitude as grayscale PNGs in output_dir.
+
+    Uses explicit 3x3 Sobel kernels for Gx and Gy, computed via
+    direct convolution. Borders are handled with edge-replication
+    padding so the output has the same size as the input, and even
+    1-pixel-wide / 1-pixel-tall images are processed correctly.
+    """
+    # 3x3 Sobel kernels
+    Gx = np.array([
+        [-1, 0, 1],
+        [-2, 0, 2],
+        [-1, 0, 1],
+    ], dtype=np.float32)
+
+    Gy = np.array([
+        [-1, -2, -1],
+        [ 0,  0,  0],
+        [ 1,  2,  1],
+    ], dtype=np.float32)
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    valid_exts = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp")
+
+    for fname in sorted(os.listdir(input_dir)):
+        if not fname.lower().endswith(valid_exts):
+            continue
+
+        in_path = os.path.join(input_dir, fname)
+        stem = os.path.splitext(fname)[0]
+        out_path = os.path.join(output_dir, stem + ".png")
+
+        # Load as grayscale
+        img = Image.open(in_path).convert("L")
+        arr = np.asarray(img, dtype=np.float32)
+
+        # Degenerate guard: an empty array has no pixels to process.
+        if arr.size == 0:
+            continue
+
+        # Edge-replicate padding by 1 pixel on all sides.
+        padded = _pad_edge_replicate(arr, pad=1)
+
+        # Shape after padding is guaranteed to be >= 3x3 because the
+        # smallest possible input is 1x1 -> padded to 3x3.
+        windows = np.lib.stride_tricks.sliding_window_view(padded, (3, 3))
+
+        # Explicit convolution: sum of element-wise products with kernels.
+        # shapes: windows (H, W, 3, 3), gx/gy (H, W)
+        gx = np.sum(windows * Gx, axis=(-1, -2))
+        gy = np.sum(windows * Gy, axis=(-1, -2))
+
+        magnitude = np.sqrt(gx * gx + gy * gy)
+
+        # Result already matches input shape because we padded by exactly
+        # the kernel radius (1). Cast/clip and save as grayscale PNG.
+        mag_clipped = np.clip(magnitude, 0, 255).astype(np.uint8)
+        Image.fromarray(mag_clipped, mode="L").save(out_path, format="PNG")
+
+        print(f"{fname} -> {os.path.basename(out_path)}")
+```

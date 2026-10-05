@@ -1,0 +1,153 @@
+import os
+from pathlib import Path
+import numpy as np
+from PIL import Image
+
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".webp"}
+
+# Default classification boundaries (0-255 scale)
+DEFAULT_THRESHOLDS = (85, 170)  # (dark_max, bright_min)
+
+
+def analyze_brightness(input_dir, custom_thresholds=None):
+    """
+    Analyze brightness of every image in a directory.
+
+    For each image computes:
+      - per-channel means (R, G, B) from the RGB rendering
+      - overall grayscale brightness as the mean of the image converted
+        to Pillow 'L' mode (perceptual luminance)
+      - classification: 'dark', 'normal', or 'bright'
+
+    Args:
+        input_dir (str | Path): Directory containing images.
+        custom_thresholds (tuple[float, float] | None): Optional
+            (dark_max, bright_min) boundaries used to classify each
+            image's grayscale brightness. Images with brightness
+            strictly below `dark_max` are 'dark'; images with
+            brightness strictly above `bright_min` are 'bright';
+            everything in between is 'normal'. Defaults to
+            DEFAULT_THRESHOLDS = (85, 170) when None.
+
+    Returns:
+        list[dict]: One record per image with keys:
+            'file', 'path', 'r_mean', 'g_mean', 'b_mean',
+            'grayscale_brightness', 'classification'
+
+    Raises:
+        NotADirectoryError: If input_dir isn't a directory.
+        ValueError: If custom_thresholds is malformed or the boundaries
+            are not strictly ordered (dark_max < bright_min).
+    """
+    input_path = Path(input_dir)
+
+    if not input_path.is_dir():
+        raise NotADirectoryError(f"Not a directory: {input_dir}")
+
+    dark_max, bright_min = _resolve_thresholds(custom_thresholds)
+
+    results = []
+
+    for file_path in sorted(input_path.iterdir()):
+        if not file_path.is_file():
+            continue
+        if file_path.suffix.lower() not in IMAGE_EXTENSIONS:
+            continue
+
+        try:
+            record = _analyze_single_image(file_path, dark_max, bright_min)
+            if record is not None:
+                results.append(record)
+        except Exception as exc:
+            print(f"[WARN] Failed to analyze {file_path.name}: {exc}")
+
+    return results
+
+
+def _resolve_thresholds(custom_thresholds):
+    """Validate and normalize the threshold tuple."""
+    if custom_thresholds is None:
+        return DEFAULT_THRESHOLDS
+
+    try:
+        dark_max, bright_min = custom_thresholds
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "custom_thresholds must be a (dark_max, bright_min) pair, "
+            f"got {custom_thresholds!r}"
+        ) from exc
+
+    dark_max = float(dark_max)
+    bright_min = float(bright_min)
+
+    if not (0 <= dark_max < bright_min <= 255):
+        raise ValueError(
+            "custom_thresholds must satisfy 0 <= dark_max < bright_min <= 255, "
+            f"got ({dark_max}, {bright_min})"
+        )
+
+    return dark_max, bright_min
+
+
+def _analyze_single_image(file_path, dark_max, bright_min):
+    """Compute brightness metrics for a single image file."""
+    with Image.open(file_path) as img:
+        # RGB version for per-channel means
+        rgb_img = img.convert("RGB")
+        rgb_arr = np.asarray(rgb_img, dtype=np.float64)  # (H, W, 3)
+
+        # True grayscale conversion: Pillow 'L' mode applies perceptual
+        # luminance weighting per pixel (BT.601: 0.299 R + 0.587 G + 0.114 B).
+        gray_img = img.convert("L")
+        gray_arr = np.asarray(gray_img, dtype=np.float64)  # (H, W)
+
+    r_mean = float(rgb_arr[:, :, 0].mean())
+    g_mean = float(rgb_arr[:, :, 1].mean())
+    b_mean = float(rgb_arr[:, :, 2].mean())
+
+    grayscale_brightness = float(gray_arr.mean())
+
+    if grayscale_brightness < dark_max:
+        classification = "dark"
+    elif grayscale_brightness > bright_min:
+        classification = "bright"
+    else:
+        classification = "normal"
+
+    return {
+        "file": file_path.name,
+        "path": str(file_path),
+        "r_mean": round(r_mean, 2),
+        "g_mean": round(g_mean, 2),
+        "b_mean": round(b_mean, 2),
+        "grayscale_brightness": round(grayscale_brightness, 2),
+        "classification": classification,
+    }
+
+
+if __name__ == "__main__":
+    import sys
+
+    target = sys.argv[1] if len(sys.argv) > 1 else "."
+
+    # Example: allow overriding thresholds from the CLI
+    #   python script.py ./images
+    #   python script.py ./images 60 200
+    if len(sys.argv) >= 4:
+        thresholds = (float(sys.argv[2]), float(sys.argv[3]))
+    else:
+        thresholds = None
+
+    records = analyze_brightness(target, custom_thresholds=thresholds)
+
+    label = thresholds if thresholds else DEFAULT_THRESHOLDS
+    print(f"\nAnalyzed {len(records)} image(s) in '{target}' "
+          f"(dark_max={label[0]}, bright_min={label[1]}):\n")
+
+    for r in records:
+        print(
+            f"  {r['file']:<30} "
+            f"R={r['r_mean']:>6.2f}  G={r['g_mean']:>6.2f}  B={r['b_mean']:>6.2f}  "
+            f"gray={r['grayscale_brightness']:>6.2f}  -> {r['classification']}"
+        )

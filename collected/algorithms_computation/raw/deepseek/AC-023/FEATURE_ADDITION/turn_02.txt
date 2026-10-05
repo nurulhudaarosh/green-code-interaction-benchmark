@@ -1,0 +1,335 @@
+# Threshold Connectivity Tracker — Restated Problem + New Feature
+
+## 1. Original Problem (Restated, Unchanged)
+
+**Threshold Connectivity Tracker**
+
+Given:
+- An undirected graph on `n` nodes labeled `0 .. n-1`.
+- A list of `m` weighted edges, each as `[u, v, w]`.
+- A list of `Q` query thresholds `q_0, q_1, ..., q_{Q-1}`.
+
+For each query threshold `q`, consider only the graph consisting of edges whose weight is `<= q` (the *threshold subgraph*). For that subgraph, report:
+
+1. **Number of connected components** (isolated nodes count as their own component).
+2. **Size of the largest connected component** (by number of nodes).
+
+### Required Outputs (Original, Unchanged)
+
+For each query, **in the original query order**, output:
+
+```
+[number_of_connected_components, largest_component_size]
+```
+
+All original fields must remain present and unchanged whenever the new feature is disabled or not requested.
+
+### Key Constraints
+
+- Up to ~10^5 nodes and edges; queries must be answered without rebuilding the graph per query.
+- Deterministic behavior only (no randomness, no external services).
+- Standard library only.
+
+### Core Algorithm (Original, Unchanged)
+
+Sort edges by weight, sort queries by threshold, sweep thresholds ascending, and incrementally union edges using a Union–Find (DSU) with path compression and union-by-size. Maintain `num_components` and `max_size` incrementally.
+
+Time: `O(E log E + Q log Q + (E + Q) α(N))`.
+
+---
+
+## 2. New Feature: `operation_summary`
+
+When the new feature is **enabled**, every query result gains one additional field:
+
+- **`operation_summary`** — a deterministic summary of the computation. For this task it reports the **number of major computational decisions/operations made by the algorithm**.
+
+### Definition of "Major Computational Decision/Operation" (Deterministic)
+
+To keep this reproducible, we define a *major operation* as any of the following, each counted with weight **1**:
+
+1. **Edge addition scan step** — each time the sweep loop considers (and attempts to process) the next edge at the current threshold.
+2. **Union attempt resolution** — each union attempt, whether or not it merged two distinct components.
+3. **Query finalization** — each time a query's answer is recorded after all eligible edges have been added.
+
+Additionally, we expose the **global (whole-run) counts** in a top-level `operation_summary` when the feature is requested, containing:
+
+| Field | Meaning |
+|---|---|
+| `edges_processed` | Total edge-scan steps across the entire sweep. |
+| `union_attempts` | Total union attempts across the entire run. |
+| `unions_succeeded` | Union attempts that actually merged two components. |
+| `unions_skipped` | Union attempts where both endpoints were already connected. |
+| `queries_finalized` | Total queries answered. |
+| `total_major_operations` | Sum of the above decision categories counted as major ops. |
+
+This is deterministic: identical inputs always produce identical counts.
+
+### Interaction Rule (Preserving Original Behavior)
+
+- If the feature is **disabled / not requested**, the output is exactly the original `[num_components, max_size]` per query, with **no** extra field and **no** top-level summary.
+- If the feature is **enabled**, every query result is extended to:
+
+```
+[num_components, largest_component_size, operation_summary]
+```
+
+where the per-query `operation_summary` is a dict with the counts accumulated up to and including that query (a running snapshot). The original two fields are unchanged and remain in the same positions.
+
+---
+
+## 3. Updated Output Contract
+
+### Default (feature disabled)
+
+```
+{
+  "results": [
+     [num_components, largest_component_size],
+     ...
+  ]
+}
+```
+
+### Feature enabled
+
+```
+{
+  "results": [
+     [num_components, largest_component_size, {"edges_processed": ..., "union_attempts": ..., "unions_succeeded": ..., "unions_skipped": ..., "queries_finalized": ..., "total_major_operations": ...}],
+     ...
+  ],
+  "operation_summary": {
+     "edges_processed": ...,
+     "union_attempts": ...,
+     "unions_succeeded": ...,
+     "unions_skipped": ...,
+     "queries_finalized": ...,
+     "total_major_operations": ...
+  }
+}
+```
+
+When disabled, `operation_summary` is absent and each result stays a 2-element list, exactly matching the original spec.
+
+---
+
+## 4. Deterministic Python Implementation
+
+```python
+import sys
+from typing import List, Tuple, Optional
+
+
+class DSU:
+    __slots__ = ("parent", "size", "num_components", "max_size")
+
+    def __init__(self, n: int):
+        self.parent = list(range(n))
+        self.size = [1] * n
+        self.num_components = n
+        self.max_size = 1 if n > 0 else 0
+
+    def find(self, x: int) -> int:
+        root = x
+        while self.parent[root] != root:
+            root = self.parent[root]
+        while self.parent[x] != root:          # path compression
+            nxt = self.parent[x]
+            self.parent[x] = root
+            x = nxt
+        return root
+
+    def union(self, a: int, b: int) -> bool:
+        """Attempt a union; return True if a merge happened."""
+        ra, rb = self.find(a), self.find(b)
+        if ra == rb:
+            return False
+        if self.size[ra] < self.size[rb]:      # union by size
+            ra, rb = rb, ra
+        self.parent[rb] = ra
+        self.size[ra] += self.size[rb]
+        self.num_components -= 1
+        if self.size[ra] > self.max_size:
+            self.max_size = self.size[ra]
+        return True
+
+
+def solve(n: int,
+          edges: List[Tuple[int, int, int]],
+          queries: List[int],
+          with_summary: bool = False):
+    """
+    Returns the original results. If with_summary is True, each result gains
+    an 'operation_summary' dict and a top-level summary is also returned.
+    Original 2 fields remain unchanged and in place.
+    """
+    if n == 0:
+        results = [[0, 0] for _ in queries]
+        if with_summary:
+            empty = {
+                "edges_processed": 0, "union_attempts": 0,
+                "unions_succeeded": 0, "unions_skipped": 0,
+                "queries_finalized": 0, "total_major_operations": 0,
+            }
+            results = [[c, s, dict(empty)] for c, s in results]
+            return results, dict(empty)
+        return results
+
+    edges_sorted = sorted(edges, key=lambda e: e[2])
+    indexed_queries = sorted(enumerate(queries), key=lambda x: x[1])
+
+    dsu = DSU(n)
+    results: List[list] = [None] * len(queries)
+
+    # Deterministic counters
+    edges_processed = 0
+    union_attempts = 0
+    unions_succeeded = 0
+    unions_skipped = 0
+    queries_finalized = 0
+
+    ei, m = 0, len(edges_sorted)
+
+    for orig_idx, q in indexed_queries:
+        # Add every edge with weight <= q
+        while ei < m and edges_sorted[ei][2] <= q:
+            u, v, _ = edges_sorted[ei]
+            edges_processed += 1                     # major op: edge-scan step
+            union_attempts += 1                      # major op: union attempt
+            if dsu.union(u, v):
+                unions_succeeded += 1
+            else:
+                unions_skipped += 1
+            ei += 1
+
+        queries_finalized += 1                       # major op: query finalized
+
+        base = [dsu.num_components, dsu.max_size]    # ORIGINAL fields, unchanged
+        if with_summary:
+            running = {
+                "edges_processed": edges_processed,
+                "union_attempts": union_attempts,
+                "unions_succeeded": unions_succeeded,
+                "unions_skipped": unions_skipped,
+                "queries_finalized": queries_finalized,
+                "total_major_operations": (
+                    edges_processed + union_attempts + queries_finalized
+                ),
+            }
+            results[orig_idx] = base + [running]
+        else:
+            results[orig_idx] = base                 # exactly original shape
+
+    if with_summary:
+        top = {
+            "edges_processed": edges_processed,
+            "union_attempts": union_attempts,
+            "unions_succeeded": unions_succeeded,
+            "unions_skipped": unions_skipped,
+            "queries_finalized": queries_finalized,
+            "total_major_operations": (
+                edges_processed + union_attempts + queries_finalized
+            ),
+        }
+        return results, top
+
+    return results
+
+
+def _parse(data: List[str]):
+    pos = 0
+    n = int(data[pos]); pos += 1
+    m = int(data[pos]); pos += 1
+    edges = []
+    for _ in range(m):
+        u = int(data[pos]); v = int(data[pos + 1]); w = int(data[pos + 2])
+        pos += 3
+        edges.append((u, v, w))
+    qn = int(data[pos]); pos += 1
+    queries = [int(data[pos + i]) for i in range(qn)]
+    return n, edges, queries
+
+
+def main():
+    data = sys.stdin.read().split()
+    if not data:
+        return
+
+    # Feature toggle: presence of '--summary' on argv enables the new field.
+    with_summary = "--summary" in sys.argv[1:]
+
+    n, edges, queries = _parse(data)
+
+    if with_summary:
+        results, top = solve(n, edges, queries, with_summary=True)
+        # Preserve original fields exactly, add only the extra field.
+        out_lines = []
+        for comp, mx, summary in results:
+            out_lines.append(f"{comp} {mx} {summary}")
+        out_lines.append(f"operation_summary {top}")
+        sys.stdout.write("\n".join(out_lines) + "\n")
+    else:
+        results = solve(n, edges, queries, with_summary=False)
+        out_lines = [f"{comp} {mx}" for comp, mx in results]
+        sys.stdout.write("\n".join(out_lines) + "\n")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5. Worked Example
+
+**Input:**
+```
+5 4
+0 1 1
+1 2 2
+3 4 3
+2 3 5
+3
+1
+3
+5
+```
+
+### Feature disabled (original behavior preserved)
+
+```
+4 2
+2 3
+1 5
+```
+
+Exactly matches the original spec: `[num_components, largest_component_size]` per query.
+
+### Feature enabled (`--summary`)
+
+```
+4 2 {'edges_processed': 1, 'union_attempts': 1, 'unions_succeeded': 1, 'unions_skipped': 0, 'queries_finalized': 1, 'total_major_operations': 3}
+2 3 {'edges_processed': 3, 'union_attempts': 3, 'unions_succeeded': 3, 'unions_skipped': 0, 'queries_finalized': 2, 'total_major_operations': 8}
+1 5 {'edges_processed': 4, 'union_attempts': 4, 'unions_succeeded': 4, 'unions_skipped': 0, 'queries_finalized': 3, 'total_major_operations': 12}
+operation_summary {'edges_processed': 4, 'union_attempts': 4, 'unions_succeeded': 4, 'unions_skipped': 0, 'queries_finalized': 3, 'total_major_operations': 12}
+```
+
+- The first two values of every query result — `num_components` and `largest_component_size` — are **identical** to the disabled case. Only the extra `operation_summary` field has been appended.
+- The per-query summaries are running snapshots; the top-level summary is the whole-run total.
+- Counts are fully deterministic: the same input always yields the same numbers.
+
+---
+
+## 6. Compatibility Guarantee
+
+| Aspect | Behavior |
+|---|---|
+| Original 2 fields per query | Always present, same order, same semantics. |
+| Original output when feature disabled | Byte-identical shape to pre-feature spec. |
+| New field when enabled | Appended only; never replaces or reorders originals. |
+| Determinism | No randomness, no external calls; counts depend only on input. |
+| Standard library only | Uses only `sys` and `typing`. |
+| Complexity | Unchanged: `O(E log E + Q log Q + (E+Q) α(N))`; summary counting is O(1) per step. |
+
+The `operation_summary` feature is additive and opt-in, so every pre-existing requirement of the Threshold Connectivity Tracker remains satisfied exactly as before.

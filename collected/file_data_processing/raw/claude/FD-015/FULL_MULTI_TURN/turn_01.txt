@@ -1,0 +1,174 @@
+```python
+#!/usr/bin/env python3
+"""
+JSONL filter: validates records, keeps active records with score >= threshold,
+sorts by category (asc), score (desc), id (asc), and reports skipped counts.
+
+Expected record schema (one JSON object per line):
+    {"id": <str|int>, "category": <str>, "score": <number>, "active": <bool>}
+
+Usage:
+    python jsonl_filter.py input.jsonl --threshold 50 -o output.jsonl
+    cat input.jsonl | python jsonl_filter.py - --threshold 50
+"""
+
+import argparse
+import json
+import sys
+from collections import Counter
+from typing import Any, Iterable, Iterator, TextIO
+
+
+class ValidationError(Exception):
+    """Raised when a record does not match the expected schema."""
+
+
+def validate_record(record: Any) -> dict:
+    """Validate a parsed record; return it unchanged or raise ValidationError."""
+    if not isinstance(record, dict):
+        raise ValidationError("not_an_object")
+
+    for field in ("id", "category", "score", "active"):
+        if field not in record:
+            raise ValidationError(f"missing_field:{field}")
+
+    rid = record["id"]
+    if isinstance(rid, bool) or not isinstance(rid, (str, int)):
+        raise ValidationError("invalid_id")
+    if isinstance(rid, str) and not rid.strip():
+        raise ValidationError("invalid_id")
+
+    if not isinstance(record["category"], str) or not record["category"].strip():
+        raise ValidationError("invalid_category")
+
+    score = record["score"]
+    if isinstance(score, bool) or not isinstance(score, (int, float)):
+        raise ValidationError("invalid_score")
+    if score != score or score in (float("inf"), float("-inf")):  # NaN / inf
+        raise ValidationError("invalid_score")
+
+    if not isinstance(record["active"], bool):
+        raise ValidationError("invalid_active")
+
+    return record
+
+
+def parse_lines(lines: Iterable[str], stats: Counter) -> Iterator[dict]:
+    """Yield validated records, updating stats for blank/invalid lines."""
+    for line_no, line in enumerate(lines, start=1):
+        line = line.strip()
+        if not line:
+            stats["skipped_blank"] += 1
+            continue
+        try:
+            raw = json.loads(line)
+        except json.JSONDecodeError:
+            stats["skipped_invalid_json"] += 1
+            print(f"line {line_no}: invalid JSON", file=sys.stderr)
+            continue
+        try:
+            yield validate_record(raw)
+        except ValidationError as exc:
+            stats["skipped_invalid_record"] += 1
+            stats[f"reason:{exc}"] += 1
+            print(f"line {line_no}: {exc}", file=sys.stderr)
+
+
+def sort_key(record: dict) -> tuple:
+    """Category asc, score desc, id asc (ints sort before strings, no type errors)."""
+    rid = record["id"]
+    id_key = (0, rid, "") if isinstance(rid, int) else (1, 0, rid)
+    return (record["category"], -record["score"], id_key)
+
+
+def filter_records(lines: Iterable[str], threshold: float) -> tuple[list[dict], Counter]:
+    """Return (sorted kept records, stats counter)."""
+    stats: Counter = Counter()
+    kept: list[dict] = []
+
+    for record in parse_lines(lines, stats):
+        if not record["active"]:
+            stats["skipped_inactive"] += 1
+        elif record["score"] < threshold:
+            stats["skipped_below_threshold"] += 1
+        else:
+            kept.append(record)
+
+    kept.sort(key=sort_key)
+    stats["kept"] = len(kept)
+    return kept, stats
+
+
+def write_records(records: Iterable[dict], out: TextIO) -> None:
+    for rec in records:
+        out.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def print_summary(stats: Counter) -> None:
+    skipped_total = (
+        stats["skipped_blank"]
+        + stats["skipped_invalid_json"]
+        + stats["skipped_invalid_record"]
+        + stats["skipped_inactive"]
+        + stats["skipped_below_threshold"]
+    )
+    print("--- Summary ---", file=sys.stderr)
+    print(f"Kept:                  {stats['kept']}", file=sys.stderr)
+    print(f"Skipped (total):       {skipped_total}", file=sys.stderr)
+    print(f"  blank lines:         {stats['skipped_blank']}", file=sys.stderr)
+    print(f"  invalid JSON:        {stats['skipped_invalid_json']}", file=sys.stderr)
+    print(f"  invalid records:     {stats['skipped_invalid_record']}", file=sys.stderr)
+    for key in sorted(k for k in stats if k.startswith("reason:")):
+        print(f"    {key[7:]:<22}{stats[key]}", file=sys.stderr)
+    print(f"  inactive:            {stats['skipped_inactive']}", file=sys.stderr)
+    print(f"  below threshold:     {stats['skipped_below_threshold']}", file=sys.stderr)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Filter and sort JSONL records.")
+    parser.add_argument("input", help="Input JSONL file, or '-' for stdin")
+    parser.add_argument("-t", "--threshold", type=float, required=True,
+                        help="Minimum score (inclusive) for a record to be kept")
+    parser.add_argument("-o", "--output", default="-",
+                        help="Output JSONL file, or '-' for stdout (default)")
+    args = parser.parse_args()
+
+    try:
+        in_f = sys.stdin if args.input == "-" else open(args.input, "r", encoding="utf-8")
+        with in_f if in_f is not sys.stdin else _nullcontext(in_f):
+            kept, stats = filter_records(in_f, args.threshold)
+    except OSError as exc:
+        print(f"Error reading input: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        if args.output == "-":
+            write_records(kept, sys.stdout)
+        else:
+            with open(args.output, "w", encoding="utf-8") as out_f:
+                write_records(kept, out_f)
+    except OSError as exc:
+        print(f"Error writing output: {exc}", file=sys.stderr)
+        return 1
+
+    print_summary(stats)
+    return 0
+
+
+class _nullcontext:
+    """Minimal context manager so stdin isn't closed."""
+    def __init__(self, obj): self.obj = obj
+    def __enter__(self): return self.obj
+    def __exit__(self, *exc): return False
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+**How it works**
+
+- **Validation:** each record must be a JSON object with `id` (non-empty string or int), `category` (non-empty string), `score` (finite number, not a bool), and `active` (bool). Anything else is skipped with a reason.
+- **Filtering:** only `active == true` records with `score >= threshold` are kept.
+- **Sorting:** category ascending, score descending, then id ascending. Integer and string IDs are handled together without type errors.
+- **Skip counts:** the summary on stderr breaks down blank lines, invalid JSON, invalid records (by reason), inactive records, and below-threshold records. Output goes to stdout or `-o`, so it can be piped cleanly.

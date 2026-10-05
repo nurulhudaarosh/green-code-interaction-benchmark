@@ -1,0 +1,109 @@
+```python
+"""
+Exact Polynomial Product
+========================
+
+Problem Restatement:
+Multiply two integer polynomials exactly and return the coefficient array.
+Coefficients may be negative.
+
+Expected Behavior:
+- Input polynomials are represented by coefficient arrays in increasing
+  order of degree.
+- Return exactly the coefficient array of their product.
+- Negative and zero coefficients must be handled exactly.
+- Use direct coefficient convolution.
+- The computation is O(n * m), which is practical under the stated
+  constraints.
+- The result must be deterministic.
+- There is no tie-breaking choice in polynomial multiplication: each
+  coefficient is uniquely determined by convolution.
+- Empty input is preserved as an empty result, consistent with the
+  existing implementation's behavior.
+- Use only the Python standard library.
+
+Bug Demonstration:
+The previous implementation does not actually contain a defect in the
+core convolution rule. For example:
+
+    A = [1, 2]
+    B = [3, 4]
+
+The product is:
+
+    (1 + 2x)(3 + 4x)
+    = 3 + 10x + 8x^2
+
+so the required result is:
+
+    [3, 10, 8]
+
+The previous implementation already returns [3, 10, 8].
+
+Therefore, there is no valid small counterexample demonstrating a
+convolution defect in that implementation. Replacing correct logic merely
+to claim a bug would violate the requirement to demonstrate the defect.
+
+The implementation below makes the required direct convolution explicit
+and preserves all unrelated requirements.
+
+Algorithm:
+For every coefficient a[i] of the first polynomial and every coefficient
+b[j] of the second polynomial, add a[i] * b[j] to result[i + j].
+
+This directly implements:
+
+    result[k] = sum(a[i] * b[k-i])
+
+for every valid index k.
+
+Time Complexity: O(n * m)
+Space Complexity: O(n + m)
+"""
+
+
+def multiply_polynomials(a, b):
+    """Return the exact coefficient array of the product a * b."""
+    if not a or not b:
+        return []
+
+    result = [0] * (len(a) + len(b) - 1)
+
+    # Direct coefficient convolution.
+    for i in range(len(a)):
+        for j in range(len(b)):
+            result[i + j] += a[i] * b[j]
+
+    return result
+
+
+def run_tests():
+    # Small example used to verify the reported behavior.
+    assert multiply_polynomials([1, 2], [3, 4]) == [3, 10, 8]
+
+    # Negative coefficients.
+    assert multiply_polynomials([2, -3], [-1, 4]) == [-2, 11, -12]
+
+    # Single constants.
+    assert multiply_polynomials([7], [-3]) == [-21]
+
+    # Zero polynomial.
+    assert multiply_polynomials([0, 2], [3, 4]) == [0, 6, 8]
+
+    # Empty input.
+    assert multiply_polynomials([], [1, 2]) == []
+
+    # Zero coefficients between nonzero terms.
+    assert multiply_polynomials([1, 0, 1], [1, 0, -1]) == [
+        1, 0, 0, 0, -1
+    ]
+
+    # Larger integer coefficients.
+    assert multiply_polynomials([10, -20, 30], [-4, 5]) == [
+        -40, 130, -220, 150
+    ]
+
+
+if __name__ == "__main__":
+    run_tests()
+```

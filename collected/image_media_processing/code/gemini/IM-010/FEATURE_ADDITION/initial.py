@@ -1,0 +1,43 @@
+import os
+from pathlib import Path
+from PIL import Image
+
+def rotate_and_crop(input_dir: str, output_dir: str, angle_degrees: float, crop_size: tuple[int, int]) -> None:
+    """
+    Rotates all images in input_dir around their center and center-crops/pads 
+    them to match crop_size.
+
+    :param input_dir: Path to directory containing original images.
+    :param output_dir: Path to directory where processed images will be saved.
+    :param angle_degrees: Counter-clockwise rotation angle in degrees.
+    :param crop_size: Target (width, height) tuple.
+    """
+    target_w, target_h = crop_size
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    supported_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff"}
+
+    for img_file in input_path.iterdir():
+        if img_file.suffix.lower() not in supported_extensions:
+            continue
+
+        with Image.open(img_file) as img:
+            # 1. Rotate around the center (expand=False keeps original dimensions prior to crop/pad)
+            rotated_img = img.rotate(angle_degrees, resample=Image.BICUBIC, expand=False)
+            rot_w, rot_h = rotated_img.size
+
+            # 2. Calculate bounding box for center crop
+            left = (rot_w - target_w) / 2
+            top = (rot_h - target_h) / 2
+            right = left + target_w
+            bottom = top + target_h
+
+            # PIL.Image.crop accepts float/int coordinates and handles 
+            # padding outside original image boundaries automatically.
+            cropped_img = rotated_img.crop((left, top, right, bottom))
+
+            # 3. Save output image
+            out_file_path = output_path / img_file.name
+            cropped_img.save(out_file_path)

@@ -1,0 +1,37 @@
+I read through the previous version and it already lowercases and collapses whitespace in normalized mode. I haven't run it, so I can't point to the exact failure you hit. The one thing it did differently on the newline was always adding `\n` to the last line, which changes a file that didn't end with one. This version preserves the input's ending instead:
+
+```python
+def dedup_lines(in_path, out_path, mode='exact'):
+    if mode not in ('exact', 'normalized'):
+        raise ValueError("mode must be 'exact' or 'normalized'")
+
+    seen = set()
+    total = unique = 0
+    last_kept_had_nl = False
+
+    with open(in_path, 'r', encoding='utf-8') as fin, \
+         open(out_path, 'w', encoding='utf-8', newline='\n') as fout:
+        for raw in fin:
+            total += 1
+            had_nl = raw.endswith('\n')
+            line = raw[:-1] if had_nl else raw
+            key = ' '.join(line.split()).lower() if mode == 'normalized' else line
+            if key in seen:
+                continue
+            seen.add(key)
+            if unique:
+                fout.write('\n')  # terminator for the previous kept line
+            fout.write(line)
+            unique += 1
+            last_kept_had_nl = had_nl
+        if unique and last_kept_had_nl:
+            fout.write('\n')
+
+    return {'total': total, 'unique': unique, 'removed': total - unique}
+```
+
+Changes:
+- **Newline handling:** the file is read in universal-newline mode, so `\r\n` and `\n` both become `\n`. The terminator is written between kept lines, and only the final one is conditional. A last line with no trailing newline stays without one, and empty files give an empty output.
+- **Normalized mode:** the key is `' '.join(line.split()).lower()`. `split()` with no arguments already strips and collapses all whitespace, including tabs and non-breaking spaces. Output lines are still written as the original text, not the key.
+
+If your input has `\r\n` endings you want preserved in the output, tell me and I'll change that.

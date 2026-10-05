@@ -1,0 +1,80 @@
+import os
+from pathlib import Path
+from PIL import Image
+
+def bulk_reencode(input_dir: str, output_dir: str, quality: int = 85) -> None:
+    """
+    Re-encodes all images in input_dir to JPEG format at the given quality setting,
+    saving them in output_dir and printing size/compression stats per file.
+    """
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+    
+    # Ensure output directory exists
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    # Supported input extensions
+    valid_extensions = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".gif"}
+    
+    # Header for report
+    print(f"{'Filename':<30} | {'Original (KB)':<15} | {'Re-encoded (KB)':<15} | {'Ratio':<10}")
+    print("-" * 78)
+    
+    total_orig_size = 0
+    total_new_size = 0
+    processed_count = 0
+
+    for file in input_path.iterdir():
+        if file.is_file() and file.suffix.lower() in valid_extensions:
+            out_filename = file.stem + ".jpg"
+            out_file = output_path / out_filename
+            
+            try:
+                orig_size = file.stat().st_size
+                
+                with Image.open(file) as img:
+                    # Convert transparent or paletted images to RGB for JPEG compatibility
+                    if img.mode in ("RGBA", "P", "LA"):
+                        img = img.convert("RGB")
+                    
+                    # Save as JPEG with specified quality
+                    img.save(out_file, "JPEG", quality=quality, optimize=True)
+                
+                new_size = out_file.stat().st_size
+                compression_ratio = (1 - (new_size / orig_size)) * 100
+                
+                # Accumulate totals
+                total_orig_size += orig_size
+                total_new_size += new_size
+                processed_count += 1
+                
+                # Report per file (Ratio: positive % means size reduction)
+                print(
+                    f"{file.name:<30} | "
+                    f"{orig_size / 1024:<15.2f} | "
+                    f"{new_size / 1024:<15.2f} | "
+                    f"{compression_ratio:>8.2f}%"
+                )
+                
+            except Exception as e:
+                print(f"Error processing {file.name}: {e}")
+
+    # Summary report
+    print("-" * 78)
+    if processed_count > 0:
+        overall_ratio = (1 - (total_new_size / total_orig_size)) * 100
+        print(f"Processed {processed_count} files.")
+        print(f"Total Original Size:   {total_orig_size / (1024 * 1024):.2f} MB")
+        print(f"Total Re-encoded Size: {total_new_size / (1024 * 1024):.2f} MB")
+        print(f"Overall Space Saved:   {overall_ratio:.2f}%")
+    else:
+        print("No valid images found in the input directory.")
+
+
+# Example Usage
+if __name__ == "__main__":
+    bulk_reencode(
+        input_dir="./input_images",
+        output_dir="./output_images",
+        quality=80
+    )

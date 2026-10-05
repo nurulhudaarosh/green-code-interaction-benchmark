@@ -1,0 +1,77 @@
+```python
+from collections import Counter
+import re
+from typing import List, Tuple
+
+
+def analyze_error_log(path: str, top_n: int = 10) -> List[Tuple[str, int]]:
+    """Reads a server log file, extracts ERROR lines, normalizes dynamic values
+
+    (e.g., timestamps, IDs, hex addresses, numbers) into signatures,
+    and returns the top_n most frequent error signatures.
+
+    Handles malformed lines, encoding issues, and missing files gracefully.
+    """
+    # Regex to capture common log structures: [Timestamp] [LEVEL] [Message]
+    # Accommodates formats like:
+    # 2026-10-04 12:00:00 [ERROR] Connection timeout to 10.0.0.1:8080
+    # [2026-10-04T12:00:00Z] ERROR: User 12345 failed to authenticate
+    log_pattern = re.compile(
+        r"(?:\[?[\d\-T:\.\sZ]+\]?\s+)?(?:\[?(?P<level>INFO|WARN(?:ING)?|ERROR|CRITICAL|DEBUG)\]?:?\s+)?(?P<message>.*)",
+        re.IGNORECASE,
+    )
+
+    # Patterns to normalize dynamic tokens to prevent signature fragmentation
+    uuid_pattern = re.compile(
+        r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+    )
+    ip_pattern = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b")
+    hex_pattern = re.compile(r"\b0x[0-9a-fA-F]+\b")
+    num_pattern = re.compile(r"\b\d+\b")
+    quoted_pattern = re.compile(r"(['\"]).*?\1")
+
+    counts = Counter()
+
+    try:
+        # Use errors='replace' to prevent crashing on corrupt bytes / encoding issues
+        with open(path, "r", encoding="utf-8", errors="replace") as file:
+            for line in file:
+                line_str = line.strip()
+                if not line_str:
+                    continue
+
+                match = log_pattern.match(line_str)
+                if not match:
+                    continue
+
+                level = match.group("level")
+                message = match.group("message")
+
+                # Validate error severity; fallback check if level tag is inside the text
+                is_error = False
+                if level and level.upper() in {"ERROR", "CRITICAL"}:
+                    is_error = True
+                elif "ERROR" in line_str.upper():
+                    is_error = True
+
+                if not is_error or not message:
+                    continue
+
+                # Normalize dynamic components into placeholder tokens
+                normalized = uuid_pattern.sub("<UUID>", message)
+                normalized = ip_pattern.sub("<IP:PORT>", normalized)
+                normalized = hex_pattern.sub("<HEX>", normalized)
+                normalized = quoted_pattern.sub("<STR>", normalized)
+                normalized = num_pattern.sub("<NUM>", normalized)
+
+                # Collapse redundant whitespace
+                normalized = re.sub(r"\s+", " ", normalized).strip()
+
+                counts[normalized] += 1
+
+    except (FileNotFoundError, PermissionError) as err:
+        print(f"File access error: {err}")
+        return []
+
+    return counts.most_common(top_n)
+```

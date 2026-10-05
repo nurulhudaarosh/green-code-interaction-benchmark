@@ -1,0 +1,109 @@
+### Problem Understanding
+
+The problem asks for the minimum edit distance to transform a source string $s$ into a target string $t$ using four allowed operations:
+
+1. **Insertion:** Insert a character (cost = 1).
+2. **Deletion:** Delete a character (cost = 1).
+3. **Substitution:** Replace one character with another (cost = 1 if different, 0 if identical).
+4. **Adjacent Transposition:** Swap two adjacent characters (cost = 1).
+
+Under the standard dynamic programming recurrence with an explicit adjacent transposition transition, this corresponds to the **Optimal String Alignment (OSA) distance** (also known as restricted Damerau-Levenshtein distance), where no substring is edited more than once via transposition.
+
+---
+
+### Constraints & Required Output
+
+* **Input:** Two strings, `s` (source) and `t` (target).
+* **Cost Model:** Each operation (insertion, deletion, mismatch substitution, transposition) has a uniform unit cost of $1$. Matches cost $0$.
+* **Constraints:**
+* Deterministic execution using Python standard library only.
+* Time complexity: $O(\vert{}s\vert{} \times \vert{}t\vert{})$.
+* Space complexity: $O(\vert{}s\vert{} \times \vert{}t\vert{})$ (or $O(\min(\vert{}s\vert{}, \vert{}t\vert{}))$ using row buffers).
+
+
+* **Required Output:** A non-negative integer representing the minimum total cost to convert $s$ to $t$.
+
+---
+
+### Algorithm Description
+
+Let $m = \vert{}s\vert{}$ and $n = \vert{}t\vert{}$. We construct a 2D table `dp` of dimensions $(m + 1) \times (n + 1)$, where `dp[i][j]` is the edit distance between prefix $s[0 \dots i-1]$ and prefix $t[0 \dots j-1]$.
+
+1. **Base cases:**
+* `dp[i][0] = i` (deleting all $i$ characters from $s$).
+* `dp[0][j] = j` (inserting all $j$ characters of $t$).
+
+
+2. **Standard transitions:**
+* Deletion: `dp[i - 1][j] + 1`
+* Insertion: `dp[i][j - 1] + 1`
+* Substitution / Match: `dp[i - 1][j - 1] + cost`, where `cost = 0` if `s[i - 1] == t[j - 1]`, else `1`.
+
+
+3. **Explicit transposition transition:**
+* If $i > 1$, $j > 1$, $s[i - 1] == t[j - 2]$, and $s[i - 2] == t[j - 1]$:
+
+$$\text{dp}[i][j] = \min(\text{dp}[i][j], \text{dp}[i - 2][j - 2] + 1)$$
+
+
+
+
+4. The final answer is in `dp[m][n]`.
+
+---
+
+### Deterministic Python Implementation
+
+```python
+def optimal_string_alignment_distance(s: str, t: str) -> int:
+    """
+    Computes the edit distance between strings s and t using insertion,
+    deletion, substitution, and adjacent transposition, each costing 1.
+    """
+    m, n = len(s), len(t)
+    
+    # Initialize DP table of size (m + 1) x (n + 1)
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    
+    # Base cases: transforming to/from empty strings
+    for i in range(m + 1):
+        dp[i][0] = i
+    for j in range(n + 1):
+        dp[0][j] = j
+        
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            cost = 0 if s[i - 1] == t[j - 1] else 1
+            
+            # Standard Levenshtein transitions
+            dp[i][j] = min(
+                dp[i - 1][j] + 1,       # Deletion
+                dp[i][j - 1] + 1,       # Insertion
+                dp[i - 1][j - 1] + cost # Substitution / Match
+            )
+            
+            # Adjacent transposition transition
+            if i > 1 and j > 1 and s[i - 1] == t[j - 2] and s[i - 2] == t[j - 1]:
+                dp[i][j] = min(dp[i][j], dp[i - 2][j - 2] + 1)
+                
+    return dp[m][n]
+
+
+if __name__ == "__main__":
+    # Test cases
+    test_cases = [
+        ("ca", "abc", 3),       # Delete 'c', insert 'b', insert 'c' OR transpose + insert
+        ("ab", "ba", 1),        # Single swap / transposition
+        ("kitten", "sitting", 3), # 2 substitutions + 1 insertion
+        ("", "abc", 3),         # 3 insertions
+        ("abc", "", 3),         # 3 deletions
+        ("a cat", "an act", 2), # 1 insertion ('n') + 1 transposition ('ca' -> 'ac')
+    ]
+    
+    for s_in, t_in, expected in test_cases:
+        res = optimal_string_alignment_distance(s_in, t_in)
+        assert res == expected, f"Failed for '{s_in}' -> '{t_in}': expected {expected}, got {res}"
+    
+    print("All test assertions passed successfully.")
+
+```

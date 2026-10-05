@@ -1,0 +1,37 @@
+```python
+import re
+from collections import Counter
+
+_LINE_RE = re.compile(r'^\[([^\]]+)\]\s+([A-Za-z]+)\s*(.*)$')
+_IP_RE = re.compile(r'\b\d{1,3}(?:\.\d{1,3}){3}\b')
+_NUM_RE = re.compile(r'\b\d+(?:\.\d+)?\b')
+
+
+def analyze_error_log(path, top_n=10):
+    counts = Counter()
+    malformed = 0
+
+    with open(path, 'r', encoding='utf-8', errors='replace') as f:
+        for line in f:  # streaming, one line at a time
+            line = line.strip()
+            if not line:
+                malformed += 1
+                continue
+            m = _LINE_RE.match(line)
+            if not m:
+                malformed += 1
+                continue
+            if m.group(2) != 'ERROR':
+                continue
+            msg = _IP_RE.sub('<IP>', m.group(3))
+            msg = _NUM_RE.sub('<N>', msg)
+            msg = ' '.join(msg.split())
+            counts[msg] += 1
+
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    top = [[sig, c] for sig, c in ranked[:max(top_n, 0)]]
+
+    return {'counts': dict(counts), 'malformed': malformed, 'top': top}
+```
+
+It's also saved as analyze_error_log.py. Blank lines and lines that don't match `[timestamp] LEVEL message` count as malformed. Invalid UTF-8 bytes are replaced rather than raising. Numbers use word boundaries, so identifiers like `user42` stay intact; drop the `\b` anchors in `_NUM_RE` if you want those masked too.

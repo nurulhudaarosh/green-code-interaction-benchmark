@@ -1,0 +1,71 @@
+import heapq
+from collections import defaultdict
+
+
+def assign_rooms(intervals):
+    """
+    Assign intervals to rooms minimizing room count.
+
+    Rule: a room is reusable when its previous interval's end <= next start.
+    Tie handling: deterministic (sort by start, then end, then original index;
+    busy heap keyed by (end_time, room_id); reuse smallest available room ID).
+
+    Args:
+        intervals: list of (start, end) tuples
+
+    Returns:
+        list[int]: room ID for each original interval (0-indexed rooms)
+    """
+    n = len(intervals)
+    if n == 0:
+        return []
+
+    # (start, end, original_index) — deterministic tie handling
+    indexed = [(s, e, i) for i, (s, e) in enumerate(intervals)]
+    indexed.sort(key=lambda x: (x[0], x[1], x[2]))
+
+    # Busy heap keyed FIRST by end_time, THEN by room_id.
+    busy = []           # (end_time, room_id)
+    free_rooms = []     # min-heap of available room IDs
+    next_room_id = 0
+
+    room_ids = [None] * n
+
+    for start, end, idx in indexed:
+        # Free every room whose occupant ended at or before this start.
+        while busy and busy[0][0] <= start:
+            _, rid = heapq.heappop(busy)
+            heapq.heappush(free_rooms, rid)
+
+        if free_rooms:
+            rid = heapq.heappop(free_rooms)
+        else:
+            rid = next_room_id
+            next_room_id += 1
+
+        room_ids[idx] = rid
+        heapq.heappush(busy, (end, rid))
+
+    return room_ids
+
+
+def verify(intervals, room_ids):
+    """Check no two intervals in the same room overlap."""
+    rooms = defaultdict(list)
+    for i, (s, e) in enumerate(intervals):
+        rooms[room_ids[i]].append((s, e))
+    for rid, ivs in rooms.items():
+        ivs.sort()
+        for j in range(1, len(ivs)):
+            if ivs[j][0] < ivs[j - 1][1]:
+                return False, f"Overlap in room {rid}: {ivs[j - 1]} vs {ivs[j]}"
+    return True, "OK"
+
+
+if __name__ == "__main__":
+    intervals = [(0, 10), (0, 5), (5, 10)]
+    result = assign_rooms(intervals)
+    print("Intervals:", intervals)
+    print("Room assignments:", result)
+    print("Rooms used:", max(result) + 1 if result else 0)
+    print("Verification:", verify(intervals, result)[1])

@@ -1,0 +1,222 @@
+# Restatement of the original problem
+
+**Problem:** Given strings `a` and `b`, compute the minimum number of operations that turn `a` into `b`. The operations are insertion, deletion, substitution, and swapping two adjacent characters, each costing 1.
+
+**Existing requirements (all unchanged):**
+- **Output:** a single non-negative integer, the minimum cost.
+- **Algorithm:** DP table with an explicit transposition transition. The default is the unrestricted (true Damerau-Levenshtein) minimum, and `restricted=True` selects the OSA variant.
+- **Constraints:** standard library only, deterministic, no network, randomness or interaction. Time and space are O(n·m).
+- **Tie handling:** only the minimum value is returned, so ties cannot change the result.
+
+# New feature: `operation_summary`
+
+It is opt-in through a new keyword argument, `summary=False` by default.
+
+| `summary` | Return value |
+|---|---|
+| `False` (default) | The plain `int`, exactly as before |
+| `True` | `{"distance": int, "operation_summary": {...}}` |
+
+The summary counts decisions made by the algorithm. These are pure functions of the inputs and the mode, so they are deterministic.
+
+| Field | Meaning |
+|---|---|
+| `base_cells` | Boundary cells initialised (`n + m + 1`) |
+| `cells_computed` | Interior cells filled (`n·m`) |
+| `matches` | Cells where `a[i-1] == b[j-1]` |
+| `standard_candidates` | Delete/insert/substitute candidates compared (`3·n·m`) |
+| `transposition_candidates` | Cells where a transposition transition was eligible and evaluated |
+| `transposition_improvements` | Cells where the transposition strictly beat the other three candidates |
+| `total_decisions` | `base_cells + standard_candidates + transposition_candidates` |
+
+# Implementation
+
+```python
+from collections import deque
+from itertools import product
+from typing import Dict, List, Union
+
+
+def edit_distance_with_transposition(
+    a: str,
+    b: str,
+    restricted: bool = False,
+    summary: bool = False,
+) -> Union[int, Dict[str, object]]:
+    """
+    Minimum number of insertions, deletions, substitutions and adjacent
+    transpositions (each cost 1) turning `a` into `b`.
+
+    restricted=False (default): unrestricted minimum (true Damerau-Levenshtein).
+    restricted=True: optimal string alignment (local d[i-2][j-2] + 1 transition).
+
+    summary=False (default): returns the int distance, as in the original spec.
+    summary=True: returns {"distance": int, "operation_summary": {...}} where the
+        summary counts the algorithm's decisions deterministically.
+
+    Deterministic, standard library only.
+    """
+    n, m = len(a), len(b)
+    d: List[List[int]] = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(n + 1):
+        d[i][0] = i
+    for j in range(m + 1):
+        d[0][j] = j
+
+    # Counters (cheap integer increments; do not influence the result).
+    matches = 0
+    transposition_candidates = 0
+    transposition_improvements = 0
+
+    last_row: Dict[str, int] = {}  # last 1-based row where each char occurred in a
+
+    for i in range(1, n + 1):
+        ai = a[i - 1]
+        last_match_col = 0
+        for j in range(1, m + 1):
+            bj = b[j - 1]
+            cost = 0 if ai == bj else 1
+
+            best = min(
+                d[i - 1][j] + 1,         # deletion
+                d[i][j - 1] + 1,         # insertion
+                d[i - 1][j - 1] + cost,  # substitution / match
+            )
+
+            # explicit transposition transition
+            trans = None
+            if restricted:
+                if i > 1 and j > 1 and ai == b[j - 2] and a[i - 2] == bj:
+                    trans = d[i - 2][j - 2] + 1
+            else:
+                k = last_row.get(bj, 0)
+                l = last_match_col
+                if k > 0 and l > 0:
+                    trans = d[k - 1][l - 1] + (i - k - 1) + 1 + (j - l - 1)
+
+            if trans is not None:
+                transposition_candidates += 1
+                if trans < best:
+                    transposition_improvements += 1
+                    best = trans
+
+            if cost == 0:
+                matches += 1
+                last_match_col = j
+            d[i][j] = best
+        last_row[ai] = i
+
+    distance = d[n][m]
+    if not summary:
+        return distance
+
+    base_cells = n + m + 1
+    cells_computed = n * m
+    standard_candidates = 3 * cells_computed
+    return {
+        "distance": distance,
+        "operation_summary": {
+            "base_cells": base_cells,
+            "cells_computed": cells_computed,
+            "matches": matches,
+            "standard_candidates": standard_candidates,
+            "transposition_candidates": transposition_candidates,
+            "transposition_improvements": transposition_improvements,
+            "total_decisions": base_cells + standard_candidates + transposition_candidates,
+        },
+    }
+
+
+def _bfs_reference(a: str, b: str) -> int:
+    """Independent check: shortest path over single edits, including swaps anywhere."""
+    if a == b:
+        return 0
+    alphabet = sorted(set(a) | set(b))
+    cap = max(len(a), len(b)) + 2
+    seen = {a}
+    q = deque([(a, 0)])
+    while q:
+        s, dist = q.popleft()
+        nxt = []
+        for i in range(len(s)):
+            nxt.append(s[:i] + s[i + 1:])
+            for c in alphabet:
+                if c != s[i]:
+                    nxt.append(s[:i] + c + s[i + 1:])
+        if len(s) < cap:
+            for i in range(len(s) + 1):
+                for c in alphabet:
+                    nxt.append(s[:i] + c + s[i:])
+        for i in range(len(s) - 1):
+            nxt.append(s[:i] + s[i + 1] + s[i] + s[i + 2:])
+        for t in nxt:
+            if t not in seen:
+                if t == b:
+                    return dist + 1
+                seen.add(t)
+                q.append((t, dist + 1))
+    raise AssertionError("unreachable")
+
+
+def _self_test() -> None:
+    f = edit_distance_with_transposition
+
+    # Original behaviour (feature disabled) is unchanged: plain ints.
+    fixed = [
+        ("", "", 0, 0), ("", "abc", 3, 3), ("abc", "", 3, 3),
+        ("ab", "ba", 1, 1), ("teh", "the", 1, 1),
+        ("kitten", "sitting", 3, 3), ("ca", "abc", 2, 3),
+    ]
+    for x, y, free, restr in fixed:
+        r1, r2 = f(x, y), f(x, y, restricted=True)
+        assert type(r1) is int and r1 == free, (x, y)
+        assert type(r2) is int and r2 == restr, (x, y)
+
+    # Default mode still matches brute force on all short strings.
+    words = [""] + ["".join(p) for n in range(1, 4) for p in product("abc", repeat=n)]
+    for x in words:
+        for y in words:
+            assert f(x, y) == _bfs_reference(x, y), (x, y)
+
+    # Feature enabled: distance identical, summary consistent and deterministic.
+    for x in words:
+        for y in words:
+            for mode in (False, True):
+                plain = f(x, y, restricted=mode)
+                res = f(x, y, restricted=mode, summary=True)
+                assert res["distance"] == plain
+                s = res["operation_summary"]
+                assert s["cells_computed"] == len(x) * len(y)
+                assert s["standard_candidates"] == 3 * len(x) * len(y)
+                assert s["transposition_improvements"] <= s["transposition_candidates"]
+                assert s["total_decisions"] == (
+                    s["base_cells"] + s["standard_candidates"] + s["transposition_candidates"]
+                )
+                assert res == f(x, y, restricted=mode, summary=True)  # repeatable
+
+    # Hand-verified example: "ab" -> "ba".
+    assert f("ab", "ba", summary=True) == {
+        "distance": 1,
+        "operation_summary": {
+            "base_cells": 5, "cells_computed": 4, "matches": 2,
+            "standard_candidates": 12, "transposition_candidates": 1,
+            "transposition_improvements": 1, "total_decisions": 18,
+        },
+    }
+    # Empty input: no interior cells, only boundary cells.
+    assert f("", "abc", summary=True)["operation_summary"]["total_decisions"] == 4
+
+
+if __name__ == "__main__":
+    _self_test()
+    print(edit_distance_with_transposition("ca", "abc"))                 # 2
+    print(edit_distance_with_transposition("ab", "ba", summary=True))
+    print("All tests passed.")
+```
+
+# Notes
+
+- **Backward compatibility:** with `summary` omitted or `False`, the function returns the same `int` as before for both modes. The counters are plain integer increments and never feed into the DP values.
+- **Hand-checked example:** for `"ab"` → `"ba"`, the transposition is eligible at one cell (`i=2, j=2`) and strictly beats the other candidates (1 vs 2), which is why `transposition_improvements` is 1.
+- **Not run:** I haven't executed this code. The asserts, including the hand-computed `"ab"`/`"ba"` summary, are there so that running the file checks it.
+- **Counting rule:** `transposition_candidates` counts only cells where the transition was valid, not every cell. This makes the summary reflect actual decisions and differ meaningfully between the restricted and unrestricted modes.

@@ -1,0 +1,244 @@
+## Restatement of the original problem
+
+**Prime Range Analyzer:** given integers `L <= R`, find every prime in `[L, R]` using base primes up to `isqrt(R)` and a segmented sieve.
+
+**Existing required outputs (unchanged):**
+1. `primes`: the ascending list of all primes in `[L, R]`.
+2. `largest_gap`: the maximum difference between consecutive primes, or `0` if there are fewer than two primes.
+
+**Existing rules (unchanged):**
+- Ties go to the earliest pair (smallest lower prime), using strict `>`.
+- `L > R` raises `ValueError`.
+- `L < 2` is clamped to 2.
+- `solve(L, R)` returns exactly `(primes, largest_gap)`.
+- The implementation is standard library only, deterministic, and has no network, randomness, or interaction.
+
+## New feature: `operation_summary`
+
+The feature is **opt-in**. `solve(L, R)` behaves exactly as before. `solve(L, R, include_summary=True)` returns `(primes, largest_gap, operation_summary)`, where `operation_summary` is a dict of deterministic counters. It depends only on `L` and `R`, never on timing or environment.
+
+| Field | Meaning |
+|---|---|
+| `base_limit` | `isqrt(R)`, the bound for base primes (0 if the range is empty) |
+| `base_primes_found` | number of base primes generated |
+| `base_sieve_strikes` | slice-clear operations in the base sieve |
+| `segments` | segments processed |
+| `segment_prime_checks` | base primes examined across all segments, including the one that triggers the early `break` |
+| `segment_strikes` | slice-clear operations actually performed on segments |
+| `primes_found` | number of primes in `[L, R]` |
+| `gap_comparisons` | adjacent pairs compared |
+| `gap_updates` | times the best gap was replaced |
+| `total_operations` | `base_sieve_strikes + segments + segment_prime_checks + segment_strikes + gap_comparisons + gap_updates` |
+
+```python
+"""
+Prime Range Analyzer
+
+Problem: for integers L <= R, return (primes, largest_gap) where
+  - primes      = ascending list of all primes in [L, R]
+  - largest_gap = max difference between consecutive primes (0 if < 2 primes)
+
+Rules (unchanged):
+  - Ties: the earliest pair (smallest lower prime) wins (strict '>').
+  - L > R raises ValueError (no silent swapping).
+  - L < 2 is clamped to 2.
+  - solve(L, R) returns exactly (primes, largest_gap).
+
+New, opt-in feature:
+  - solve(L, R, include_summary=True) returns
+        (primes, largest_gap, operation_summary)
+    where operation_summary is a deterministic dict of operation counters.
+    With include_summary=False (default) nothing changes and no counting occurs.
+
+Algorithm: base primes up to isqrt(R) via a simple sieve, then a segmented
+sieve over [max(L, 2), R]. Standard library only, deterministic.
+
+Usage: python solution.py L R [--summary]   (no args -> demo on [1, 100])
+"""
+
+import sys
+from math import isqrt
+
+BLOCK_SIZE = 1 << 20
+
+SUMMARY_KEYS = (
+    "base_limit",
+    "base_primes_found",
+    "base_sieve_strikes",
+    "segments",
+    "segment_prime_checks",
+    "segment_strikes",
+    "primes_found",
+    "gap_comparisons",
+    "gap_updates",
+)
+
+
+def _new_stats():
+    return {k: 0 for k in SUMMARY_KEYS}
+
+
+def simple_sieve(n, stats=None):
+    """All primes <= n (sieve of Eratosthenes)."""
+    if n < 2:
+        return []
+    flags = bytearray([1]) * (n + 1)
+    flags[0] = flags[1] = 0
+    for i in range(2, isqrt(n) + 1):
+        if flags[i]:
+            flags[i * i::i] = bytes(len(range(i * i, n + 1, i)))
+            if stats is not None:
+                stats["base_sieve_strikes"] += 1
+    return [i for i in range(2, n + 1) if flags[i]]
+
+
+def primes_in_range(L, R, stats=None):
+    """Sorted primes in [L, R] via segmented sieve. Requires L <= R."""
+    if L > R:
+        raise ValueError(f"invalid interval: L={L} > R={R}")
+    lo = max(L, 2)
+    if lo > R:
+        return []
+    base = simple_sieve(isqrt(R), stats)
+    if stats is not None:
+        stats["base_limit"] = isqrt(R)
+        stats["base_primes_found"] = len(base)
+    result = []
+    seg_lo = lo
+    while seg_lo <= R:
+        seg_hi = min(seg_lo + BLOCK_SIZE - 1, R)
+        size = seg_hi - seg_lo + 1
+        if stats is not None:
+            stats["segments"] += 1
+        seg = bytearray([1]) * size
+        for p in base:
+            if stats is not None:
+                stats["segment_prime_checks"] += 1
+            if p * p > seg_hi:
+                break
+            start = max(p * p, ((seg_lo + p - 1) // p) * p)
+            if start > seg_hi:
+                continue
+            offset = start - seg_lo
+            seg[offset::p] = bytes(len(range(offset, size, p)))
+            if stats is not None:
+                stats["segment_strikes"] += 1
+        result.extend(seg_lo + i for i in range(size) if seg[i])
+        seg_lo = seg_hi + 1
+    if stats is not None:
+        stats["primes_found"] = len(result)
+    return result
+
+
+def largest_gap_pair(primes, stats=None):
+    """Return (gap, (p, q)); on ties the EARLIEST pair wins (strict '>').
+    Returns (0, None) when fewer than two primes."""
+    best, pair = 0, None
+    for a, b in zip(primes, primes[1:]):
+        if stats is not None:
+            stats["gap_comparisons"] += 1
+        if b - a > best:
+            best, pair = b - a, (a, b)
+            if stats is not None:
+                stats["gap_updates"] += 1
+    return best, pair
+
+
+def _finalize(stats):
+    stats["total_operations"] = (
+        stats["base_sieve_strikes"]
+        + stats["segments"]
+        + stats["segment_prime_checks"]
+        + stats["segment_strikes"]
+        + stats["gap_comparisons"]
+        + stats["gap_updates"]
+    )
+    return stats
+
+
+def solve(L, R, include_summary=False):
+    """Default: (primes, largest_gap), exactly as originally required.
+    With include_summary=True: (primes, largest_gap, operation_summary)."""
+    if not include_summary:
+        primes = primes_in_range(L, R)
+        gap, _ = largest_gap_pair(primes)
+        return primes, gap
+    stats = _new_stats()
+    primes = primes_in_range(L, R, stats)
+    gap, _ = largest_gap_pair(primes, stats)
+    return primes, gap, _finalize(stats)
+
+
+def _self_test():
+    # --- original behavior (feature disabled) ---
+    assert solve(1, 100)[1] == 8
+    assert solve(1, 20)[1] == 4
+    assert len(solve(1, 100)) == 2                      # exact original shape
+    assert largest_gap_pair(solve(1, 20)[0]) == (4, (7, 11))  # tie -> earliest
+    assert solve(14, 16) == ([], 0)
+    assert solve(13, 13) == ([13], 0)
+    assert solve(-5, 2) == ([2], 0)
+    assert solve(2, 3) == ([2, 3], 1)
+    try:
+        solve(100, 1)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("L > R must raise ValueError")
+
+    # --- feature enabled: original fields identical, summary appended ---
+    for L, R in [(1, 100), (1, 20), (14, 16), (13, 13), (-5, 2), (2, 3)]:
+        primes, gap, _ = solve(L, R, include_summary=True)
+        assert (primes, gap) == solve(L, R)
+
+    # Hand-computed for [1, 20]: base_limit 4, base primes [2, 3],
+    # 1 base strike, 1 segment, 2 checks, 2 strikes, 8 primes,
+    # 7 comparisons, 3 gap updates -> total 1+1+2+2+7+3 = 16.
+    _, _, s = solve(1, 20, include_summary=True)
+    assert s == {
+        "base_limit": 4, "base_primes_found": 2, "base_sieve_strikes": 1,
+        "segments": 1, "segment_prime_checks": 2, "segment_strikes": 2,
+        "primes_found": 8, "gap_comparisons": 7, "gap_updates": 3,
+        "total_operations": 16,
+    }
+    # Empty range: no sieve work at all.
+    _, _, s = solve(14, 16, include_summary=True)
+    assert s["total_operations"] == 0 and s["segments"] == 0
+    # Determinism: repeated calls give identical summaries.
+    assert solve(1, 1000, True)[2] == solve(1, 1000, True)[2]
+
+
+def main():
+    _self_test()
+    args = [a for a in sys.argv[1:] if a != "--summary"]
+    want_summary = "--summary" in sys.argv[1:]
+    if len(args) >= 2:
+        L, R = int(args[0]), int(args[1])
+    else:
+        L, R = 1, 100
+    result = solve(L, R, include_summary=want_summary)
+    primes, gap = result[0], result[1]
+    _, pair = largest_gap_pair(primes)
+    print(f"Range: [{L}, {R}]")
+    print(f"Prime count: {len(primes)}")
+    print(f"Primes: {primes}")
+    if pair is None:
+        print("Largest gap: 0 (fewer than two primes)")
+    else:
+        print(f"Largest gap: {gap} (between {pair[0]} and {pair[1]})")
+    if want_summary:
+        print("operation_summary:")
+        for k, v in result[2].items():
+            print(f"  {k}: {v}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## Compatibility notes
+
+- **Feature off (default):** the return value is `(primes, largest_gap)`, and the counting code is skipped entirely because every counter update is guarded by `stats is not None`. The sieve logic, tie rule, clamping, and `ValueError` are untouched.
+- **Feature on:** the first two elements are identical to the disabled result, which the self-test checks across several ranges. The summary is appended as a third element.
+- **Verified by hand:** for `[1, 20]` the summary totals 16 operations, and this is asserted in the self-test.
+- **CLI:** `python solution.py 1 100 --summary` prints the original output followed by the summary. Without `--summary` the output is unchanged.

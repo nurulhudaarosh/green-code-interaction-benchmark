@@ -1,0 +1,11 @@
+{
+  "task_id": "TL-003",
+  "model": "gpt",
+  "interaction": "ONE_SHOT",
+  "turn": 1,
+  "saved_at": "2026-10-05T04:54:39.557471+00:00",
+  "response_sha256": "f6827be6cb6e5068fae1706db347b97f0b366a9b0fb2880b3e66d9a01910f615",
+  "code_sha256": "20a123784f3d7c8c426b6b1e59e83a78548c7c3b871ec4895380e307b26d9770",
+  "raw_file": ".collection/raw/gpt/TL-003/ONE_SHOT/turn_01.txt",
+  "code_file": ".collection/code/gpt/TL-003/ONE_SHOT/code.py"
+}

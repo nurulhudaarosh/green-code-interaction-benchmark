@@ -1,0 +1,99 @@
+import pandas as pd
+from typing import List, Dict, Any, Optional
+
+def pivot_event_records(
+    records: List[Dict[str, Any]], 
+    date_col: str = 'date', 
+    region_col: str = 'region', 
+    event_type_col: str = 'event_type',
+    expected_event_types: Optional[List[str]] = None
+) -> pd.DataFrame:
+    """
+    Validates, aggregates, and pivots event data with deterministic column ordering.
+
+    Parameters:
+    -----------
+    records : List[Dict[str, Any]]
+        List of event record dictionaries.
+    date_col : str
+        Column name for event dates.
+    region_col : str
+        Column name for regions.
+    event_type_col : str
+        Column name for event types.
+    expected_event_types : Optional[List[str]]
+        Explicit list defining fixed event columns and their exact order.
+        If None, automatically extracts and sorts event types lexicographically.
+
+    Returns:
+    --------
+    pd.DataFrame
+        Pivoted DataFrame with deterministic column ordering, zero-filled missing cells,
+        and sorted rows by date and region.
+    """
+    if not records:
+        cols = [date_col, region_col] + (expected_event_types if expected_event_types else [])
+        return pd.DataFrame(columns=cols)
+
+    df = pd.DataFrame(records)
+
+    # 1. Validation: Ensure required columns exist
+    required_cols = {date_col, region_col, event_type_col}
+    missing_cols = required_cols - set(df.columns)
+    if missing_cols:
+        raise ValueError(f"Input records missing required fields: {missing_cols}")
+
+    # Drop null keys and convert dates for chronological sorting
+    df = df.dropna(subset=[date_col, region_col, event_type_col]).copy()
+    df[date_col] = pd.to_datetime(df[date_col])
+
+    # 2. Determine target event types order deterministically
+    if expected_event_types is not None:
+        target_columns = list(expected_event_types)
+    else:
+        # Lexicographical sort guarantees order independent of record arrival order
+        target_columns = sorted(df[event_type_col].dropna().astype(str).unique())
+
+    # 3. Aggregate & Pivot
+    pivoted_df = df.pivot_table(
+        index=[date_col, region_col],
+        columns=event_type_col,
+        aggfunc='size',
+        fill_value=0
+    )
+
+    # 4. Enforce exact, deterministic column list and sequence
+    pivoted_df = pivoted_df.reindex(columns=target_columns, fill_value=0)
+
+    # 5. Sort rows chronologically (date) and alphabetically (region)
+    pivoted_df = pivoted_df.sort_index(ascending=[True, True]).reset_index()
+
+    # Format date back to standard string representation
+    pivoted_df[date_col] = pivoted_df[date_col].dt.strftime('%Y-%m-%d')
+
+    return pivoted_df
+
+
+# --- Example Usage ---
+if __name__ == "__main__":
+    # Batch 1: Unsorted arrival order ['view', 'click', 'purchase']
+    batch1 = [
+        {"date": "2026-10-01", "region": "North", "event_type": "view"},
+        {"date": "2026-10-01", "region": "North", "event_type": "click"},
+        {"date": "2026-10-01", "region": "South", "event_type": "purchase"},
+    ]
+
+    # Batch 2: Different order and subset ['purchase', 'click']
+    batch2 = [
+        {"date": "2026-10-01", "region": "South", "event_type": "purchase"},
+        {"date": "2026-10-01", "region": "North", "event_type": "click"},
+    ]
+
+    # Mode A: Automatic Lexicographical Sorting ('click', 'purchase', 'view')
+    print("--- Auto-sorted Columns ---")
+    print(pivot_event_records(batch1).to_string(index=False))
+
+    # Mode B: Explicit Fixed Schema Strategy (Guarantees identical layout across runs)
+    fixed_schema = ["click", "view", "purchase", "signup"]
+    print("\n--- Fixed Schema Columns ---")
+    print(pivot_event_records(batch2, expected_event_types=fixed_schema).to_string(index=False))

@@ -1,0 +1,77 @@
+```python
+"""
+PROBLEM
+-------
+Multiply two integer polynomials exactly and return the coefficient array.
+Coefficients may be negative.
+
+Polynomial representation: a list of ints where index i is the coefficient
+of x^i (lowest degree first).
+    e.g. [1, -2, 3]  ->  1 - 2x + 3x^2
+
+KEY CONSTRAINTS
+---------------
+- Inputs are lists of (possibly negative) Python integers.
+- Result must be exact: Python ints have arbitrary precision, so no
+  overflow or floating-point error (no FFT with floats).
+- Standard library only; no network, APIs, randomness, or interaction.
+- Sizes are modest, so an O(n*m) quadratic algorithm is practical.
+
+REQUIRED OUTPUT
+---------------
+A list of ints of length len(a) + len(b) - 1, where result[k] is the
+coefficient of x^k in the product. If either input is empty, return [].
+(Optionally, trailing zeros are kept, since the exact degree is len-1
+by construction; use trim=True to strip them.)
+
+ALGORITHM
+---------
+Direct coefficient convolution:
+    result[i + j] += a[i] * b[j]   for all i, j
+Time O(n*m), space O(n+m). Deterministic and exact.
+"""
+
+from typing import List
+
+
+def multiply_polynomials(a: List[int], b: List[int], trim: bool = False) -> List[int]:
+    """Return the exact coefficient array of the product of polynomials a and b."""
+    if not a or not b:
+        return []
+
+    result = [0] * (len(a) + len(b) - 1)
+
+    for i, ai in enumerate(a):
+        if ai == 0:
+            continue  # skip zero rows for a small speedup
+        for j, bj in enumerate(b):
+            result[i + j] += ai * bj
+
+    if trim:
+        while len(result) > 1 and result[-1] == 0:
+            result.pop()
+
+    return result
+
+
+def main() -> None:
+    # Self-checks (deterministic)
+    assert multiply_polynomials([1, 1], [1, 1]) == [1, 2, 1]                 # (1+x)^2
+    assert multiply_polynomials([1, -1], [1, 1]) == [1, 0, -1]               # (1-x)(1+x)
+    assert multiply_polynomials([-2, 3], [4, -5, 6]) == [-8, 22, -27, 18]
+    assert multiply_polynomials([0], [5, 7]) == [0, 0]
+    assert multiply_polynomials([0], [5, 7], trim=True) == [0]
+    assert multiply_polynomials([], [1, 2]) == []
+    big = 10**30
+    assert multiply_polynomials([big, -big], [big]) == [big * big, -big * big]
+
+    # Demo
+    a = [3, -2, 0, 5]      # 3 - 2x + 5x^3
+    b = [-1, 4, 2]         # -1 + 4x + 2x^2
+    print(multiply_polynomials(a, b))
+    # -> [-3, 14, 8, -13, 20, 10]
+
+
+if __name__ == "__main__":
+    main()
+```

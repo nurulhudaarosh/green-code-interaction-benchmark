@@ -1,0 +1,70 @@
+from pathlib import Path
+
+import numpy as np
+from PIL import Image
+
+SOBEL_X = np.array([[-1, 0, 1],
+                    [-2, 0, 2],
+                    [-1, 0, 1]], dtype=np.float64)
+SOBEL_Y = np.array([[-1, -2, -1],
+                    [ 0,  0,  0],
+                    [ 1,  2,  1]], dtype=np.float64)
+
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+
+
+def convolve2d(img, kernel):
+    """Explicit 2D convolution (kernel flipped), 'same' output size,
+    edge-replicated borders. Implemented as a sum of shifted slices."""
+    kh, kw = kernel.shape
+    ph, pw = kh // 2, kw // 2
+    padded = np.pad(img, ((ph, ph), (pw, pw)), mode="edge")
+    flipped = kernel[::-1, ::-1]
+    h, w = img.shape
+    out = np.zeros((h, w), dtype=np.float64)
+    for i in range(kh):
+        for j in range(kw):
+            out += flipped[i, j] * padded[i:i + h, j:j + w]
+    return out
+
+
+def sobel_edges(input_dir, output_dir):
+    """Apply Sobel (Gx, Gy) to every image in input_dir and save the
+    clipped gradient magnitude as a grayscale PNG in output_dir.
+
+    Returns the list of written file paths."""
+    input_dir, output_dir = Path(input_dir), Path(output_dir)
+    if not input_dir.is_dir():
+        raise NotADirectoryError(f"Input directory not found: {input_dir}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    written = []
+    for path in sorted(input_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in IMAGE_EXTS:
+            continue
+        try:
+            with Image.open(path) as im:
+                gray = np.asarray(im.convert("L"), dtype=np.float64)
+        except OSError as e:
+            print(f"Skipping {path.name}: {e}")
+            continue
+
+        gx = convolve2d(gray, SOBEL_X)
+        gy = convolve2d(gray, SOBEL_Y)
+        magnitude = np.hypot(gx, gy)
+        edges = np.clip(magnitude, 0, 255).astype(np.uint8)
+
+        out_path = output_dir / f"{path.stem}_sobel.png"
+        Image.fromarray(edges, mode="L").save(out_path)
+        written.append(out_path)
+
+    return written
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) != 3:
+        sys.exit("Usage: python sobel_edges.py <input_dir> <output_dir>")
+    for p in sobel_edges(sys.argv[1], sys.argv[2]):
+        print("Saved", p)

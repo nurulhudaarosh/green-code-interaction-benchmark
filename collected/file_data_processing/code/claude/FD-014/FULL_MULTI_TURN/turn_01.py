@@ -1,0 +1,291 @@
+#!/usr/bin/env python3
+"""
+Offline customer record matcher.
+
+Strategy
+--------
+1. Normalize fields (email, phone, surname, postal code).
+2. Blocking: group records by (surname initial, postal-code prefix) so that
+   only records within the same block are compared.
+3. Matching: within each block, two records match if they share an exact
+   normalized email OR an exact normalized phone number.
+4. Clustering: matches are merged transitively with union-find, so
+   A~B and B~C yields one cluster {A, B, C}.
+
+Usage
+-----
+    python matcher.py customers.csv
+    python matcher.py customers.csv --postal-prefix-len 3 --out-dir results
+
+Expected CSV columns (case-insensitive, extra columns are preserved):
+    id, first_name, last_name, email, phone, postal_code
+
+Only the standard library is used, so it runs fully offline.
+"""
+
+import argparse
+import csv
+import re
+import sys
+import unicodedata
+from collections import defaultdict
+from itertools import combinations
+from pathlib import Path
+
+
+# --------------------------------------------------------------------------
+# Normalization
+# --------------------------------------------------------------------------
+
+def strip_accents(text: str) -> str:
+    """Remove diacritics: 'Müller' -> 'Muller'."""
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
+def normalize_surname(value: str) -> str:
+    """Lowercase, strip accents, keep letters only."""
+    value = strip_accents(value or "").lower()
+    return re.sub(r"[^a-z]", "", value)
+
+
+def normalize_postal(value: str) -> str:
+    """Uppercase and keep only letters/digits ('sw1a 1aa' -> 'SW1A1AA')."""
+    return re.sub(r"[^A-Z0-9]", "", (value or "").upper())
+
+
+def normalize_email(value: str) -> str:
+    """
+    Lowercase and trim. Conservative: no provider-specific tricks
+    (e.g. Gmail dot removal), so matches stay exact and defensible.
+    """
+    value = (value or "").strip().lower()
+    if value.count("@") != 1:
+        return ""
+    local, domain = value.split("@")
+    if not local or not domain or "." not in domain:
+        return ""
+    # Strip mailto: prefix or surrounding angle brackets if present.
+    return value.replace("mailto:", "").strip("<>")
+
+
+def normalize_phone(value: str, min_digits: int = 7) -> str:
+    """
+    Keep digits only, drop extension markers and a leading international
+    '00' prefix. Too-short numbers are treated as missing so that junk
+    values like '1234' never create matches.
+    """
+    value = (value or "").lower()
+    # Remove extensions such as "x123" or "ext. 45".
+    value = re.split(r"(?:ext\.?|x)\s*\d+\s*$", value)[0]
+    digits = re.sub(r"\D", "", value)
+    if digits.startswith("00"):
+        digits = digits[2:]
+    return digits if len(digits) >= min_digits else ""
+
+
+# --------------------------------------------------------------------------
+# Union-Find (disjoint set) for transitive clustering
+# --------------------------------------------------------------------------
+
+class UnionFind:
+    def __init__(self, items):
+        self.parent = {i: i for i in items}
+        self.rank = {i: 0 for i in items}
+
+    def find(self, x):
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]  # path halving
+            x = self.parent[x]
+        return x
+
+    def union(self, a, b):
+        ra, rb = self.find(a), self.find(b)
+        if ra == rb:
+            return
+        if self.rank[ra] < self.rank[rb]:
+            ra, rb = rb, ra
+        self.parent[rb] = ra
+        if self.rank[ra] == self.rank[rb]:
+            self.rank[ra] += 1
+
+
+# --------------------------------------------------------------------------
+# Loading
+# --------------------------------------------------------------------------
+
+REQUIRED = {"id", "last_name", "email", "phone", "postal_code"}
+
+
+def load_records(path: Path):
+    with path.open(newline="", encoding="utf-8-sig") as fh:
+        reader = csv.DictReader(fh)
+        if reader.fieldnames is None:
+            sys.exit("Input file is empty.")
+        # Case-insensitive header handling.
+        header_map = {h: h.strip().lower() for h in reader.fieldnames}
+        missing = REQUIRED - set(header_map.values())
+        if missing:
+            sys.exit(f"Missing required column(s): {', '.join(sorted(missing))}")
+
+        records = []
+        seen_ids = set()
+        for row in reader:
+            rec = {header_map[k]: (v or "").strip() for k, v in row.items() if k}
+            if rec["id"] in seen_ids:
+                sys.exit(f"Duplicate id in input: {rec['id']!r}")
+            seen_ids.add(rec["id"])
+            records.append(rec)
+    return records
+
+
+# --------------------------------------------------------------------------
+# Blocking and matching
+# --------------------------------------------------------------------------
+
+def blocking_key(rec, prefix_len):
+    """(surname initial, postal prefix); None if either part is unusable."""
+    surname = normalize_surname(rec["last_name"])
+    postal = normalize_postal(rec["postal_code"])
+    if not surname or len(postal) < 1:
+        return None
+    return surname[0], postal[:prefix_len]
+
+
+def build_blocks(records, prefix_len):
+    blocks = defaultdict(list)
+    unblocked = []
+    for rec in records:
+        key = blocking_key(rec, prefix_len)
+        if key is None:
+            unblocked.append(rec)
+        else:
+            blocks[key].append(rec)
+    return blocks, unblocked
+
+
+def match_block(block):
+    """
+    Return a list of (id_a, id_b, reason) for pairs inside a block that share
+    an exact normalized email or phone. Uses inverted indexes so the cost is
+    roughly linear in block size rather than quadratic comparison of all pairs.
+    """
+    by_email = defaultdict(list)
+    by_phone = defaultdict(list)
+    for rec in block:
+        if rec["_email"]:
+            by_email[rec["_email"]].append(rec["id"])
+        if rec["_phone"]:
+            by_phone[rec["_phone"]].append(rec["id"])
+
+    pair_reasons = defaultdict(set)
+    for ids in by_email.values():
+        for a, b in combinations(sorted(ids), 2):
+            pair_reasons[(a, b)].add("email")
+    for ids in by_phone.values():
+        for a, b in combinations(sorted(ids), 2):
+            pair_reasons[(a, b)].add("phone")
+
+    return [(a, b, "+".join(sorted(r))) for (a, b), r in pair_reasons.items()]
+
+
+def run_matching(records, prefix_len):
+    for rec in records:
+        rec["_email"] = normalize_email(rec["email"])
+        rec["_phone"] = normalize_phone(rec["phone"])
+
+    blocks, unblocked = build_blocks(records, prefix_len)
+
+    pairs = []
+    for block in blocks.values():
+        if len(block) > 1:
+            pairs.extend(match_block(block))
+
+    uf = UnionFind([r["id"] for r in records])
+    for a, b, _ in pairs:
+        uf.union(a, b)
+
+    clusters = defaultdict(list)
+    for rec in records:
+        clusters[uf.find(rec["id"])].append(rec["id"])
+
+    stats = {
+        "records": len(records),
+        "blocks": len(blocks),
+        "largest_block": max((len(b) for b in blocks.values()), default=0),
+        "unblocked_records": len(unblocked),
+        "candidate_pairs_compared": sum(
+            len(b) * (len(b) - 1) // 2 for b in blocks.values()
+        ),
+        "matched_pairs": len(pairs),
+    }
+    return pairs, clusters, stats
+
+
+# --------------------------------------------------------------------------
+# Output
+# --------------------------------------------------------------------------
+
+def write_outputs(records, pairs, clusters, out_dir: Path):
+    out_dir.mkdir(parents=True, exist_ok=True)
+    by_id = {r["id"]: r for r in records}
+
+    # Pairwise matches with the reason for each.
+    with (out_dir / "match_pairs.csv").open("w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["id_a", "id_b", "reason"])
+        for a, b, reason in sorted(pairs):
+            w.writerow([a, b, reason])
+
+    # Every record with its cluster id (singletons get their own cluster).
+    cluster_ids = {}
+    for n, (_, members) in enumerate(
+        sorted(clusters.items(), key=lambda kv: min(kv[1])), start=1
+    ):
+        for m in members:
+            cluster_ids[m] = f"C{n:06d}"
+
+    original_fields = [k for k in records[0].keys() if not k.startswith("_")]
+    with (out_dir / "clustered_records.csv").open(
+        "w", newline="", encoding="utf-8"
+    ) as fh:
+        w = csv.writer(fh)
+        w.writerow(["cluster_id", "cluster_size"] + original_fields)
+        size_of = {cluster_ids[m]: len(ms) for ms in clusters.values() for m in ms}
+        for rec in records:
+            cid = cluster_ids[rec["id"]]
+            w.writerow(
+                [cid, size_of[cid]] + [by_id[rec["id"]].get(f, "") for f in original_fields]
+            )
+
+    return sum(1 for ms in clusters.values() if len(ms) > 1)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Offline customer record matcher")
+    parser.add_argument("input", type=Path, help="Input CSV file")
+    parser.add_argument("--postal-prefix-len", type=int, default=3,
+                        help="Postal-code characters used in the blocking key (default 3)")
+    parser.add_argument("--out-dir", type=Path, default=Path("match_output"),
+                        help="Directory for result files (default ./match_output)")
+    args = parser.parse_args()
+
+    if args.postal_prefix_len < 1:
+        sys.exit("--postal-prefix-len must be at least 1")
+
+    records = load_records(args.input)
+    if not records:
+        sys.exit("No records found.")
+
+    pairs, clusters, stats = run_matching(records, args.postal_prefix_len)
+    dup_clusters = write_outputs(records, pairs, clusters, args.out_dir)
+
+    print("Matching complete")
+    for k, v in stats.items():
+        print(f"  {k.replace('_', ' '):<28}{v}")
+    print(f"  {'duplicate clusters':<28}{dup_clusters}")
+    print(f"Results written to: {args.out_dir.resolve()}")
+
+
+if __name__ == "__main__":
+    main()

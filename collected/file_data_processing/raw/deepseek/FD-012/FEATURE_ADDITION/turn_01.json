@@ -1,0 +1,11 @@
+{
+  "task_id": "FD-012",
+  "model": "deepseek",
+  "interaction": "FEATURE_ADDITION",
+  "turn": 1,
+  "saved_at": "2026-10-04T21:39:19.684520+00:00",
+  "response_sha256": "71d4340a2d4cbe7128e498e5029429bc00ddd9e0b60eff3c2a037311a142df8a",
+  "code_sha256": "3ce5c5af8e075a69c1ab6a0a84b5ca75bcafa09dd54e7a782c4d250b072f7b63",
+  "raw_file": ".collection/raw/deepseek/FD-012/FEATURE_ADDITION/turn_01.txt",
+  "code_file": ".collection/code/deepseek/FD-012/FEATURE_ADDITION/initial.py"
+}

@@ -1,0 +1,129 @@
+import csv
+import itertools
+import math
+import statistics
+from typing import Dict, List, Any, Union
+
+def calculate_csv_stats(file_path: str) -> List[Dict[str, Any]]:
+    """
+    Reads a CSV file and calculates count, min, max, mean, and median for each header.
+    
+    Handles:
+    - Missing or empty cells independently per column.
+    - Entirely empty columns (returns count=0 and None for stats without crashing).
+    - Rows with missing trailing values.
+    - Negative and zero numeric values correctly.
+    """
+    with open(file_path, mode='r', newline='', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        try:
+            headers = [h.strip() for h in next(reader)]
+        except StopIteration:
+            return []  # Handle completely empty CSV files safely
+
+        data_by_col: Dict[str, List[float]] = {header: [] for header in headers}
+
+        for row in reader:
+            # Handle short rows missing trailing values safely
+            for header, val in itertools.zip_longest(headers, row, fillvalue=""):
+                if header is None:
+                    continue  # Ignore extra values beyond defined headers
+                
+                val_str = (val or "").strip()
+                if not val_str:
+                    continue  # Skip empty strings
+                
+                try:
+                    num_val = float(val_str)
+                    if not math.isnan(num_val):
+                        data_by_col[header].append(num_val)
+                except ValueError:
+                    # Ignore non-numeric strings per column independently
+                    pass
+
+    results = []
+    for header in headers:
+        values = data_by_col[header]
+        n = len(values)
+
+        if n == 0:
+            stats = {
+                "column": header,
+                "count": 0,
+                "min": None,
+                "max": None,
+                "mean": None,
+                "median": None
+            }
+        else:
+            stats = {
+                "column": header,
+                "count": n,
+                "min": min(values),
+                "max": max(values),
+                "mean": statistics.mean(values),
+                "median": statistics.median(values)
+            }
+        results.append(stats)
+
+    return results
+
+
+def print_stats_table(stats_list: List[Dict[str, Any]]) -> None:
+    """Formats and prints column statistics in a clean ASCII table."""
+    if not stats_list:
+        print("No data or empty file.")
+        return
+
+    headers = ["Column", "Count", "Min", "Max", "Mean", "Median"]
+    
+    def fmt(val: Union[float, int, None]) -> str:
+        if val is None:
+            return "N/A"
+        if isinstance(val, float):
+            return f"{val:.4f}".rstrip('0').rstrip('.') if val % 1 != 0 else f"{val:.1f}"
+        return str(val)
+
+    col_widths = {
+        "Column": max(len(s["column"]) for s in stats_list),
+        "Count": max(len(str(s["count"])) for s in stats_list),
+        "Min": max(len(fmt(s["min"])) for s in stats_list),
+        "Max": max(len(fmt(s["max"])) for s in stats_list),
+        "Mean": max(len(fmt(s["mean"])) for s in stats_list),
+        "Median": max(len(fmt(s["median"])) for s in stats_list),
+    }
+    for k in col_widths:
+        col_widths[k] = max(col_widths[k], len(k))
+
+    header_row = " | ".join(f"{h:<{col_widths[h]}}" for h in headers)
+    divider = "-+-".join("-" * col_widths[h] for h in headers)
+    print(header_row)
+    print(divider)
+
+    for s in stats_list:
+        row = [
+            f"{s['column']:<{col_widths['Column']}}",
+            f"{s['count']:<{col_widths['Count']}}",
+            f"{fmt(s['min']):<{col_widths['Min']}}",
+            f"{fmt(s['max']):<{col_widths['Max']}}",
+            f"{fmt(s['mean']):<{col_widths['Mean']}}",
+            f"{fmt(s['median']):<{col_widths['Median']}}"
+        ]
+        print(" | ".join(row))
+
+
+if __name__ == "__main__":
+    sample_csv = """Temperature, Loss, EmptyColumn, MixedText
+-15.5, 0.0, , ABC
+0, -100.25, , 42
+12.5, 0, , text
+-3.0, 50.5
+"""
+    
+    test_filename = "edge_case_data.csv"
+    with open(test_filename, "w", encoding="utf-8") as f:
+        f.write(sample_csv)
+
+    print(f"Processing '{test_filename}'...\n")
+    results = calculate_csv_stats(test_filename)
+    print_stats_table(results)

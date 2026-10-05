@@ -1,0 +1,11 @@
+{
+  "task_id": "TL-005",
+  "model": "gemini",
+  "interaction": "BUG_FIX",
+  "turn": 2,
+  "saved_at": "2026-10-05T06:56:48.632214+00:00",
+  "response_sha256": "866a248d4791f6233b26d9059aad93e7dd9b21a359581b81eb6e7281582e94b0",
+  "code_sha256": "d4bd714b3b7df3c776468c3fc5912d066ea203387d2ad1d42f339f565dc38cb8",
+  "raw_file": ".collection/raw/gemini/TL-005/BUG_FIX/turn_02.txt",
+  "code_file": ".collection/code/gemini/TL-005/BUG_FIX/final.py"
+}

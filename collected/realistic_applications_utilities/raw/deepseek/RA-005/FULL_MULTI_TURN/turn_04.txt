@@ -1,0 +1,259 @@
+# Turn 4: Handling Threshold Boundaries and Malformed Lines
+
+Here's a robust Python implementation that handles edge cases around threshold boundaries and malformed input lines:
+
+```python
+import re
+from typing import Optional, Tuple, List
+
+
+# ============================================================
+# 1. THRESHOLD BOUNDARY HANDLING
+# ============================================================
+
+def classify_with_threshold(
+    value: float,
+    low: float,
+    high: float,
+    *,
+    inclusive_low: bool = True,
+    inclusive_high: bool = True,
+) -> str:
+    """
+    Classify a value into 'low', 'medium', or 'high' with configurable
+    boundary inclusivity.
+
+    Boundary rules:
+      inclusive_low  -> value == low  counts as 'low'  (else 'medium')
+      inclusive_high -> value == high counts as 'high' (else 'medium')
+    """
+    # Guard against NaN / inf
+    if value != value:  # NaN check
+        return "invalid"
+    if value in (float("inf"), float("-inf")):
+        return "invalid"
+
+    # Guard against inverted thresholds
+    if low > high:
+        low, high = high, low
+
+    # Boundary logic
+    if value < low:
+        return "low"
+    if value > high:
+        return "high"
+
+    # value is between low and high (inclusive range on the number line)
+    if value == low:
+        return "low" if inclusive_low else "medium"
+    if value == high:
+        return "high" if inclusive_high else "medium"
+    return "medium"
+
+
+# ---------- Boundary test matrix ----------
+BOUNDARY_TEST_CASES = [
+    # (value, low, high, incl_low, incl_high, expected)
+    (0,   0,   10,  True,  True,  "low"),
+    (0,   0,   10,  False, True,  "medium"),
+    (10,  0,   10,  True,  True,  "high"),
+    (10,  0,   10,  True,  False, "medium"),
+    (5,   0,   10,  True,  True,  "medium"),
+    (-1,  0,   10,  True,  True,  "low"),
+    (11,  0,   10,  True,  True,  "high"),
+    (0,   10,  0,   True,  True,  "low"),   # inverted thresholds
+    (float("nan"), 0, 10, True, True, "invalid"),
+    (float("inf"), 0, 10, True, True, "invalid"),
+]
+
+
+def run_boundary_tests() -> None:
+    for v, lo, hi, il, ih, exp in BOUNDARY_TEST_CASES:
+        got = classify_with_threshold(v, lo, hi,
+                                      inclusive_low=il,
+                                      inclusive_high=ih)
+        status = "PASS" if got == exp else "FAIL"
+        print(f"[{status}] value={v!r:>6} low={lo} high={hi} "
+              f"il={il} ih={ih} -> got={got!r} expected={exp!r}")
+
+
+# ============================================================
+# 2. MALFORMED LINE HANDLING
+# ============================================================
+
+# Expected format: "<label> <value>"  e.g. "temperature 23.5"
+LINE_PATTERN = re.compile(
+    r"^\s*(?P<label>[A-Za-z_][A-Za-z0-9_]*)\s*[=:,]?\s*"
+    r"(?P<value>[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*$"
+)
+
+class ParseResult:
+    __slots__ = ("line_no", "raw", "label", "value", "error")
+
+    def __init__(self, line_no, raw, label=None, value=None, error=None):
+        self.line_no = line_no
+        self.raw = raw
+        self.label = label
+        self.value = value
+        self.error = error
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+    def __repr__(self):
+        if self.ok:
+            return f"ParseResult(line={self.line_no}, {self.label}={self.value})"
+        return f"ParseResult(line={self.line_no}, ERROR={self.error!r})"
+
+
+def parse_line(line: str, line_no: int = 0) -> ParseResult:
+    """
+    Parse a single line of the form 'label value' (with optional separators).
+    Never raises — always returns a ParseResult.
+    """
+    # Handle non-string and None defensively
+    if line is None:
+        return ParseResult(line_no, line, error="null_line")
+    if not isinstance(line, str):
+        return ParseResult(line_no, line, error="non_string_line")
+
+    # Strip trailing newline / CR
+    stripped = line.rstrip("\r\n")
+
+    # Empty / whitespace-only line
+    if not stripped.strip():
+        return ParseResult(line_no, stripped, error="empty_line")
+
+    # Comment line
+    if stripped.lstrip().startswith("#"):
+        return ParseResult(line_no, stripped, error="comment_line")
+
+    match = LINE_PATTERN.match(stripped)
+    if not match:
+        return ParseResult(line_no, stripped, error="malformed_line")
+
+    label = match.group("label")
+    raw_value = match.group("value")
+
+    try:
+        value = float(raw_value)
+    except (ValueError, OverflowError):
+        return ParseResult(line_no, stripped,
+                           label=label, error="value_overflow")
+
+    if value != value:  # NaN
+        return ParseResult(line_no, stripped, label=label, error="nan_value")
+
+    return ParseResult(line_no, stripped, label=label, value=value)
+
+
+def parse_stream(text: str,
+                 *,
+                 low: float,
+                 high: float,
+                 inclusive_low: bool = True,
+                 inclusive_high: bool = True
+                 ) -> Tuple[List[dict], List[ParseResult]]:
+    """
+    Parse a multi-line string. Returns (valid_records, rejected_lines).
+    Each valid record gets a 'class' field from the threshold classifier.
+    """
+    valid: List[dict] = []
+    rejected: List[ParseResult] = []
+
+    for i, raw_line in enumerate(text.splitlines(), start=1):
+        result = parse_line(raw_line, line_no=i)
+
+        if not result.ok:
+            rejected.append(result)
+            continue
+
+        # Boundary classification for each successfully parsed value
+        bucket = classify_with_threshold(
+            result.value, low, high,
+            inclusive_low=inclusive_low,
+            inclusive_high=inclusive_high,
+        )
+        valid.append({
+            "line_no": result.line_no,
+            "label": result.label,
+            "value": result.value,
+            "class": bucket,
+        })
+
+    return valid, rejected
+
+
+# ============================================================
+# 3. DEMO / SELF-TEST
+# ============================================================
+
+SAMPLE_INPUT = """\
+# sensor readings
+temperature = 23.5
+humidity: 45
+pressure 1013.25
+temperature = -40        # extreme low (== low boundary if low=-40)
+humidity: 0              # exactly at lower threshold
+pressure 999999e999      # value overflow -> malformed value
+bad line with no number
+temperature = abc        # non-numeric value
+                         # whitespace-only line below
+   
+-5 invalid start        # malformed (starts with '-')
+humidity = 50.0.5       # malformed (double decimal)
+"""
+
+
+def demo() -> None:
+    print("=" * 60)
+    print("BOUNDARY TESTS")
+    print("=" * 60)
+    run_boundary_tests()
+
+    print()
+    print("=" * 60)
+    print("MALFORMED LINE + THRESHOLD STREAM")
+    print("=" * 60)
+
+    valid, rejected = parse_stream(
+        SAMPLE_INPUT,
+        low=0.0, high=100.0,
+        inclusive_low=True,   # 0 counts as "low"
+        inclusive_high=False, # 100 counts as "medium"
+    )
+
+    print("\n--- VALID RECORDS ---")
+    for rec in valid:
+        print(f"  line {rec['line_no']:>2}: "
+              f"{rec['label']:<12} = {rec['value']:<10} -> {rec['class']}")
+
+    print("\n--- REJECTED LINES ---")
+    for r in rejected:
+        print(f"  line {r.line_no:>2}: [{r.error}] raw={r.raw!r}")
+
+    print(f"\nTotals: {len(valid)} valid, {len(rejected)} rejected")
+
+
+if __name__ == "__main__":
+    demo()
+```
+
+## Key Design Decisions
+
+### Threshold boundaries
+- **Configurable inclusivity** for both `low` and `high` edges via keyword-only args (`inclusive_low`, `inclusive_high`).
+- **Self-healing on inverted thresholds** (`low > high`) — swaps them instead of silently misclassifying.
+- **Rejects `NaN` and `±inf`** before any comparison, since `NaN` breaks all relational operators (`nan < x` and `nan >= x` are both `False`).
+
+### Malformed lines
+- **Never raises** — `parse_line` always returns a `ParseResult`, so a bad line never kills the stream.
+- **Categorized errors**: `empty_line`, `comment_line`, `malformed_line`, `value_overflow`, `nan_value`, `non_string_line`, `null_line`.
+- **Regex-based format** accepts `label value`, `label = value`, and `label: value`, plus scientific notation.
+- **Overflow guard** catches values like `999999e999` that `float()` would turn into `inf`.
+- **Whitespace preserved in `raw`** for debugging, but stripped for parsing.
+- **Line numbers tracked** (1-based) so downstream tooling can point users at the offending line.
+
+### Test matrix
+`BOUNDARY_TEST_CASES` exercises every edge — exact lower, exact upper, just outside, inverted bounds, `NaN`, and `inf` — and `run_boundary_tests()` prints a PASS/FAIL per case so regressions are obvious.

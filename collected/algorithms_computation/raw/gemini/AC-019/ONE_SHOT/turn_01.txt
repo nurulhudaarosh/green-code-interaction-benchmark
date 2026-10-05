@@ -1,0 +1,110 @@
+### Problem Identification & Key Constraints
+
+The problem asks to find the minimum path cost from the top-left corner $(0, 0)$ to the bottom-right corner $(m-1, n-1)$ of an $m \times n$ matrix containing non-negative movement costs.
+
+* **Allowed Moves:** From any cell $(r, c)$, you can only move either Right to $(r, c+1)$ or Down to $(r+1, c)$.
+* **Constraints:**
+* Grid size: $m \ge 1$ rows and $n \ge 1$ columns.
+* Cell costs: $C[r][c] \ge 0$.
+* Determinism requirement: The choice of path must be strictly deterministic when multiple optimal paths share the same minimal cost (tie handling).
+
+
+* **Required Output:** A tuple containing:
+1. The minimum total cost (integer/float).
+2. One deterministic optimal path represented as a list of coordinate tuples `[(0, 0), ..., (m-1, n-1)]`.
+
+
+
+---
+
+### Dynamic Programming Algorithm
+
+1. **State & Recurrence:**
+Let $DP[r][c]$ be the minimum cost to reach cell $(r, c)$ from $(0, 0)$.
+* $DP[0][0] = C[0][0]$
+* For the top row ($r = 0, c > 0$): $DP[0][c] = DP[0][c-1] + C[0][c]$ (must come from Left)
+* For the left column ($r > 0, c = 0$): $DP[r][0] = DP[r-1][0] + C[r][0]$ (must come from Up)
+* For inner cells ($r > 0, c > 0$): $DP[r][c] = C[r][c] + \min(DP[r-1][c], DP[r][c-1])$
+
+
+2. **Deterministic Tie Handling:**
+To guarantee a single, deterministic path when costs are tied, prefer one direction consistently. For instance, when constructing the path or making DP transitions, prioritize coming from **Up** over **Left** (or vice versa).
+3. **Path Reconstruction:**
+Maintain a parent/predecessor table $P[r][c]$ recording which neighbor produced the minimal cost for cell $(r, c)$, then backtrack from $(m-1, n-1)$ back to $(0, 0)$ and reverse the sequence.
+
+---
+
+### Python Solution
+
+```python
+def min_cost_path(cost_matrix):
+    """
+    Finds the minimum cost path in a grid from top-left to bottom-right 
+    moving only right or down.
+    
+    Tie-breaking rule: Prefers coming from UP over LEFT when costs are equal.
+    
+    :param cost_matrix: List[List[number]], m x n non-negative grid
+    :return: Tuple[number, List[Tuple[int, int]]]: (min_cost, path)
+    """
+    if not cost_matrix or not cost_matrix[0]:
+        return 0, []
+
+    m = len(cost_matrix)
+    n = len(cost_matrix[0])
+
+    dp = [[0] * n for _ in range(m)]
+    parent = [[None] * n for _ in range(m)]
+
+    # Initialize starting point
+    dp[0][0] = cost_matrix[0][0]
+
+    # Initialize first row (can only come from the Left)
+    for c in range(1, n):
+        dp[0][c] = dp[0][c - 1] + cost_matrix[0][c]
+        parent[0][c] = (0, c - 1)
+
+    # Initialize first column (can only come from Up)
+    for r in range(1, m):
+        dp[r][0] = dp[r - 1][0] + cost_matrix[r][0]
+        parent[r][0] = (r - 1, 0)
+
+    # Fill the DP and parent tables for the rest of the grid
+    for r in range(1, m):
+        for c in range(1, n):
+            cost_from_up = dp[r - 1][c]
+            cost_from_left = dp[r][c - 1]
+
+            # Deterministic tie-handling: prefer UP if cost_from_up <= cost_from_left
+            if cost_from_up <= cost_from_left:
+                dp[r][c] = cost_matrix[r][c] + cost_from_up
+                parent[r][c] = (r - 1, c)
+            else:
+                dp[r][c] = cost_matrix[r][c] + cost_from_left
+                parent[r][c] = (r, c - 1)
+
+    # Reconstruct the optimal path by backtracking from bottom-right
+    path = []
+    curr = (m - 1, n - 1)
+    while curr is not None:
+        path.append(curr)
+        curr = parent[curr[0]][curr[1]]
+
+    path.reverse()
+    min_cost = dp[m - 1][n - 1]
+
+    return min_cost, path
+
+
+# Example usage:
+if __name__ == "__main__":
+    grid = [
+        [1, 3, 1],
+        [1, 5, 1],
+        [4, 2, 1]
+    ]
+    min_cost, optimal_path = min_cost_path(grid)
+    print(f"Minimum Cost: {min_cost}")
+    print(f"Optimal Path: {optimal_path}")
+
+```

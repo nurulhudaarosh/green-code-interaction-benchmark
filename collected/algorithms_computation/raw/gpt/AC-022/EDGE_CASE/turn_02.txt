@@ -1,0 +1,177 @@
+## Restated problem
+
+Compute the minimum edit distance between two strings using these operations, each costing **1**:
+
+* insertion
+* deletion
+* substitution
+* adjacent transposition
+
+Matching characters cost `0`. The solution must use **dynamic programming with an explicit transposition transition**, handle empty strings, and remain deterministic. The required output is the minimum edit distance as an integer.
+
+### Difficult cases handled
+
+* **Repeated values:** repeated characters such as `"aabb"` or `"aaaa"` are handled normally by evaluating every valid DP state; a transposition is only applied when the two adjacent characters satisfy the explicit transposition condition.
+* **Deterministic ties:** candidate operations are considered in a fixed order:
+  **substitution/match → deletion → insertion → transposition**. Since the returned output is only the distance, ties do not change the numeric result, but this fixed order preserves deterministic behavior if the implementation is later extended to reconstruct operations.
+
+```python
+def edit_distance_with_transposition(source: str, target: str) -> int:
+    """
+    Compute edit distance using:
+        - insertion: 1
+        - deletion: 1
+        - substitution: 1
+        - adjacent transposition: 1
+
+    Dynamic programming with an explicit transposition transition.
+
+    Deterministic tie order:
+        1. substitution / match
+        2. deletion
+        3. insertion
+        4. transposition
+
+    Returns:
+        Minimum edit distance as an integer.
+    """
+
+    n = len(source)
+    m = len(target)
+
+    # dp[i][j] = minimum cost to transform
+    # source[:i] into target[:j]
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+
+    # Base cases
+    for i in range(n + 1):
+        dp[i][0] = i
+
+    for j in range(m + 1):
+        dp[0][j] = j
+
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+
+            # 1. Match / substitution
+            substitution_cost = (
+                0 if source[i - 1] == target[j - 1] else 1
+            )
+            substitution = dp[i - 1][j - 1] + substitution_cost
+
+            # 2. Deletion
+            deletion = dp[i - 1][j] + 1
+
+            # 3. Insertion
+            insertion = dp[i][j - 1] + 1
+
+            # Fixed candidate order ensures deterministic tie handling.
+            candidates = [
+                substitution,
+                deletion,
+                insertion,
+            ]
+
+            # 4. Explicit adjacent transposition.
+            #
+            # source[i-2:i] == XY
+            # target[j-2:j] == YX
+            #
+            # Then XY -> YX can be done in one operation.
+            if (
+                i >= 2
+                and j >= 2
+                and source[i - 2] == target[j - 1]
+                and source[i - 1] == target[j - 2]
+                and source[i - 2] != source[i - 1]
+            ):
+                transposition = dp[i - 2][j - 2] + 1
+                candidates.append(transposition)
+
+            dp[i][j] = min(candidates)
+
+    return dp[n][m]
+
+
+# ============================================================
+# Tests: original required behavior
+# ============================================================
+
+# Empty strings
+assert edit_distance_with_transposition("", "") == 0
+assert edit_distance_with_transposition("", "abc") == 3
+assert edit_distance_with_transposition("abc", "") == 3
+
+# Identical strings
+assert edit_distance_with_transposition("abc", "abc") == 0
+
+# Substitution
+assert edit_distance_with_transposition("cat", "cut") == 1
+
+# Insertion
+assert edit_distance_with_transposition("cat", "cart") == 1
+
+# Deletion
+assert edit_distance_with_transposition("cart", "cat") == 1
+
+# Adjacent transposition
+assert edit_distance_with_transposition("ab", "ba") == 1
+
+
+# ============================================================
+# Tests: repeated values
+# ============================================================
+
+# Repeated identical characters should not be treated
+# as a transposition because swapping equal characters
+# produces no change.
+assert edit_distance_with_transposition("aa", "aa") == 0
+assert edit_distance_with_transposition("aaaa", "aaaa") == 0
+
+# Repeated characters with an additional character
+assert edit_distance_with_transposition("aab", "aba") == 1
+assert edit_distance_with_transposition("aba", "aab") == 1
+
+# Multiple repeated values
+assert edit_distance_with_transposition("aabb", "abab") == 1
+assert edit_distance_with_transposition("abab", "aabb") == 1
+
+# Repeated values requiring more than one edit
+assert edit_distance_with_transposition("aabbcc", "ccbbaa") == 3
+
+
+# ============================================================
+# Tests: deterministic ties
+# ============================================================
+
+# These cases have multiple possible one-cost operations.
+# The result must remain deterministic.
+assert edit_distance_with_transposition("a", "b") == 1
+assert edit_distance_with_transposition("ab", "ac") == 1
+assert edit_distance_with_transposition("ab", "ba") == 1
+
+# A tie between different edit paths must still produce
+# the same deterministic minimum distance on repeated calls.
+for _ in range(10):
+    assert edit_distance_with_transposition("aab", "baa") == 1
+    assert edit_distance_with_transposition("abab", "baba") == 1
+    assert edit_distance_with_transposition("abc", "acb") == 1
+
+
+# ============================================================
+# Additional mixed cases
+# ============================================================
+
+assert edit_distance_with_transposition("kitten", "sitting") == 3
+assert edit_distance_with_transposition("abcdef", "abcfde") == 2
+assert edit_distance_with_transposition("ca", "abc") == 2
+
+print("All tests passed.")
+```
+
+One important detail for repeated values is the `source[i - 2] != source[i - 1]` condition: swapping two identical adjacent characters is not a meaningful transposition, so it is excluded while ordinary match/substitution transitions continue to handle those cases.
+
+Refine the transposition solution
+
+* Explain the recurrence formally
+* Add a space-optimized version

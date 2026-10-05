@@ -1,0 +1,66 @@
+from collections import Counter
+
+
+def summarize_logs(logs, error_threshold=2):
+    if not logs:
+        return {
+            "total": 0,
+            "levels": {},
+            "errors": {},
+            "repeated_errors": []
+        }
+
+    level_counts = Counter()
+    error_counts = Counter()
+
+    for log in logs:
+        if not isinstance(log, str) or not log.strip():
+            continue
+
+        # Remove empty fields caused by extra separators.
+        parts = [part.strip() for part in log.split("|") if part.strip()]
+
+        if len(parts) < 2:
+            continue
+
+        level = parts[0].upper()
+        message = " ".join(parts[1:]).strip()
+
+        if not level or not message:
+            continue
+
+        level_counts[level] += 1
+
+        if level == "ERROR":
+            normalized_message = message.casefold()
+            error_counts[normalized_message] += 1
+
+    repeated_errors = sorted(
+        message
+        for message, count in error_counts.items()
+        if count >= error_threshold
+    )
+
+    return {
+        "total": sum(level_counts.values()),
+        "levels": dict(level_counts),
+        "errors": dict(error_counts),
+        "repeated_errors": repeated_errors
+    }
+
+
+if __name__ == "__main__":
+    logs = [
+        "",
+        "   ",
+        "INFO|Application started",
+        "error|Database connection failed",
+        "ERROR||DATABASE CONNECTION FAILED",
+        "WARNING|||Disk space low",
+        "Error||||Database Connection Failed",
+        "INFO|User logged in",
+        "ERROR|File not found",
+        "ERROR|FILE NOT FOUND"
+    ]
+
+    print(summarize_logs(logs, error_threshold=2))

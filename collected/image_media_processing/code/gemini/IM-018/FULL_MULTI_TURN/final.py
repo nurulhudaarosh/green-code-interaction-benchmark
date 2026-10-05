@@ -1,0 +1,107 @@
+import os
+import glob
+from PIL import Image
+import numpy as np
+
+class UnionFind:
+    def __init__(self, items):
+        self.parent = {item: item for item in items}
+
+    def find(self, item):
+        # Path compression ensures transitive chains resolve to the canonical root
+        if self.parent[item] != item:
+            self.parent[item] = self.find(self.parent[item])
+        return self.parent[item]
+
+    def union(self, item1, item2):
+        root1 = self.find(item1)
+        root2 = self.find(item2)
+        if root1 != root2:
+            self.parent[root2] = root1
+
+
+def compute_grayscale_histogram(image_path, bins=256):
+    """Loads an image, converts to grayscale, and calculates L1 normalized histogram."""
+    with Image.open(image_path) as img:
+        gray = img.convert('L')
+        hist, _ = np.histogram(gray, bins=bins, range=(0, 256))
+    
+    total = hist.sum()
+    if total == 0:
+        return np.zeros(bins, dtype=np.float64)
+    return hist.astype(np.float64) / total
+
+
+def calculate_distance(hist_a, hist_b, metric='l1'):
+    """Calculates histogram distance based on the requested metric."""
+    if metric == 'l1':
+        return np.sum(np.abs(hist_a - hist_b))
+    elif metric == 'chi_squared':
+        # 0.5 * sum((a - b)^2 / (a + b)) with epsilon protection against division by zero
+        eps = 1e-10
+        denom = hist_a + hist_b + eps
+        return 0.5 * np.sum(((hist_a - hist_b) ** 2) / denom)
+    else:
+        raise ValueError(f"Unsupported distance metric: '{metric}'. Supported metrics are 'l1' and 'chi_squared'.")
+
+
+def find_near_duplicates(input_dir, threshold, distance_metric='l1'):
+    """
+    Clusters images by normalized grayscale histogram distance with transitive
+    equivalence grouping via Union-Find.
+
+    Parameters:
+        input_dir (str): Path to directory containing images.
+        threshold (float): Distance threshold below which images are grouped.
+        distance_metric (str): 'l1' (default) or 'chi_squared'.
+
+    Returns:
+        list[list[str]]: Clusters containing 2 or more near-duplicate image paths.
+    """
+    extensions = ('*.jpg', '*.jpeg', '*.png', '*.bmp', '*.webp', '*.tiff')
+    filepaths = []
+    
+    for ext in extensions:
+        filepaths.extend(glob.glob(os.path.join(input_dir, ext)))
+        filepaths.extend(glob.glob(os.path.join(input_dir, ext.upper())))
+
+    filepaths = sorted(list(set(filepaths)))
+    if len(filepaths) < 2:
+        return []
+
+    # 1. Compute normalized grayscale histogram for all accessible images
+    histograms = {}
+    valid_paths = []
+    
+    for path in filepaths:
+        try:
+            histograms[path] = compute_grayscale_histogram(path)
+            valid_paths.append(path)
+        except Exception:
+            continue  # Skip unreadable image files
+
+    if len(valid_paths) < 2:
+        return []
+
+    # 2. Perform Union-Find on pairwise matches below threshold
+    uf = UnionFind(valid_paths)
+    num_images = len(valid_paths)
+
+    for i in range(num_images):
+        for j in range(i + 1, num_images):
+            path_a = valid_paths[i]
+            path_b = valid_paths[j]
+
+            dist = calculate_distance(histograms[path_a], histograms[path_b], metric=distance_metric)
+
+            if dist <= threshold:
+                uf.union(path_a, path_b)
+
+    # 3. Resolve canonical components via find()
+    clusters = {}
+    for path in valid_paths:
+        root = uf.find(path)
+        clusters.setdefault(root, []).append(path)
+
+    # 4. Filter out singletons (only keep clusters with at least 2 members)
+    return [group for group in clusters.values() if len(group) >= 2]

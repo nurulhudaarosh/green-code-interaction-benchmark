@@ -1,0 +1,68 @@
+import os
+import numpy as np
+from PIL import Image
+
+
+def sobel_edges(input_dir, output_dir):
+    """
+    Apply Sobel edge detection to all images in input_dir and save
+    the gradient magnitude as grayscale PNGs in output_dir.
+
+    Uses explicit 3x3 Sobel kernels (no scipy/cv2 dependency).
+    """
+    # Sobel kernels
+    Gx = np.array([
+        [-1, 0, 1],
+        [-2, 0, 2],
+        [-1, 0, 1],
+    ], dtype=np.float32)
+
+    Gy = np.array([
+        [-1, -2, -1],
+        [ 0,  0,  0],
+        [ 1,  2,  1],
+    ], dtype=np.float32)
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    valid_exts = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.webp')
+
+    for fname in sorted(os.listdir(input_dir)):
+        if not fname.lower().endswith(valid_exts):
+            continue
+
+        in_path = os.path.join(input_dir, fname)
+
+        # Load as grayscale, float32
+        img = Image.open(in_path).convert('L')
+        arr = np.asarray(img, dtype=np.float32)
+
+        # Pad with edge replication so output has same size
+        padded = np.pad(arr, 1, mode='edge')
+
+        # Extract 3x3 neighborhoods via stride tricks / slicing
+        # shape: (H, W, 3, 3)
+        h, w = arr.shape
+        windows = np.lib.stride_tricks.sliding_window_view(padded, (3, 3))
+
+        # Explicit convolution: sum over the 3x3 window
+        gx = np.sum(windows * Gx, axis=(-1, -2))
+        gy = np.sum(windows * Gy, axis=(-1, -2))
+
+        # Gradient magnitude
+        mag = np.sqrt(gx * gx + gy * gy)
+
+        # Clip to [0, 255] and convert to uint8
+        mag = np.clip(mag, 0, 255).astype(np.uint8)
+
+        out_name = os.path.splitext(fname)[0] + '.png'
+        out_path = os.path.join(output_dir, out_name)
+        Image.fromarray(mag, mode='L').save(out_path, format='PNG')
+
+
+if __name__ == '__main__':
+    import sys
+    if len(sys.argv) != 3:
+        print("Usage: python sobel_edges.py <input_dir> <output_dir>")
+        sys.exit(1)
+    sobel_edges(sys.argv[1], sys.argv[2])

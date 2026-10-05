@@ -1,0 +1,11 @@
+{
+  "task_id": "RA-003",
+  "model": "claude",
+  "interaction": "FULL_MULTI_TURN",
+  "turn": 4,
+  "saved_at": "2026-10-01T06:58:13.038756+00:00",
+  "response_sha256": "084005805d83f5bfb3cbcf61e8aa9deaf7e8f091d3cbab1dd4e0915004eba6ad",
+  "code_sha256": "9f101034ca8c5137b07003abd48dbf9571b17c1d3aaec1380cc9d6e0669e7f6d",
+  "raw_file": ".collection/raw/claude/RA-003/FULL_MULTI_TURN/turn_04.txt",
+  "code_file": ".collection/code/claude/RA-003/FULL_MULTI_TURN/turn_04.py"
+}

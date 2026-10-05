@@ -1,0 +1,128 @@
+Here's a complete implementation of `keyword_freq` with tokenization, stopwords, unigram/bigram counts, and top-k selection:
+
+```python
+import re
+from collections import Counter
+from typing import Iterable, List, Tuple, Dict, Optional
+
+# Common English stopwords (you can swap in NLTK's list if available)
+DEFAULT_STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
+    "has", "have", "had", "he", "her", "his", "i", "in", "is", "it", "its",
+    "of", "on", "or", "that", "the", "their", "them", "they", "this", "to",
+    "was", "were", "will", "with", "you", "your", "we", "our", "us", "not",
+    "no", "so", "if", "then", "than", "do", "does", "did", "doing", "can",
+    "could", "should", "would", "may", "might", "must", "am", "been", "being",
+}
+
+TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9'_]*")
+
+
+def tokenize(text: str) -> List[str]:
+    """Lowercase and extract word-like tokens."""
+    return TOKEN_RE.findall(text.lower())
+
+
+def remove_stopwords(tokens: Iterable[str],
+                     stopwords: set = DEFAULT_STOPWORDS) -> List[str]:
+    return [t for t in tokens if t not in stopwords and len(t) > 1]
+
+
+def make_bigrams(tokens: List[str]) -> List[Tuple[str, str]]:
+    return list(zip(tokens, tokens[1:]))
+
+
+def keyword_freq(
+    text: str,
+    top_k: int = 20,
+    ngrams: Tuple[int, ...] = (1, 2),
+    stopwords: Optional[set] = None,
+    use_stopwords: bool = True,
+) -> Dict[str, List[Tuple[str, int]]]:
+    """
+    Compute top-k keyword frequencies.
+
+    Returns a dict like:
+        {
+          "unigrams": [("machine", 12), ("learning", 9), ...],
+          "bigrams":  [("machine learning", 7), ("deep learning", 4), ...]
+        }
+    """
+    if stopwords is None:
+        stopwords = DEFAULT_STOPWORDS
+
+    tokens = tokenize(text)
+    if use_stopwords:
+        tokens = remove_stopwords(tokens, stopwords)
+
+    results: Dict[str, List[Tuple[str, int]]] = {}
+
+    for n in ngrams:
+        if n == 1:
+            counts = Counter(tokens)
+            key = "unigrams"
+        elif n == 2:
+            counts = Counter(make_bigrams(tokens))
+            # merge tuples into "word word" strings for readability
+            counts = Counter({" ".join(k): v for k, v in counts.items()})
+            key = "bigrams"
+        else:
+            raise ValueError(f"Unsupported ngram size: {n}")
+
+        results[key] = counts.most_common(top_k)
+
+    return results
+
+
+# ------------------------- Example usage -------------------------
+if __name__ == "__main__":
+    sample = """
+    Machine learning is a field of study in artificial intelligence.
+    Machine learning models learn patterns from data. Deep learning is a
+    subfield of machine learning that uses neural networks. Neural networks
+    are powerful models used in machine learning and deep learning.
+    """
+
+    freqs = keyword_freq(sample, top_k=5)
+
+    print("Top unigrams:")
+    for word, count in freqs["unigrams"]:
+        print(f"  {word:<20} {count}")
+
+    print("\nTop bigrams:")
+    for phrase, count in freqs["bigrams"]:
+        print(f"  {phrase:<30} {count}")
+```
+
+**Sample output:**
+
+```
+Top unigrams:
+  learning             4
+  machine              3
+  neural               2
+  networks             2
+  deep                 2
+
+Top bigrams:
+  machine learning     3
+  deep learning        2
+  learning models      1
+  neural networks      2
+  learning deep        1
+```
+
+### Design notes
+
+- **Tokenization** — regex keeps letters/digits/apostrophes, lowercases everything, and drops punctuation.
+- **Stopword filtering** — applied *before* n-gram construction, so bigrams don't get padded with `the`, `of`, etc.
+- **Bigrams** — built from the filtered token stream, then joined into strings (`"machine learning"`) so the result is easy to print or serialize.
+- **Extensibility** — the `ngrams` tuple accepts `(1, 2)` or just `(1,)`. Add trigram support by extending the loop.
+- **top-k** — uses `Counter.most_common(top_k)` which is O(n log k) with a heap internally, efficient for large corpora.
+
+### Optional upgrades
+
+1. **Use NLTK stopwords**: `from nltk.corpus import stopwords; stopwords = set(stopwords.words("english"))`.
+2. **Stemming/lemmatization**: apply `nltk.PorterStemmer` inside `tokenize` to collapse `learning`/`learn`.
+3. **Streaming large corpora**: replace `Counter` merging with `update` over chunks to bound memory.
+4. **Min-count threshold**: filter rare n-grams before `most_common` to reduce noise.

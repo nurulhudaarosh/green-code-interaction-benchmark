@@ -1,0 +1,88 @@
+```python
+#!/usr/bin/env python3
+"""Offline recursive .txt analyzer with deterministic word ranking."""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from collections import Counter
+from pathlib import Path
+
+WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
+
+
+def iter_txt_files(root: Path):
+    """Yield all .txt files under root (recursive), sorted for determinism."""
+    if root.is_file():
+        if root.suffix.lower() == ".txt":
+            yield root
+        return
+    for path in sorted(root.rglob("*")):
+        if path.is_file() and path.suffix.lower() == ".txt":
+            yield path
+
+
+def analyze(root: Path):
+    total = Counter()
+    doc_freq = Counter()
+    file_count = 0
+
+    for path in iter_txt_files(root):
+        file_count += 1
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            print(f"warn: cannot read {path}: {exc}", file=sys.stderr)
+            continue
+
+        words = [m.group(0).casefold() for m in WORD_RE.finditer(text)]
+        total.update(words)
+        doc_freq.update(set(words))
+
+    return total, doc_freq, file_count
+
+
+def rank_words(total: Counter, doc_freq: Counter):
+    """Sort by (-total, -doc_freq, word) for a stable, meaningful order."""
+    return sorted(total.items(), key=lambda kv: (-kv[1], -doc_freq[kv[0]], kv[0]))
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Recursive offline .txt word analyzer.")
+    parser.add_argument("path", nargs="?", default=".", help="root directory or .txt file")
+    parser.add_argument("-n", "--top", type=int, default=50, help="show top N words (0 = all)")
+    parser.add_argument("--tsv", action="store_true", help="output tab-separated values")
+    args = parser.parse_args(argv)
+
+    root = Path(args.path).expanduser()
+    if not root.exists():
+        print(f"error: path not found: {root}", file=sys.stderr)
+        return 2
+
+    total, doc_freq, file_count = analyze(root)
+    ranked = rank_words(total, doc_freq)
+    if args.top > 0:
+        ranked = ranked[: args.top]
+
+    if args.tsv:
+        print("rank\tword\ttotal\tdoc_freq")
+        for i, (word, count) in enumerate(ranked, 1):
+            print(f"{i}\t{word}\t{count}\t{doc_freq[word]}")
+    else:
+        print(f"Files scanned : {file_count}")
+        print(f"Unique words  : {len(total)}")
+        print(f"Total tokens  : {sum(total.values())}")
+        print()
+        print(f"{'rank':>4}  {'word':<24} {'total':>8} {'docs':>6}")
+        print("-" * 48)
+        for i, (word, count) in enumerate(ranked, 1):
+            print(f"{i:>4}  {word:<24} {count:>8} {doc_freq[word]:>6}")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+```

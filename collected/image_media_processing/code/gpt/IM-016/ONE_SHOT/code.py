@@ -1,0 +1,66 @@
+from pathlib import Path
+import math
+from PIL import Image
+
+
+def sobel_edges(input_dir, output_dir):
+    """
+    Apply explicit Sobel gradient convolution to every image in input_dir.
+
+    Computes:
+        Gx = horizontal Sobel convolution
+        Gy = vertical Sobel convolution
+        magnitude = sqrt(Gx^2 + Gy^2)
+
+    The gradient magnitude is clipped to [0, 255] and saved
+    as a grayscale PNG in output_dir.
+    """
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    gx_kernel = [
+        [-1, 0, 1],
+        [-2, 0, 2],
+        [-1, 0, 1],
+    ]
+
+    gy_kernel = [
+        [-1, -2, -1],
+        [0, 0, 0],
+        [1, 2, 1],
+    ]
+
+    valid_extensions = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+
+    for input_path in input_dir.iterdir():
+        if not input_path.is_file() or input_path.suffix.lower() not in valid_extensions:
+            continue
+
+        with Image.open(input_path) as img:
+            gray = img.convert("L")
+            width, height = gray.size
+            src = gray.load()
+
+            output = Image.new("L", (width, height), 0)
+            dst = output.load()
+
+            # Explicit 3x3 Sobel convolution.
+            for y in range(1, height - 1):
+                for x in range(1, width - 1):
+                    gx = 0
+                    gy = 0
+
+                    for ky in range(3):
+                        for kx in range(3):
+                            pixel = src[x + kx - 1, y + ky - 1]
+                            gx += pixel * gx_kernel[ky][kx]
+                            gy += pixel * gy_kernel[ky][kx]
+
+                    magnitude = math.sqrt(gx * gx + gy * gy)
+
+                    # Clip gradient magnitude to valid grayscale range.
+                    dst[x, y] = max(0, min(255, int(round(magnitude))))
+
+            output_path = output_dir / f"{input_path.stem}_sobel.png"
+            output.save(output_path, format="PNG")

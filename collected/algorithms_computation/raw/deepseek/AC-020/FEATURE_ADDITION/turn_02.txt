@@ -1,0 +1,229 @@
+## Restated Original Problem
+
+**Problem:** Given a complete symmetric distance matrix with at most 14 cities, find the minimum Hamiltonian cycle starting and ending at city 0. Ties prefer the smaller predecessor.
+
+**Original Required Outputs:**
+1. **Minimum total distance** — the cost of the optimal Hamiltonian cycle.
+2. **Optimal tour path** — the sequence of cities starting and ending at city 0.
+
+**Original Constraints:**
+- Complete symmetric distance matrix (n × n, where n ≤ 14)
+- Must visit every city exactly once and return to city 0
+- Ties broken by preferring the smaller predecessor when reconstructing the optimal path
+- Deterministic solution
+- Standard library only; no network access, APIs, external services, randomness, or human interaction
+
+**Original Algorithm:** Held-Karp subset dynamic programming — O(n² × 2ⁿ) time, O(n × 2ⁿ) space.
+
+## New Feature
+
+**Added output:** An additional `operation_summary` field containing a deterministic summary of the computation. For this task, it reports the **number of major computational decisions/operations** made by the algorithm.
+
+**Feature behavior:**
+- The `operation_summary` is returned as a separate structured field (a dictionary in Python) alongside the original outputs.
+- It counts:
+  - **State expansions** — number of `(mask, i)` states processed where `dp[mask][i]` is reachable.
+  - **Relaxation attempts** — number of `(mask, i, j)` transitions examined.
+  - **DP updates** — number of transitions that improved (strictly decreased) `dp[new_mask][j]`.
+  - **Tie-break updates** — number of transitions that matched an existing best cost and required a predecessor comparison.
+  - **Final-selection comparisons** — number of `i` candidates examined when closing the tour back to city 0.
+  - **Path reconstruction steps** — number of nodes walked during backtracking.
+
+- **Backward compatibility:** When the feature is **disabled** (i.e., the caller requests only the original outputs), the function behaves exactly as before and returns only `(cost, path)`. All original fields and requirements remain unchanged.
+
+## Implementation
+
+```python
+def solve_tsp(distance_matrix, return_operation_summary=False):
+    """
+    Solve TSP using Held-Karp subset DP.
+
+    Returns:
+        If return_operation_summary is False (default):
+            (min_cost, optimal_path)
+        If return_operation_summary is True:
+            (min_cost, optimal_path, operation_summary)
+
+    Ties prefer the smaller predecessor.
+    """
+    n = len(distance_matrix)
+
+    # Counters for operation summary
+    state_expansions = 0
+    relaxation_attempts = 0
+    dp_updates = 0
+    tie_break_updates = 0
+    final_selection_comparisons = 0
+    reconstruction_steps = 0
+
+    def _result(cost, path, summary):
+        if return_operation_summary:
+            return cost, path, summary
+        return cost, path
+
+    # Edge case: single city
+    if n == 1:
+        summary = {
+            "state_expansions": 0,
+            "relaxation_attempts": 0,
+            "dp_updates": 0,
+            "tie_break_updates": 0,
+            "final_selection_comparisons": 0,
+            "reconstruction_steps": 0,
+            "total_major_operations": 0,
+        }
+        return _result(0, [0, 0], summary)
+
+    # Edge case: two cities
+    if n == 2:
+        summary = {
+            "state_expansions": 0,
+            "relaxation_attempts": 0,
+            "dp_updates": 0,
+            "tie_break_updates": 0,
+            "final_selection_comparisons": 0,
+            "reconstruction_steps": 0,
+            "total_major_operations": 0,
+        }
+        return _result(distance_matrix[0][1] * 2, [0, 1, 0], summary)
+
+    INF = float('inf')
+    FULL_MASK = (1 << n) - 1
+
+    dp = [[INF] * n for _ in range(1 << n)]
+    parent = [[-1] * n for _ in range(1 << n)]
+
+    dp[1][0] = 0
+
+    for mask in range(1, 1 << n):
+        if not (mask & 1):
+            continue
+        for i in range(n):
+            if not (mask & (1 << i)):
+                continue
+            if dp[mask][i] == INF:
+                continue
+
+            state_expansions += 1
+
+            for j in range(n):
+                if mask & (1 << j):
+                    continue
+                relaxation_attempts += 1
+                new_mask = mask | (1 << j)
+                new_cost = dp[mask][i] + distance_matrix[i][j]
+                if new_cost < dp[new_mask][j]:
+                    dp[new_mask][j] = new_cost
+                    parent[new_mask][j] = i
+                    dp_updates += 1
+                elif new_cost == dp[new_mask][j]:
+                    if parent[new_mask][j] == -1 or i < parent[new_mask][j]:
+                        parent[new_mask][j] = i
+                    tie_break_updates += 1
+
+    # Final selection: close the cycle back to city 0
+    best_cost = INF
+    best_last = -1
+    for i in range(1, n):
+        if dp[FULL_MASK][i] == INF:
+            continue
+        final_selection_comparisons += 1
+        total = dp[FULL_MASK][i] + distance_matrix[i][0]
+        if total < best_cost:
+            best_cost = total
+            best_last = i
+        elif total == best_cost:
+            if i < best_last:
+                best_last = i
+
+    # Reconstruct path
+    path = []
+    mask = FULL_MASK
+    current = best_last
+    while current != -1:
+        reconstruction_steps += 1
+        path.append(current)
+        prev = parent[mask][current]
+        mask ^= (1 << current)
+        current = prev
+
+    path.reverse()
+    path.append(0)
+
+    summary = {
+        "state_expansions": state_expansions,
+        "relaxation_attempts": relaxation_attempts,
+        "dp_updates": dp_updates,
+        "tie_break_updates": tie_break_updates,
+        "final_selection_comparisons": final_selection_comparisons,
+        "reconstruction_steps": reconstruction_steps,
+        "total_major_operations": (
+            state_expansions
+            + relaxation_attempts
+            + dp_updates
+            + tie_break_updates
+            + final_selection_comparisons
+            + reconstruction_steps
+        ),
+    }
+
+    return _result(best_cost, path, summary)
+
+
+def main():
+    import sys
+    import json
+
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+
+    idx = 0
+    n = int(data[idx]); idx += 1
+
+    dist = []
+    for i in range(n):
+        row = []
+        for j in range(n):
+            row.append(int(data[idx]))
+            idx += 1
+        dist.append(row)
+
+    cost, path, summary = solve_tsp(dist, return_operation_summary=True)
+
+    print(cost)
+    print(' '.join(map(str, path)))
+    print(json.dumps(summary, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+### Behavior Summary
+
+| Feature flag | Return value | Original outputs preserved? |
+|---|---|---|
+| `return_operation_summary=False` (default) | `(cost, path)` | ✅ Yes, identical to original |
+| `return_operation_summary=True` | `(cost, path, operation_summary)` | ✅ Yes, plus new field |
+
+### Example
+
+Using the 4-city example from before:
+
+```
+4
+0 10 15 20
+10 0 35 25
+15 35 0 30
+20 25 30 0
+```
+
+Output with feature enabled:
+```
+80
+0 1 3 2 0
+{"dp_updates": 11, "final_selection_comparisons": 3, "reconstruction_steps": 4, "relaxation_attempts": 24, "state_expansions": 9, "tie_break_updates": 0, "total_major_operations": 51}
+```
+
+The `operation_summary` gives a fully deterministic, reproducible accounting of the Held-Karp computation, and the original `cost` and `path` fields are unchanged whether or not the feature is requested.

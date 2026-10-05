@@ -1,0 +1,119 @@
+Here's the updated version with a `mode` parameter:
+
+```python
+import re
+
+_WS_RE = re.compile(r"\s+")
+
+
+def _normalize(line):
+    """Collapse internal whitespace, strip ends, lowercase."""
+    return _WS_RE.sub(" ", line.strip()).lower()
+
+
+def remove_duplicate_lines(lines, mode="exact"):
+    """
+    Remove duplicate lines while preserving order.
+
+    Args:
+        lines: An iterable of strings, or a single string with newlines.
+        mode: 'exact'      -> compare raw lines
+              'normalized' -> compare stripped, lowercased, whitespace-collapsed form
+
+    Returns:
+        tuple: (unique_lines, counts)
+            - unique_lines: list of unique lines in original order
+              (first-seen raw form is kept as the representative)
+            - counts: dict mapping the *compared key* to its occurrence count
+    """
+    if isinstance(lines, str):
+        lines = lines.splitlines()
+
+    if mode not in ("exact", "normalized"):
+        raise ValueError(f"unknown mode: {mode!r}")
+
+    key_fn = (lambda s: s) if mode == "exact" else _normalize
+
+    seen = set()
+    unique_lines = []
+    counts = {}
+
+    for line in lines:
+        key = key_fn(line)
+        counts[key] = counts.get(key, 0) + 1
+        if key not in seen:
+            seen.add(key)
+            unique_lines.append(line)  # keep the first-seen raw line
+
+    return unique_lines, counts
+
+
+def dedupe_file(input_path, output_path, mode="exact"):
+    with open(input_path) as f:
+        unique, counts = remove_duplicate_lines(f.read().splitlines(), mode=mode)
+
+    with open(output_path, "w") as f:
+        f.write("\n".join(unique) + "\n")
+
+    return counts
+
+
+if __name__ == "__main__":
+    sample = """Apple
+  apple
+banana
+BANANA   
+cherry\tpie
+cherry   pie
+date"""
+
+    for mode in ("exact", "normalized"):
+        unique, counts = remove_duplicate_lines(sample, mode=mode)
+        print(f"--- mode={mode} ---")
+        for line in unique:
+            key = line if mode == "exact" else _normalize(line)
+            print(f"  {line!r}  (x{counts[key]})")
+        print()
+```
+
+**Output:**
+```
+--- mode=exact ---
+  'Apple'  (x1)
+  '  apple'  (x1)
+  'banana'  (x1)
+  'BANANA   '  (x1)
+  'cherry\tpie'  (x1)
+  'cherry   pie'  (x1)
+  'date'  (x1)
+
+--- mode=normalized ---
+  'Apple'  (x2)
+  'banana'  (x2)
+  'cherry\tpie'  (x2)
+  'date'  (x1)
+```
+
+### Key design choices
+
+1. **Output writing is identical** in both modes — `unique_lines` still holds raw strings, so `"\n".join(unique)` produces the same kind of output regardless of mode.
+2. **First-seen raw form wins.** `"Apple"` and `"  apple"` normalize to the same key, so only the first occurrence is written. This avoids silently rewriting lines the user didn't ask to change.
+3. **`counts` is keyed by the comparison key.** In `exact` mode the key is the raw line; in `normalized` mode it's the normalized form. This is the only way the numbers stay meaningful when multiple raw lines collapse to one key. If you'd rather have counts keyed by the representative raw line, change `counts[key]` to `counts[unique_representative]` — but then lookups during the loop get awkward.
+4. **Normalization rules:** `strip()` removes leading/trailing whitespace (including tabs), `re.sub(r"\s+", " ", ...)` collapses internal runs (spaces, tabs, newlines-that-survived-splitlines shouldn't occur, but tabs mixed with spaces do), then `lower()`. Order matters — collapse *after* strip is fine either way here, but collapsing first is slightly cleaner.
+5. **Validation:** unknown modes raise `ValueError` rather than silently defaulting, since a typo in a shell script would otherwise quietly produce wrong output.
+
+### If you want counts keyed by the output line instead
+
+A common alternative is to return `counts` keyed by the *representative raw line*, so you can print `for line in unique: print(line, counts[line])` directly. To do that:
+
+
+    for line in lines:
+        key = key_fn(line)
+        counts[key] = counts.get(key, 0) + 1
+        if key not in seen:
+            seen.add(key)
+            unique_lines.append(line)
+            counts.setdefault(line, 0)  # placeholder; not needed if you re-key below
+```
+
+It's simpler to keep the keyed-by-comparison-key version and normalize again at print time, as the demo does — it's one extra cheap call and keeps the function's contract clean.

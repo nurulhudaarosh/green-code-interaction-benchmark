@@ -1,0 +1,59 @@
+The fix is to explicitly use `ddof=0` for **population standard deviation**. Here is the corrected full implementation:
+
+```python
+import os
+from PIL import Image
+import numpy as np
+
+
+def compute_statistics(input_dir):
+    """
+    Compute per-image grayscale statistics.
+
+    Returns:
+        dict: {
+            filename: {
+                "histogram": 256-bin grayscale histogram,
+                "mean": mean pixel intensity,
+                "std": population standard deviation
+            }
+        }
+    """
+    results = {}
+
+    for filename in sorted(os.listdir(input_dir)):
+        filepath = os.path.join(input_dir, filename)
+
+        # Skip directories and non-files
+        if not os.path.isfile(filepath):
+            continue
+
+        try:
+            with Image.open(filepath) as img:
+                # Convert image to grayscale
+                gray = np.array(img.convert("L"), dtype=np.uint8)
+
+            # Flatten pixel values
+            pixels = gray.ravel()
+
+            # 256-bin histogram for pixel values 0-255
+            histogram = np.bincount(pixels, minlength=256)
+
+            # Mean pixel intensity
+            mean = float(np.mean(pixels))
+
+            # Population standard deviation: divide by N, not N-1
+            std = float(np.std(pixels, ddof=0))
+
+            results[filename] = {
+                "histogram": histogram.tolist(),
+                "mean": mean,
+                "std": std
+            }
+
+        except (OSError, ValueError):
+            # Skip files that are not valid/readable images
+            continue
+
+    return results
+```

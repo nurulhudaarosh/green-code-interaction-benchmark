@@ -1,0 +1,64 @@
+```python
+import pandas as pd
+
+
+def process_customer_transactions(
+    customers_df: pd.DataFrame, transactions_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Aggregates transactions by customer, ignoring unknown/invalid transaction IDs
+
+    and customer IDs not present in the customer master, including zero-transaction
+    customers, and sorting by customer ID.
+    """
+    # Filter out transactions with missing transaction_id or customer_id
+    valid_tx = transactions_df.dropna(
+        subset=["transaction_id", "customer_id"]
+    ).copy()
+
+    # Keep only transactions whose customer_id actually exists in the customer master
+    valid_tx = valid_tx[valid_tx["customer_id"].isin(customers_df["customer_id"])]
+
+    # Aggregate valid transactions by customer ID
+    aggregated_tx = (
+        valid_tx.groupby("customer_id", as_index=False)
+        .agg(
+            total_amount=("amount", "sum"),
+            transaction_count=("transaction_id", "count"),
+        )
+    )
+
+    # Left join to ensure all master customers are present, but no unknown entities are added
+    result = customers_df.merge(aggregated_tx, on="customer_id", how="left")
+
+    # Fill NaN values for customers with zero transactions
+    result["total_amount"] = result["total_amount"].fillna(0.0)
+    result["transaction_count"] = result["transaction_count"].fillna(0).astype(int)
+
+    # Sort by customer_id
+    result = result.sort_values("customer_id").reset_index(drop=True)
+
+    return result
+
+
+# Example Usage
+if __name__ == "__main__":
+    customers = pd.DataFrame(
+        {
+            "customer_id": [101, 102, 103, 104],
+            "customer_name": ["Alice", "Bob", "Charlie", "Diana"],
+        }
+    )
+
+    # Includes: valid IDs, missing transaction_id (None), and an unknown customer_id (999)
+    transactions = pd.DataFrame(
+        {
+            "transaction_id": ["T1", "T2", None, "T4", "T5"],
+            "customer_id": [101, 101, 102, 103, 999],
+            "amount": [50.0, 30.0, 100.0, 200.0, 500.0],
+        }
+    )
+
+    summary_df = process_customer_transactions(customers, transactions)
+    print(summary_df)
+
+```

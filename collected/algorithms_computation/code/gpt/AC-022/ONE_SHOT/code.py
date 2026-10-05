@@ -1,0 +1,120 @@
+def edit_distance_with_transposition(s1: str, s2: str) -> int:
+    """
+    Compute the minimum edit distance between s1 and s2 using:
+      - insertion: 1
+      - deletion: 1
+      - substitution: 1
+      - adjacent transposition: 1
+
+    Returns:
+        int: Minimum number of operations required.
+    """
+
+    n = len(s1)
+    m = len(s2)
+
+    # dp[i][j] = minimum cost to transform
+    # s1[:i] into s2[:j]
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+
+    # Base cases
+    for i in range(n + 1):
+        dp[i][0] = i
+
+    for j in range(m + 1):
+        dp[0][j] = j
+
+    # Dynamic programming
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+
+            # 1. Insertion
+            insertion = dp[i][j - 1] + 1
+
+            # 2. Deletion
+            deletion = dp[i - 1][j] + 1
+
+            # 3. Match / substitution
+            substitution = dp[i - 1][j - 1] + (
+                0 if s1[i - 1] == s2[j - 1] else 1
+            )
+
+            # Start with the three standard operations.
+            best = min(insertion, deletion, substitution)
+
+            # 4. Explicit adjacent transposition
+            #
+            # Example:
+            #     s1 = "ab"
+            #     s2 = "ba"
+            #
+            # The two adjacent characters can be swapped at cost 1.
+            if (
+                i >= 2
+                and j >= 2
+                and s1[i - 2] == s2[j - 1]
+                and s1[i - 1] == s2[j - 2]
+            ):
+                transposition = dp[i - 2][j - 2] + 1
+                best = min(best, transposition)
+
+            dp[i][j] = best
+
+    return dp[n][m]
+
+
+# -------------------------
+# Deterministic test cases
+# -------------------------
+
+def run_tests():
+    test_cases = [
+        # Empty strings
+        ("", "", 0),
+        ("", "abc", 3),
+        ("abc", "", 3),
+
+        # Identical strings
+        ("abc", "abc", 0),
+
+        # Standard operations
+        ("abc", "ab", 1),       # deletion
+        ("abc", "abcd", 1),     # insertion
+        ("abc", "axc", 1),      # substitution
+
+        # Adjacent transposition
+        ("ab", "ba", 1),
+        ("abcd", "acbd", 1),
+        ("conserve", "convesre", 1),
+
+        # Multiple operations
+        ("kitten", "sitting", 3),
+
+        # Different lengths
+        ("abc", "xyz", 3),
+
+        # Single-character cases
+        ("a", "b", 1),
+        ("a", "a", 0),
+        ("a", "", 1),
+        ("", "a", 1),
+    ]
+
+    for s1, s2, expected in test_cases:
+        result = edit_distance_with_transposition(s1, s2)
+        assert result == expected, (
+            f"Failed for {s1!r} -> {s2!r}: "
+            f"expected {expected}, got {result}"
+        )
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()
+
+    # Example
+    s1 = "abcd"
+    s2 = "acbd"
+
+    print(f"Edit distance: {edit_distance_with_transposition(s1, s2)}")

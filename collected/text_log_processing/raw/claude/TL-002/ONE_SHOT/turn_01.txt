@@ -1,0 +1,44 @@
+```python
+import csv
+import re
+
+_LOG_RE = re.compile(
+    r'^(\S+)\s+\S+\s+\S+\s+\[([^\]]+)\]\s+'
+    r'"(\S+)\s+(\S+)(?:\s+[^"]*)?"\s+'
+    r'(\d{3})\s+(\d+|-)(?:\s.*)?$'
+)
+
+def convert_access_log(in_path, out_path, methods, status_classes):
+    allowed_methods = {m.upper() for m in methods} if methods else None
+    allowed_classes = {c.lower() for c in status_classes} if status_classes else None
+    written = skipped = 0
+
+    with open(in_path, "r", encoding="utf-8", errors="replace") as fin, \
+         open(out_path, "w", newline="", encoding="utf-8") as fout:
+        writer = csv.writer(fout)
+        writer.writerow(["ip", "timestamp", "method", "url", "status", "statusClass", "size"])
+
+        for line in fin:
+            m = _LOG_RE.match(line.strip())
+            if not m:
+                skipped += 1
+                continue
+
+            ip, ts, method, url, status, size = m.groups()
+            status_class = f"{status[0]}xx"
+            size = 0 if size == "-" else int(size)
+
+            if allowed_methods is not None and method.upper() not in allowed_methods:
+                continue
+            if allowed_classes is not None and status_class not in allowed_classes:
+                continue
+
+            writer.writerow([ip, ts, method, url, int(status), status_class, size])
+            written += 1
+
+    return {"written": written, "skipped": skipped}
+```
+
+Example: `convert_access_log("access.log", "out.csv", ["GET", "POST"], ["2xx", "4xx"])`
+
+Notes: it handles both Common and Combined log formats (referer and user-agent are ignored). Blank and malformed lines count as skipped. Valid lines excluded by the filters are not counted as skipped. Passing `None` or an empty list for `methods` or `status_classes` disables that filter.

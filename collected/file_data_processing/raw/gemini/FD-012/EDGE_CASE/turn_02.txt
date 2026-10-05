@@ -1,0 +1,114 @@
+Here is the updated Python script using Python's full `str.casefold()` (which handles tricky Unicode casing like the German `ß` $\rightarrow$ `ss`) and Unicode word character matching (`\w+` stripped of digits/underscores, or standard Unicode alphabetic detection via `str.isalpha`).
+
+```python
+import argparse
+import re
+from collections import Counter
+from pathlib import Path
+
+
+def tokenize_unicode(text: str) -> list[str]:
+    """Tokenizes text into Unicode alphabetic words and applies standard Unicode case-folding.
+
+    - Uses str.casefold() for proper Unicode lowercasing (e.g., 'ß' -> 'ss', 'Σ' -> 'σ').
+    - Filters tokens to retain purely alphabetic Unicode characters (including letters
+      with diacritics, Cyrillic, Greek, CJK, etc.).
+    """
+    # casefold() normalizes mixed-case and complex Unicode letter pairs
+    casefolded_text = text.casefold()
+
+    # Extract sequences of word characters (\w includes Unicode letters, digits, underscores)
+    tokens = re.findall(r"\w+", casefolded_text, flags=re.UNICODE)
+
+    # Filter out numbers, underscores, and mixed alphanumeric tokens to keep purely alphabetic words
+    return [token for token in tokens if token.isalpha()]
+
+
+def analyze_text_files(directory_path: str):
+    """Recursively processes .txt files in a directory to analyze word frequencies.
+
+    - Tokenizes Unicode alphabetic words with full Unicode case-folding.
+    - Counts total occurrences and document frequency per word.
+    - Orders results deterministically:
+        1. Total occurrences (descending)
+        2. Document frequency (descending)
+        3. Word (alphabetical ascending)
+    """
+    root_dir = Path(directory_path)
+
+    if not root_dir.exists() or not root_dir.is_dir():
+        print(f"Error: Directory '{directory_path}' does not exist or is not a directory.")
+        return
+
+    total_counts = Counter()
+    doc_counts = Counter()
+    processed_files = 0
+
+    for file_path in root_dir.rglob("*.txt"):
+        try:
+            # Fallback encoding sequence for cross-platform files
+            content = None
+            for encoding in ("utf-8", "utf-8-sig", "latin-1", "cp1252"):
+                try:
+                    content = file_path.read_text(encoding=encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+
+            if content is None:
+                print(f"Skipping unreadable file: {file_path}")
+                continue
+
+            # Extract unicode case-folded alphabetic words
+            words = tokenize_unicode(content)
+
+            # Update total frequency count across all files
+            total_counts.update(words)
+
+            # Update document frequency (unique words in current file)
+            doc_counts.update(set(words))
+
+            processed_files += 1
+
+        except Exception as e:
+            print(f"Error processing {file_path}: {e}")
+
+    if processed_files == 0:
+        print(f"No valid .txt files found in '{directory_path}'.")
+        return
+
+    # Deterministic Sorting:
+    # Key 1: Total occurrences (-total_counts[word] for descending)
+    # Key 2: Document frequency (-doc_counts[word] for descending)
+    # Key 3: Word string (word for ascending alphabetical order)
+    unique_words = sorted(
+        total_counts.keys(),
+        key=lambda w: (-total_counts[w], -doc_counts[w], w)
+    )
+
+    # Print Summary & Results Table
+    print(f"Processed {processed_files} file(s).\n")
+    print(f"{'Rank':<6} {'Word':<22} {'Total Count':<12} {'Doc Frequency':<12}")
+    print("-" * 54)
+
+    for rank, word in enumerate(unique_words, start=1):
+        print(
+            f"{rank:<6} {word:<22} {total_counts[word]:<12} {doc_counts[word]:<12}"
+        )
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Recursively analyze text files and rank Unicode word frequencies."
+    )
+    parser.add_argument(
+        "directory",
+        nargs="?",
+        default=".",
+        help="Path to directory containing .txt files (default: current directory)"
+    )
+    args = parser.parse_args()
+
+    analyze_text_files(args.directory)
+
+```

@@ -1,0 +1,46 @@
+```python
+import re
+from collections import Counter
+
+# Matches the ERROR level token and captures the message that follows it.
+_ERROR_RE = re.compile(r"\bERROR\b\s*[:\-\]|]*\s*(.*)")
+
+# Normalization rules, applied in order (specific patterns before generic ones).
+_NORMALIZERS = [
+    (re.compile(r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b"), "<TS>"),
+    (re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"), "<UUID>"),
+    (re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b"), "<IP>"),
+    (re.compile(r"\b0x[0-9a-fA-F]+\b"), "<HEX>"),
+    (re.compile(r"\b[0-9a-fA-F]{16,}\b"), "<HASH>"),
+    (re.compile(r"(?:/[\w.\-]+){2,}"), "<PATH>"),
+    (re.compile(r"'[^']*'|\"[^\"]*\""), "<STR>"),
+    (re.compile(r"\b\d+(?:\.\d+)?\b"), "<N>"),
+    (re.compile(r"\s+"), " "),
+]
+
+
+def normalize(message: str) -> str:
+    for pattern, repl in _NORMALIZERS:
+        message = pattern.sub(repl, message)
+    return message.strip()
+
+
+def analyze_error_log(path: str) -> dict[str, int]:
+    """Return {normalized ERROR signature: count}, sorted by count descending."""
+    counts: Counter[str] = Counter()
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            m = _ERROR_RE.search(line)
+            if not m:
+                continue
+            signature = normalize(m.group(1)) or "<EMPTY>"
+            counts[signature] += 1
+    return dict(counts.most_common())
+
+
+if __name__ == "__main__":
+    import sys
+
+    for sig, n in analyze_error_log(sys.argv[1]).items():
+        print(f"{n:6d}  {sig}")
+```

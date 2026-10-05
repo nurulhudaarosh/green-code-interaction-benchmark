@@ -1,0 +1,174 @@
+"""Bulk re-encode images as JPEG and report size savings.
+
+Requires Pillow:  pip install pillow
+"""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+from PIL import Image, ImageOps, UnidentifiedImageError
+
+# Every extension Pillow can read (".png", ".webp", ".bmp", ".tif", ...).
+_IMAGE_EXTS = {
+    ext.lower()
+    for ext, fmt in Image.registered_extensions().items()
+    if fmt in Image.OPEN
+}
+
+
+def _human(n: float) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if abs(n) < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+
+
+def _ratio(original: int, reencoded: int) -> float | None:
+    """original / reencoded, or None when the ratio is undefined (size <= 0)."""
+    return original / reencoded if reencoded > 0 else None
+
+
+def _fmt_ratio(ratio: float | None) -> str:
+    return f"{ratio:.2f}x" if ratio is not None else "n/a"
+
+
+def _jpeg_compatible(img: Image.Image) -> Image.Image:
+    """JPEG has no alpha channel: flatten transparency onto white."""
+    has_alpha = img.mode in ("RGBA", "LA", "PA", "RGBa", "La") or (
+        img.mode == "P" and "transparency" in img.info
+    )
+    if has_alpha:
+        rgba = img.convert("RGBA")
+        bg = Image.new("RGB", rgba.size, (255, 255, 255))
+        bg.paste(rgba, mask=rgba.getchannel("A"))
+        return bg
+    if img.mode in ("RGB", "L", "CMYK"):
+        return img
+    return img.convert("RGB")  # palette, 16-bit, 1-bit, etc.
+
+
+def _unique_path(path: Path, claimed: set[Path], src: Path) -> Path:
+    """Avoid collisions such as photo.png and photo.jpg both -> photo.jpg."""
+    if path not in claimed:
+        return path
+    candidate = path.with_name(f"{path.stem}_{src.suffix.lstrip('.').lower()}.jpg")
+    n = 2
+    while candidate in claimed:
+        candidate = path.with_name(
+            f"{path.stem}_{src.suffix.lstrip('.').lower()}_{n}.jpg"
+        )
+        n += 1
+    return candidate
+
+
+def bulk_reencode(input_dir, output_dir, quality=85):
+    """Re-encode every image under `input_dir` as JPEG into `output_dir`.
+
+    - Walks `input_dir` recursively and mirrors its folder structure.
+    - Transparency is flattened onto a white background; EXIF orientation is
+      applied; ICC profiles are preserved. Animated images use their first frame.
+    - Prints per-file original size, re-encoded size and compression ratio
+      (original / re-encoded; values below 1.0x mean the file got larger).
+
+    Returns a list of dicts: source, output, original_size, reencoded_size,
+    ratio, and error (None on success).
+    """
+    if not isinstance(quality, int) or not 1 <= quality <= 100:
+        raise ValueError("quality must be an integer between 1 and 100")
+
+    in_root = Path(input_dir).resolve()
+    out_root = Path(output_dir).resolve()
+    if not in_root.is_dir():
+        raise NotADirectoryError(f"Input directory not found: {in_root}")
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    results: list[dict] = []
+    claimed: set[Path] = set()
+
+    for dirpath, dirnames, filenames in os.walk(in_root):
+        current = Path(dirpath)
+        # Don't re-process our own output if it lives inside the input tree.
+        dirnames[:] = sorted(d for d in dirnames if (current / d).resolve() != out_root)
+
+        for name in sorted(filenames):
+            src = current / name
+            if src.suffix.lower() not in _IMAGE_EXTS:
+                continue
+
+            rel = src.relative_to(in_root)
+            dst = _unique_path(out_root / rel.with_suffix(".jpg"), claimed, src)
+            claimed.add(dst)
+
+            record = {
+                "source": str(src),
+                "output": str(dst),
+                "original_size": src.stat().st_size,
+                "reencoded_size": None,
+                "ratio": None,
+                "error": None,
+            }
+            try:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                with Image.open(src) as img:
+                    icc = img.info.get("icc_profile")
+                    img = ImageOps.exif_transpose(img)
+                    img = _jpeg_compatible(img)
+                    save_kwargs = {"quality": quality, "optimize": True}
+                    if icc:
+                        save_kwargs["icc_profile"] = icc
+                    img.save(dst, "JPEG", **save_kwargs)
+
+                new_size = dst.stat().st_size
+                record["reencoded_size"] = new_size
+                record["ratio"] = _ratio(record["original_size"], new_size)
+            except (UnidentifiedImageError, OSError, ValueError) as exc:
+                record["error"] = f"{type(exc).__name__}: {exc}"
+                if dst.exists():
+                    dst.unlink()  # don't leave a partial file behind
+
+            results.append(record)
+
+            if record["error"]:
+                print(f"FAILED  {rel}  ({record['error']})")
+            else:
+                print(
+                    f"{str(rel):<45} {_human(record['original_size']):>10} -> "
+                    f"{_human(record['reencoded_size']):>10}   "
+                    f"{_fmt_ratio(record['ratio'])}"
+                )
+
+    ok = [r for r in results if not r["error"]]
+    if ok:
+        total_in = sum(r["original_size"] for r in ok)
+        total_out = sum(r["reencoded_size"] for r in ok)
+        print("-" * 80)
+        overall = _fmt_ratio(_ratio(total_in, total_out))
+        saved = (
+            f"{(1 - total_out / total_in) * 100:.1f}% saved"
+            if total_in > 0
+            else "n/a saved"
+        )
+        print(
+            f"{len(ok)} file(s) re-encoded at quality {quality}: "
+            f"{_human(total_in)} -> {_human(total_out)}  "
+            f"({overall} overall, {saved})"
+        )
+    failed = len(results) - len(ok)
+    if failed:
+        print(f"{failed} file(s) failed.")
+    if not results:
+        print("No images found.")
+
+    return results
+
+
+if __name__ == "__main__":
+    import argparse
+
+    p = argparse.ArgumentParser(description="Re-encode images as JPEG.")
+    p.add_argument("input_dir")
+    p.add_argument("output_dir")
+    p.add_argument("-q", "--quality", type=int, default=85)
+    args = p.parse_args()
+    bulk_reencode(args.input_dir, args.output_dir, args.quality)

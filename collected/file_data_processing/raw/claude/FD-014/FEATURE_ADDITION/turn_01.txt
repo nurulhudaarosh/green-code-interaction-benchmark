@@ -1,0 +1,276 @@
+Here's a self-contained matcher. It blocks on surname initial + postal prefix to limit comparisons, then links records within each block that share a normalized email or phone, and merges them into clusters with union-find.
+
+```python
+#!/usr/bin/env python3
+"""
+Offline customer record matcher.
+
+Pipeline:
+  1. Normalize fields (email, phone, surname, postal code).
+  2. Block on (surname initial, postal prefix) so only plausible pairs are compared.
+  3. Within each block, link records sharing an exact normalized email or phone.
+  4. Merge links transitively with union-find into entity clusters.
+
+Usage:
+  python matcher.py customers.csv [-o matches.csv] [--postal-prefix-len 3] [--demo]
+
+Expected CSV columns (case-insensitive): id, first_name, last_name, email, phone, postal_code
+"""
+
+import argparse
+import csv
+import re
+import sys
+import unicodedata
+from collections import defaultdict
+from itertools import combinations
+
+
+# ----------------------------- Normalization -----------------------------
+
+def strip_accents(s: str) -> str:
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c)
+    )
+
+
+def normalize_surname(s: str) -> str:
+    s = strip_accents((s or "").strip().lower())
+    return re.sub(r"[^a-z]", "", s)
+
+
+def normalize_postal(s: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", (s or "").upper())
+
+
+def normalize_email(s: str) -> str:
+    s = (s or "").strip().lower()
+    if "@" not in s:
+        return ""
+    local, _, domain = s.rpartition("@")
+    if not local or not domain or "." not in domain:
+        return ""
+    local = local.split("+", 1)[0]          # drop +tag
+    if domain in ("gmail.com", "googlemail.com"):
+        domain = "gmail.com"
+        local = local.replace(".", "")      # gmail ignores dots
+    return f"{local}@{domain}" if local else ""
+
+
+def normalize_phone(s: str, min_digits: int = 7) -> str:
+    digits = re.sub(r"\D", "", s or "")
+    # Strip common international/trunk prefixes for 11-digit NANP numbers
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    if len(digits) < min_digits:
+        return ""
+    if len(set(digits)) == 1:               # e.g. 0000000000
+        return ""
+    return digits
+
+
+# ----------------------------- Union-Find -----------------------------
+
+class UnionFind:
+    def __init__(self):
+        self.parent = {}
+        self.rank = {}
+
+    def add(self, x):
+        if x not in self.parent:
+            self.parent[x] = x
+            self.rank[x] = 0
+
+    def find(self, x):
+        root = x
+        while self.parent[root] != root:
+            root = self.parent[root]
+        while self.parent[x] != root:       # path compression
+            self.parent[x], x = root, self.parent[x]
+        return root
+
+    def union(self, a, b):
+        ra, rb = self.find(a), self.find(b)
+        if ra == rb:
+            return
+        if self.rank[ra] < self.rank[rb]:
+            ra, rb = rb, ra
+        self.parent[rb] = ra
+        if self.rank[ra] == self.rank[rb]:
+            self.rank[ra] += 1
+
+
+# ----------------------------- Matching -----------------------------
+
+def prepare(record: dict, prefix_len: int) -> dict:
+    surname = normalize_surname(record.get("last_name", ""))
+    postal = normalize_postal(record.get("postal_code", ""))
+    return {
+        **record,
+        "_surname": surname,
+        "_email": normalize_email(record.get("email", "")),
+        "_phone": normalize_phone(record.get("phone", "")),
+        "_block": (surname[:1], postal[:prefix_len]) if surname and postal else None,
+    }
+
+
+def build_blocks(records: list) -> dict:
+    blocks = defaultdict(list)
+    for r in records:
+        if r["_block"] is not None:
+            blocks[r["_block"]].append(r)
+    return blocks
+
+
+def match_block(block: list, uf: UnionFind, evidence: dict):
+    """Link records in one block via exact email/phone using inverted indexes
+    (avoids O(n^2) pair comparisons within large blocks)."""
+    for field, label in (("_email", "email"), ("_phone", "phone")):
+        index = defaultdict(list)
+        for r in block:
+            if r[field]:
+                index[r[field]].append(r["id"])
+        for value, ids in index.items():
+            for a, b in combinations(ids, 2):
+                uf.union(a, b)
+                evidence[tuple(sorted((a, b)))].add(label)
+
+
+def run_matcher(rows: list, prefix_len: int = 3):
+    records = [prepare(r, prefix_len) for r in rows]
+
+    seen = set()
+    for r in records:
+        if r["id"] in seen:
+            raise ValueError(f"Duplicate record id: {r['id']!r}")
+        seen.add(r["id"])
+
+    uf = UnionFind()
+    for r in records:
+        uf.add(r["id"])
+
+    evidence = defaultdict(set)             # (id_a, id_b) -> {"email", "phone"}
+    blocks = build_blocks(records)
+    for block in blocks.values():
+        if len(block) > 1:
+            match_block(block, uf, evidence)
+
+    clusters = defaultdict(list)
+    for r in records:
+        clusters[uf.find(r["id"])].append(r["id"])
+
+    stats = {
+        "records": len(records),
+        "unblocked": sum(1 for r in records if r["_block"] is None),
+        "blocks": len(blocks),
+        "largest_block": max((len(b) for b in blocks.values()), default=0),
+        "clusters": len(clusters),
+        "multi_record_clusters": sum(1 for c in clusters.values() if len(c) > 1),
+    }
+    return records, clusters, evidence, stats
+
+
+# ----------------------------- I/O -----------------------------
+
+def read_csv(path: str) -> list:
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        if not reader.fieldnames:
+            raise ValueError("CSV has no header row")
+        reader.fieldnames = [h.strip().lower() for h in reader.fieldnames]
+        if "id" not in reader.fieldnames:
+            raise ValueError("CSV must contain an 'id' column")
+        return [{k: (v or "").strip() for k, v in row.items()} for row in reader]
+
+
+def write_output(path, records, clusters, evidence):
+    by_id = {r["id"]: r for r in records}
+    cluster_ids = {}
+    for n, (_, members) in enumerate(
+        sorted(clusters.items(), key=lambda kv: min(kv[1])), start=1
+    ):
+        for m in members:
+            cluster_ids[m] = f"C{n:06d}"
+
+    # Which evidence types touched each record
+    rec_evidence = defaultdict(set)
+    for (a, b), kinds in evidence.items():
+        rec_evidence[a] |= kinds
+        rec_evidence[b] |= kinds
+
+    out = sys.stdout if path == "-" else open(path, "w", newline="", encoding="utf-8")
+    try:
+        w = csv.writer(out)
+        w.writerow(["cluster_id", "cluster_size", "id", "first_name", "last_name",
+                    "email", "phone", "postal_code", "matched_on"])
+        for rid in sorted(by_id, key=lambda i: (cluster_ids[i], i)):
+            r = by_id[rid]
+            size = len(clusters[next(k for k, v in clusters.items() if rid in v)])
+            w.writerow([
+                cluster_ids[rid], size, rid,
+                r.get("first_name", ""), r.get("last_name", ""),
+                r.get("email", ""), r.get("phone", ""), r.get("postal_code", ""),
+                "+".join(sorted(rec_evidence.get(rid, []))),
+            ])
+    finally:
+        if out is not sys.stdout:
+            out.close()
+
+
+DEMO_ROWS = [
+    {"id": "1", "first_name": "Ana",   "last_name": "García",  "email": "ana.garcia@gmail.com", "phone": "(555) 123-4567", "postal_code": "90210"},
+    {"id": "2", "first_name": "Anna",  "last_name": "Garcia",  "email": "anagarcia+shop@gmail.com", "phone": "",              "postal_code": "902-10"},
+    {"id": "3", "first_name": "A.",    "last_name": "Garcia",  "email": "other@example.com",    "phone": "+1 555 123 4567", "postal_code": "90211"},
+    {"id": "4", "first_name": "Bob",   "last_name": "Smith",   "email": "bob@example.com",      "phone": "555-000-1111",    "postal_code": "10001"},
+    {"id": "5", "first_name": "Robert","last_name": "Smith",   "email": "BOB@EXAMPLE.COM",      "phone": "",                "postal_code": "10002"},
+    {"id": "6", "first_name": "Bob",   "last_name": "Smyth",   "email": "bob@example.com",      "phone": "",                "postal_code": "10001"},  # different initial/surname -> different block
+    {"id": "7", "first_name": "Cara",  "last_name": "Lee",     "email": "",                     "phone": "",                "postal_code": ""},       # no block
+]
+
+
+def main():
+    p = argparse.ArgumentParser(description="Offline customer record matcher")
+    p.add_argument("input", nargs="?", help="Input CSV path")
+    p.add_argument("-o", "--output", default="-", help="Output CSV path (default: stdout)")
+    p.add_argument("--postal-prefix-len", type=int, default=3)
+    p.add_argument("--demo", action="store_true", help="Run on built-in sample data")
+    args = p.parse_args()
+
+    if args.demo:
+        rows = DEMO_ROWS
+    elif args.input:
+        rows = read_csv(args.input)
+    else:
+        p.error("provide an input CSV or use --demo")
+
+    records, clusters, evidence, stats = run_matcher(rows, args.postal_prefix_len)
+    write_output(args.output, records, clusters, evidence)
+
+    print("\n--- stats ---", file=sys.stderr)
+    for k, v in stats.items():
+        print(f"{k}: {v}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+**How it works**
+
+- **Normalization:** emails are lowercased, `+tag` is stripped, and Gmail dots are removed. Phones are reduced to digits, a leading US `1` is dropped, and short or all-same-digit values are discarded. Surnames are accent-stripped and reduced to letters. Postal codes are uppercased and stripped of punctuation.
+- **Blocking:** the key is `(first letter of surname, first N chars of postal code)`, with N defaulting to 3. Records missing either value get no block and can't match, which keeps results conservative.
+- **Matching:** inside each block, an inverted index on email and on phone links records sharing an exact value. This avoids comparing every pair.
+- **Clustering:** union-find merges links transitively, so A–B by email and B–C by phone puts all three in one cluster.
+- **Output:** one row per record with `cluster_id`, `cluster_size`, and `matched_on` (email, phone, or both).
+
+**Run it**
+
+```
+python matcher.py --demo
+python matcher.py customers.csv -o matches.csv --postal-prefix-len 3
+```
+
+**Caveats to know about**
+
+- Blocking trades recall for speed. In the demo, record 6 ("Smyth") shares an email with record 4, but different surname initials mean they're never compared. Add a second blocking pass (e.g., on email domain) if you need to catch those.
+- Shared phones (households, switchboards) can produce false merges. If that matters, require email *or* phone plus a name check before linking.

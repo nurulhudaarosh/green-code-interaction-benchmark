@@ -1,0 +1,178 @@
+# Minimum-Cost Grid Path with `operation_summary`
+
+## 1. Original Problem (unchanged)
+
+Given a non-negative cost matrix (`m × n`), start at the top-left cell `(0, 0)` and move only **right** or **down** to reach the bottom-right cell `(m-1, n-1)`. The path cost is the sum of all visited cells, including start and end.
+
+**Constraints**
+- The matrix is non-empty, rectangular, and has non-negative costs.
+- Only right/down moves are allowed.
+- The standard library only, with no network, APIs, randomness, or interaction.
+- The result must be deterministic.
+
+**Original required outputs**
+1. `min_cost`: the minimum total cost.
+2. `path`: one optimal path as `(row, col)` coordinates from start to end.
+3. The same path is returned every time. Ties are broken by choosing the predecessor from **above**.
+
+## 2. New Feature: `operation_summary`
+
+When requested, the function also returns a deterministic summary of the computation. "Major operations" are counted as follows:
+
+| Field | Meaning |
+|---|---|
+| `rows`, `cols` | Grid dimensions |
+| `cells_initialized` | Start cell setup (always 1) |
+| `forced_moves` | First-row and first-column cells, where only one predecessor exists (`(m-1)+(n-1)`) |
+| `comparisons` | Up-vs-left decisions at interior cells (`(m-1)(n-1)`) |
+| `chose_up` / `chose_left` | Outcome of those comparisons (`chose_up` includes ties) |
+| `ties_broken_up` | Comparisons where costs were equal and "up" was chosen |
+| `backtrack_steps` | Predecessor hops during path reconstruction (`len(path)-1`) |
+| `total_operations` | `cells_initialized + forced_moves + comparisons + backtrack_steps` |
+
+**Backward compatibility:** the flag defaults to `False`. When disabled, the function returns exactly the original `(min_cost, path)` tuple with identical values, and the DP logic and tie rule are untouched. The counters only observe the computation and never influence it.
+
+## 3. Implementation
+
+```python
+from typing import Dict, List, Optional, Tuple, Union
+
+Coord = Tuple[int, int]
+Summary = Dict[str, int]
+
+
+def min_cost_path(
+    grid: List[List[float]],
+    include_operation_summary: bool = False,
+) -> Union[Tuple[float, List[Coord]], Tuple[float, List[Coord], Summary]]:
+    """
+    Minimum-cost path moving only right/down from (0, 0) to (m-1, n-1).
+
+    Default (include_operation_summary=False): returns (min_cost, path),
+    identical to the original behavior.
+
+    If include_operation_summary=True: returns (min_cost, path, summary).
+
+    Tie rule: equal cost from above and from the left -> predecessor is above.
+    """
+    # ---- Validation (unchanged) ----
+    if not grid or not grid[0]:
+        raise ValueError("grid must be a non-empty matrix")
+    m, n = len(grid), len(grid[0])
+    for row in grid:
+        if len(row) != n:
+            raise ValueError("grid must be rectangular")
+        for v in row:
+            if v < 0:
+                raise ValueError("costs must be non-negative")
+
+    # ---- Counters (observe only; never affect results) ----
+    cells_initialized = 0
+    forced_moves = 0
+    comparisons = 0
+    chose_up = 0
+    chose_left = 0
+    ties_broken_up = 0
+
+    # ---- DP tables ----
+    dp: List[List[float]] = [[0] * n for _ in range(m)]
+    prev: List[List[Optional[Coord]]] = [[None] * n for _ in range(m)]
+
+    dp[0][0] = grid[0][0]
+    cells_initialized += 1
+
+    for c in range(1, n):                      # first row: from the left
+        dp[0][c] = dp[0][c - 1] + grid[0][c]
+        prev[0][c] = (0, c - 1)
+        forced_moves += 1
+
+    for r in range(1, m):                      # first column: from above
+        dp[r][0] = dp[r - 1][0] + grid[r][0]
+        prev[r][0] = (r - 1, 0)
+        forced_moves += 1
+
+    for r in range(1, m):                      # interior cells
+        for c in range(1, n):
+            from_up = dp[r - 1][c]
+            from_left = dp[r][c - 1]
+            comparisons += 1
+            if from_up <= from_left:           # tie -> prefer "up"
+                dp[r][c] = grid[r][c] + from_up
+                prev[r][c] = (r - 1, c)
+                chose_up += 1
+                if from_up == from_left:
+                    ties_broken_up += 1
+            else:
+                dp[r][c] = grid[r][c] + from_left
+                prev[r][c] = (r, c - 1)
+                chose_left += 1
+
+    # ---- Path reconstruction ----
+    path: List[Coord] = []
+    cur: Optional[Coord] = (m - 1, n - 1)
+    while cur is not None:
+        path.append(cur)
+        cur = prev[cur[0]][cur[1]]
+    path.reverse()
+
+    min_cost = dp[m - 1][n - 1]
+
+    if not include_operation_summary:
+        return min_cost, path                  # original output, unchanged
+
+    backtrack_steps = len(path) - 1
+    summary: Summary = {
+        "rows": m,
+        "cols": n,
+        "cells_initialized": cells_initialized,
+        "forced_moves": forced_moves,
+        "comparisons": comparisons,
+        "chose_up": chose_up,
+        "chose_left": chose_left,
+        "ties_broken_up": ties_broken_up,
+        "backtrack_steps": backtrack_steps,
+        "total_operations": (
+            cells_initialized + forced_moves + comparisons + backtrack_steps
+        ),
+    }
+    return min_cost, path, summary
+
+
+def main() -> None:
+    g = [[1, 3, 1],
+         [1, 5, 1],
+         [4, 2, 1]]
+
+    # Feature disabled: original behavior.
+    print("disabled:", min_cost_path(g))
+
+    # Feature enabled.
+    cost, path, summary = min_cost_path(g, include_operation_summary=True)
+    print("enabled: ")
+    print("  min_cost         =", cost)
+    print("  path             =", path)
+    print("  operation_summary =", summary)
+
+    # Tie example.
+    t = [[1, 1], [1, 1]]
+    print("tie:", min_cost_path(t, include_operation_summary=True))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## 4. Sample Output
+
+```
+disabled: (7, [(0, 0), (0, 1), (0, 2), (1, 2), (2, 2)])
+enabled:
+  min_cost         = 7
+  path             = [(0, 0), (0, 1), (0, 2), (1, 2), (2, 2)]
+  operation_summary = {'rows': 3, 'cols': 3, 'cells_initialized': 1, 'forced_moves': 4, 'comparisons': 4, 'chose_up': 2, 'chose_left': 2, 'ties_broken_up': 0, 'backtrack_steps': 4, 'total_operations': 13}
+tie: (3, [(0, 0), (0, 1), (1, 1)], {'rows': 2, 'cols': 2, 'cells_initialized': 1, 'forced_moves': 2, 'comparisons': 1, 'chose_up': 1, 'chose_left': 0, 'ties_broken_up': 1, 'backtrack_steps': 2, 'total_operations': 5})
+```
+
+**Correction to my previous answer:** the sample-output explanation there wrongly implied multiple optimal paths for the classic grid. Cost 7 is achieved only by right, right, down, down, so it is the unique optimum. The tie-handling example (`[[1,1],[1,1]]`) was correct, and here it shows `ties_broken_up = 1`.
+
+Every count in the summary is a pure function of the grid, so repeated runs give identical summaries.

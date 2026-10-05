@@ -1,0 +1,229 @@
+Here's the extended solution with a pluggable `distance_metric`. I've refactored distance computation into its own dispatcher and made the pairwise loop metric-aware. Chi-squared is a natural fit here because it's bounded and particularly sensitive to shape differences in sparse histogram bins.
+
+```python
+import os
+from pathlib import Path
+from collections import defaultdict
+import numpy as np
+from PIL import Image
+
+
+IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tif', '.tiff', '.webp'}
+
+
+class UnionFind:
+    def __init__(self, n):
+        self.parent = list(range(n))
+        self.rank = [0] * n
+
+    def find(self, x):
+        root = x
+        while self.parent[root] != root:
+            root = self.parent[root]
+        while self.parent[x] != root:
+            self.parent[x], x = root, self.parent[x]
+        return root
+
+    def union(self, x, y):
+        rx, ry = self.find(x), self.find(y)
+        if rx == ry:
+            return False
+        if self.rank[rx] < self.rank[ry]:
+            rx, ry = ry, rx
+        self.parent[ry] = rx
+        if self.rank[rx] == self.rank[ry]:
+            self.rank[rx] += 1
+        return True
+
+    def groups(self):
+        result = defaultdict(list)
+        for i in range(len(self.parent)):
+            result[self.find(i)].append(i)
+        return result
+
+
+def compute_histogram(path, bins=256, size=(256, 256)):
+    """Load image, convert to grayscale, resize, compute normalized histogram."""
+    with Image.open(path) as img:
+        img = img.convert('L')
+        if size is not None:
+            img = img.resize(size, Image.BILINEAR)
+        arr = np.asarray(img, dtype=np.uint8)
+
+    hist, _ = np.histogram(arr, bins=bins, range=(0, 256))
+    hist = hist.astype(np.float64)
+    total = hist.sum()
+    if total > 0:
+        hist /= total
+    return hist
+
+
+# ---------------------------------------------------------------------------
+# Distance metrics
+# ---------------------------------------------------------------------------
+# Each metric takes two 1-D arrays of shape (bins,) and returns a scalar.
+# A "batch" variant is also provided where possible; it takes a query row
+# of shape (bins,) and a matrix of shape (m, bins) and returns shape (m,).
+
+def _l1_pair(h1, h2):
+    return float(np.abs(h1 - h2).sum())
+
+
+def _l1_batch(query, matrix):
+    """L1 distance from `query` to each row of `matrix`. Returns shape (m,)."""
+    return np.abs(matrix - query).sum(axis=1)
+
+
+def _chi_squared_pair(h1, h2):
+    # Standard chi-squared: sum((a - b)^2 / (a + b)), with the 0/0 convention
+    # that the term is 0 when both bins are empty.
+    denom = h1 + h2
+    numer = (h1 - h2) ** 2
+    term = np.where(denom > 0, numer / np.where(denom > 0, denom, 1.0), 0.0)
+    return float(term.sum())
+
+
+def _chi_squared_batch(query, matrix):
+    """Chi-squared distance from `query` to each row of `matrix`. Returns (m,)."""
+    denom = matrix + query                          # (m, bins)
+    numer = (matrix - query) ** 2                   # (m, bins)
+    safe = denom > 0
+    term = np.zeros_like(numer)
+    np.divide(numer, denom, out=term, where=safe)   # 0/0 → 0
+    return term.sum(axis=1)
+
+
+_METRICS = {
+    # name: (pairwise_fn, batch_fn)
+    'l1':          (_l1_pair,          _l1_batch),
+    'chi_squared': (_chi_squared_pair, _chi_squared_batch),
+}
+
+
+def get_metric(name):
+    key = name.lower()
+    if key not in _METRICS:
+        raise ValueError(
+            f"Unknown distance_metric {name!r}. "
+            f"Supported: {sorted(_METRICS)}"
+        )
+    return _METRICS[key]
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+def find_near_duplicates(input_dir, threshold, distance_metric='l1',
+                         bins=256, size=(256, 256), verbose=False):
+    """
+    Cluster images in `input_dir` whose histogram distance is within `threshold`,
+    using transitive union-find grouping.
+
+    Parameters
+    ----------
+    input_dir : str | Path
+        Directory to scan (non-recursive).
+    threshold : float
+        Max distance between two histograms to be considered near-duplicates.
+        Interpretation depends on `distance_metric`:
+          - 'l1'          : 0 (identical) .. 2 (disjoint) for normalized hists.
+          - 'chi_squared' : 0 (identical) .. 2 (disjoint) for normalized hists.
+    distance_metric : {'l1', 'chi_squared'}
+        Distance function between normalized histograms.
+    bins : int
+        Number of histogram bins.
+    size : tuple | None
+        Resize target before histogram computation (None to skip).
+    verbose : bool
+        Print progress info.
+
+    Returns
+    -------
+    clusters : list[list[str]]
+        Clusters of file paths (size >= 2), largest first.
+    """
+    pair_fn, batch_fn = get_metric(distance_metric)
+
+    input_dir = Path(input_dir)
+    if not input_dir.is_dir():
+        raise NotADirectoryError(f"Not a directory: {input_dir}")
+
+    paths = sorted(
+        str(p) for p in input_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+    )
+    if verbose:
+        print(f"Found {len(paths)} image(s) in {input_dir}")
+
+    valid_paths, histograms = [], []
+    for p in paths:
+        try:
+            histograms.append(compute_histogram(p, bins=bins, size=size))
+            valid_paths.append(p)
+        except Exception as e:
+            if verbose:
+                print(f"  Skipping {p}: {e}")
+
+    n = len(valid_paths)
+    if n < 2:
+        return []
+
+    stacked = np.stack(histograms, axis=0)  # (n, bins)
+
+    if verbose:
+        print(f"Computing pairwise distances with metric={distance_metric!r}, "
+              f"threshold={threshold}")
+
+    # --- Step 1: enumerate close pairs ---
+    close_pairs = []
+    for i in range(n):
+        # Distance from image i to every j > i, vectorized via batch_fn
+        diffs = batch_fn(stacked[i], stacked[i + 1:])
+        for offset in np.nonzero(diffs <= threshold)[0]:
+            j = i + 1 + int(offset)
+            close_pairs.append((i, j))
+
+    if verbose:
+        print(f"Found {len(close_pairs)} close pair(s)")
+
+    # --- Step 2: transitive closure via union-find ---
+    uf = UnionFind(n)
+    for i, j in close_pairs:
+        uf.union(i, j)
+
+    # --- Step 3: collect components, drop singletons ---
+    clusters = []
+    for members in uf.groups().values():
+        if len(members) >= 2:
+            clusters.append(sorted(valid_paths[m] for m in members))
+
+    clusters.sort(key=lambda c: (-len(c), c[0]))
+    return clusters
+
+
+# --- Example usage ---------------------------------------------------------
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) < 3:
+        print("Usage: python find_near_duplicates.py <input_dir> <threshold> "
+              "[l1|chi_squared]")
+        sys.exit(1)
+
+    directory = sys.argv[1]
+    thr = float(sys.argv[2])
+    metric = sys.argv[3] if len(sys.argv) > 3 else 'l1'
+
+    results = find_near_duplicates(directory, thr,
+                                   distance_metric=metric, verbose=True)
+
+    if not results:
+        print("No near-duplicate clusters found.")
+    else:
+        print(f"\nFound {len(results)} cluster(s):")
+        for idx, cluster in enumerate(results, 1):
+            print(f"\nCluster {idx} ({len(cluster)} images):")
+            for path in cluster:
+                print(f"  {path}")
+```

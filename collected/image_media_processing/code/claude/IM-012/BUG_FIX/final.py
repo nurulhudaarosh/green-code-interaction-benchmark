@@ -1,0 +1,36 @@
+from pathlib import Path
+
+from PIL import Image, ImageOps
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
+
+
+def letterbox_resize(input_dir, output_dir, target_size, pad_color=(0, 0, 0)):
+    """Resize every image in input_dir to fit inside target_size (width, height),
+    preserving aspect ratio, then pad with pad_color so the output is exactly
+    target_size with the content centered. Results are saved to output_dir
+    under the same file names.
+    """
+    tw, th = target_size
+    in_dir, out_dir = Path(input_dir), Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    for path in sorted(in_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in IMAGE_EXTS:
+            continue
+
+        with Image.open(path) as img:
+            img = ImageOps.exif_transpose(img).convert("RGB")  # honor camera rotation
+
+            scale = min(tw / img.width, th / img.height)
+            nw = min(tw, max(1, round(img.width * scale)))
+            nh = min(th, max(1, round(img.height * scale)))
+            resized = img.resize((nw, nh), Image.Resampling.LANCZOS)
+
+            canvas = Image.new("RGB", (tw, th), pad_color)
+            canvas.paste(resized, ((tw - nw) // 2, (th - nh) // 2))
+            canvas.save(out_dir / path.name)
+
+
+if __name__ == "__main__":
+    letterbox_resize("input", "output", (640, 640), pad_color=(114, 114, 114))

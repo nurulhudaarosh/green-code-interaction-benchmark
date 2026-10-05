@@ -1,0 +1,74 @@
+Here's a Python code block for `keyword_freq`:
+
+```python
+import re
+from collections import Counter
+from pathlib import Path
+
+
+def keyword_freq(paths, stopwords=None, top_k=10, include_bigrams=False):
+    """
+    Tokenize text files, filter stopwords, count unigrams (and optionally bigrams),
+    and return the top-k most frequent keywords.
+
+    Args:
+        paths (str | Path | list): File path(s) or directory(ies) to process.
+        stopwords (iterable): Words to filter out (case-insensitive).
+        top_k (int): Number of top keywords to return.
+        include_bigrams (bool): If True, also count and include bigrams.
+
+    Returns:
+        list[tuple[str, int]]: Top-k (keyword, count) pairs sorted by frequency.
+    """
+    stopwords = {w.lower() for w in (stopwords or [])}
+
+    # Normalize input to a list of file paths
+    if isinstance(paths, (str, Path)):
+        paths = [paths]
+
+    files = []
+    for p in paths:
+        p = Path(p)
+        if p.is_dir():
+            files.extend(f for f in p.rglob("*") if f.is_file())
+        elif p.is_file():
+            files.append(p)
+
+    token_re = re.compile(r"[a-zA-Z']+")
+    counter = Counter()
+
+    for f in files:
+        try:
+            text = f.read_text(encoding="utf-8", errors="ignore").lower()
+        except OSError:
+            continue
+
+        tokens = [t for t in token_re.findall(text) if t not in stopwords]
+
+        counter.update(tokens)
+
+        if include_bigrams:
+            bigrams = [f"{tokens[i]} {tokens[i + 1]}" for i in range(len(tokens) - 1)]
+            counter.update(bigrams)
+
+    return counter.most_common(top_k)
+```
+
+Example usage:
+
+
+freqs = keyword_freq(
+    paths="docs/",
+    stopwords={"the", "and", "of", "to", "a", "in"},
+    top_k=15,
+    include_bigrams=True,
+)
+print(freqs)
+```
+
+Key behaviors:
+- Recursively scans directories via `rglob("*")`.
+- Lowercases text and keeps word-ish tokens (`[a-zA-Z']+`).
+- Filters stopwords case-insensitively.
+- Bigrams are formed only from consecutive *kept* tokens (after stopword filtering).
+- Uses `Counter.most_common(top_k)` for the final sorted result.

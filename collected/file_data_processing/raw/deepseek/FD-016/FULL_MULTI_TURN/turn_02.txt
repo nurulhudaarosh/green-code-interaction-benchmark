@@ -1,0 +1,111 @@
+```python
+"""
+Transaction aggregation utility.
+
+Aggregates transactions by customer, ignores transactions whose IDs are not
+present in the master transaction list, joins the aggregated results to the
+customer master (including customers with zero transactions), and sorts the
+final output by customer ID.
+
+Unknown transaction IDs never produce output rows: only customers present in
+the customer master are emitted, and only valid transactions contribute to
+their aggregates.
+"""
+
+from collections import defaultdict
+
+
+def aggregate_transactions(customers, known_transaction_ids, transactions):
+    """
+    Parameters
+    ----------
+    customers : list of dict
+        Customer master records, each with at least a 'customer_id' key.
+        Example: [{"customer_id": "C001", "name": "Alice"}, ...]
+
+    known_transaction_ids : iterable
+        The set of transaction IDs that are considered valid. Any transaction
+        whose ID is not in this collection is ignored.
+
+    transactions : list of dict
+        Transaction records, each with at least 'transaction_id',
+        'customer_id', and 'amount' keys.
+        Example: [{"transaction_id": "T1", "customer_id": "C001", "amount": 50.0}, ...]
+
+    Returns
+    -------
+    list of dict
+        One record per customer in the master, sorted by customer_id, containing:
+        customer_id, name (if present), transaction_count, total_amount,
+        and transactions (list of valid transactions for that customer).
+        Customers with no valid transactions are included with zero counts.
+    """
+    valid_ids = set(known_transaction_ids)
+
+    # Build the set of legitimate customer IDs from the master.
+    # This guarantees unknown customers (implied by unknown transaction IDs)
+    # never create output rows.
+    valid_customer_ids = {c.get("customer_id") for c in customers}
+
+    # Aggregate valid transactions by customer
+    totals = defaultdict(float)
+    counts = defaultdict(int)
+    per_customer_transactions = defaultdict(list)
+
+    for txn in transactions:
+        txn_id = txn.get("transaction_id")
+        cust_id = txn.get("customer_id")
+
+        # Ignore unknown transaction IDs
+        if txn_id not in valid_ids:
+            continue
+        # Ignore transactions not tied to a known customer
+        if cust_id not in valid_customer_ids:
+            continue
+
+        amount = txn.get("amount", 0) or 0
+        totals[cust_id] += amount
+        counts[cust_id] += 1
+        per_customer_transactions[cust_id].append(txn)
+
+    # Join to customer master (includes zero-transaction customers).
+    # Only master customers are emitted, so unknown IDs never appear.
+    results = []
+    for cust in customers:
+        cust_id = cust.get("customer_id")
+        record = dict(cust)  # preserve all master fields
+        record["transaction_count"] = counts.get(cust_id, 0)
+        record["total_amount"] = round(totals.get(cust_id, 0.0), 2)
+        record["transactions"] = per_customer_transactions.get(cust_id, [])
+        results.append(record)
+
+    # Sort by customer ID
+    results.sort(key=lambda r: r.get("customer_id") or "")
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Example usage / self-test
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    customers = [
+        {"customer_id": "C003", "name": "Charlie"},
+        {"customer_id": "C001", "name": "Alice"},
+        {"customer_id": "C002", "name": "Bob"},
+        {"customer_id": "C004", "name": "Dana"},  # no transactions
+    ]
+
+    known_transaction_ids = ["T1", "T2", "T3", "T4"]
+
+    transactions = [
+        {"transaction_id": "T1", "customer_id": "C001", "amount": 100.0},
+        {"transaction_id": "T2", "customer_id": "C001", "amount": 50.5},
+        {"transaction_id": "T3", "customer_id": "C002", "amount": 25.0},
+        {"transaction_id": "T99", "customer_id": "C003", "amount": 999.0},  # unknown ID -> ignored
+        {"transaction_id": "T100", "customer_id": "C999", "amount": 777.0}, # unknown ID & unknown customer -> ignored
+        {"transaction_id": "T4", "customer_id": "C003", "amount": 10.0},
+    ]
+
+    for row in aggregate_transactions(customers, known_transaction_ids, transactions):
+        print(row)
+```

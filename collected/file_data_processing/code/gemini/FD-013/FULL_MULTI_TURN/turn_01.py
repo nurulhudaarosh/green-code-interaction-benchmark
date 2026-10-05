@@ -1,0 +1,120 @@
+import csv
+import math
+import statistics
+import sys
+from typing import Dict, List, Optional, Tuple, Union
+
+
+def is_numeric(val: str) -> bool:
+    """Check if a string value can be converted to a float."""
+    try:
+        f = float(val)
+        return not math.isnan(f)
+    except ValueError:
+        return False
+
+
+def calculate_csv_stats(
+    file_path: str,
+) -> Dict[str, Dict[str, Optional[Union[int, float]]]]:
+    """Reads a CSV file, identifies numeric columns, ignores missing/invalid values
+
+    per column independently, and calculates statistics preserving column order.
+    """
+    with open(file_path, mode="r", newline="", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        try:
+            headers = next(reader)
+        except StopIteration:
+            return {}
+
+        # Collect data values per column in original header order
+        column_data: Dict[str, List[float]] = {h: [] for h in headers}
+
+        for row in reader:
+            for header, cell in zip(headers, row):
+                cell_clean = cell.strip()
+                if cell_clean != "" and is_numeric(cell_clean):
+                    column_data[header].append(float(cell_clean))
+
+    stats: Dict[str, Dict[str, Optional[Union[int, float]]]] = {}
+
+    for header in headers:
+        values = column_data[header]
+        count = len(values)
+
+        if count > 0:
+            stats[header] = {
+                "count": count,
+                "min": min(values),
+                "max": max(values),
+                "mean": statistics.mean(values),
+                "median": statistics.median(values),
+            }
+        else:
+            stats[header] = {
+                "count": 0,
+                "min": None,
+                "max": None,
+                "mean": None,
+                "median": None,
+            }
+
+    return stats
+
+
+def print_stats_table(
+    stats: Dict[str, Dict[str, Optional[Union[int, float]]]]
+) -> None:
+    """Print the calculated statistics in a formatted tabular layout."""
+    if not stats:
+        print("No data or empty CSV file.")
+        return
+
+    headers = ["Column", "Count", "Min", "Max", "Mean", "Median"]
+    rows = []
+
+    for col, s in stats.items():
+        count_str = str(s["count"])
+        min_str = f"{s['min']:.4f}" if s["min"] is not None else "N/A"
+        max_str = f"{s['max']:.4f}" if s["max"] is not None else "N/A"
+        mean_str = f"{s['mean']:.4f}" if s["mean"] is not None else "N/A"
+        median_str = f"{s['median']:.4f}" if s["median"] is not None else "N/A"
+
+        rows.append([col, count_str, min_str, max_str, mean_str, median_str])
+
+    # Calculate column widths
+    col_widths = [
+        max(len(str(item)) for item in col_values)
+        for col_values in zip(headers, *rows)
+    ]
+
+    # Format string generator
+    row_format = " | ".join(f"{{:<{w}}}" for w in col_widths)
+    separator = "-+-".join("-" * w for w in col_widths)
+
+    print(row_format.format(*headers))
+    print(separator)
+    for row in rows:
+        print(row_format.format(*row))
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        filepath = sys.argv[1]
+    else:
+        # Example usage with a temporary dummy CSV file
+        filepath = "sample_data.csv"
+        sample_csv_content = """Age,Salary,Score,Notes
+25,50000,88.5,Good
+30,,92.0,Pass
+,60000,,
+40,75000,75.2,N/A
+35,55000,90.0,
+"""
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(sample_csv_content)
+        print(f"Created sample CSV file '{filepath}' for demonstration.\n")
+
+    results = calculate_csv_stats(filepath)
+    print_stats_table(results)

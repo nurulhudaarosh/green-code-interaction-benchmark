@@ -1,0 +1,147 @@
+```python
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+import hashlib
+import json
+
+
+def process_sensor_timeseries(
+    readings: list[dict],
+    sensor_key: str = "sensor_id",
+    timestamp_key: str = "timestamp",
+    value_key: str = "value",
+    freq: str = "1h",
+) -> pd.DataFrame:
+    """
+    Sort readings per sensor, fill missing interior hourly timestamps by linear
+    interpolation, mark inserted rows, and return deterministic output.
+
+    Parameters
+    ----------
+    readings : list of dict
+        Each dict must contain sensor_key, timestamp_key, value_key.
+    sensor_key : str
+        Key identifying the sensor.
+    timestamp_key : str
+        Key holding the timestamp (parsable by pandas).
+    value_key : str
+        Key holding the numeric reading.
+    freq : str
+        Resampling frequency (default hourly).
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: sensor_id, timestamp, value, is_interpolated
+        Deterministically sorted by (sensor_id, timestamp).
+    """
+    if not readings:
+        return pd.DataFrame(
+            columns=[sensor_key, timestamp_key, value_key, "is_interpolated"]
+        )
+
+    df = pd.DataFrame(readings)
+    df[timestamp_key] = pd.to_datetime(df[timestamp_key], utc=True, errors="coerce")
+    df[value_key] = pd.to_numeric(df[value_key], errors="coerce")
+    df = df.dropna(subset=[sensor_key, timestamp_key, value_key])
+
+    # Deterministic ordering of original rows: sort by sensor + timestamp
+    df = df.sort_values([sensor_key, timestamp_key], kind="mergesort").reset_index(
+        drop=True
+    )
+
+    output_frames = []
+
+    for sensor, group in df.groupby(sensor_key, sort=True):
+        group = group.sort_values(timestamp_key, kind="mergesort").reset_index(
+            drop=True
+        )
+
+        # Deduplicate: keep first occurrence per timestamp (deterministic)
+        group = group.drop_duplicates(subset=[timestamp_key], keep="first")
+
+        series = group.set_index(timestamp_key)[value_key]
+
+        # Reindex onto the full hourly grid between first and last observed ts
+        full_index = pd.date_range(
+            start=series.index.min(),
+            end=series.index.max(),
+            freq=freq,
+            tz=series.index.tz,
+        )
+
+        reindexed = series.reindex(full_index)
+
+        # Mark which rows are original vs. inserted (missing)
+        is_interpolated = reindexed.isna()
+
+        # Interpolate only interior gaps (limit_area='inside')
+        interpolated = reindexed.interpolate(
+            method="linear", limit_area="inside"
+        )
+
+        # Any remaining NaN is a leading/trailing gap — drop it
+        valid_mask = interpolated.notna()
+        interpolated = interpolated[valid_mask]
+        is_interpolated = is_interpolated[valid_mask]
+
+        result = pd.DataFrame(
+            {
+                sensor_key: sensor,
+                timestamp_key: interpolated.index,
+                value_key: interpolated.values,
+                "is_interpolated": is_interpolated.values,
+            }
+        )
+        output_frames.append(result)
+
+    final = pd.concat(output_frames, ignore_index=True)
+
+    # Deterministic final ordering
+    final = final.sort_values(
+        [sensor_key, timestamp_key], kind="mergesort"
+    ).reset_index(drop=True)
+
+    # Stable column order
+    final = final[[sensor_key, timestamp_key, value_key, "is_interpolated"]]
+
+    return final
+
+
+def write_deterministic_csv(df: pd.DataFrame, path: str) -> str:
+    """
+    Write DataFrame to CSV deterministically (sorted, fixed float formatting).
+    Returns the SHA-256 hash of the file contents.
+    """
+    out = df.copy()
+    if "value" in out.columns:
+        out["value"] = out["value"].map(lambda x: f"{x:.6f}")
+    if "timestamp" in out.columns:
+        out["timestamp"] = out["timestamp"].dt.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+    out.to_csv(path, index=False, lineterminator="\n")
+
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+# -------------------------
+# Example usage
+# -------------------------
+if __name__ == "__main__":
+    sample = [
+        {"sensor_id": "A", "timestamp": "2024-01-01T00:00:00Z", "value": 10.0},
+        {"sensor_id": "A", "timestamp": "2024-01-01T03:00:00Z", "value": 16.0},
+        {"sensor_id": "B", "timestamp": "2024-01-01T00:00:00Z", "value": 5.0},
+        {"sensor_id": "B", "timestamp": "2024-01-01T01:00:00Z", "value": 7.0},
+        {"sensor_id": "B", "timestamp": "2024-01-01T04:00:00Z", "value": 13.0},
+        {"sensor_id": "A", "timestamp": "2024-01-01T01:00:00Z", "value": 12.0},
+    ]
+
+    df = process_sensor_timeseries(sample)
+    print(df.to_string(index=False))
+
+    digest = write_deterministic_csv(df, "sensor_output.csv")
+    print("\nSHA-256:", digest)
+```

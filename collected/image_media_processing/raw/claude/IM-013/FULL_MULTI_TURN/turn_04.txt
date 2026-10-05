@@ -1,0 +1,115 @@
+```python
+import math
+from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff", ".webp"}
+
+
+def _load_font(size):
+    """Load a default font at the given size (falls back for older Pillow)."""
+    try:
+        return ImageFont.load_default(size=size)  # Pillow >= 10.1
+    except TypeError:
+        return ImageFont.load_default()
+
+
+def _fit_text(draw, text, font, max_width):
+    """Truncate text with an ellipsis so it fits within max_width pixels."""
+    if draw.textlength(text, font=font) <= max_width:
+        return text
+    ellipsis = "..."
+    while text and draw.textlength(text + ellipsis, font=font) > max_width:
+        text = text[:-1]
+    return text + ellipsis if text else ellipsis
+
+
+def build_contact_sheet(input_dir, output_path, thumb_size, columns,
+                        padding=10, background=(255, 255, 255),
+                        label=False, font_size=12, text_color=(40, 40, 40)):
+    """Tile all images in input_dir into a grid and save it to output_path.
+
+    thumb_size: int (square cell) or (width, height) tuple. Each image is
+                scaled to fit within the cell, preserving aspect ratio, and
+                centered.
+    columns:    fixed number of columns; row count is derived using ceiling
+                division so a trailing partial row is always included.
+    label:      if True, draw each image's filename in a caption strip
+                beneath its thumbnail. The strip is reserved on top of
+                thumb_size, so each cell's effective height grows by
+                caption_h (the image area itself stays cell_h tall).
+    font_size:  caption font size in pixels (only used when label=True).
+    text_color: caption color (only used when label=True).
+
+    Returns the composite PIL image. Edge case: if input_dir has no valid
+    images, a 1x1 placeholder image is written to output_path and the tuple
+    (0, columns) is returned instead of raising.
+    """
+    if columns < 1:
+        raise ValueError("columns must be >= 1")
+    cell_w, cell_h = (thumb_size, thumb_size) if isinstance(thumb_size, int) else thumb_size
+
+    paths = sorted(p for p in Path(input_dir).iterdir()
+                   if p.is_file() and p.suffix.lower() in IMAGE_EXTS)
+
+    thumbs = []  # list of (filename, thumbnail)
+    for path in paths:
+        try:
+            with Image.open(path) as im:
+                im = ImageOps.exif_transpose(im)  # respect camera orientation
+                has_alpha = "A" in im.getbands() or "transparency" in im.info
+                im = im.convert("RGBA" if has_alpha else "RGB")
+                im.thumbnail((cell_w, cell_h), Image.LANCZOS)
+                thumbs.append((path.name, im.copy()))
+        except (UnidentifiedImageError, OSError) as e:
+            print(f"Skipping {path.name}: {e}")  # unreadable / corrupt file
+            continue
+
+    if not thumbs:
+        # Nothing to tile: write a minimal valid 1x1 image and report 0 rows.
+        print(f"No readable images found in {input_dir}; wrote 1x1 placeholder.")
+        Image.new("RGB", (1, 1), background).save(output_path)
+        return (0, columns)
+
+    # Reserve a caption strip under each thumbnail cell when labeling.
+    font = _load_font(font_size) if label else None
+    caption_h = 0
+    if label:
+        probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+        left, top, right, bottom = probe.textbbox((0, 0), "Ag", font=font)
+        caption_h = (bottom - top) + 8  # text height + small vertical margin
+
+    full_cell_h = cell_h + caption_h  # effective cell height
+
+    rows = math.ceil(len(thumbs) / columns)  # ceiling division: keeps partial last row
+    sheet_w = columns * cell_w + (columns + 1) * padding
+    sheet_h = rows * full_cell_h + (rows + 1) * padding
+    sheet = Image.new("RGB", (sheet_w, sheet_h), background)
+    draw = ImageDraw.Draw(sheet) if label else None
+
+    for i, (name, thumb) in enumerate(thumbs):
+        row, col = divmod(i, columns)
+        cell_x = padding + col * (cell_w + padding)
+        cell_y = padding + row * (full_cell_h + padding)
+
+        # Image is centered within the cell_w x cell_h image area.
+        x = cell_x + (cell_w - thumb.width) // 2
+        y = cell_y + (cell_h - thumb.height) // 2
+        mask = thumb if thumb.mode == "RGBA" else None  # keep transparency
+        sheet.paste(thumb, (x, y), mask)
+
+        if label:
+            text = _fit_text(draw, name, font, cell_w)
+            text_w = draw.textlength(text, font=font)
+            tx = cell_x + (cell_w - text_w) / 2
+            ty = cell_y + cell_h + 4  # inside the reserved strip
+            draw.text((tx, ty), text, font=font, fill=text_color)
+
+    sheet.save(output_path)
+    return sheet
+
+
+if __name__ == "__main__":
+    build_contact_sheet("photos", "contact_sheet.jpg", 200, 5, label=True)
+```

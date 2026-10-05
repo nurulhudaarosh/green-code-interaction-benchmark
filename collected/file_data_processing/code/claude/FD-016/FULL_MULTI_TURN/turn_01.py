@@ -1,0 +1,86 @@
+"""
+Customer transaction aggregation utility.
+
+Behavior:
+  1. Drops transactions whose transaction ID is not in the known set.
+  2. Aggregates remaining transactions by customer (count + total amount).
+  3. Left-joins the results onto the customer master, so customers with
+     no transactions still appear (count = 0, total = 0).
+  4. Returns rows sorted by customer ID.
+
+Transactions for customers missing from the master are dropped, since the
+output is driven by the master.
+"""
+
+from collections import defaultdict
+from decimal import Decimal
+from typing import Any, Iterable, Mapping
+
+
+def aggregate_transactions(
+    transactions: Iterable[Mapping[str, Any]],
+    customer_master: Iterable[Mapping[str, Any]],
+    known_transaction_ids: Iterable[Any],
+) -> list[dict[str, Any]]:
+    """
+    Args:
+        transactions: rows with keys 'transaction_id', 'customer_id', 'amount'.
+        customer_master: rows with keys 'customer_id', 'name' (extra keys are kept).
+        known_transaction_ids: valid transaction IDs; any others are ignored.
+
+    Returns:
+        A list of dicts, one per master customer, sorted by customer_id, with
+        added 'transaction_count' and 'total_amount' fields.
+    """
+    known_ids = set(known_transaction_ids)
+
+    counts: dict[Any, int] = defaultdict(int)
+    totals: dict[Any, Decimal] = defaultdict(Decimal)
+
+    # Step 1 and 2: filter out unknown transaction IDs, then aggregate.
+    for txn in transactions:
+        if txn["transaction_id"] not in known_ids:
+            continue
+        cust_id = txn["customer_id"]
+        counts[cust_id] += 1
+        totals[cust_id] += Decimal(str(txn["amount"]))
+
+    # Step 3: join to the master; customers with no transactions get zeros.
+    result = []
+    for cust in customer_master:
+        cust_id = cust["customer_id"]
+        result.append(
+            {
+                **cust,
+                "transaction_count": counts.get(cust_id, 0),
+                "total_amount": totals.get(cust_id, Decimal("0")),
+            }
+        )
+
+    # Step 4: sort by customer ID.
+    result.sort(key=lambda row: row["customer_id"])
+    return result
+
+
+if __name__ == "__main__":
+    master = [
+        {"customer_id": 3, "name": "Carol"},
+        {"customer_id": 1, "name": "Alice"},
+        {"customer_id": 2, "name": "Bob"},  # no transactions
+    ]
+    txns = [
+        {"transaction_id": "T1", "customer_id": 1, "amount": "10.50"},
+        {"transaction_id": "T2", "customer_id": 1, "amount": "4.50"},
+        {"transaction_id": "T3", "customer_id": 3, "amount": "99.99"},
+        {"transaction_id": "TX", "customer_id": 3, "amount": "500.00"},   # unknown ID -> ignored
+        {"transaction_id": "T4", "customer_id": 42, "amount": "7.00"},    # not in master -> dropped
+    ]
+    known = ["T1", "T2", "T3", "T4"]
+
+    for row in aggregate_transactions(txns, master, known):
+        print(row)
+
+    # Output:
+    # {'customer_id': 1, 'name': 'Alice', 'transaction_count': 2, 'total_amount': Decimal('15.00')}
+    # {'customer_id': 2, 'name': 'Bob', 'transaction_count': 0, 'total_amount': Decimal('0')}
+    # {'customer_id': 3, 'name': 'Carol', 'transaction_count': 1, 'total_amount': Decimal('99.99')}

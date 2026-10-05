@@ -1,0 +1,104 @@
+import json
+import sys
+
+
+def process_products(data):
+    rows = []
+    invalid_products = 0
+
+    if not isinstance(data, list):
+        return rows, 0
+
+    for product in data:
+        if not isinstance(product, dict):
+            invalid_products += 1
+            continue
+
+        product_id = product.get("product_id")
+        name = product.get("name")
+        category = product.get("category")
+        warehouses = product.get("warehouses")
+
+        if (
+            not isinstance(product_id, str)
+            or not product_id.strip()
+            or not isinstance(name, str)
+            or not name.strip()
+            or not isinstance(category, str)
+            or not category.strip()
+            or not isinstance(warehouses, list)
+        ):
+            invalid_products += 1
+            continue
+
+        valid_product = True
+        product_rows = []
+
+        for warehouse in warehouses:
+            if not isinstance(warehouse, dict):
+                valid_product = False
+                break
+
+            warehouse_id = warehouse.get("warehouse_id")
+            stock = warehouse.get("stock")
+
+            if (
+                not isinstance(warehouse_id, str)
+                or not warehouse_id.strip()
+                or isinstance(stock, bool)
+                or not isinstance(stock, (int, float))
+                or stock < 0
+            ):
+                valid_product = False
+                break
+
+            product_rows.append({
+                "product_id": product_id,
+                "name": name,
+                "category": category,
+                "warehouse_id": warehouse_id,
+                "stock": stock
+            })
+
+        if not valid_product:
+            invalid_products += 1
+            continue
+
+        rows.extend(product_rows)
+
+    rows.sort(
+        key=lambda row: (
+            row["product_id"],
+            row["warehouse_id"]
+        )
+    )
+
+    return rows, invalid_products
+
+
+def main():
+    if len(sys.argv) != 2:
+        print("Usage: python script.py input.json")
+        return
+
+    input_file = sys.argv[1]
+
+    try:
+        with open(input_file, "r", encoding="utf-8") as file:
+            data = json.load(file)
+    except (OSError, json.JSONDecodeError):
+        print("Invalid input file")
+        return
+
+    rows, invalid_products = process_products(data)
+
+    output = {
+        "products": rows,
+        "invalid_products": invalid_products
+    }
+
+    print(json.dumps(output, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,184 @@
+```python
+import csv
+import re
+import sys
+import unicodedata
+from collections import defaultdict
+
+
+def normalize_text(value):
+    value = unicodedata.normalize("NFKC", value or "")
+    return " ".join(value.strip().casefold().split())
+
+
+def normalize_email(value):
+    return normalize_text(value)
+
+
+def normalize_phone(value):
+    return re.sub(r"\D", "", value or "")
+
+
+def get_surname(name):
+    parts = normalize_text(name).split()
+    return parts[-1] if parts else ""
+
+
+def get_surname_initial(name):
+    surname = get_surname(name)
+    return surname[0] if surname else ""
+
+
+def get_postal_prefix(postal_code):
+    postal = normalize_text(postal_code)
+    match = re.match(r"(\d+)", postal)
+    return match.group(1) if match else ""
+
+
+def build_blocks(record):
+    blocks = []
+
+    surname_initial = get_surname_initial(record.get("name", ""))
+    postal_prefix = get_postal_prefix(record.get("postal_code", ""))
+
+    if surname_initial and postal_prefix:
+        blocks.append(surname_initial + "|" + postal_prefix)
+
+    return blocks
+
+
+def read_records(filename):
+    records = []
+
+    with open(filename, "r", encoding="utf-8-sig", newline="") as file:
+        reader = csv.DictReader(file)
+
+        for index, row in enumerate(reader):
+            row["_row_number"] = index
+            row["_email"] = normalize_email(row.get("email", ""))
+            row["_phone"] = normalize_phone(row.get("phone", ""))
+            records.append(row)
+
+    return records
+
+
+def match_records(records):
+    blocks = defaultdict(list)
+    email_index = defaultdict(list)
+    phone_index = defaultdict(list)
+
+    for record in records:
+        for block in build_blocks(record):
+            blocks[block].append(record)
+
+        if record["_email"]:
+            email_index[record["_email"]].append(record)
+
+        if record["_phone"]:
+            phone_index[record["_phone"]].append(record)
+
+    matches = []
+
+    for record in records:
+        candidate_ids = set()
+
+        for block in build_blocks(record):
+            for candidate in blocks[block]:
+                candidate_ids.add(candidate["_row_number"])
+
+        exact_candidates = set()
+
+        if record["_email"]:
+            for candidate in email_index[record["_email"]]:
+                exact_candidates.add(candidate["_row_number"])
+
+        if record["_phone"]:
+            for candidate in phone_index[record["_phone"]]:
+                exact_candidates.add(candidate["_row_number"])
+
+        candidate_ids.update(exact_candidates)
+
+        for candidate in records:
+            if candidate["_row_number"] == record["_row_number"]:
+                continue
+
+            if candidate["_row_number"] not in candidate_ids:
+                continue
+
+            email_match = (
+                bool(record["_email"])
+                and bool(candidate["_email"])
+                and record["_email"] == candidate["_email"]
+            )
+
+            phone_match = (
+                bool(record["_phone"])
+                and bool(candidate["_phone"])
+                and record["_phone"] == candidate["_phone"]
+            )
+
+            same_block = bool(
+                set(build_blocks(record)) & set(build_blocks(candidate))
+            )
+
+            if email_match or phone_match:
+                match_type = "exact_email_or_phone"
+            elif same_block:
+                match_type = "same_block"
+            else:
+                continue
+
+            matches.append({
+                "record_1": record["_row_number"],
+                "record_2": candidate["_row_number"],
+                "match_type": match_type,
+                "email_match": str(email_match).lower(),
+                "phone_match": str(phone_match).lower()
+            })
+
+    unique_matches = {}
+    for match in matches:
+        key = tuple(sorted((match["record_1"], match["record_2"])))
+        unique_matches[key] = match
+
+    return sorted(
+        unique_matches.values(),
+        key=lambda x: (x["record_1"], x["record_2"])
+    )
+
+
+def write_matches(filename, matches):
+    fieldnames = [
+        "record_1",
+        "record_2",
+        "match_type",
+        "email_match",
+        "phone_match"
+    ]
+
+    with open(filename, "w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(matches)
+
+
+def main():
+    if len(sys.argv) != 3:
+        print("Usage: python matcher.py input.csv output.csv")
+        sys.exit(1)
+
+    input_file = sys.argv[1]
+    output_file = sys.argv[2]
+
+    records = read_records(input_file)
+    matches = match_records(records)
+    write_matches(output_file, matches)
+
+    print(f"Processed {len(records)} records.")
+    print(f"Found {len(matches)} candidate matches.")
+    print(f"Results written to {output_file}.")
+
+
+if __name__ == "__main__":
+    main()
+```

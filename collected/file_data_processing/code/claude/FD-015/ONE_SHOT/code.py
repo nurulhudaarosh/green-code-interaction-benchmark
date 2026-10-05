@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""
+JSONL filter: validates records, keeps active records with score >= threshold,
+sorts by category (asc), score (desc), id (asc), and reports skipped counts.
+
+Usage:
+    python jsonl_filter.py input.jsonl --threshold 50 [-o output.jsonl]
+    cat input.jsonl | python jsonl_filter.py - --threshold 50
+
+Expected record schema:
+    {"id": <int|str>, "category": <str>, "score": <number>, "active": <bool>}
+"""
+
+import argparse
+import json
+import math
+import sys
+from collections import Counter
+
+
+def validate(record):
+    """Return (ok, reason). Reason is a short skip-category string when not ok."""
+    if not isinstance(record, dict):
+        return False, "not_an_object"
+
+    for field in ("id", "category", "score", "active"):
+        if field not in record:
+            return False, f"missing_{field}"
+
+    rid = record["id"]
+    # bool is a subclass of int, so exclude it explicitly
+    if isinstance(rid, bool) or not isinstance(rid, (int, str)):
+        return False, "invalid_id"
+    if isinstance(rid, str) and not rid.strip():
+        return False, "invalid_id"
+
+    cat = record["category"]
+    if not isinstance(cat, str) or not cat.strip():
+        return False, "invalid_category"
+
+    score = record["score"]
+    if isinstance(score, bool) or not isinstance(score, (int, float)):
+        return False, "invalid_score"
+    if isinstance(score, float) and not math.isfinite(score):
+        return False, "invalid_score"
+
+    if not isinstance(record["active"], bool):
+        return False, "invalid_active"
+
+    return True, None
+
+
+def id_sort_key(rid):
+    """Sort numeric IDs before string IDs, each in natural order."""
+    if isinstance(rid, int):
+        return (0, rid, "")
+    return (1, 0, rid)
+
+
+def process(lines, threshold):
+    kept = []
+    skipped = Counter()
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue  # blank lines are ignored, not counted
+
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            skipped["malformed_json"] += 1
+            continue
+
+        ok, reason = validate(record)
+        if not ok:
+            skipped[reason] += 1
+            continue
+
+        if not record["active"]:
+            skipped["inactive"] += 1
+            continue
+
+        if record["score"] < threshold:
+            skipped["below_threshold"] += 1
+            continue
+
+        kept.append(record)
+
+    kept.sort(
+        key=lambda r: (
+            r["category"].casefold(),
+            -r["score"],
+            id_sort_key(r["id"]),
+        )
+    )
+    return kept, skipped
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Filter and sort JSONL records.")
+    parser.add_argument("input", help="Input JSONL file, or '-' for stdin")
+    parser.add_argument("-t", "--threshold", type=float, required=True,
+                        help="Minimum score (inclusive) to keep")
+    parser.add_argument("-o", "--output", help="Output file (default: stdout)")
+    args = parser.parse_args()
+
+    if not math.isfinite(args.threshold):
+        parser.error("threshold must be a finite number")
+
+    try:
+        infile = sys.stdin if args.input == "-" else open(args.input, encoding="utf-8")
+    except OSError as e:
+        print(f"Error: cannot open input: {e}", file=sys.stderr)
+        return 1
+
+    with infile:
+        kept, skipped = process(infile, args.threshold)
+
+    try:
+        out = open(args.output, "w", encoding="utf-8") if args.output else sys.stdout
+    except OSError as e:
+        print(f"Error: cannot open output: {e}", file=sys.stderr)
+        return 1
+
+    try:
+        for record in kept:
+            out.write(json.dumps(record, ensure_ascii=False) + "\n")
+    finally:
+        if out is not sys.stdout:
+            out.close()
+
+    total_skipped = sum(skipped.values())
+    print(f"Kept: {len(kept)} | Skipped: {total_skipped}", file=sys.stderr)
+    for reason, count in sorted(skipped.items()):
+        print(f"  {reason}: {count}", file=sys.stderr)
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

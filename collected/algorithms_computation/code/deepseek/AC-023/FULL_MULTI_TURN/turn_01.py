@@ -1,0 +1,79 @@
+import sys
+
+class DSU:
+    __slots__ = ("parent", "size")
+    def __init__(self, n):
+        self.parent = list(range(n))
+        self.size = [1] * n
+
+    def find(self, x):
+        parent = self.parent
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]  # path halving
+            x = parent[x]
+        return x
+
+    def union(self, a, b):
+        ra = self.find(a)
+        rb = self.find(b)
+        if ra == rb:
+            return 0, 0
+        if self.size[ra] < self.size[rb]:
+            ra, rb = rb, ra
+        self.parent[rb] = ra
+        self.size[ra] += self.size[rb]
+        return 1, self.size[ra]
+
+
+def solve():
+    data = sys.stdin.buffer.read().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    m = int(next(it))
+
+    edges = []
+    for _ in range(m):
+        u = int(next(it))
+        v = int(next(it))
+        w = int(next(it))
+        edges.append((w, u, v))
+
+    q = int(next(it))
+    queries = []
+    for i in range(q):
+        t = int(next(it))
+        queries.append((t, i))
+
+    edges.sort(key=lambda e: e[0])
+    queries.sort(key=lambda x: x[0])
+
+    dsu = DSU(n)
+    components = n
+    largest = 0 if n == 0 else 1
+
+    ans_components = [0] * q
+    ans_largest = [0] * q
+
+    ei = 0
+    for t, idx in queries:
+        while ei < m and edges[ei][0] <= t:
+            _, u, v = edges[ei]
+            merged, new_size = dsu.union(u, v)
+            if merged:
+                components -= 1
+                if new_size > largest:
+                    largest = new_size
+            ei += 1
+        ans_components[idx] = components
+        ans_largest[idx] = largest
+
+    out = []
+    for i in range(q):
+        out.append(f"{ans_components[i]} {ans_largest[i]}")
+    sys.stdout.write("\n".join(out))
+
+
+if __name__ == "__main__":
+    solve()

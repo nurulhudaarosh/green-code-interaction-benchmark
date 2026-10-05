@@ -1,0 +1,65 @@
+def summarize_logs(logs):
+    """
+    Summarize log entries by log level.
+
+    Expected format:
+    LEVEL: message
+
+    Malformed, empty, or unknown-level entries are ignored.
+    """
+
+    summary = {
+        "INFO": 0,
+        "WARNING": 0,
+        "ERROR": 0,
+        "DEBUG": 0
+    }
+
+    if not logs:
+        return summary
+
+    for log in logs:
+        if not isinstance(log, str):
+            continue
+
+        log = log.strip()
+        if not log:
+            continue
+
+        # Split only once so the message can contain separators.
+        parts = log.split(":", 1)
+
+        if len(parts) != 2:
+            continue
+
+        level = parts[0].strip().upper()
+        message = parts[1].strip()
+
+        # Both the log level and message must be valid.
+        if not level or not message:
+            continue
+
+        if level not in summary:
+            continue
+
+        summary[level] += 1
+
+    return summary
+
+
+if __name__ == "__main__":
+    logs = [
+        "INFO: Application started",
+        "ERROR: Database connection failed",
+        "WARNING: Low memory",
+        "INFO: User logged in",
+        "DEBUG: Processing request",
+        "ERROR: Request failed",
+        "MALFORMED LOG",
+        "",
+        "UNKNOWN: Something happened",
+        "ERROR:",
+        ": Missing level"
+    ]
+
+    print(summarize_logs(logs))

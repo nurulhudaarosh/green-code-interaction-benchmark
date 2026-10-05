@@ -1,11 +1,11 @@
 {
   "version": 1,
   "created_at": "2026-09-02T10:22:39.968140+00:00",
-  "updated_at": "2026-09-13T19:54:09.415426+00:00",
+  "updated_at": "2026-10-05T01:48:16.341589+00:00",
   "category": null,
   "current": {
-    "task_index": 7,
-    "task_id": "IM-008",
+    "task_index": 20,
+    "task_id": "IM-021",
     "model_index": 0,
     "model": "gpt",
     "interaction_index": 0,
@@ -1300,6 +1300,2398 @@
         3,
         4
       ]
+    },
+    "IM-008|gpt|ONE_SHOT": {
+      "task_id": "IM-008",
+      "model": "gpt",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-008|gpt|BUG_FIX": {
+      "task_id": "IM-008",
+      "model": "gpt",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-008|gpt|FEATURE_ADDITION": {
+      "task_id": "IM-008",
+      "model": "gpt",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-008|gpt|EDGE_CASE": {
+      "task_id": "IM-008",
+      "model": "gpt",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-008|gpt|FULL_MULTI_TURN": {
+      "task_id": "IM-008",
+      "model": "gpt",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-008|claude|ONE_SHOT": {
+      "task_id": "IM-008",
+      "model": "claude",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-008|claude|BUG_FIX": {
+      "task_id": "IM-008",
+      "model": "claude",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-008|claude|FEATURE_ADDITION": {
+      "task_id": "IM-008",
+      "model": "claude",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-008|claude|EDGE_CASE": {
+      "task_id": "IM-008",
+      "model": "claude",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-008|claude|FULL_MULTI_TURN": {
+      "task_id": "IM-008",
+      "model": "claude",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-008|gemini|ONE_SHOT": {
+      "task_id": "IM-008",
+      "model": "gemini",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-008|gemini|BUG_FIX": {
+      "task_id": "IM-008",
+      "model": "gemini",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-008|gemini|FEATURE_ADDITION": {
+      "task_id": "IM-008",
+      "model": "gemini",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-008|gemini|EDGE_CASE": {
+      "task_id": "IM-008",
+      "model": "gemini",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-008|gemini|FULL_MULTI_TURN": {
+      "task_id": "IM-008",
+      "model": "gemini",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-008|deepseek|ONE_SHOT": {
+      "task_id": "IM-008",
+      "model": "deepseek",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-008|deepseek|BUG_FIX": {
+      "task_id": "IM-008",
+      "model": "deepseek",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-008|deepseek|FEATURE_ADDITION": {
+      "task_id": "IM-008",
+      "model": "deepseek",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-008|deepseek|EDGE_CASE": {
+      "task_id": "IM-008",
+      "model": "deepseek",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-008|deepseek|FULL_MULTI_TURN": {
+      "task_id": "IM-008",
+      "model": "deepseek",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-009|gpt|ONE_SHOT": {
+      "task_id": "IM-009",
+      "model": "gpt",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-009|gpt|BUG_FIX": {
+      "task_id": "IM-009",
+      "model": "gpt",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-009|gpt|FEATURE_ADDITION": {
+      "task_id": "IM-009",
+      "model": "gpt",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-009|gpt|EDGE_CASE": {
+      "task_id": "IM-009",
+      "model": "gpt",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-009|gpt|FULL_MULTI_TURN": {
+      "task_id": "IM-009",
+      "model": "gpt",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-009|claude|ONE_SHOT": {
+      "task_id": "IM-009",
+      "model": "claude",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-009|claude|BUG_FIX": {
+      "task_id": "IM-009",
+      "model": "claude",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-009|claude|FEATURE_ADDITION": {
+      "task_id": "IM-009",
+      "model": "claude",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-009|claude|EDGE_CASE": {
+      "task_id": "IM-009",
+      "model": "claude",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-009|claude|FULL_MULTI_TURN": {
+      "task_id": "IM-009",
+      "model": "claude",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-009|gemini|ONE_SHOT": {
+      "task_id": "IM-009",
+      "model": "gemini",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-009|gemini|BUG_FIX": {
+      "task_id": "IM-009",
+      "model": "gemini",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-009|gemini|FEATURE_ADDITION": {
+      "task_id": "IM-009",
+      "model": "gemini",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-009|gemini|EDGE_CASE": {
+      "task_id": "IM-009",
+      "model": "gemini",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-009|gemini|FULL_MULTI_TURN": {
+      "task_id": "IM-009",
+      "model": "gemini",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-009|deepseek|ONE_SHOT": {
+      "task_id": "IM-009",
+      "model": "deepseek",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-009|deepseek|BUG_FIX": {
+      "task_id": "IM-009",
+      "model": "deepseek",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-009|deepseek|FEATURE_ADDITION": {
+      "task_id": "IM-009",
+      "model": "deepseek",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-009|deepseek|EDGE_CASE": {
+      "task_id": "IM-009",
+      "model": "deepseek",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-009|deepseek|FULL_MULTI_TURN": {
+      "task_id": "IM-009",
+      "model": "deepseek",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-010|gpt|ONE_SHOT": {
+      "task_id": "IM-010",
+      "model": "gpt",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-010|gpt|BUG_FIX": {
+      "task_id": "IM-010",
+      "model": "gpt",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-010|gpt|FEATURE_ADDITION": {
+      "task_id": "IM-010",
+      "model": "gpt",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-010|gpt|EDGE_CASE": {
+      "task_id": "IM-010",
+      "model": "gpt",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-010|gpt|FULL_MULTI_TURN": {
+      "task_id": "IM-010",
+      "model": "gpt",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-010|claude|ONE_SHOT": {
+      "task_id": "IM-010",
+      "model": "claude",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-010|claude|BUG_FIX": {
+      "task_id": "IM-010",
+      "model": "claude",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-010|claude|FEATURE_ADDITION": {
+      "task_id": "IM-010",
+      "model": "claude",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-010|claude|EDGE_CASE": {
+      "task_id": "IM-010",
+      "model": "claude",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-010|claude|FULL_MULTI_TURN": {
+      "task_id": "IM-010",
+      "model": "claude",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-010|gemini|ONE_SHOT": {
+      "task_id": "IM-010",
+      "model": "gemini",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-010|gemini|BUG_FIX": {
+      "task_id": "IM-010",
+      "model": "gemini",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-010|gemini|FEATURE_ADDITION": {
+      "task_id": "IM-010",
+      "model": "gemini",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-010|gemini|EDGE_CASE": {
+      "task_id": "IM-010",
+      "model": "gemini",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-010|gemini|FULL_MULTI_TURN": {
+      "task_id": "IM-010",
+      "model": "gemini",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-010|deepseek|ONE_SHOT": {
+      "task_id": "IM-010",
+      "model": "deepseek",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-010|deepseek|BUG_FIX": {
+      "task_id": "IM-010",
+      "model": "deepseek",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-010|deepseek|FEATURE_ADDITION": {
+      "task_id": "IM-010",
+      "model": "deepseek",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-010|deepseek|EDGE_CASE": {
+      "task_id": "IM-010",
+      "model": "deepseek",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-010|deepseek|FULL_MULTI_TURN": {
+      "task_id": "IM-010",
+      "model": "deepseek",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-011|gpt|ONE_SHOT": {
+      "task_id": "IM-011",
+      "model": "gpt",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-011|gpt|BUG_FIX": {
+      "task_id": "IM-011",
+      "model": "gpt",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-011|gpt|FEATURE_ADDITION": {
+      "task_id": "IM-011",
+      "model": "gpt",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-011|gpt|EDGE_CASE": {
+      "task_id": "IM-011",
+      "model": "gpt",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-011|gpt|FULL_MULTI_TURN": {
+      "task_id": "IM-011",
+      "model": "gpt",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-011|claude|ONE_SHOT": {
+      "task_id": "IM-011",
+      "model": "claude",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-011|claude|BUG_FIX": {
+      "task_id": "IM-011",
+      "model": "claude",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-011|claude|FEATURE_ADDITION": {
+      "task_id": "IM-011",
+      "model": "claude",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-011|claude|EDGE_CASE": {
+      "task_id": "IM-011",
+      "model": "claude",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-011|claude|FULL_MULTI_TURN": {
+      "task_id": "IM-011",
+      "model": "claude",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-011|gemini|ONE_SHOT": {
+      "task_id": "IM-011",
+      "model": "gemini",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-011|gemini|BUG_FIX": {
+      "task_id": "IM-011",
+      "model": "gemini",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-011|gemini|FEATURE_ADDITION": {
+      "task_id": "IM-011",
+      "model": "gemini",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-011|gemini|EDGE_CASE": {
+      "task_id": "IM-011",
+      "model": "gemini",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-011|gemini|FULL_MULTI_TURN": {
+      "task_id": "IM-011",
+      "model": "gemini",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-011|deepseek|ONE_SHOT": {
+      "task_id": "IM-011",
+      "model": "deepseek",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-011|deepseek|BUG_FIX": {
+      "task_id": "IM-011",
+      "model": "deepseek",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-011|deepseek|FEATURE_ADDITION": {
+      "task_id": "IM-011",
+      "model": "deepseek",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-011|deepseek|EDGE_CASE": {
+      "task_id": "IM-011",
+      "model": "deepseek",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-011|deepseek|FULL_MULTI_TURN": {
+      "task_id": "IM-011",
+      "model": "deepseek",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-012|gpt|ONE_SHOT": {
+      "task_id": "IM-012",
+      "model": "gpt",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-012|gpt|BUG_FIX": {
+      "task_id": "IM-012",
+      "model": "gpt",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-012|gpt|FEATURE_ADDITION": {
+      "task_id": "IM-012",
+      "model": "gpt",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-012|gpt|EDGE_CASE": {
+      "task_id": "IM-012",
+      "model": "gpt",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-012|gpt|FULL_MULTI_TURN": {
+      "task_id": "IM-012",
+      "model": "gpt",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-012|claude|ONE_SHOT": {
+      "task_id": "IM-012",
+      "model": "claude",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-012|claude|BUG_FIX": {
+      "task_id": "IM-012",
+      "model": "claude",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-012|claude|FEATURE_ADDITION": {
+      "task_id": "IM-012",
+      "model": "claude",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-012|claude|EDGE_CASE": {
+      "task_id": "IM-012",
+      "model": "claude",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-012|claude|FULL_MULTI_TURN": {
+      "task_id": "IM-012",
+      "model": "claude",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-012|gemini|ONE_SHOT": {
+      "task_id": "IM-012",
+      "model": "gemini",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-012|gemini|BUG_FIX": {
+      "task_id": "IM-012",
+      "model": "gemini",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-012|gemini|FEATURE_ADDITION": {
+      "task_id": "IM-012",
+      "model": "gemini",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-012|gemini|EDGE_CASE": {
+      "task_id": "IM-012",
+      "model": "gemini",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-012|gemini|FULL_MULTI_TURN": {
+      "task_id": "IM-012",
+      "model": "gemini",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-012|deepseek|ONE_SHOT": {
+      "task_id": "IM-012",
+      "model": "deepseek",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-012|deepseek|BUG_FIX": {
+      "task_id": "IM-012",
+      "model": "deepseek",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-012|deepseek|FEATURE_ADDITION": {
+      "task_id": "IM-012",
+      "model": "deepseek",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-012|deepseek|EDGE_CASE": {
+      "task_id": "IM-012",
+      "model": "deepseek",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-012|deepseek|FULL_MULTI_TURN": {
+      "task_id": "IM-012",
+      "model": "deepseek",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-013|gpt|ONE_SHOT": {
+      "task_id": "IM-013",
+      "model": "gpt",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-013|gpt|BUG_FIX": {
+      "task_id": "IM-013",
+      "model": "gpt",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-013|gpt|FEATURE_ADDITION": {
+      "task_id": "IM-013",
+      "model": "gpt",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-013|gpt|EDGE_CASE": {
+      "task_id": "IM-013",
+      "model": "gpt",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-013|gpt|FULL_MULTI_TURN": {
+      "task_id": "IM-013",
+      "model": "gpt",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-013|claude|ONE_SHOT": {
+      "task_id": "IM-013",
+      "model": "claude",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-013|claude|BUG_FIX": {
+      "task_id": "IM-013",
+      "model": "claude",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-013|claude|FEATURE_ADDITION": {
+      "task_id": "IM-013",
+      "model": "claude",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-013|claude|EDGE_CASE": {
+      "task_id": "IM-013",
+      "model": "claude",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-013|claude|FULL_MULTI_TURN": {
+      "task_id": "IM-013",
+      "model": "claude",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-013|gemini|ONE_SHOT": {
+      "task_id": "IM-013",
+      "model": "gemini",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-013|gemini|BUG_FIX": {
+      "task_id": "IM-013",
+      "model": "gemini",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-013|gemini|FEATURE_ADDITION": {
+      "task_id": "IM-013",
+      "model": "gemini",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-013|gemini|EDGE_CASE": {
+      "task_id": "IM-013",
+      "model": "gemini",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-013|gemini|FULL_MULTI_TURN": {
+      "task_id": "IM-013",
+      "model": "gemini",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-013|deepseek|ONE_SHOT": {
+      "task_id": "IM-013",
+      "model": "deepseek",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-013|deepseek|BUG_FIX": {
+      "task_id": "IM-013",
+      "model": "deepseek",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-013|deepseek|FEATURE_ADDITION": {
+      "task_id": "IM-013",
+      "model": "deepseek",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-013|deepseek|EDGE_CASE": {
+      "task_id": "IM-013",
+      "model": "deepseek",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-013|deepseek|FULL_MULTI_TURN": {
+      "task_id": "IM-013",
+      "model": "deepseek",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-014|gpt|ONE_SHOT": {
+      "task_id": "IM-014",
+      "model": "gpt",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-014|gpt|BUG_FIX": {
+      "task_id": "IM-014",
+      "model": "gpt",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-014|gpt|FEATURE_ADDITION": {
+      "task_id": "IM-014",
+      "model": "gpt",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-014|gpt|EDGE_CASE": {
+      "task_id": "IM-014",
+      "model": "gpt",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-014|gpt|FULL_MULTI_TURN": {
+      "task_id": "IM-014",
+      "model": "gpt",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-014|claude|ONE_SHOT": {
+      "task_id": "IM-014",
+      "model": "claude",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-014|claude|BUG_FIX": {
+      "task_id": "IM-014",
+      "model": "claude",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-014|claude|FEATURE_ADDITION": {
+      "task_id": "IM-014",
+      "model": "claude",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-014|claude|EDGE_CASE": {
+      "task_id": "IM-014",
+      "model": "claude",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-014|claude|FULL_MULTI_TURN": {
+      "task_id": "IM-014",
+      "model": "claude",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-014|gemini|ONE_SHOT": {
+      "task_id": "IM-014",
+      "model": "gemini",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-014|gemini|BUG_FIX": {
+      "task_id": "IM-014",
+      "model": "gemini",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-014|gemini|FEATURE_ADDITION": {
+      "task_id": "IM-014",
+      "model": "gemini",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-014|gemini|EDGE_CASE": {
+      "task_id": "IM-014",
+      "model": "gemini",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-014|gemini|FULL_MULTI_TURN": {
+      "task_id": "IM-014",
+      "model": "gemini",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-014|deepseek|ONE_SHOT": {
+      "task_id": "IM-014",
+      "model": "deepseek",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-014|deepseek|BUG_FIX": {
+      "task_id": "IM-014",
+      "model": "deepseek",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-014|deepseek|FEATURE_ADDITION": {
+      "task_id": "IM-014",
+      "model": "deepseek",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-014|deepseek|EDGE_CASE": {
+      "task_id": "IM-014",
+      "model": "deepseek",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-014|deepseek|FULL_MULTI_TURN": {
+      "task_id": "IM-014",
+      "model": "deepseek",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-015|gpt|ONE_SHOT": {
+      "task_id": "IM-015",
+      "model": "gpt",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-015|gpt|BUG_FIX": {
+      "task_id": "IM-015",
+      "model": "gpt",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-015|gpt|FEATURE_ADDITION": {
+      "task_id": "IM-015",
+      "model": "gpt",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-015|gpt|EDGE_CASE": {
+      "task_id": "IM-015",
+      "model": "gpt",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-015|gpt|FULL_MULTI_TURN": {
+      "task_id": "IM-015",
+      "model": "gpt",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-015|claude|ONE_SHOT": {
+      "task_id": "IM-015",
+      "model": "claude",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-015|claude|BUG_FIX": {
+      "task_id": "IM-015",
+      "model": "claude",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-015|claude|FEATURE_ADDITION": {
+      "task_id": "IM-015",
+      "model": "claude",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-015|claude|EDGE_CASE": {
+      "task_id": "IM-015",
+      "model": "claude",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-015|claude|FULL_MULTI_TURN": {
+      "task_id": "IM-015",
+      "model": "claude",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-015|gemini|ONE_SHOT": {
+      "task_id": "IM-015",
+      "model": "gemini",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-015|gemini|BUG_FIX": {
+      "task_id": "IM-015",
+      "model": "gemini",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-015|gemini|FEATURE_ADDITION": {
+      "task_id": "IM-015",
+      "model": "gemini",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-015|gemini|EDGE_CASE": {
+      "task_id": "IM-015",
+      "model": "gemini",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-015|gemini|FULL_MULTI_TURN": {
+      "task_id": "IM-015",
+      "model": "gemini",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-015|deepseek|ONE_SHOT": {
+      "task_id": "IM-015",
+      "model": "deepseek",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-015|deepseek|BUG_FIX": {
+      "task_id": "IM-015",
+      "model": "deepseek",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-015|deepseek|FEATURE_ADDITION": {
+      "task_id": "IM-015",
+      "model": "deepseek",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-015|deepseek|EDGE_CASE": {
+      "task_id": "IM-015",
+      "model": "deepseek",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-015|deepseek|FULL_MULTI_TURN": {
+      "task_id": "IM-015",
+      "model": "deepseek",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-016|gpt|ONE_SHOT": {
+      "task_id": "IM-016",
+      "model": "gpt",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-016|gpt|BUG_FIX": {
+      "task_id": "IM-016",
+      "model": "gpt",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-016|gpt|FEATURE_ADDITION": {
+      "task_id": "IM-016",
+      "model": "gpt",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-016|gpt|EDGE_CASE": {
+      "task_id": "IM-016",
+      "model": "gpt",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-016|gpt|FULL_MULTI_TURN": {
+      "task_id": "IM-016",
+      "model": "gpt",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-016|claude|ONE_SHOT": {
+      "task_id": "IM-016",
+      "model": "claude",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-016|claude|BUG_FIX": {
+      "task_id": "IM-016",
+      "model": "claude",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-016|claude|FEATURE_ADDITION": {
+      "task_id": "IM-016",
+      "model": "claude",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-016|claude|EDGE_CASE": {
+      "task_id": "IM-016",
+      "model": "claude",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-016|claude|FULL_MULTI_TURN": {
+      "task_id": "IM-016",
+      "model": "claude",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-016|gemini|ONE_SHOT": {
+      "task_id": "IM-016",
+      "model": "gemini",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-016|gemini|BUG_FIX": {
+      "task_id": "IM-016",
+      "model": "gemini",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-016|gemini|FEATURE_ADDITION": {
+      "task_id": "IM-016",
+      "model": "gemini",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-016|gemini|EDGE_CASE": {
+      "task_id": "IM-016",
+      "model": "gemini",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-016|gemini|FULL_MULTI_TURN": {
+      "task_id": "IM-016",
+      "model": "gemini",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-016|deepseek|ONE_SHOT": {
+      "task_id": "IM-016",
+      "model": "deepseek",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-016|deepseek|BUG_FIX": {
+      "task_id": "IM-016",
+      "model": "deepseek",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-016|deepseek|FEATURE_ADDITION": {
+      "task_id": "IM-016",
+      "model": "deepseek",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-016|deepseek|EDGE_CASE": {
+      "task_id": "IM-016",
+      "model": "deepseek",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-016|deepseek|FULL_MULTI_TURN": {
+      "task_id": "IM-016",
+      "model": "deepseek",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-017|gpt|ONE_SHOT": {
+      "task_id": "IM-017",
+      "model": "gpt",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-017|gpt|BUG_FIX": {
+      "task_id": "IM-017",
+      "model": "gpt",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-017|gpt|FEATURE_ADDITION": {
+      "task_id": "IM-017",
+      "model": "gpt",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-017|gpt|EDGE_CASE": {
+      "task_id": "IM-017",
+      "model": "gpt",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-017|gpt|FULL_MULTI_TURN": {
+      "task_id": "IM-017",
+      "model": "gpt",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-017|claude|ONE_SHOT": {
+      "task_id": "IM-017",
+      "model": "claude",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-017|claude|BUG_FIX": {
+      "task_id": "IM-017",
+      "model": "claude",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-017|claude|FEATURE_ADDITION": {
+      "task_id": "IM-017",
+      "model": "claude",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-017|claude|EDGE_CASE": {
+      "task_id": "IM-017",
+      "model": "claude",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-017|claude|FULL_MULTI_TURN": {
+      "task_id": "IM-017",
+      "model": "claude",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-017|gemini|ONE_SHOT": {
+      "task_id": "IM-017",
+      "model": "gemini",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-017|gemini|BUG_FIX": {
+      "task_id": "IM-017",
+      "model": "gemini",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-017|gemini|FEATURE_ADDITION": {
+      "task_id": "IM-017",
+      "model": "gemini",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-017|gemini|EDGE_CASE": {
+      "task_id": "IM-017",
+      "model": "gemini",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-017|gemini|FULL_MULTI_TURN": {
+      "task_id": "IM-017",
+      "model": "gemini",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-017|deepseek|ONE_SHOT": {
+      "task_id": "IM-017",
+      "model": "deepseek",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-017|deepseek|BUG_FIX": {
+      "task_id": "IM-017",
+      "model": "deepseek",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-017|deepseek|FEATURE_ADDITION": {
+      "task_id": "IM-017",
+      "model": "deepseek",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-017|deepseek|EDGE_CASE": {
+      "task_id": "IM-017",
+      "model": "deepseek",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-017|deepseek|FULL_MULTI_TURN": {
+      "task_id": "IM-017",
+      "model": "deepseek",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-018|gpt|ONE_SHOT": {
+      "task_id": "IM-018",
+      "model": "gpt",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-018|gpt|BUG_FIX": {
+      "task_id": "IM-018",
+      "model": "gpt",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-018|gpt|FEATURE_ADDITION": {
+      "task_id": "IM-018",
+      "model": "gpt",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-018|gpt|EDGE_CASE": {
+      "task_id": "IM-018",
+      "model": "gpt",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-018|gpt|FULL_MULTI_TURN": {
+      "task_id": "IM-018",
+      "model": "gpt",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-018|claude|ONE_SHOT": {
+      "task_id": "IM-018",
+      "model": "claude",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-018|claude|BUG_FIX": {
+      "task_id": "IM-018",
+      "model": "claude",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-018|claude|FEATURE_ADDITION": {
+      "task_id": "IM-018",
+      "model": "claude",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-018|claude|EDGE_CASE": {
+      "task_id": "IM-018",
+      "model": "claude",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-018|claude|FULL_MULTI_TURN": {
+      "task_id": "IM-018",
+      "model": "claude",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-018|gemini|ONE_SHOT": {
+      "task_id": "IM-018",
+      "model": "gemini",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-018|gemini|BUG_FIX": {
+      "task_id": "IM-018",
+      "model": "gemini",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-018|gemini|FEATURE_ADDITION": {
+      "task_id": "IM-018",
+      "model": "gemini",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-018|gemini|EDGE_CASE": {
+      "task_id": "IM-018",
+      "model": "gemini",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-018|gemini|FULL_MULTI_TURN": {
+      "task_id": "IM-018",
+      "model": "gemini",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-018|deepseek|ONE_SHOT": {
+      "task_id": "IM-018",
+      "model": "deepseek",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-018|deepseek|BUG_FIX": {
+      "task_id": "IM-018",
+      "model": "deepseek",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-018|deepseek|FEATURE_ADDITION": {
+      "task_id": "IM-018",
+      "model": "deepseek",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-018|deepseek|EDGE_CASE": {
+      "task_id": "IM-018",
+      "model": "deepseek",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-018|deepseek|FULL_MULTI_TURN": {
+      "task_id": "IM-018",
+      "model": "deepseek",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-019|gpt|ONE_SHOT": {
+      "task_id": "IM-019",
+      "model": "gpt",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-019|gpt|BUG_FIX": {
+      "task_id": "IM-019",
+      "model": "gpt",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-019|gpt|FEATURE_ADDITION": {
+      "task_id": "IM-019",
+      "model": "gpt",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-019|gpt|EDGE_CASE": {
+      "task_id": "IM-019",
+      "model": "gpt",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-019|gpt|FULL_MULTI_TURN": {
+      "task_id": "IM-019",
+      "model": "gpt",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-019|claude|ONE_SHOT": {
+      "task_id": "IM-019",
+      "model": "claude",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-019|claude|BUG_FIX": {
+      "task_id": "IM-019",
+      "model": "claude",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-019|claude|FEATURE_ADDITION": {
+      "task_id": "IM-019",
+      "model": "claude",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-019|claude|EDGE_CASE": {
+      "task_id": "IM-019",
+      "model": "claude",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-019|claude|FULL_MULTI_TURN": {
+      "task_id": "IM-019",
+      "model": "claude",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-019|gemini|ONE_SHOT": {
+      "task_id": "IM-019",
+      "model": "gemini",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-019|gemini|BUG_FIX": {
+      "task_id": "IM-019",
+      "model": "gemini",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-019|gemini|FEATURE_ADDITION": {
+      "task_id": "IM-019",
+      "model": "gemini",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-019|gemini|EDGE_CASE": {
+      "task_id": "IM-019",
+      "model": "gemini",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-019|gemini|FULL_MULTI_TURN": {
+      "task_id": "IM-019",
+      "model": "gemini",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-019|deepseek|ONE_SHOT": {
+      "task_id": "IM-019",
+      "model": "deepseek",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-019|deepseek|BUG_FIX": {
+      "task_id": "IM-019",
+      "model": "deepseek",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-019|deepseek|FEATURE_ADDITION": {
+      "task_id": "IM-019",
+      "model": "deepseek",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-019|deepseek|EDGE_CASE": {
+      "task_id": "IM-019",
+      "model": "deepseek",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-019|deepseek|FULL_MULTI_TURN": {
+      "task_id": "IM-019",
+      "model": "deepseek",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-020|gpt|ONE_SHOT": {
+      "task_id": "IM-020",
+      "model": "gpt",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-020|gpt|BUG_FIX": {
+      "task_id": "IM-020",
+      "model": "gpt",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-020|gpt|FEATURE_ADDITION": {
+      "task_id": "IM-020",
+      "model": "gpt",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-020|gpt|EDGE_CASE": {
+      "task_id": "IM-020",
+      "model": "gpt",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-020|gpt|FULL_MULTI_TURN": {
+      "task_id": "IM-020",
+      "model": "gpt",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-020|claude|ONE_SHOT": {
+      "task_id": "IM-020",
+      "model": "claude",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-020|claude|BUG_FIX": {
+      "task_id": "IM-020",
+      "model": "claude",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-020|claude|FEATURE_ADDITION": {
+      "task_id": "IM-020",
+      "model": "claude",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-020|claude|EDGE_CASE": {
+      "task_id": "IM-020",
+      "model": "claude",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-020|claude|FULL_MULTI_TURN": {
+      "task_id": "IM-020",
+      "model": "claude",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-020|gemini|ONE_SHOT": {
+      "task_id": "IM-020",
+      "model": "gemini",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-020|gemini|BUG_FIX": {
+      "task_id": "IM-020",
+      "model": "gemini",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-020|gemini|FEATURE_ADDITION": {
+      "task_id": "IM-020",
+      "model": "gemini",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-020|gemini|EDGE_CASE": {
+      "task_id": "IM-020",
+      "model": "gemini",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-020|gemini|FULL_MULTI_TURN": {
+      "task_id": "IM-020",
+      "model": "gemini",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "IM-020|deepseek|ONE_SHOT": {
+      "task_id": "IM-020",
+      "model": "deepseek",
+      "interaction": "ONE_SHOT",
+      "turns": [
+        1
+      ]
+    },
+    "IM-020|deepseek|BUG_FIX": {
+      "task_id": "IM-020",
+      "model": "deepseek",
+      "interaction": "BUG_FIX",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-020|deepseek|FEATURE_ADDITION": {
+      "task_id": "IM-020",
+      "model": "deepseek",
+      "interaction": "FEATURE_ADDITION",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-020|deepseek|EDGE_CASE": {
+      "task_id": "IM-020",
+      "model": "deepseek",
+      "interaction": "EDGE_CASE",
+      "turns": [
+        1,
+        2
+      ]
+    },
+    "IM-020|deepseek|FULL_MULTI_TURN": {
+      "task_id": "IM-020",
+      "model": "deepseek",
+      "interaction": "FULL_MULTI_TURN",
+      "turns": [
+        1,
+        2,
+        3,
+        4
+      ]
     }
   },
   "history": [
@@ -1337,6 +3729,71 @@
       "event": "TASK_COMPLETED",
       "task_id": "IM-007",
       "completed_at": "2026-09-13T19:54:09.412232+00:00"
+    },
+    {
+      "event": "TASK_COMPLETED",
+      "task_id": "IM-008",
+      "completed_at": "2026-09-30T14:24:34.252901+00:00"
+    },
+    {
+      "event": "TASK_COMPLETED",
+      "task_id": "IM-009",
+      "completed_at": "2026-10-04T19:34:15.862478+00:00"
+    },
+    {
+      "event": "TASK_COMPLETED",
+      "task_id": "IM-010",
+      "completed_at": "2026-10-04T20:15:24.409260+00:00"
+    },
+    {
+      "event": "TASK_COMPLETED",
+      "task_id": "IM-011",
+      "completed_at": "2026-10-04T20:41:09.488198+00:00"
+    },
+    {
+      "event": "TASK_COMPLETED",
+      "task_id": "IM-012",
+      "completed_at": "2026-10-04T21:03:38.953218+00:00"
+    },
+    {
+      "event": "TASK_COMPLETED",
+      "task_id": "IM-013",
+      "completed_at": "2026-10-04T21:50:10.570955+00:00"
+    },
+    {
+      "event": "TASK_COMPLETED",
+      "task_id": "IM-014",
+      "completed_at": "2026-10-04T22:14:04.072751+00:00"
+    },
+    {
+      "event": "TASK_COMPLETED",
+      "task_id": "IM-015",
+      "completed_at": "2026-10-04T22:38:39.889240+00:00"
+    },
+    {
+      "event": "TASK_COMPLETED",
+      "task_id": "IM-016",
+      "completed_at": "2026-10-04T23:02:10.192848+00:00"
+    },
+    {
+      "event": "TASK_COMPLETED",
+      "task_id": "IM-017",
+      "completed_at": "2026-10-04T23:36:59.879562+00:00"
+    },
+    {
+      "event": "TASK_COMPLETED",
+      "task_id": "IM-018",
+      "completed_at": "2026-10-05T00:56:02.087933+00:00"
+    },
+    {
+      "event": "TASK_COMPLETED",
+      "task_id": "IM-019",
+      "completed_at": "2026-10-05T01:21:59.896909+00:00"
+    },
+    {
+      "event": "TASK_COMPLETED",
+      "task_id": "IM-020",
+      "completed_at": "2026-10-05T01:48:16.336044+00:00"
     }
   ]
 }

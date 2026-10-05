@@ -1,0 +1,9 @@
+I'll test both cases before changing anything.
+
+I couldn't reproduce either problem. I ran the script on a nested tree with empty and whitespace-only files, and a `.md` file that should be skipped, using `--lower`.
+
+- **Tree:** `a/b/deep.txt` came out at `a/b/deep.txt`, and `empty_dir` was mirrored too.
+- **Empty files:** `empty.txt` and `a/blank.txt` were written as empty files, and the whitespace-only `a/ws.txt` also came out empty. Nothing crashed.
+- **Normalization:** `Hello   WORLD`, a combining `é`, tabs and newlines became `hello world é x y`, which is correct.
+
+So the version you ran may differ from this one. Could you paste the traceback and an example input path? If it ends in a `UnicodeDecodeError`, the cause is likely a non-UTF-8 or BOM-prefixed file rather than an empty one, and I can make it read with `utf-8-sig` and `errors="replace"`.

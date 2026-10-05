@@ -1,0 +1,92 @@
+```python
+import re
+from typing import Dict, List, Any
+
+
+def normalize_text(text: str) -> str:
+    """Normalizes text by lowercasing, stripping, and reducing whitespace/punctuation."""
+    if not text:
+        return ""
+    text = text.lower().strip()
+    # Replace non-alphanumeric characters with a single space
+    text = re.sub(r"[^\w\s]", " ", text)
+    # Collapse multiple whitespace characters into a single space
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def find_duplicate_records(records: List[Dict[str, Any]]) -> List[List[Any]]:
+    """Groups duplicate records based on normalized title, description, and exact date.
+
+    Returns deterministic duplicate ID groups sorted by group size (descending)
+    and then first record ID.
+    """
+    groups: Dict[tuple, List[Any]] = {}
+
+    for record in records:
+        rec_id = record.get("id")
+        title = normalize_text(str(record.get("title", "")))
+        description = normalize_text(str(record.get("description", "")))
+        date = str(record.get("date", "")).strip()
+
+        # Group key combining normalized title, normalized description, and date
+        key = (title, description, date)
+        groups.setdefault(key, []).append(rec_id)
+
+    # Filter out unique records (groups with 1 record) and keep only duplicates
+    duplicate_groups = [
+        sorted(rec_ids) for rec_ids in groups.values() if len(rec_ids) > 1
+    ]
+
+    # Deterministic sorting: largest groups first, then by the first ID in the group
+    duplicate_groups.sort(key=lambda g: (-len(g), g[0]))
+
+    return duplicate_groups
+
+
+# Example Usage & Verification:
+if __name__ == "__main__":
+    sample_records = [
+        {
+            "id": 101,
+            "title": "  Python   Tutorial! ",
+            "description": "Learn python fast.",
+            "date": "2026-10-05",
+        },
+        {
+            "id": 102,
+            "title": "python tutorial",
+            "description": "Learn python fast",
+            "date": "2026-10-05",
+        },
+        {
+            "id": 103,
+            "title": "Python Tutorial",
+            "description": "Learn python fast.",
+            "date": "2026-10-06",  # Different date
+        },
+        {
+            "id": 104,
+            "title": "Data Science Guide",
+            "description": "Intro to ML & AI.",
+            "date": "2026-09-01",
+        },
+        {
+            "id": 105,
+            "title": "DATA SCIENCE GUIDE...",
+            "description": "Intro to ML and AI",  # Different description
+            "date": "2026-09-01",
+        },
+        {
+            "id": 106,
+            "title": "Data Science Guide",
+            "description": "Intro to ML & AI.",
+            "date": "2026-09-01",
+        },
+    ]
+
+    duplicates = find_duplicate_records(sample_records)
+    print("Duplicate Groups Found:")
+    for group in duplicates:
+        print(group)
+
+```

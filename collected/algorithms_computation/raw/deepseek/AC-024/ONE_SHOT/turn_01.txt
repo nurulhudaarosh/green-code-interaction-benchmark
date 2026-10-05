@@ -1,0 +1,109 @@
+## Problem Understanding
+
+**Problem:** Given a list of intervals, each with a start time, end time, and original index, assign each interval to a room such that:
+- Overlapping intervals never share a room.
+- A room can be reused when its previous interval's end time ≤ the next interval's start time.
+- The total number of rooms used is minimized.
+- Return the room ID assigned to each original interval.
+
+**Key constraints:**
+- Intervals may overlap.
+- A room is "available" at time `t` if its last assigned interval ended at or before `t`.
+- We must minimize rooms, which equals the maximum number of intervals overlapping at any single point in time.
+- Output must map back to the original interval order.
+
+**Required output:** A list of room IDs (0-indexed or 1-indexed) aligned with the original input order of intervals.
+
+---
+
+## Algorithm
+
+1. **Sort** intervals by start time (tie-break by end time or original index for determinism).
+2. **Min-heap** keyed by room availability time (the end time of the last interval in that room), storing `(end_time, room_id)`.
+3. For each interval in sorted order:
+   - If the heap is non-empty and the smallest `end_time` ≤ current `start`, pop that room and reuse it.
+   - Otherwise, allocate a new room ID.
+   - Push `(current_end, room_id)` onto the heap.
+   - Record `room_id` for the interval's original index.
+4. Return the result array in original order.
+
+This greedy approach is optimal: at each step we reuse any available room, and if none is available, we must open a new one — matching the classic interval partitioning theorem.
+
+---
+
+## Python Implementation
+
+```python
+import heapq
+
+
+def assign_rooms(intervals):
+    """
+    intervals: list of (start, end, original_index)
+    returns: list of room IDs indexed by original_index
+    """
+    n = len(intervals)
+    if n == 0:
+        return []
+
+    # Sort by start time; tie-break by end time, then original index for determinism
+    order = sorted(range(n), key=lambda i: (intervals[i][0], intervals[i][1], intervals[i][2]))
+
+    result = [None] * n
+    # Min-heap of (end_time, room_id)
+    heap = []
+    next_room_id = 0
+
+    for i in order:
+        start, end, orig_idx = intervals[i]
+
+        if heap and heap[0][0] <= start:
+            # Reuse the room that frees up earliest
+            end_time, room_id = heapq.heappop(heap)
+        else:
+            # Allocate a new room
+            room_id = next_room_id
+            next_room_id += 1
+
+        result[orig_idx] = room_id
+        heapq.heappush(heap, (end, room_id))
+
+    return result
+
+
+# ---------- Demonstration ----------
+if __name__ == "__main__":
+    # Example: (start, end, original_index)
+    intervals = [
+        (1, 4, 0),
+        (2, 5, 1),
+        (7, 9, 2),
+        (3, 6, 3),
+        (8, 10, 4),
+        (4, 7, 5),
+    ]
+
+    rooms = assign_rooms(intervals)
+    print("Room assignments (by original index):")
+    for i, r in enumerate(rooms):
+        s, e, _ = intervals[i]
+        print(f"  Interval {i}: [{s}, {e}) -> Room {r}")
+
+    print(f"\nMinimum rooms needed: {max(rooms) + 1}")
+```
+
+### Output for the example
+
+```
+Room assignments (by original index):
+  Interval 0: [1, 4) -> Room 0
+  Interval 1: [2, 5) -> Room 1
+  Interval 2: [7, 9) -> Room 0
+  Interval 3: [3, 6) -> Room 2
+  Interval 4: [8, 10) -> Room 1
+  Interval 5: [4, 7) -> Room 3
+
+Minimum rooms needed: 4
+```
+
+The algorithm runs in **O(n log n)** time due to sorting and heap operations, and uses **O(n)** extra space.

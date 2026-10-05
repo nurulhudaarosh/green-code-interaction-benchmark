@@ -1,0 +1,473 @@
+import re
+from collections import Counter
+from typing import Dict, Optional, Tuple, List
+import os
+
+
+def analyze_error_log(path: str, top_n: Optional[int] = None) -> Dict[str, int]:
+    """
+    Analyze a server log file and count ERROR-level entries per normalized message.
+    Skips blank and malformed lines instead of raising.
+    
+    Args:
+        path: Path to the log file
+        top_n: If provided, return only the top-N error signatures sorted by
+               count descending. If None, return all signatures.
+               If top_n > number of distinct signatures, returns all of them.
+        
+    Returns:
+        Dictionary mapping normalized error messages to their counts,
+        sorted by count descending with alphabetical tie-breaking.
+        Returns an empty dict for empty files or files with no ERROR entries.
+        
+    Raises:
+        FileNotFoundError: If the log file doesn't exist
+        PermissionError: If the file can't be read
+        ValueError: If top_n is not a positive integer or None
+    """
+    _validate_top_n(top_n)
+    
+    error_pattern = re.compile(
+        r'\[?[\d\-:\s]+\]?\s*'
+        r'ERROR[:\s]+'
+        r'(.+?)$',
+        re.IGNORECASE | re.MULTILINE
+    )
+    
+    normalization_patterns = _get_default_patterns()
+    
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Log file not found: {path}")
+    
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as file:
+            error_counts = _process_file(file, error_pattern, normalization_patterns)
+    except PermissionError:
+        raise PermissionError(f"Cannot read log file: {path}")
+    except UnicodeDecodeError:
+        with open(path, 'r', encoding='latin-1', errors='replace') as file:
+            error_counts = _process_file(file, error_pattern, normalization_patterns)
+    
+    # Empty counter (empty file or no ERRORs) -> return {} cleanly
+    return _sorted_counts(error_counts, top_n)
+
+
+def analyze_error_log_with_stats(path: str, top_n: Optional[int] = None) -> Dict[str, object]:
+    """
+    Analyze a server log file with detailed statistics about skipped/malformed lines.
+    
+    Args:
+        path: Path to the log file
+        top_n: If provided, return only the top-N error signatures sorted by
+               count descending. If None, return all signatures.
+        
+    Returns:
+        Dictionary with keys:
+            - 'errors': Dict[str, int] — sorted desc, limited to top_n if provided.
+                        Empty dict if no ERRORs found.
+            - 'stats': Dict with total_lines, blank_lines, malformed_lines,
+                       error_lines, parsed_errors, skipped_lines, unique_signatures
+            - 'malformed_samples': List of (line_number, raw_line) — first 10 only
+    """
+    _validate_top_n(top_n)
+    
+    error_pattern = re.compile(
+        r'\[?[\d\-:\s]+\]?\s*'
+        r'ERROR[:\s]+'
+        r'(.+?)$',
+        re.IGNORECASE | re.MULTILINE
+    )
+    
+    normalization_patterns = _get_default_patterns()
+    
+    stats = {
+        'total_lines': 0,
+        'blank_lines': 0,
+        'malformed_lines': 0,
+        'error_lines': 0,
+        'parsed_errors': 0,
+        'skipped_lines': 0,
+        'unique_signatures': 0,
+    }
+    malformed_samples = []
+    MAX_SAMPLES = 10
+    
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Log file not found: {path}")
+    
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as file:
+            error_counts, stats, malformed_samples = _process_file_with_stats(
+                file, error_pattern, normalization_patterns, MAX_SAMPLES
+            )
+    except PermissionError:
+        raise PermissionError(f"Cannot read log file: {path}")
+    except UnicodeDecodeError:
+        with open(path, 'r', encoding='latin-1', errors='replace') as file:
+            error_counts, stats, malformed_samples = _process_file_with_stats(
+                file, error_pattern, normalization_patterns, MAX_SAMPLES
+            )
+    
+    # Record unique count BEFORE slicing
+    stats['unique_signatures'] = len(error_counts)
+    
+    return {
+        'errors': _sorted_counts(error_counts, top_n),
+        'stats': stats,
+        'malformed_samples': malformed_samples,
+    }
+
+
+def _validate_top_n(top_n: Optional[int]) -> None:
+    """Validate the top_n parameter. None is allowed (means 'all')."""
+    if top_n is None:
+        return
+    # bool is a subclass of int — reject explicitly to avoid True == 1 surprises
+    if isinstance(top_n, bool) or not isinstance(top_n, int):
+        raise ValueError(f"top_n must be an int or None, got {type(top_n).__name__}")
+    if top_n < 1:
+        raise ValueError(f"top_n must be >= 1 (or None for all), got {top_n}")
+
+
+def _sorted_counts(counter: Counter, top_n: Optional[int]) -> Dict[str, int]:
+    """
+    Return dict sorted by count descending, ties broken alphabetically by
+    signature (ascending) for deterministic output.
+    
+    Edge cases:
+      - Empty counter -> returns {}
+      - top_n > len(counter) -> returns all entries (Python slicing clamps)
+      - top_n is None -> returns all entries
+      - top_n == len(counter) -> returns all entries
+    
+    Sorting is fully deterministic: two runs over identical input produce
+    identical key ordering, regardless of dict/Counter insertion order.
+    """
+    if not counter:
+        return {}
+    
+    # (-count, signature) -> count desc, then signature asc
+    # Using a tuple key avoids relying on stable-sort semantics for ties.
+    sorted_items = sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))
+    
+    if top_n is not None:
+        # Python slicing on a list is bounds-safe: [:N] never raises
+        # even if N > len(sorted_items).
+        sorted_items = sorted_items[:top_n]
+    
+    return dict(sorted_items)
+
+
+def _process_file(file, error_pattern, normalization_patterns) -> Counter:
+    """Process file lines, skipping blanks and malformed lines silently."""
+    error_counts = Counter()
+    
+    for line in file:
+        try:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            
+            match = error_pattern.search(stripped)
+            if not match:
+                continue
+            
+            message = match.group(1).strip()
+            if not message:
+                continue
+            
+            normalized = normalize_message(message, normalization_patterns)
+            if normalized:
+                error_counts[normalized] += 1
+                
+        except (AttributeError, IndexError, TypeError, re.error):
+            continue
+        except Exception:
+            continue
+    
+    return error_counts
+
+
+def _process_file_with_stats(file, error_pattern, normalization_patterns, 
+                              max_samples: int) -> Tuple[Counter, Dict, list]:
+    """Process file lines with detailed statistics tracking."""
+    error_counts = Counter()
+    malformed_samples = []
+    stats = {
+        'total_lines': 0,
+        'blank_lines': 0,
+        'malformed_lines': 0,
+        'error_lines': 0,
+        'parsed_errors': 0,
+        'skipped_lines': 0,
+    }
+    
+    for line_num, line in enumerate(file, 1):
+        stats['total_lines'] += 1
+        
+        try:
+            if not isinstance(line, str):
+                _record_malformed(line_num, line, malformed_samples, max_samples)
+                stats['malformed_lines'] += 1
+                stats['skipped_lines'] += 1
+                continue
+            
+            stripped = line.strip()
+            
+            if not stripped:
+                stats['blank_lines'] += 1
+                continue
+            
+            if len(stripped) < 5:
+                _record_malformed(line_num, line, malformed_samples, max_samples)
+                stats['malformed_lines'] += 1
+                stats['skipped_lines'] += 1
+                continue
+            
+            match = error_pattern.search(stripped)
+            if not match:
+                continue
+            
+            stats['error_lines'] += 1
+            message = match.group(1).strip()
+            
+            if not message:
+                _record_malformed(line_num, line, malformed_samples, max_samples)
+                stats['malformed_lines'] += 1
+                stats['skipped_lines'] += 1
+                continue
+            
+            normalized = normalize_message(message, normalization_patterns)
+            
+            if not normalized:
+                _record_malformed(line_num, line, malformed_samples, max_samples)
+                stats['malformed_lines'] += 1
+                stats['skipped_lines'] += 1
+                continue
+            
+            error_counts[normalized] += 1
+            stats['parsed_errors'] += 1
+            
+        except re.error:
+            _record_malformed(line_num, line, malformed_samples, max_samples)
+            stats['malformed_lines'] += 1
+            stats['skipped_lines'] += 1
+        except (AttributeError, IndexError, TypeError, ValueError):
+            _record_malformed(line_num, line, malformed_samples, max_samples)
+            stats['malformed_lines'] += 1
+            stats['skipped_lines'] += 1
+        except Exception:
+            _record_malformed(line_num, line, malformed_samples, max_samples)
+            stats['malformed_lines'] += 1
+            stats['skipped_lines'] += 1
+    
+    return error_counts, stats, malformed_samples
+
+
+def _record_malformed(line_num: int, line, samples: list, max_samples: int) -> None:
+    """Record a malformed line sample if we haven't hit the cap."""
+    if len(samples) < max_samples:
+        try:
+            raw = repr(line)
+            if len(raw) > 200:
+                raw = raw[:200] + '...'
+            samples.append((line_num, raw))
+        except Exception:
+            samples.append((line_num, '<unreprable>'))
+
+
+def _get_default_patterns() -> list:
+    """Return the default normalization patterns."""
+    return [
+        (re.compile(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'), '<IP>'),
+        (re.compile(r':\d{2,5}\b'), ':<PORT>'),
+        (re.compile(r'\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b', re.I), '<UUID>'),
+        (re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'), '<EMAIL>'),
+        (re.compile(r'(?:[A-Za-z]:)?[/\\](?:[^/\\\s]+[/\\])*[^/\\\s]+'), '<PATH>'),
+        (re.compile(r'\b\d+\b'), '<NUM>'),
+        (re.compile(r"'[^']*'"), "'<STR>'"),
+        (re.compile(r'"[^"]*"'), '"<STR>"'),
+        (re.compile(r'\b0x[0-9a-fA-F]+\b'), '<HEX>'),
+        (re.compile(r'\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?'), '<TIMESTAMP>'),
+        (re.compile(r'\b[A-Za-z0-9]{8,}\b'), '<ID>'),
+    ]
+
+
+def normalize_message(message: str, patterns: list) -> str:
+    """Normalize an error message. Returns empty string on failure."""
+    if not isinstance(message, str):
+        return ''
+    
+    try:
+        normalized = message
+        for pattern, replacement in patterns:
+            try:
+                normalized = pattern.sub(replacement, normalized)
+            except (re.error, TypeError):
+                continue
+        
+        normalized = ' '.join(normalized.split())
+        return normalized
+    except Exception:
+        return ''
+
+
+# ============ Edge case tests ============
+if __name__ == "__main__":
+    import tempfile
+    
+    def _write(content: str) -> str:
+        fd, path = tempfile.mkstemp(suffix='.log', text=True)
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(content)
+        return path
+    
+    def _cleanup(*paths):
+        for p in paths:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+    
+    print("=" * 60)
+    print("EDGE CASE 1: Empty file")
+    print("=" * 60)
+    p = _write("")
+    try:
+        result = analyze_error_log(p)
+        assert result == {}, f"Expected {{}}, got {result}"
+        print(f"  analyze_error_log -> {result}  ✓")
+        
+        full = analyze_error_log_with_stats(p, top_n=5)
+        assert full['errors'] == {}
+        assert full['stats']['total_lines'] == 0
+        assert full['stats']['unique_signatures'] == 0
+        print(f"  with_stats -> errors={full['errors']}, "
+              f"total_lines={full['stats']['total_lines']}, "
+              f"unique={full['stats']['unique_signatures']}  ✓")
+    finally:
+        _cleanup(p)
+    
+    print()
+    print("=" * 60)
+    print("EDGE CASE 2: File with no ERROR entries")
+    print("=" * 60)
+    p = _write(
+        "[2024-01-15 10:00:00] INFO: Server started\n"
+        "[2024-01-15 10:00:01] WARNING: Memory high\n"
+        "[2024-01-15 10:00:02] DEBUG: request id=abc\n"
+        "\n"
+    )
+    try:
+        result = analyze_error_log(p)
+        assert result == {}, f"Expected {{}}, got {result}"
+        print(f"  analyze_error_log -> {result}  ✓")
+        
+        full = analyze_error_log_with_stats(p)
+        assert full['errors'] == {}
+        assert full['stats']['error_lines'] == 0
+        assert full['stats']['total_lines'] == 4
+        assert full['stats']['blank_lines'] == 1
+        print(f"  with_stats -> errors={full['errors']}, "
+              f"error_lines={full['stats']['error_lines']}, "
+              f"blank_lines={full['stats']['blank_lines']}  ✓")
+    finally:
+        _cleanup(p)
+    
+    print()
+    print("=" * 60)
+    print("EDGE CASE 3: top_n > distinct signatures")
+    print("=" * 60)
+    p = _write(
+        "[2024-01-15 10:00:00] ERROR: File not found: /a\n"
+        "[2024-01-15 10:00:01] ERROR: File not found: /b\n"
+        "[2024-01-15 10:00:02] ERROR: Database down at 1.2.3.4\n"
+        "[2024-01-15 10:00:03] ERROR: Database down at 5.6.7.8\n"
+        "[2024-01-15 10:00:04] ERROR: Database down at 9.9.9.9\n"
+    )
+    try:
+        # Only 2 distinct signatures exist; ask for 100
+        result = analyze_error_log(p, top_n=100)
+        assert len(result) == 2, f"Expected 2, got {len(result)}"
+        print(f"  top_n=100 over 2 distinct -> returned {len(result)}  ✓")
+        for msg, cnt in result.items():
+            print(f"      {cnt} x {msg}")
+        
+        full = analyze_error_log_with_stats(p, top_n=100)
+        assert full['stats']['unique_signatures'] == 2
+        assert len(full['errors']) == 2
+        print(f"  unique_signatures={full['stats']['unique_signatures']}, "
+              f"returned={len(full['errors'])}  ✓")
+    finally:
+        _cleanup(p)
+    
+    print()
+    print("=" * 60)
+    print("EDGE CASE 4: Deterministic tie-breaking")
+    print("=" * 60)
+    # Three signatures, all with count=2, plus one with count=1.
+    # Alphabetical tie-break should order: alpha < beta < gamma
+    p = _write(
+        "[2024-01-15 10:00:00] ERROR: gamma issue\n"
+        "[2024-01-15 10:00:01] ERROR: alpha issue\n"
+        "[2024-01-15 10:00:02] ERROR: beta issue\n"
+        "[2024-01-15 10:00:03] ERROR: gamma issue\n"
+        "[2024-01-15 10:00:04] ERROR: alpha issue\n"
+        "[2024-01-15 10:00:05] ERROR: beta issue\n"
+        "[2024-01-15 10:00:06] ERROR: zeta rare\n"
+    )
+    try:
+        expected_order = ['alpha issue', 'beta issue', 'gamma issue', 'zeta rare']
+        
+        # Run multiple times to confirm identical ordering
+        orders = []
+        for _ in range(5):
+            result = analyze_error_log(p, top_n=10)
+            orders.append(list(result.keys()))
+        
+        assert all(o == expected_order for o in orders), \
+            f"Non-deterministic ordering: {orders}"
+        print(f"  All 5 runs identical: {orders[0]}  ✓")
+        
+        # Confirm counts are correct
+        result = analyze_error_log(p)
+        assert result == {
+            'alpha issue': 2,
+            'beta issue': 2,
+            'gamma issue': 2,
+            'zeta rare': 1,
+        }, f"Unexpected counts: {result}"
+        print(f"  Counts: {result}  ✓")
+        
+        # top_n=3 should drop 'zeta rare' (lowest count)
+        top3 = analyze_error_log(p, top_n=3)
+        assert list(top3.keys()) == ['alpha issue', 'beta issue', 'gamma issue']
+        print(f"  top_n=3 -> {list(top3.keys())}  ✓")
+    finally:
+        _cleanup(p)
+    
+    print()
+    print("=" * 60)
+    print("EDGE CASE 5: Combined (blank file + top_n + malformed)")
+    print("=" * 60)
+    p = _write(
+        "\n"
+        "\x00\x01corrupted\n"
+        "[2024-01-15 10:00:00] ERROR: dup msg\n"
+        "   \n"
+        "[2024-01-15 10:00:01] ERROR: dup msg\n"
+        "[2024-01-15 10:00:02] ERROR: unique msg\n"
+    )
+    try:
+        result = analyze_error_log(p, top_n=50)
+        assert result == {'dup msg': 2, 'unique msg': 1}
+        print(f"  {result}  ✓")
+        
+        full = analyze_error_log_with_stats(p, top_n=50)
+        print(f"  stats: {full['stats']}")
+        print(f"  malformed samples: {full['malformed_samples']}")
+    finally:
+        _cleanup(p)
+    
+    print()
+    print("All edge case tests passed.")

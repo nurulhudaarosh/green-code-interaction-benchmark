@@ -1,72 +1,214 @@
 ```python
-import json
-import traceback
+import os
+import shutil
 from pathlib import Path
+from collections import defaultdict
 
-DATASET_PATH = "dataset.json"
 
-def load_dataset(path):
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"'{path}' not found. Check the path.")
-    with open(p, "r", encoding="utf-8") as f:
-        return json.load(f)
+class DocumentOrganizer:
+    """
+    Organizes documents into folders based on file extension.
 
-def safe_get(lst, index, default=None, label="list"):
-    """Access list[index] safely, logging instead of crashing."""
-    try:
-        return lst[index]
-    except IndexError:
-        print(f"IndexError: {label} has length {len(lst)}, but index {index} was requested.")
-        return default
+    Features:
+    - Creates category folders automatically
+    - Handles missing source directories
+    - Ignores directories and hidden files
+    - Handles unknown file types
+    - Avoids overwriting existing files
+    - Supports dry-run mode
+    - Returns a summary of operations
+    """
 
-def diagnose_index_errors(data):
-    issues = []
-    interactions = data.get("interactions", []) if isinstance(data, dict) else []
+    DEFAULT_CATEGORIES = {
+        "Documents": {".pdf", ".doc", ".docx", ".txt", ".rtf", ".odt"},
+        "Spreadsheets": {".xls", ".xlsx", ".csv", ".ods"},
+        "Presentations": {".ppt", ".pptx", ".odp"},
+        "Images": {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp"},
+        "Archives": {".zip", ".rar", ".7z", ".tar", ".gz"},
+        "Audio": {".mp3", ".wav", ".flac", ".aac", ".ogg"},
+        "Video": {".mp4", ".avi", ".mkv", ".mov", ".wmv", ".webm"},
+    }
 
-    if not interactions:
-        issues.append("'interactions' list is empty — nothing to advance through.")
-        return issues
+    def __init__(self, source_directory, destination_directory=None):
+        self.source_directory = Path(source_directory).expanduser()
+        self.destination_directory = (
+            Path(destination_directory).expanduser()
+            if destination_directory
+            else self.source_directory
+        )
 
-    for i, interaction in enumerate(interactions):
+        self.extension_map = {}
+        for category, extensions in self.DEFAULT_CATEGORIES.items():
+            for extension in extensions:
+                self.extension_map[extension] = category
+
+    def get_category(self, file_path):
+        """Return the category for a file based on its extension."""
+        extension = file_path.suffix.lower()
+        return self.extension_map.get(extension, "Others")
+
+    def get_unique_destination(self, destination_path):
+        """Prevent overwriting an existing file."""
+        if not destination_path.exists():
+            return destination_path
+
+        stem = destination_path.stem
+        suffix = destination_path.suffix
+        counter = 1
+
+        while True:
+            candidate = destination_path.parent / f"{stem}_{counter}{suffix}"
+            if not candidate.exists():
+                return candidate
+            counter += 1
+
+    def organize(self, dry_run=False):
+        """
+        Organize files in the source directory.
+
+        Returns a summary containing:
+        - moved: number of successfully moved files
+        - skipped: number of skipped files
+        - errors: number of files that could not be processed
+        - by_category: number of files in each category
+        - details: operation details
+        """
+        summary = {
+            "moved": 0,
+            "skipped": 0,
+            "errors": 0,
+            "by_category": defaultdict(int),
+            "details": [],
+        }
+
+        if not self.source_directory.exists():
+            summary["errors"] = 1
+            summary["details"].append(
+                f"Source directory does not exist: {self.source_directory}"
+            )
+            return summary
+
+        if not self.source_directory.is_dir():
+            summary["errors"] = 1
+            summary["details"].append(
+                f"Source path is not a directory: {self.source_directory}"
+            )
+            return summary
+
         try:
-            # Example of the kind of indexing that typically throws this error:
-            # accessing a sub-list/messages array without checking length first
-            messages = interaction.get("messages", []) if isinstance(interaction, dict) else []
-            if not messages:
-                issues.append(f"Interaction {i}: 'messages' is empty — indexing into it would fail.")
+            files = list(self.source_directory.iterdir())
+        except OSError as exc:
+            summary["errors"] = 1
+            summary["details"].append(
+                f"Could not read source directory: {exc}"
+            )
+            return summary
+
+        for file_path in files:
+            if not file_path.is_file():
                 continue
 
-            first_msg = safe_get(messages, 0, label=f"interaction[{i}].messages")
-            last_msg = safe_get(messages, len(messages) - 1, label=f"interaction[{i}].messages")
+            # Ignore hidden files.
+            if file_path.name.startswith("."):
+                summary["skipped"] += 1
+                summary["details"].append(
+                    f"Skipped hidden file: {file_path.name}"
+                )
+                continue
 
-            if first_msg is None or last_msg is None:
-                issues.append(f"Interaction {i}: could not safely access first/last message.")
+            category = self.get_category(file_path)
+            category_directory = self.destination_directory / category
+            destination_path = category_directory / file_path.name
 
-        except Exception:
-            issues.append(f"Interaction {i}: unexpected error:\n{traceback.format_exc()}")
+            try:
+                if not dry_run:
+                    category_directory.mkdir(parents=True, exist_ok=True)
 
-    return issues
+                destination_path = self.get_unique_destination(destination_path)
 
-def main():
-    try:
-        data = load_dataset(DATASET_PATH)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"Failed to load dataset: {e}")
-        return
+                if dry_run:
+                    summary["moved"] += 1
+                    summary["by_category"][category] += 1
+                    summary["details"].append(
+                        f"Would move: {file_path.name} -> "
+                        f"{category}/{destination_path.name}"
+                    )
+                else:
+                    # If source and destination are the same path,
+                    # there is nothing to move.
+                    if file_path.resolve() == destination_path.resolve():
+                        summary["skipped"] += 1
+                        summary["details"].append(
+                            f"Already organized: {file_path.name}"
+                        )
+                        continue
 
-    issues = diagnose_index_errors(data)
+                    shutil.move(str(file_path), str(destination_path))
 
-    if issues:
-        print("Issues found (likely causes of 'list index out of range'):")
-        for issue in issues:
-            print(f"  - {issue}")
-    else:
-        print("No obvious index issues found — the error may be occurring elsewhere in your pipeline.")
-        print("Check any loop like `data[i]` or `list[-1]` where the list could be shorter than expected.")
+                    summary["moved"] += 1
+                    summary["by_category"][category] += 1
+                    summary["details"].append(
+                        f"Moved: {file_path.name} -> "
+                        f"{category}/{destination_path.name}"
+                    )
+
+            except (OSError, shutil.Error) as exc:
+                summary["errors"] += 1
+                summary["details"].append(
+                    f"Error processing {file_path.name}: {exc}"
+                )
+
+        summary["by_category"] = dict(summary["by_category"])
+        return summary
+
+
+def organize_documents(
+    source_directory,
+    destination_directory=None,
+    dry_run=False
+):
+    """Convenience function for organizing documents."""
+    organizer = DocumentOrganizer(
+        source_directory,
+        destination_directory
+    )
+    return organizer.organize(dry_run=dry_run)
+
+
+def print_summary(summary):
+    """Print a readable organization summary."""
+    print("\nDocument Organizer Summary")
+    print("-" * 30)
+    print(f"Files moved:  {summary['moved']}")
+    print(f"Files skipped: {summary['skipped']}")
+    print(f"Errors:       {summary['errors']}")
+
+    if summary["by_category"]:
+        print("\nFiles by category:")
+        for category, count in sorted(summary["by_category"].items()):
+            print(f"  {category}: {count}")
+
+    if summary["details"]:
+        print("\nDetails:")
+        for detail in summary["details"]:
+            print(f"  - {detail}")
+
 
 if __name__ == "__main__":
-    main()
-```
+    # Change this path to the directory containing your files.
+    source = "documents"
 
-This assumes a `messages` list nested inside each interaction — swap that key/structure for whatever your actual pipeline indexes into. If you can share the traceback with a line number, I can point at the exact line instead of guessing at the shape.
+    # Set this to None to organize files inside the source directory.
+    destination = None
+
+    # Set to True to preview changes without moving files.
+    dry_run = False
+
+    summary = organize_documents(
+        source_directory=source,
+        destination_directory=destination,
+        dry_run=dry_run
+    )
+
+    print_summary(summary)
+```

@@ -1,0 +1,108 @@
+Here's a dependency-free version that edits the PNG chunk stream directly. Pixel data is never decoded or re-encoded, so the image stays byte-for-byte identical apart from the added metadata.
+
+```python
+import struct
+import zlib
+
+_SIG = b"\x89PNG\r\n\x1a\n"
+_TEXT_TYPES = (b"tEXt", b"zTXt", b"iTXt")
+
+
+def _iter_chunks(data: bytes):
+    if data[:8] != _SIG:
+        raise ValueError("Not a PNG file")
+    pos = 8
+    while pos + 8 <= len(data):
+        length, ctype = struct.unpack(">I4s", data[pos:pos + 8])
+        body = data[pos + 8:pos + 8 + length]
+        if len(body) != length:
+            raise ValueError("Truncated PNG chunk")
+        yield ctype, body
+        pos += 12 + length  # length + type + body + CRC
+
+
+def _pack_chunk(ctype: bytes, body: bytes) -> bytes:
+    crc = zlib.crc32(ctype + body) & 0xFFFFFFFF
+    return struct.pack(">I", len(body)) + ctype + body + struct.pack(">I", crc)
+
+
+def _parse_text_chunk(ctype: bytes, body: bytes):
+    """Return (key, value) for tEXt/zTXt/iTXt chunks, else None."""
+    key_raw, _, rest = body.partition(b"\x00")
+    key = key_raw.decode("latin-1")
+    if ctype == b"tEXt":
+        return key, rest.decode("latin-1")
+    if ctype == b"zTXt":
+        # rest = compression method (1 byte) + zlib data
+        return key, zlib.decompress(rest[1:]).decode("latin-1")
+    if ctype == b"iTXt":
+        flag, _method = rest[0], rest[1]
+        _lang, _, rest = rest[2:].partition(b"\x00")
+        _trans, _, text = rest.partition(b"\x00")
+        if flag:
+            text = zlib.decompress(text)
+        return key, text.decode("utf-8")
+    return None
+
+
+def _make_itxt(key: str, value: str) -> bytes:
+    key_b = key.encode("latin-1")
+    if not 1 <= len(key_b) <= 79 or b"\x00" in key_b or key != key.strip():
+        raise ValueError(f"Invalid PNG keyword: {key!r}")
+    # keyword\0 | compressed=0 | method=0 | lang\0 | translated kw\0 | UTF-8 text
+    body = key_b + b"\x00" + b"\x00\x00" + b"\x00" + b"\x00" + value.encode("utf-8")
+    return _pack_chunk(b"iTXt", body)
+
+
+def embed_tags(input_path: str, output_path: str, tags: dict[str, str]) -> None:
+    """Copy a PNG, adding `tags` as iTXt (UTF-8) text chunks.
+
+    Existing text chunks with the same keys are replaced; all others are kept.
+    """
+    with open(input_path, "rb") as f:
+        data = f.read()
+
+    new_chunks = b"".join(_make_itxt(k, v) for k, v in tags.items())  # validates first
+    out = [_SIG]
+    inserted = False
+
+    for ctype, body in _iter_chunks(data):
+        if ctype in _TEXT_TYPES:
+            parsed = _parse_text_chunk(ctype, body)
+            if parsed and parsed[0] in tags:
+                continue  # replaced by the new value
+        if ctype == b"IEND":
+            out.append(new_chunks)
+            inserted = True
+        out.append(_pack_chunk(ctype, body))
+
+    if not inserted:
+        raise ValueError("PNG has no IEND chunk (corrupt or truncated)")
+
+    with open(output_path, "wb") as f:
+        f.write(b"".join(out))
+
+
+def read_tags(image_path: str) -> dict[str, str]:
+    """Return all text-chunk key/value pairs (tEXt, zTXt, iTXt) as a dict."""
+    with open(image_path, "rb") as f:
+        data = f.read()
+    tags = {}
+    for ctype, body in _iter_chunks(data):
+        if ctype in _TEXT_TYPES:
+            parsed = _parse_text_chunk(ctype, body)
+            if parsed:
+                tags[parsed[0]] = parsed[1]
+    return tags
+```
+
+Usage:
+
+
+
+Design notes:
+- **iTXt for writing:** classic `tEXt` is Latin-1 only, while `iTXt` holds UTF-8, so any string round-trips. `read_tags` still handles all three chunk types, so it can read files made by other tools.
+- **Key rules:** keys must be 1–79 Latin-1 characters with no NUL and no leading or trailing spaces, per the PNG spec. Invalid keys raise `ValueError` before anything is written.
+- **Placement:** new chunks go right before `IEND`, which the spec allows.
+- **Duplicates:** if a key already exists, the new value replaces it. If a file contains duplicate keys, `read_tags` returns the last one.
+- **Alternative:** Pillow's `PngImageFile.text` and `PngInfo` would be shorter, but they decode and re-encode the pixels and can drop other ancillary chunks.

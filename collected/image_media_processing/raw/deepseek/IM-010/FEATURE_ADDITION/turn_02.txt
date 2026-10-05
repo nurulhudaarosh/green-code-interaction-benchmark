@@ -1,0 +1,115 @@
+Here's the extended implementation with an optional `fill_color` parameter:
+
+```python
+import os
+from pathlib import Path
+from PIL import Image
+
+# Common image extensions to process
+IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp'}
+
+
+def rotate_and_crop(input_dir, output_dir, angle_degrees, crop_size, fill_color=(0, 0, 0)):
+    """
+    Rotate each image in input_dir by angle_degrees and center-crop/pad it
+    to exactly crop_size (width, height). Results are written to output_dir.
+
+    Args:
+        input_dir (str | Path): Directory containing input images.
+        output_dir (str | Path): Directory to write processed images.
+        angle_degrees (float): Rotation angle in degrees (counter-clockwise).
+        crop_size (tuple[int, int]): Target size as (width, height).
+        fill_color (tuple[int, int, int]): RGB color used for padding /
+            rotation corners. Defaults to black (0, 0, 0). Alpha is added
+            automatically for images with transparency.
+    """
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if not input_dir.is_dir():
+        raise NotADirectoryError(f"Input directory not found: {input_dir}")
+
+    target_w, target_h = crop_size
+    if target_w <= 0 or target_h <= 0:
+        raise ValueError("crop_size dimensions must be positive")
+
+    if (not isinstance(fill_color, (tuple, list))
+            or len(fill_color) != 3
+            or not all(isinstance(c, int) and 0 <= c <= 255 for c in fill_color)):
+        raise ValueError("fill_color must be an RGB tuple of three ints in [0, 255]")
+
+    fill_rgb = tuple(fill_color)
+
+    for path in sorted(input_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS:
+            continue
+
+        try:
+            with Image.open(path) as img:
+                # Preserve alpha channel if present; otherwise stay in RGB.
+                if img.mode in ('RGBA', 'LA') or 'transparency' in img.info:
+                    img = img.convert('RGBA')
+                    fill = fill_rgb + (0,)  # transparent padding
+                else:
+                    img = img.convert('RGB')
+                    fill = fill_rgb
+
+                # Rotate with expand=True so the whole image fits without clipping.
+                rotated = img.rotate(
+                    angle_degrees,
+                    resample=Image.BICUBIC,
+                    expand=True,
+                    fillcolor=fill,
+                )
+
+                # Center-crop if larger than target, otherwise pad.
+                rw, rh = rotated.size
+                if rw >= target_w and rh >= target_h:
+                    left = (rw - target_w) // 2
+                    top = (rh - target_h) // 2
+                    result = rotated.crop((left, top, left + target_w, top + target_h))
+                else:
+                    # Create a canvas and paste the rotated image centered.
+                    canvas = Image.new(rotated.mode, (target_w, target_h), fill)
+                    paste_x = (target_w - rw) // 2
+                    paste_y = (target_h - rh) // 2
+                    if rotated.mode == 'RGBA':
+                        canvas.paste(rotated, (paste_x, paste_y), rotated)
+                    else:
+                        canvas.paste(rotated, (paste_x, paste_y))
+                    result = canvas
+
+                # Save with original extension; force a sensible default quality.
+                out_path = output_dir / path.name
+                save_kwargs = {}
+                ext = path.suffix.lower()
+                if ext in ('.jpg', '.jpeg'):
+                    result = result.convert('RGB')
+                    save_kwargs = {'quality': 95, 'subsampling': 0}
+                elif ext == '.png':
+                    save_kwargs = {'optimize': True}
+                elif ext == '.webp':
+                    save_kwargs = {'quality': 95}
+
+                result.save(out_path, **save_kwargs)
+                print(f"Processed: {path.name} -> {out_path.name}")
+
+        except Exception as e:
+            print(f"Failed to process {path.name}: {e}")
+
+
+if __name__ == "__main__":
+    # Default: black padding
+    rotate_and_crop("input_images", "output_images", angle_degrees=30, crop_size=(512, 512))
+
+    # Custom white padding
+    rotate_and_crop("input_images", "output_images_white", 30, (512, 512), fill_color=(255, 255, 255))
+```
+
+### What changed
+
+1. **New parameter**: `fill_color=(0, 0, 0)` — an RGB tuple. The default keeps the original black-padding behavior.
+2. **Validation**: Raises `ValueError` if `fill_color` isn't a 3-tuple of ints in `[0, 255]`.
+3. **Alpha handling**: For images with an alpha channel, the fill is `fill_rgb + (0,)` — so the *rotated corners* stay transparent while any padding is also transparent. If you'd prefer opaque padding for RGBA images too, change that line to `fill = fill_rgb + (255,)`.
+4. **Applied to both**: `fillcolor` in `Image.rotate()` and the background of the padding `Image.new(...)`.

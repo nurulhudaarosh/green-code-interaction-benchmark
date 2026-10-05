@@ -1,0 +1,77 @@
+import json
+import sys
+
+
+def main():
+    if len(sys.argv) != 2:
+        print("Usage: python filter.py <score_threshold>")
+        return
+
+    try:
+        threshold = float(sys.argv[1])
+    except ValueError:
+        print("Invalid score threshold")
+        return
+
+    kept = []
+    skipped = 0
+
+    for line in sys.stdin:
+        try:
+            record = json.loads(line)
+
+            if not isinstance(record, dict):
+                skipped += 1
+                continue
+
+            if "id" not in record or "category" not in record:
+                skipped += 1
+                continue
+
+            if "score" not in record or "active" not in record:
+                skipped += 1
+                continue
+
+            record_id = record["id"]
+            category = record["category"]
+            score = record["score"]
+            active = record["active"]
+
+            if not isinstance(record_id, (str, int)) or isinstance(record_id, bool):
+                skipped += 1
+                continue
+
+            if not isinstance(category, str):
+                skipped += 1
+                continue
+
+            if not isinstance(score, (int, float)) or isinstance(score, bool):
+                skipped += 1
+                continue
+
+            if not isinstance(active, bool):
+                skipped += 1
+                continue
+
+            if active and score >= threshold:
+                kept.append(record)
+
+        except (json.JSONDecodeError, TypeError, ValueError):
+            skipped += 1
+
+    kept.sort(
+        key=lambda r: (
+            r["category"],
+            -r["score"],
+            r["id"]
+        )
+    )
+
+    for record in kept:
+        print(json.dumps(record, ensure_ascii=False))
+
+    print(json.dumps({"kept": len(kept), "skipped": skipped}))
+
+
+if __name__ == "__main__":
+    main()

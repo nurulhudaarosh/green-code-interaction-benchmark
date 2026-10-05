@@ -1,0 +1,118 @@
+## Problem Identification
+
+**Problem:** Interval partitioning / meeting rooms assignment.
+
+We are given a set of intervals `[start, end)`. We must:
+1. Assign each interval to a room.
+2. No two overlapping intervals may share a room (intervals that touch, i.e., one ends exactly when another starts, may share a room).
+3. Minimize the number of rooms used.
+4. Return the room ID assigned to each **original** interval (in original input order).
+
+This is the classic "minimum number of meeting rooms" problem, with the added requirement of returning the actual assignment per original interval.
+
+---
+
+## Key Constraints
+
+- Intervals are half-open: `[start, end)`.
+- A room can be reused if `previous_end <= next_start`.
+- All intervals must be assigned.
+- Output must preserve original interval order.
+- Deterministic, standard-library-only solution.
+- Typical complexity target: `O(n log n)`.
+
+---
+
+## Required Output
+
+A list `room_ids` of length `n`, where `room_ids[i]` is the room ID assigned to the `i`-th interval in the original input order.
+
+
+
+## Algorithm
+
+1. Pair each interval with its original index.
+2. Sort the pairs by **start time** (ties broken by original index for determinism).
+3. Maintain a min-heap of `(end_time, room_id)` representing rooms currently in use, keyed by when they become free.
+4. For each interval in sorted order:
+   - If the heap is non-empty and the earliest-ending room is free (`heap[0].end <= start`), pop it and reuse that room.
+   - Otherwise, allocate a new room ID.
+   - Push `(end, room_id)` onto the heap.
+   - Record `room_ids[original_index] = room_id`.
+5. Return `room_ids`.
+
+**Correctness:** Greedy reuse of the earliest-available room is optimal for interval partitioning — the minimum number of rooms equals the maximum overlap depth, and this strategy achieves it.
+
+---
+
+## Python Implementation
+
+```python
+import heapq
+
+
+def assign_rooms(intervals):
+    """
+    Assign each interval to a room so overlapping intervals never share a room.
+
+    Args:
+        intervals: list of (start, end) tuples, half-open [start, end).
+
+    Returns:
+        List[int] room_ids where room_ids[i] is the room for intervals[i].
+    """
+    n = len(intervals)
+    if n == 0:
+        return []
+
+    # Pair each interval with its original index, then sort by start time.
+    indexed = sorted(
+        ((start, end, i) for i, (start, end) in enumerate(intervals)),
+        key=lambda x: (x[0], x[2]),  # deterministic tie-break by original index
+    )
+
+    room_ids = [0] * n
+    # Min-heap of (end_time, room_id) for rooms currently in use.
+    heap = []
+    next_room_id = 0
+
+    for start, end, original_idx in indexed:
+        if heap and heap[0][0] <= start:
+            # Reuse the room that frees up earliest.
+            _, room_id = heapq.heappop(heap)
+        else:
+            # Allocate a new room.
+            room_id = next_room_id
+            next_room_id += 1
+
+        heapq.heappush(heap, (end, room_id))
+        room_ids[original_idx] = room_id
+
+    return room_ids
+
+
+if __name__ == "__main__":
+    # Example 1: overlapping intervals
+    intervals1 = [(0, 30), (5, 10), (15, 20)]
+    print(assign_rooms(intervals1))  # e.g. [0, 1, 1]
+
+    # Example 2: touching intervals can share a room
+    intervals2 = [(1, 5), (5, 10), (10, 15)]
+    print(assign_rooms(intervals2))  # [0, 0, 0]
+
+    # Example 3: fully overlapping
+    intervals3 = [(0, 10), (1, 11), (2, 12)]
+    print(assign_rooms(intervals3))  # [0, 1, 2]
+
+    # Example 4: empty input
+    print(assign_rooms([]))  # []
+```
+
+---
+
+## Notes on Determinism and Constraints
+
+- **No randomness:** sorting uses `(start, original_index)` as a total order, and heap operations are deterministic.
+- **No external services:** only `heapq` from the standard library.
+- **Complexity:** `O(n log n)` time, `O(n)` space.
+- **Correctness of reuse condition:** `heap[0][0] <= start` allows back-to-back intervals (`end == start`) to share a room, matching the half-open `[start, end)` convention.

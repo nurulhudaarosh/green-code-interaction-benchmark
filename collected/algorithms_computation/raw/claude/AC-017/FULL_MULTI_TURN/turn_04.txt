@@ -1,0 +1,351 @@
+## Restatement of the original problem
+
+**Prime Range Analyzer:** given integers `L <= R`, find every prime in `[L, R]` using base primes up to `isqrt(R)` and a segmented sieve.
+
+**Required outputs (unchanged):**
+1. `primes`: the ascending list of primes in `[L, R]`.
+2. `largest_gap`: the maximum difference between consecutive primes, or `0` if there are fewer than two primes.
+3. Opt-in `operation_summary` via `include_summary=True`, returned as a third element.
+
+**Rules (unchanged):** ties go to the earliest pair (strict `>`), `L > R` raises `ValueError`, `L < 2` is clamped to 2, and `solve(L, R)` returns exactly `(primes, largest_gap)`. The code is standard library only and deterministic.
+
+## Difficult valid cases now handled and tested
+
+- **Smallest inputs:** `[2, 2]`, the smallest range containing a prime, where `isqrt(2) = 1` gives an empty base-prime list. Also `[1, 1]`, `[0, 0]`, and all-negative ranges such as `[-10, -1]`.
+- **Empty structures:** ranges with no primes (`[14, 16]`, `[114, 126]`) return `([], 0)`. Single-prime ranges return gap `0` and no pair.
+- **Disconnected structures:** primes separated by long prime-free stretches, such as `[113, 127]` where 113 and 127 are the only two primes. Also primes split across many segments, where a segment can be empty and the best gap can straddle a segment boundary.
+- **Segment-boundary behavior:** to test segmentation without huge inputs, `solve` gets an optional `block_size` argument that defaults to `BLOCK_SIZE`. Default behavior is identical. The tests compare block sizes 1, 2, 3, 7 and the default against a brute-force reference on every range in `[-3, 60]`.
+
+```python
+"""
+Prime Range Analyzer
+
+Problem: for integers L <= R, return (primes, largest_gap) where
+  - primes      = ascending list of all primes in [L, R]
+  - largest_gap = max difference between consecutive primes (0 if < 2 primes)
+
+Rules (unchanged):
+  - Ties: the earliest pair (smallest lower prime) wins (strict '>').
+  - L > R raises ValueError (no silent swapping).
+  - L < 2 is clamped to 2.
+  - solve(L, R) returns exactly (primes, largest_gap).
+  - solve(L, R, include_summary=True) appends a deterministic operation_summary.
+
+Edge cases handled explicitly:
+  - Empty results (no primes in range, or R < 2): ([], 0), zero sieve work.
+  - Smallest prime-bearing input [2, 2]: isqrt(2) = 1 -> no base primes.
+  - Sparse/"disconnected" primes and multi-segment ranges, including empty
+    segments and gaps that straddle a segment boundary.
+  - block_size is an optional testing hook (default BLOCK_SIZE, must be >= 1).
+
+Algorithm: base primes up to isqrt(R) via a simple sieve, then a segmented
+sieve over [max(L, 2), R]. Standard library only, deterministic.
+
+Usage: python solution.py L R [--summary]   (no args -> demo on [1, 100])
+"""
+
+import sys
+from math import isqrt
+
+BLOCK_SIZE = 1 << 20
+
+SUMMARY_KEYS = (
+    "base_limit",
+    "base_primes_found",
+    "base_sieve_strikes",
+    "segments",
+    "segment_prime_checks",
+    "segment_strikes",
+    "primes_found",
+    "gap_comparisons",
+    "gap_updates",
+)
+
+
+def _new_stats():
+    return {k: 0 for k in SUMMARY_KEYS}
+
+
+def simple_sieve(n, stats=None):
+    """All primes <= n (sieve of Eratosthenes). Returns [] for n < 2."""
+    if n < 2:
+        return []
+    flags = bytearray([1]) * (n + 1)
+    flags[0] = flags[1] = 0
+    for i in range(2, isqrt(n) + 1):
+        if flags[i]:
+            flags[i * i::i] = bytes(len(range(i * i, n + 1, i)))
+            if stats is not None:
+                stats["base_sieve_strikes"] += 1
+    return [i for i in range(2, n + 1) if flags[i]]
+
+
+def primes_in_range(L, R, stats=None, block_size=BLOCK_SIZE):
+    """Sorted primes in [L, R] via segmented sieve. Requires L <= R."""
+    if L > R:
+        raise ValueError(f"invalid interval: L={L} > R={R}")
+    if block_size < 1:
+        raise ValueError(f"block_size must be >= 1, got {block_size}")
+    lo = max(L, 2)
+    if lo > R:                      # empty structure: nothing to sieve
+        return []
+    base = simple_sieve(isqrt(R), stats)
+    if stats is not None:
+        stats["base_limit"] = isqrt(R)
+        stats["base_primes_found"] = len(base)
+    result = []
+    seg_lo = lo
+    while seg_lo <= R:
+        seg_hi = min(seg_lo + block_size - 1, R)
+        size = seg_hi - seg_lo + 1
+        if stats is not None:
+            stats["segments"] += 1
+        seg = bytearray([1]) * size
+        for p in base:
+            if stats is not None:
+                stats["segment_prime_checks"] += 1
+            if p * p > seg_hi:
+                break
+            start = max(p * p, ((seg_lo + p - 1) // p) * p)
+            if start > seg_hi:
+                continue
+            offset = start - seg_lo
+            seg[offset::p] = bytes(len(range(offset, size, p)))
+            if stats is not None:
+                stats["segment_strikes"] += 1
+        result.extend(seg_lo + i for i in range(size) if seg[i])
+        seg_lo = seg_hi + 1
+    if stats is not None:
+        stats["primes_found"] = len(result)
+    return result
+
+
+def largest_gap_pair(primes, stats=None):
+    """Return (gap, (p, q)); on ties the EARLIEST pair wins (strict '>').
+    Returns (0, None) when fewer than two primes."""
+    best, pair = 0, None
+    for a, b in zip(primes, primes[1:]):
+        if stats is not None:
+            stats["gap_comparisons"] += 1
+        if b - a > best:
+            best, pair = b - a, (a, b)
+            if stats is not None:
+                stats["gap_updates"] += 1
+    return best, pair
+
+
+def _finalize(stats):
+    stats["total_operations"] = (
+        stats["base_sieve_strikes"]
+        + stats["segments"]
+        + stats["segment_prime_checks"]
+        + stats["segment_strikes"]
+        + stats["gap_comparisons"]
+        + stats["gap_updates"]
+    )
+    return stats
+
+
+def solve(L, R, include_summary=False, block_size=BLOCK_SIZE):
+    """Default: (primes, largest_gap), exactly as originally required.
+    With include_summary=True: (primes, largest_gap, operation_summary)."""
+    if not include_summary:
+        primes = primes_in_range(L, R, None, block_size)
+        gap, _ = largest_gap_pair(primes)
+        return primes, gap
+    stats = _new_stats()
+    primes = primes_in_range(L, R, stats, block_size)
+    gap, _ = largest_gap_pair(primes, stats)
+    return primes, gap, _finalize(stats)
+
+
+# ----------------------------------------------------------------------------
+# Tests
+# ----------------------------------------------------------------------------
+
+def _is_prime_ref(n):
+    """Independent trial-division reference (used only by tests)."""
+    if n < 2:
+        return False
+    d = 2
+    while d * d <= n:
+        if n % d == 0:
+            return False
+        d += 1
+    return True
+
+
+def _reference(L, R):
+    """Brute-force (primes, gap, earliest_pair) for cross-checking."""
+    primes = [n for n in range(L, R + 1) if _is_prime_ref(n)]
+    best, pair = 0, None
+    for a, b in zip(primes, primes[1:]):
+        if b - a > best:
+            best, pair = b - a, (a, b)
+    return primes, best, pair
+
+
+def _raises_value_error(fn, *args, **kwargs):
+    try:
+        fn(*args, **kwargs)
+    except ValueError:
+        return True
+    return False
+
+
+def _self_test():
+    # --- original behavior (feature disabled) ---
+    assert solve(1, 100)[1] == 8
+    assert solve(1, 20)[1] == 4
+    assert len(solve(1, 100)) == 2
+    assert largest_gap_pair(solve(1, 20)[0]) == (4, (7, 11))  # tie -> earliest
+    assert solve(14, 16) == ([], 0)
+    assert solve(13, 13) == ([13], 0)
+    assert solve(-5, 2) == ([2], 0)
+    assert solve(2, 3) == ([2, 3], 1)
+    assert _raises_value_error(solve, 100, 1)
+
+    # --- smallest permitted inputs ---
+    assert solve(2, 2) == ([2], 0)              # smallest range with a prime
+    assert solve(1, 1) == ([], 0)
+    assert solve(0, 0) == ([], 0)
+    assert solve(-1, -1) == ([], 0)
+    assert solve(-10, -1) == ([], 0)            # entirely below 2
+    assert solve(-10, 1) == ([], 0)
+    assert solve(-10, 2) == ([2], 0)
+    assert solve(3, 3) == ([3], 0)
+    assert solve(4, 4) == ([], 0)               # composite singleton
+    assert _raises_value_error(solve, 1, 0)     # smallest invalid interval
+    assert _raises_value_error(solve, 2, 1)
+    assert _raises_value_error(solve, 5, 5, block_size=0)
+
+    # --- empty structures: no primes -> ([], 0) and zero-work summary ---
+    for L, R in [(14, 16), (114, 126), (24, 28), (0, 1), (-5, -3)]:
+        primes, gap, s = solve(L, R, include_summary=True)
+        assert (primes, gap) == ([], 0)
+        assert largest_gap_pair(primes) == (0, None)
+        if R < 2 or L > R:
+            assert s["total_operations"] == 0
+    # No primes but real sieving happened (114..126 sits between 113 and 127).
+    assert solve(114, 126, include_summary=True)[2]["segments"] == 1
+
+    # --- single prime: gap 0, no pair ---
+    for p in (2, 3, 13, 113):
+        primes, gap = solve(p, p)
+        assert (primes, gap) == ([p], 0)
+        assert largest_gap_pair(primes) == (0, None)
+
+    # --- disconnected / sparse primes: only two primes, far apart ---
+    assert solve(113, 127) == ([113, 127], 14)
+    assert largest_gap_pair(solve(113, 127)[0]) == (14, (113, 127))
+    assert solve(89, 97) == ([89, 97], 8)
+    assert largest_gap_pair(solve(23, 29)[0]) == (6, (23, 29))
+    # Padding with prime-free stretches on both sides changes nothing.
+    assert solve(90, 96) == ([], 0)
+    assert solve(24, 28) == ([], 0)
+    assert solve(114, 130) == ([127], 0)
+
+    # --- tie-breaking preserved (earliest pair wins) ---
+    # Gaps of 4 occur at (7,11) and (13,17); earliest is (7,11).
+    assert largest_gap_pair(solve(7, 17)[0]) == (4, (7, 11))
+    assert largest_gap_pair(solve(1, 20)[0]) == (4, (7, 11))
+    # Gaps of 2 repeat: (3,5), (5,7), ... ; earliest is (3,5).
+    assert largest_gap_pair(solve(3, 13)[0]) == (2, (3, 5))
+    # Ties must resolve identically regardless of segmentation.
+    for bs in (1, 2, 3, 5, 7):
+        assert largest_gap_pair(solve(1, 20, block_size=bs)[0]) == (4, (7, 11))
+
+    # --- multi-segment behavior, incl. empty segments and boundary gaps ---
+    assert solve(89, 97, block_size=4) == ([89, 97], 8)   # gap spans segments
+    assert solve(113, 127, block_size=3) == ([113, 127], 14)
+    # Cross-check every range in [-3, 60] against brute force, for several
+    # block sizes (block_size=1 makes every number its own segment).
+    for bs in (1, 2, 3, 7, BLOCK_SIZE):
+        for L in range(-3, 61):
+            for R in range(L, 61):
+                ref_primes, ref_gap, ref_pair = _reference(L, R)
+                primes, gap = solve(L, R, block_size=bs)
+                assert (primes, gap) == (ref_primes, ref_gap), (L, R, bs)
+                assert largest_gap_pair(primes) == (ref_gap, ref_pair), (L, R, bs)
+    # A larger spot check with an empty interior segment (block_size=5).
+    ref_primes, ref_gap, ref_pair = _reference(100, 400)
+    primes, gap = solve(100, 400, block_size=5)
+    assert (primes, gap) == (ref_primes, ref_gap)
+    assert largest_gap_pair(primes) == (ref_gap, ref_pair)
+
+    # --- feature enabled: original fields identical, summary appended ---
+    cases = [(1, 100), (1, 20), (14, 16), (13, 13), (-5, 2), (2, 3),
+             (2, 2), (1, 1), (0, 0), (-10, -1), (113, 127), (114, 126)]
+    for L, R in cases:
+        primes, gap, _ = solve(L, R, include_summary=True)
+        assert (primes, gap) == solve(L, R)
+        assert len(solve(L, R)) == 2
+
+    # Hand-computed summary for [1, 20] (default block size): total 16.
+    _, _, s = solve(1, 20, include_summary=True)
+    assert s == {
+        "base_limit": 4, "base_primes_found": 2, "base_sieve_strikes": 1,
+        "segments": 1, "segment_prime_checks": 2, "segment_strikes": 2,
+        "primes_found": 8, "gap_comparisons": 7, "gap_updates": 3,
+        "total_operations": 16,
+    }
+    # [2, 2]: isqrt(2)=1 -> no base primes; 1 segment; 1 prime; no gaps.
+    _, _, s = solve(2, 2, include_summary=True)
+    assert s == {
+        "base_limit": 1, "base_primes_found": 0, "base_sieve_strikes": 0,
+        "segments": 1, "segment_prime_checks": 0, "segment_strikes": 0,
+        "primes_found": 1, "gap_comparisons": 0, "gap_updates": 0,
+        "total_operations": 1,
+    }
+    # [2, 3]: still no base primes; one comparison, one update.
+    _, _, s = solve(2, 3, include_summary=True)
+    assert s["base_primes_found"] == 0 and s["segments"] == 1
+    assert s["gap_comparisons"] == 1 and s["gap_updates"] == 1
+    assert s["total_operations"] == 3
+    # [1, 1]: empty range -> every counter is zero.
+    _, _, s = solve(1, 1, include_summary=True)
+    assert all(v == 0 for v in s.values())
+    # [4, 4]: composite singleton; base primes [2]; one strike clears 4.
+    _, _, s = solve(4, 4, include_summary=True)
+    assert s["primes_found"] == 0 and s["segment_strikes"] == 1
+    assert s["total_operations"] == 3
+    # [1, 20] with block_size=5: segments 2-6, 7-11, 12-16, 17-20 -> 4.
+    assert solve(1, 20, include_summary=True, block_size=5)[2]["segments"] == 4
+    # Determinism: repeated calls give identical summaries.
+    assert solve(1, 1000, True)[2] == solve(1, 1000, True)[2]
+
+
+def main():
+    _self_test()
+    args = [a for a in sys.argv[1:] if a != "--summary"]
+    want_summary = "--summary" in sys.argv[1:]
+    if len(args) >= 2:
+        L, R = int(args[0]), int(args[1])
+    else:
+        L, R = 1, 100
+    result = solve(L, R, include_summary=want_summary)
+    primes, gap = result[0], result[1]
+    _, pair = largest_gap_pair(primes)
+    print(f"Range: [{L}, {R}]")
+    print(f"Prime count: {len(primes)}")
+    print(f"Primes: {primes}")
+    if pair is None:
+        print("Largest gap: 0 (fewer than two primes)")
+    else:
+        print(f"Largest gap: {gap} (between {pair[0]} and {pair[1]})")
+    if want_summary:
+        print("operation_summary:")
+        for k, v in result[2].items():
+            print(f"  {k}: {v}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## What changed and what didn't
+
+- **Unchanged:** the sieve logic, clamping, `ValueError` on `L > R`, strict-`>` tie rule, the `(primes, largest_gap)` return shape, and every summary field and formula.
+- **Added:** an optional `block_size` parameter (default `BLOCK_SIZE`, validated as `>= 1`) and the edge-case tests above. Only `simple_sieve` and `primes_in_range` got the extra parameter plumbing.
+- **Summary values for the new cases** are hand-computed. For `[2, 2]` the total is 1 (one segment, no base primes, no gaps). For `[4, 4]` it is 3 (one segment, one prime check, one strike).
+- **Not executed:** I checked the assertions by hand and against the algorithm, but I haven't run the script here. Running `python solution.py` will execute the self-tests first.

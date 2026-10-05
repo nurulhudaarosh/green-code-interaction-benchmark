@@ -1,0 +1,208 @@
+import collections
+import re
+from typing import Any, Dict, List, Optional
+
+
+def normalize_string(text: Optional[str]) -> Optional[str]:
+    """Strip leading/trailing whitespace and convert to lowercase."""
+    if not text:
+        return None
+    cleaned = text.strip().lower()
+    return cleaned if cleaned else None
+
+
+def normalize_email(email: Optional[str]) -> Optional[str]:
+    """Normalize email: trim whitespace, lowercase, and basic structure check."""
+    cleaned = normalize_string(email)
+    if cleaned and "@" in cleaned and "." in cleaned.split("@")[-1]:
+        return cleaned
+    return None
+
+
+def normalize_phone(phone: Optional[str]) -> Optional[str]:
+    """Normalize phone number: strip all punctuation/non-digits and normalize trunk codes."""
+    if not phone:
+        return None
+    # Strip all non-digit characters (punctuation, hyphens, parentheses, spaces, plus signs)
+    digits = re.sub(r"\D", "", phone)
+    # Remove leading trunk / international zero prefixes (e.g., standardizing US/NANP +1)
+    if len(digits) > 10 and digits.startswith("1"):
+        digits = digits[1:]
+    return digits if len(digits) >= 7 else None
+
+
+def generate_blocking_key(
+    surname: Optional[str], postal_code: Optional[str]
+) -> str:
+    """Creates a blocking key: (Surname Initial : First 3 Postal Code Characters).
+
+    Applies case and space normalization before extracting key components.
+    """
+    clean_surname = normalize_string(surname) or ""
+    clean_postal = normalize_string(postal_code) or ""
+
+    # Extract first alphanumeric character of surname
+    sn_chars = re.sub(r"[^a-z0-9]", "", clean_surname)
+    sn_initial = sn_chars[:1].upper() if sn_chars else "UNKNOWN"
+
+    # Extract first 3 alphanumeric characters of postal code
+    post_chars = re.sub(r"[^a-z0-9]", "", clean_postal)
+    post_prefix = post_chars[:3].upper() if post_chars else "UNKNOWN"
+
+    return f"{sn_initial}:{post_prefix}"
+
+
+class UnionFind:
+    """Disjoint-set structure to merge matching record IDs into clusters."""
+
+    def __init__(self) -> None:
+        self.parent: Dict[Any, Any] = {}
+
+    def find(self, item: Any) -> Any:
+        if item not in self.parent:
+            self.parent[item] = item
+            return item
+        if self.parent[item] != item:
+            self.parent[item] = self.find(self.parent[item])  # Path compression
+        return self.parent[item]
+
+    def union(self, item1: Any, item2: Any) -> None:
+        root1 = self.find(item1)
+        root2 = self.find(item2)
+        if root1 != root2:
+            self.parent[root2] = root1
+
+
+def match_customer_records(
+    records: List[Dict[str, Any]]
+) -> List[List[Dict[str, Any]]]:
+    """Matches offline customer records using:
+
+    1. Case, space, and phone punctuation normalization.
+    2. Surname-initial / postal-prefix candidate blocking.
+    3. Strict candidate precedence: Email Match > Phone Match, tied on lowest target ID.
+    """
+    uf = UnionFind()
+    blocks: Dict[str, List[Dict[str, Any]]] = collections.defaultdict(list)
+
+    # ------------------------------------------------------------------
+    # STAGE 1: NORMALIZATION & BLOCKING
+    # ------------------------------------------------------------------
+    for record in records:
+        rec_id = record["id"]
+        uf.find(rec_id)  # Register node in Union-Find
+
+        # Normalize text attributes
+        record["_norm_surname"] = normalize_string(record.get("surname"))
+        record["_norm_postal"] = normalize_string(record.get("postal_code"))
+        record["_norm_email"] = normalize_email(record.get("email"))
+        record["_norm_phone"] = normalize_phone(record.get("phone"))
+
+        # Generate blocking key using normalized attributes
+        block_key = generate_blocking_key(
+            record["_norm_surname"], record["_norm_postal"]
+        )
+        blocks[block_key].append(record)
+
+    # ------------------------------------------------------------------
+    # STAGE 2: CANDIDATE MATCHING WITH PREFERENCE RULES
+    # ------------------------------------------------------------------
+    for block_key, block_records in blocks.items():
+        if len(block_records) < 2:
+            continue
+
+        # Map normalized email/phone to lists of candidate record IDs within the block
+        email_map: Dict[str, List[Any]] = collections.defaultdict(list)
+        phone_map: Dict[str, List[Any]] = collections.defaultdict(list)
+
+        for rec in block_records:
+            rec_id = rec["id"]
+            if rec["_norm_email"]:
+                email_map[rec["_norm_email"]].append(rec_id)
+            if rec["_norm_phone"]:
+                phone_map[rec["_norm_phone"]].append(rec_id)
+
+        # Evaluate matches for each record in the block
+        for rec in block_records:
+            rec_id = rec["id"]
+            email = rec["_norm_email"]
+            phone = rec["_norm_phone"]
+
+            candidate_email_ids = [
+                target_id
+                for target_id in email_map.get(email, [])
+                if target_id != rec_id
+            ]
+            candidate_phone_ids = [
+                target_id
+                for target_id in phone_map.get(phone, [])
+                if target_id != rec_id
+            ]
+
+            best_match_id = None
+
+            # Priority 1: Email Match -> select lowest target candidate ID
+            if candidate_email_ids:
+                best_match_id = min(candidate_email_ids)
+            # Priority 2: Phone Match -> select lowest target candidate ID (if no email match)
+            elif candidate_phone_ids:
+                best_match_id = min(candidate_phone_ids)
+
+            # Union records if a candidate match was found
+            if best_match_id is not None:
+                uf.union(rec_id, best_match_id)
+
+    # ------------------------------------------------------------------
+    # STAGE 3: AGGREGATE CLUSTERS
+    # ------------------------------------------------------------------
+    clusters: Dict[Any, List[Dict[str, Any]]] = collections.defaultdict(list)
+    for record in records:
+        # Strip internal temporary normalization keys before output
+        clean_record = {
+            k: v for k, v in record.items() if not k.startswith("_norm_")
+        }
+        root = uf.find(record["id"])
+        clusters[root].append(clean_record)
+
+    return list(clusters.values())
+
+
+# Example Usage
+if __name__ == "__main__":
+    sample_records = [
+        {
+            "id": 101,
+            "first_name": "John",
+            "surname": "  SMITH  ",  # Spaces & upper case
+            "postal_code": " 90210-1234 ",
+            "email": "JOHN.SMITH@EXAMPLE.COM ",
+            "phone": "+1 (555) 012-3456",  # Complex phone punctuation
+        },
+        {
+            "id": 102,
+            "first_name": "Johnny",
+            "surname": "smith",  # Lower case
+            "postal_code": "90210",
+            "email": "john.smith@example.com",  # Matches 101 after case/space norm
+            "phone": "5550123456",  # Matches 101 after stripping punctuation
+        },
+        {
+            "id": 103,
+            "first_name": "J.",
+            "surname": "Smith",
+            "postal_code": "90210",
+            "email": "jsmith_alt@example.com",
+            "phone": " 555-012-3456 ",  # Matches 101 & 102 via normalized phone
+        },
+    ]
+
+    matched_groups = match_customer_records(sample_records)
+
+    print(f"Total Unique Profiles Found: {len(matched_groups)}\n")
+    for i, group in enumerate(matched_groups, 1):
+        ids = [r["id"] for r in group]
+        print(f"Cluster #{i} (IDs: {ids}):")
+        for rec in group:
+            print(
+                f"  - [{rec['id']}] {rec['first_name']} '{rec['surname']}' | Email: {rec['email']} | Phone: {rec['phone']}"
+            )

@@ -1,0 +1,103 @@
+### Problem Understanding
+
+The task is to compute the edit distance between two strings $s_1$ and $s_2$ where allowable edit operations are:
+
+1. **Insertion** (cost = 1)
+2. **Deletion** (cost = 1)
+3. **Substitution** (cost = 1 if characters differ, 0 if identical)
+4. **Adjacent Transposition** (cost = 1): Swapping two adjacent characters $s_1[i-2]$ and $s_1[i-1]$ to match $s_2[j-1]$ and $s_2[j-2]$.
+
+This specific variant is the **Optimal String Alignment (OSA) distance** (also known as restricted Damerau–Levenshtein distance), where an adjacent transposition is permitted under the standard recurrence without allowing a substring to be edited multiple times via transpositions.
+
+---
+
+### Key Constraints & Required Output
+
+* **Input:** Two strings, $s_1$ and $s_2$.
+* **Operations & Costs:** Insertion (1), Deletion (1), Substitution (1 / 0 if match), Adjacent Transposition (1).
+* **Environment:** Deterministic execution using Python standard library only; no external libraries, network calls, or randomness.
+* **Output:** An integer representing the minimum total edit cost to transform $s_1$ into $s_2$.
+
+---
+
+### Algorithm
+
+We use dynamic programming with a 2D table `dp` of size $(\vert{}s_1\vert{} + 1) \times (\vert{}s_2\vert{} + 1)$, where `dp[i][j]` denotes the edit distance between the prefixes $s_1[0 \dots i-1]$ and $s_2[0 \dots j-1]$.
+
+1. **Base cases:**
+* $\text{dp}[i][0] = i$ for all $0 \le i \le \vert{}s_1\vert{}$ (deleting $i$ characters).
+* $\text{dp}[0][j] = j$ for all $0 \le j \le \vert{}s_2\vert{}$ (inserting $j$ characters).
+
+
+2. **Transitions for $i \ge 1, j \ge 1$:**
+* $\text{cost} = 0 \text{ if } s_1[i-1] == s_2[j-1] \text{ else } 1$
+* $\text{dp}[i][j] = \min($
+* $\text{dp}[i-1][j] + 1$ (deletion),
+* $\text{dp}[i][j-1] + 1$ (insertion),
+* $\text{dp}[i-1][j-1] + \text{cost}$ (substitution / match)
+$)$
+
+
+* **Explicit transposition condition:** If $i > 1$, $j > 1$, $s_1[i-1] == s_2[j-2]$, and $s_1[i-2] == s_2[j-1]$:
+* $\text{dp}[i][j] = \min(\text{dp}[i][j], \text{dp}[i-2][j-2] + 1)$
+
+
+
+
+3. **Result:** $\text{dp}[\vert{}s_1\vert{}][\vert{}s_2\vert{}]$.
+
+---
+
+### Python Implementation
+
+```python
+def osa_distance(s1: str, s2: str) -> int:
+    """Compute the edit distance between s1 and s2 allowing insertion,
+
+    deletion, substitution, and adjacent transposition (each costing 1).
+    """
+    n, m = len(s1), len(s2)
+
+    # dp[i][j] stores the distance between s1[:i] and s2[:j]
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+
+    # Initialize base cases
+    for i in range(n + 1):
+        dp[i][0] = i
+    for j in range(m + 1):
+        dp[0][j] = j
+
+    # Fill DP table
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            sub_cost = 0 if s1[i - 1] == s2[j - 1] else 1
+
+            dp[i][j] = min(
+                dp[i - 1][j] + 1,  # Deletion
+                dp[i][j - 1] + 1,  # Insertion
+                dp[i - 1][j - 1] + sub_cost,  # Substitution / match
+            )
+
+            # Adjacent transposition check
+            if (
+                i > 1
+                and j > 1
+                and s1[i - 1] == s2[j - 2]
+                and s1[i - 2] == s2[j - 1]
+            ):
+                dp[i][j] = min(dp[i][j], dp[i - 2][j - 2] + 1)
+
+    return dp[n][m]
+
+
+if __name__ == "__main__":
+    # Test cases demonstrating the four operations
+    assert osa_distance("cat", "cat") == 0  # Identical
+    assert osa_distance("cat", "cats") == 1  # Insertion
+    assert osa_distance("cat", "at") == 1  # Deletion
+    assert osa_distance("cat", "bat") == 1  # Substitution
+    assert osa_distance("ca", "ac") == 1  # Adjacent transposition
+    assert osa_distance("banana", "bnaan") == 2  # Combined operations
+    print("All assertions passed.")
+
+```

@@ -1,0 +1,77 @@
+You're right. The fix is to use ceiling division: `(n + columns - 1) // columns`. This ensures a partial final row gets enough space for its images.
+
+```python
+from pathlib import Path
+from PIL import Image
+
+
+def build_contact_sheet(input_dir, output_path, thumb_size, columns):
+    """
+    Tile all valid images in input_dir into a contact sheet.
+
+    Returns:
+        (number_of_images, columns)
+    """
+    input_dir = Path(input_dir)
+    output_path = Path(output_path)
+
+    if columns <= 0:
+        raise ValueError("columns must be greater than 0")
+
+    thumb_w, thumb_h = thumb_size
+
+    valid_extensions = {
+        ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"
+    }
+
+    images = []
+
+    for path in sorted(input_dir.iterdir()):
+        if path.suffix.lower() not in valid_extensions:
+            continue
+
+        try:
+            with Image.open(path) as img:
+                img = img.convert("RGB")
+                img.thumbnail((thumb_w, thumb_h))
+                images.append(img.copy())
+        except (OSError, ValueError):
+            continue
+
+    n = len(images)
+
+    # Ceiling division: includes a trailing partial row.
+    rows = (n + columns - 1) // columns
+
+    # Handle no valid images.
+    if n == 0:
+        sheet = Image.new("RGB", (1, 1), "white")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        sheet.save(output_path)
+        return 0, columns
+
+    sheet_width = columns * thumb_w
+    sheet_height = rows * thumb_h
+
+    sheet = Image.new("RGB", (sheet_width, sheet_height), "white")
+
+    for i, img in enumerate(images):
+        row = i // columns
+        col = i % columns
+
+        x = col * thumb_w + (thumb_w - img.width) // 2
+        y = row * thumb_h + (thumb_h - img.height) // 2
+
+        sheet.paste(img, (x, y))
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(output_path)
+
+    return n, columns
+```
+
+The key correction is:
+
+
+
+For example, `n = 5` and `columns = 4` now gives `rows = 2`, so the fifth image appears in the second row instead of being dropped.

@@ -1,0 +1,119 @@
+# Problem
+
+**Understanding.** There is one server and a set of jobs. Each job has an ID, an arrival time, a processing (burst) time, and a priority. The server runs one job at a time and never interrupts it (non-preemptive). Whenever the server becomes free, it picks among the jobs that have already arrived and are waiting.
+
+**Selection rule** (in order):
+1. Larger priority first.
+2. Ties: earlier arrival time.
+3. Ties: smaller job ID.
+
+**Key constraints / assumptions**
+- Non-preemptive: a started job runs to completion.
+- If the server is idle and no job is waiting, it jumps to the next arrival time.
+- Jobs are `(id, arrival, burst, priority)`. Burst times may be 0 or positive; times are non-negative numbers.
+- Determinism: the ordering key is a total order (priority, arrival, ID), so ties never depend on insertion order. Job IDs are assumed unique.
+
+**Required output**
+- For every job: completion time and waiting time (`start - arrival`).
+- The average waiting time over all jobs (0.0 for no jobs).
+
+# Algorithm
+
+1. Sort jobs by `(arrival, id)`.
+2. Keep a min-heap keyed by `(-priority, arrival, id)`, which yields the highest priority first with the required tie-breaks.
+3. Maintain the current time `t`. Loop:
+   - Push every job with `arrival <= t` into the heap.
+   - If the heap is empty, set `t` to the next arrival and continue.
+   - Otherwise pop the best job, set `start = t`, `completion = t + burst`, `waiting = start - arrival`, and advance `t = completion`.
+4. Average waiting time = total waiting / number of jobs.
+
+Complexity: O(n log n) time, O(n) space.
+
+# Implementation
+
+```python
+import heapq
+from typing import Dict, List, Tuple
+
+Job = Tuple[int, float, float, int]  # (job_id, arrival, burst, priority)
+
+
+def simulate_queue(jobs: List[Job]):
+    """
+    Non-preemptive single-server priority queue simulation.
+
+    Returns:
+        results: dict job_id -> {"completion": ..., "waiting": ...}
+        avg_waiting: float (0.0 if there are no jobs)
+        order: list of job IDs in execution order
+    """
+    if not jobs:
+        return {}, 0.0, []
+
+    # Sort arrivals; job ID breaks arrival ties for deterministic ingestion.
+    pending = sorted(jobs, key=lambda j: (j[1], j[0]))
+    n = len(pending)
+
+    heap: List[Tuple[int, float, int, float]] = []
+    results: Dict[int, Dict[str, float]] = {}
+    order: List[int] = []
+
+    t = 0
+    i = 0          # next job in `pending` to arrive
+    done = 0
+    total_wait = 0
+
+    while done < n:
+        # Admit every job that has arrived by time t.
+        while i < n and pending[i][1] <= t:
+            jid, arr, burst, prio = pending[i]
+            # Larger priority first -> negate; then earlier arrival; then smaller ID.
+            heapq.heappush(heap, (-prio, arr, jid, burst))
+            i += 1
+
+        if not heap:
+            # Server idle: jump to the next arrival.
+            t = pending[i][1]
+            continue
+
+        neg_prio, arr, jid, burst = heapq.heappop(heap)
+        start = t
+        completion = start + burst
+        waiting = start - arr
+
+        results[jid] = {"completion": completion, "waiting": waiting}
+        order.append(jid)
+        total_wait += waiting
+        t = completion
+        done += 1
+
+    avg_waiting = total_wait / n
+    return results, avg_waiting, order
+
+
+if __name__ == "__main__":
+    # (id, arrival, burst, priority)
+    sample = [
+        (1, 0, 5, 1),
+        (2, 1, 3, 3),
+        (3, 2, 2, 3),
+        (4, 2, 4, 2),
+        (5, 20, 1, 1),
+    ]
+    res, avg, order = simulate_queue(sample)
+    print("Execution order:", order)
+    for jid in sorted(res):
+        r = res[jid]
+        print(f"Job {jid}: completion={r['completion']}, waiting={r['waiting']}")
+    print(f"Average waiting time: {avg:.4f}")
+```
+
+# Sample trace
+
+- t=0: only job 1 has arrived, so it runs from 0 to 5 (waiting 0).
+- t=5: jobs 2 (p3, arr 1), 3 (p3, arr 2), 4 (p2) are waiting. Job 2 wins on the arrival tie-break: runs 5 to 8 (waiting 4).
+- t=8: job 3 (p3) runs 8 to 10 (waiting 6).
+- t=10: job 4 runs 10 to 14 (waiting 8).
+- t=14: heap empty, jump to t=20. Job 5 runs 20 to 21 (waiting 0).
+
+Average waiting = (0 + 4 + 6 + 8 + 0) / 5 = **3.6**.

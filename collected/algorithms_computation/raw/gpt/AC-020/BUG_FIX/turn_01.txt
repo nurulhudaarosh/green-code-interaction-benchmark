@@ -1,0 +1,200 @@
+### Problem
+
+Given a **complete symmetric distance matrix** for at most 14 cities, find the minimum-cost Hamiltonian cycle that:
+
+* Starts at city `0`
+* Visits every city exactly once
+* Returns to city `0`
+* Uses the minimum possible total distance
+* Breaks ties **deterministically by choosing the smaller predecessor city**
+
+### Key constraints
+
+* Number of cities: `1 <= n <= 14`
+* `dist[i][j]` is the distance from city `i` to city `j`
+* The matrix is complete and symmetric:
+  `dist[i][j] == dist[j][i]`
+* Distances are non-negative.
+* City `0` is fixed as the starting/ending city.
+* Standard library only; no network, APIs, randomness, or external services.
+
+### Required output
+
+Return:
+
+1. The minimum tour cost.
+2. One corresponding optimal Hamiltonian cycle, represented as a list beginning and ending with `0`.
+
+### Algorithm — Held-Karp DP
+
+Use subset dynamic programming:
+
+`dp[mask][j]` = minimum cost of starting at `0`, visiting exactly the cities in `mask`, and ending at city `j`.
+
+For every state, try adding an unvisited city. When two choices have the same cost, keep the one with the **smaller predecessor**.
+
+Finally, add the distance from the last city back to `0` and select the minimum.
+
+```python
+from typing import List, Tuple
+
+
+def held_karp_tsp(dist: List[List[int]]) -> Tuple[int, List[int]]:
+    """
+    Solve the symmetric Traveling Salesman Problem using Held-Karp DP.
+
+    Args:
+        dist: Complete symmetric distance matrix.
+
+    Returns:
+        (minimum_cost, optimal_cycle)
+
+        optimal_cycle starts and ends at city 0.
+        Example: [0, 2, 1, 3, 0]
+
+    Tie-breaking:
+        If two transitions produce the same minimum cost for a state,
+        the smaller predecessor city is selected.
+    """
+
+    n = len(dist)
+
+    # Validate basic input constraints.
+    if not 1 <= n <= 14:
+        raise ValueError("Number of cities must be between 1 and 14.")
+
+    if any(len(row) != n for row in dist):
+        raise ValueError("Distance matrix must be square.")
+
+    for i in range(n):
+        if dist[i][i] != 0:
+            raise ValueError("Diagonal distances must be zero.")
+        for j in range(n):
+            if dist[i][j] < 0:
+                raise ValueError("Distances must be non-negative.")
+            if dist[i][j] != dist[j][i]:
+                raise ValueError("Distance matrix must be symmetric.")
+
+    # Special case: one city.
+    if n == 1:
+        return 0, [0, 0]
+
+    # We only need subsets of cities 1..n-1.
+    #
+    # dp[mask][j]:
+    #   minimum cost of starting at 0,
+    #   visiting all cities represented by mask,
+    #   and ending at city j.
+    #
+    # parent[mask][j]:
+    #   predecessor city used to obtain the optimal state.
+    size = 1 << (n - 1)
+    INF = float("inf")
+
+    dp = [[INF] * n for _ in range(size)]
+    parent = [[-1] * n for _ in range(size)]
+
+    # Base states: 0 -> j.
+    for j in range(1, n):
+        mask = 1 << (j - 1)
+        dp[mask][j] = dist[0][j]
+        parent[mask][j] = 0
+
+    # Build states by increasing subset size.
+    for mask in range(1, size):
+        for j in range(1, n):
+            j_bit = 1 << (j - 1)
+
+            # j must be part of mask.
+            if not (mask & j_bit):
+                continue
+
+            previous_mask = mask ^ j_bit
+
+            # Direct transition from city 0 is already initialized.
+            if previous_mask == 0:
+                continue
+
+            best_cost = INF
+            best_predecessor = -1
+
+            # Try every possible predecessor k.
+            for k in range(1, n):
+                k_bit = 1 << (k - 1)
+
+                if not (previous_mask & k_bit):
+                    continue
+
+                candidate = dp[previous_mask][k] + dist[k][j]
+
+                if candidate < best_cost:
+                    best_cost = candidate
+                    best_predecessor = k
+
+                # Deterministic tie-breaking:
+                # choose the smaller predecessor.
+                elif candidate == best_cost and k < best_predecessor:
+                    best_predecessor = k
+
+            dp[mask][j] = best_cost
+            parent[mask][j] = best_predecessor
+
+    # All non-zero cities must be visited.
+    full_mask = size - 1
+
+    # Close the Hamiltonian cycle by returning to city 0.
+    best_tour_cost = INF
+    best_last_city = -1
+
+    for j in range(1, n):
+        candidate = dp[full_mask][j] + dist[j][0]
+
+        if candidate < best_tour_cost:
+            best_tour_cost = candidate
+            best_last_city = j
+
+        # Deterministic final tie-breaking.
+        elif candidate == best_tour_cost and j < best_last_city:
+            best_last_city = j
+
+    # Reconstruct the path backwards.
+    reversed_path = []
+    mask = full_mask
+    current = best_last_city
+
+    while current != 0:
+        reversed_path.append(current)
+
+        predecessor = parent[mask][current]
+        mask ^= 1 << (current - 1)
+        current = predecessor
+
+    # Reverse the non-zero portion and add start/end city 0.
+    path = [0] + reversed(reversed_path) + [0]
+
+    return int(best_tour_cost), path
+
+
+# ---------------------------------------------------------
+# Example
+# ---------------------------------------------------------
+if __name__ == "__main__":
+    distance = [
+        [0, 10, 15, 20],
+        [10, 0, 35, 25],
+        [15, 35, 0, 30],
+        [20, 25, 30, 0],
+    ]
+
+    cost, cycle = held_karp_tsp(distance)
+
+    print("Minimum cost:", cost)
+    print("Optimal cycle:", cycle)
+```
+
+**Complexity:** `O(n² · 2ⁿ)` time and `O(n · 2ⁿ)` memory, which is practical for the specified maximum of 14 cities.
+
+Refine the TSP solution
+
+* Add deterministic tie-breaking tests
+* Support integer and float distances

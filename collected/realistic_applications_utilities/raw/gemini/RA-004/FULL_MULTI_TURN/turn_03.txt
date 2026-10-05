@@ -1,0 +1,279 @@
+```python
+import argparse
+import logging
+import shutil
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, Optional, Tuple
+
+# Extension-based mapping
+CATEGORY_MAPPING: Dict[str, set] = {
+    "Images": {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp", ".tiff"},
+    "Documents": {
+        ".pdf",
+        ".docx",
+        ".doc",
+        ".txt",
+        ".rtf",
+        ".odt",
+        ".xls",
+        ".xlsx",
+        ".ppt",
+        ".pptx",
+        ".csv",
+    },
+    "Audio": {".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a"},
+    "Videos": {".mp4", ".mkv", ".avi", ".mov", ".flv", ".wmv", ".webm"},
+    "Archives": {".zip", ".tar", ".gz", ".7z", ".rar", ".bz2"},
+    "Code_Scripts": {
+        ".py",
+        ".js",
+        ".html",
+        ".css",
+        ".java",
+        ".cpp",
+        ".c",
+        ".json",
+        ".xml",
+        ".sh",
+    },
+    "Executables": {".exe", ".msi", ".dmg", ".pkg", ".deb"},
+}
+
+# Size category thresholds (in bytes)
+KB = 1024
+MB = 1024 * KB
+GB = 1024 * MB
+
+
+def validate_file_metadata(
+    file_path: Path, min_size_bytes: int = 0, max_age_days: Optional[int] = None
+) -> Tuple[bool, str]:
+    """Validates file integrity and metadata attributes.
+
+    Returns:
+        Tuple[bool, str]: (is_valid, reason)
+    """
+    try:
+        if not file_path.exists():
+            return False, "File does not exist"
+
+        if file_path.is_symlink():
+            return False, "Skipped symbolic link"
+
+        if not file_path.is_file():
+            return False, "Not a regular file"
+
+        stat_info = file_path.stat()
+
+        if stat_info.st_size < min_size_bytes:
+            return False, f"File size ({stat_info.st_size} B) below minimum threshold ({min_size_bytes} B)"
+
+        if not file_path.is_readable():
+            return False, "File is not readable (Permission Denied)"
+
+        if max_age_days is not None:
+            mtime = datetime.fromtimestamp(stat_info.st_mtime, tz=timezone.utc)
+            now = datetime.now(timezone.utc)
+            file_age_days = (now - mtime).days
+            if file_age_days > max_age_days:
+                return False, f"File age ({file_age_days} days) exceeds maximum allowed ({max_age_days} days)"
+
+        return True, "Valid"
+
+    except PermissionError:
+        return False, "Permission denied accessing file metadata"
+    except OSError as e:
+        return False, f"OS error retrieving metadata: {e}"
+
+
+def get_extension_category(file_extension: str) -> str:
+    """Returns the matching category folder name for a given file extension."""
+    ext = file_extension.lower()
+    for category, extensions in CATEGORY_MAPPING.items():
+        if ext in extensions:
+            return category
+    return "Others"
+
+
+def get_size_category(size_bytes: int) -> str:
+    """Classifies file into a size bucket based on byte threshold."""
+    if size_bytes < 100 * KB:
+        return "Tiny_Under100KB"
+    elif size_bytes < 10 * MB:
+        return "Small_100KB_to_10MB"
+    elif size_bytes < 500 * MB:
+        return "Medium_10MB_to_500MB"
+    elif size_bytes < 2 * GB:
+        return "Large_500MB_to_2GB"
+    else:
+        return "Huge_Over2GB"
+
+
+def get_target_category_path(
+    file_path: Path, organize_by: str
+) -> Tuple[str, Path]:
+    """Determines destination subfolder structure based on organization strategy.
+
+    Strategies:
+      - 'type': Organizes purely by file type (e.g., Images/)
+      - 'size': Organizes purely by file size (e.g., Medium_10MB_to_500MB/)
+      - 'hybrid': Organizes by size first, then file type (e.g., Large_500MB_to_2GB/Videos/)
+    """
+    ext_category = get_extension_category(file_path.suffix)
+    size_category = get_size_category(file_path.stat().st_size)
+
+    if organize_by == "size":
+        folder_path = Path(size_category)
+    elif organize_by == "hybrid":
+        folder_path = Path(size_category) / ext_category
+    else:  # default: 'type'
+        folder_path = Path(ext_category)
+
+    return str(folder_path), folder_path
+
+
+def resolve_duplicate_path(destination_path: Path) -> Path:
+    """Handles naming collisions by appending a counter before the extension."""
+    if not destination_path.exists():
+        return destination_path
+
+    stem = destination_path.stem
+    suffix = destination_path.suffix
+    parent = destination_path.parent
+    counter = 1
+
+    while True:
+        new_path = parent / f"{stem}_{counter}{suffix}"
+        if not new_path.exists():
+            return new_path
+        counter += 1
+
+
+def organize_directory(
+    target_dir: Path,
+    dry_run: bool = False,
+    min_size_bytes: int = 0,
+    max_age_days: Optional[int] = None,
+    organize_by: str = "type",
+) -> None:
+    """Scans, validates metadata, and organizes files based on type, size, or hybrid rules."""
+    if not target_dir.exists() or not target_dir.is_dir():
+        logging.error(
+            f"The provided path does not exist or is not a directory: {target_dir}"
+        )
+        return
+
+    logging.info(
+        f"Starting file organization for: {target_dir.resolve()} "
+        f"[Mode: {organize_by.upper()}]"
+        + (" (DRY RUN)" if dry_run else "")
+    )
+
+    moved_count = 0
+    skipped_count = 0
+    invalid_count = 0
+
+    # Collect list of files upfront to avoid scanning newly created subdirectories
+    files_to_process = [item for item in target_dir.iterdir() if item.is_file()]
+
+    for item in files_to_process:
+        # Skip hidden system files
+        if item.name.startswith("."):
+            skipped_count += 1
+            continue
+
+        # Validate File Metadata before taking action
+        is_valid, validation_reason = validate_file_metadata(
+            item, min_size_bytes=min_size_bytes, max_age_days=max_age_days
+        )
+        if not is_valid:
+            logging.warning(f"Skipping '{item.name}': {validation_reason}")
+            invalid_count += 1
+            continue
+
+        rel_folder_str, rel_folder_path = get_target_category_path(
+            item, organize_by
+        )
+        category_folder = target_dir / rel_folder_path
+        destination = resolve_duplicate_path(category_folder / item.name)
+
+        if dry_run:
+            logging.info(
+                f"[DRY RUN] Would move: '{item.name}' -> '{rel_folder_str}/{destination.name}'"
+            )
+        else:
+            try:
+                category_folder.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(item), str(destination))
+                logging.info(
+                    f"Moved: '{item.name}' -> '{rel_folder_str}/{destination.name}'"
+                )
+            except Exception as e:
+                logging.error(f"Failed to move '{item.name}': {e}")
+                continue
+
+        moved_count += 1
+
+    summary_prefix = "[DRY RUN] Summary" if dry_run else "Summary"
+    logging.info(
+        f"{summary_prefix}: {moved_count} file(s) processed, "
+        f"{invalid_count} failed metadata validation, "
+        f"{skipped_count} hidden/system file(s) skipped."
+    )
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Organize files with size classification and metadata validation."
+    )
+    parser.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        help="Path to target directory (defaults to current working directory).",
+    )
+    parser.add_argument(
+        "--organize-by",
+        choices=["type", "size", "hybrid"],
+        default="type",
+        help="Organization mode: 'type' (by file extension), 'size' (by file size category), or 'hybrid' (size/type). Default: type.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview changes without actually moving any files.",
+    )
+    parser.add_argument(
+        "--min-size",
+        type=int,
+        default=0,
+        help="Minimum file size in bytes.",
+    )
+    parser.add_argument(
+        "--max-age",
+        type=int,
+        default=None,
+        help="Maximum file age in days based on last modification time.",
+    )
+
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    )
+
+    target_path = Path(args.path)
+    organize_directory(
+        target_path,
+        dry_run=args.dry_run,
+        min_size_bytes=args.min_size,
+        max_age_days=args.max_age,
+        organize_by=args.organize_by,
+    )
+
+
+if __name__ == "__main__":
+    main()
+
+```

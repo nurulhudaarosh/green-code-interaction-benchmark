@@ -1,0 +1,133 @@
+import struct
+import zlib
+from pathlib import Path
+
+
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def _read_chunks(data: bytes):
+    """Yield (chunk_type: bytes, chunk_data: bytes) for a PNG byte string."""
+    if not data.startswith(PNG_SIGNATURE):
+        raise ValueError("Not a PNG file (bad signature)")
+    pos = len(PNG_SIGNATURE)
+    while pos < len(data):
+        (length,) = struct.unpack(">I", data[pos:pos + 4])
+        ctype = data[pos + 4:pos + 8]
+        cdata = data[pos + 8:pos + 8 + length]
+        crc = data[pos + 8 + length:pos + 12 + length]
+        expected_crc = struct.pack(">I", zlib.crc32(ctype + cdata) & 0xFFFFFFFF)
+        if crc != expected_crc:
+            raise ValueError(f"CRC mismatch in chunk {ctype!r}")
+        yield ctype, cdata
+        pos += 12 + length
+
+
+def _make_chunk(chunk_type: bytes, data: bytes) -> bytes:
+    length = struct.pack(">I", len(data))
+    crc = struct.pack(">I", zlib.crc32(chunk_type + data) & 0xFFFFFFFF)
+    return length + chunk_type + data + crc
+
+
+def _encode_text_chunk(key: str, value: str) -> bytes:
+    """Build an iTXt chunk (UTF-8, uncompressed) for a key/value pair."""
+    # iTXt layout: keyword \0 compression_flag compression_method language \0 translated \0 text
+    key_bytes = key.encode("latin-1")
+    if len(key_bytes) > 79:
+        raise ValueError("PNG text keyword must be <= 79 bytes")
+    value_bytes = value.encode("utf-8")
+    payload = (
+        key_bytes + b"\x00"
+        + b"\x00"          # compression flag: 0 = uncompressed
+        + b"\x00"          # compression method: 0
+        + b"" + b"\x00"    # language tag (empty)
+        + b"" + b"\x00"    # translated keyword (empty)
+        + value_bytes
+    )
+    return _make_chunk(b"iTXt", payload)
+
+
+def _decode_text_chunk(chunk_type: bytes, data: bytes):
+    """Return (key, value) from a tEXt/zTXt/iTXt chunk."""
+    if chunk_type == b"tEXt":
+        key, _, value = data.partition(b"\x00")
+        return key.decode("latin-1"), value.decode("latin-1")
+
+    if chunk_type == b"zTXt":
+        key, _, rest = data.partition(b"\x00")
+        comp_method, value = rest[0], rest[1:]
+        if comp_method != 0:
+            raise ValueError("Unsupported zTXt compression method")
+        return key.decode("latin-1"), zlib.decompress(value).decode("latin-1")
+
+    if chunk_type == b"iTXt":
+        key, _, rest = data.partition(b"\x00")
+        comp_flag, comp_method = rest[0], rest[1]
+        rest = rest[2:]
+        _lang, _, rest = rest.partition(b"\x00")
+        _trans, _, text = rest.partition(b"\x00")
+        if comp_flag == 1:
+            if comp_method != 0:
+                raise ValueError("Unsupported iTXt compression method")
+            text = zlib.decompress(text)
+        return key.decode("latin-1"), text.decode("utf-8")
+
+    raise ValueError(f"Not a text chunk: {chunk_type!r}")
+
+
+def embed_tags(input_path, output_path, tags: dict) -> None:
+    """
+    Write custom key/value string metadata into PNG text chunks.
+
+    Existing text chunks with the same keys are replaced; all other chunks
+    (including IHDR, IDAT, IEND, and unrelated metadata) are preserved.
+    """
+    if not isinstance(tags, dict):
+        raise TypeError("tags must be a dict of str -> str")
+
+    src = Path(input_path).read_bytes()
+    out_chunks = []
+    written_keys = set()
+
+    for ctype, cdata in _read_chunks(src):
+        if ctype in (b"tEXt", b"zTXt", b"iTXt"):
+            try:
+                key, _ = _decode_text_chunk(ctype, cdata)
+            except ValueError:
+                out_chunks.append((ctype, cdata))
+                continue
+            if key in tags:
+                # Skip old value; new one is emitted just before IEND.
+                written_keys.add(key)
+                continue
+        out_chunks.append((ctype, cdata))
+
+    # Build new chunks for keys that weren't already overwritten.
+    new_chunks = [
+        (b"iTXt", _encode_text_chunk(k, v)[8:-4])  # strip length+crc
+        for k, v in tags.items() if k not in written_keys
+    ]
+
+    # Insert new text chunks right before IEND (falls back to append).
+    insert_at = len(out_chunks)
+    for i, (ctype, _) in enumerate(out_chunks):
+        if ctype == b"IEND":
+            insert_at = i
+            break
+    out_chunks[insert_at:insert_at] = new_chunks
+
+    body = b"".join(_make_chunk(c, d) for c, d in out_chunks)
+    Path(output_path).write_bytes(PNG_SIGNATURE + body)
+
+
+def read_tags(image_path) -> dict:
+    """Return all custom text-chunk key/value pairs from a PNG as a dict."""
+    result = {}
+    for ctype, cdata in _read_chunks(Path(image_path).read_bytes()):
+        if ctype in (b"tEXt", b"zTXt", b"iTXt"):
+            try:
+                key, value = _decode_text_chunk(ctype, cdata)
+            except ValueError:
+                continue
+            result[key] = value
+    return result

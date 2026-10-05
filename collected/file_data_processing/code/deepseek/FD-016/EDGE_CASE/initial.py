@@ -1,0 +1,84 @@
+"""
+Transaction Aggregation Utility
+--------------------------------
+Aggregates transactions by customer, ignores unknown transaction IDs,
+joins results to the customer master, includes zero-transaction customers,
+and sorts by customer ID.
+"""
+
+from collections import defaultdict
+
+
+def aggregate_transactions(customers, transactions):
+    """
+    Aggregate transactions by customer and join to the customer master.
+
+    Parameters
+    ----------
+    customers : list[dict]
+        Customer master records. Each dict must have a 'customer_id' key
+        and may have other keys (e.g. 'name').
+    transactions : list[dict]
+        Transaction records. Each dict must have 'transaction_id',
+        'customer_id', and 'amount' keys.
+
+    Returns
+    -------
+    list[dict]
+        One record per customer (including zero-transaction customers),
+        sorted by customer_id, with the aggregated total and count.
+        Transactions whose customer_id is not in the customer master
+        (i.e. "unknown transaction IDs") are ignored.
+    """
+    # Build a lookup of valid customer IDs from the master
+    valid_customer_ids = {c["customer_id"] for c in customers}
+
+    # Initialize totals for every known customer (ensures zero-tx customers appear)
+    totals = {cid: {"total_amount": 0.0, "transaction_count": 0}
+              for cid in valid_customer_ids}
+
+    # Aggregate transactions, skipping unknown customers
+    for tx in transactions:
+        cid = tx.get("customer_id")
+        if cid not in valid_customer_ids:
+            continue  # ignore unknown transaction IDs
+        totals[cid]["total_amount"] += tx.get("amount", 0.0)
+        totals[cid]["transaction_count"] += 1
+
+    # Join aggregated results back to the customer master
+    results = []
+    for cust in customers:
+        cid = cust["customer_id"]
+        agg = totals[cid]
+        results.append({
+            **cust,
+            "total_amount": round(agg["total_amount"], 2),
+            "transaction_count": agg["transaction_count"],
+        })
+
+    # Sort by customer ID
+    results.sort(key=lambda r: r["customer_id"])
+    return results
+
+
+# ---------------------------
+# Example usage / self-test
+# ---------------------------
+if __name__ == "__main__":
+    customers = [
+        {"customer_id": 1, "name": "Alice"},
+        {"customer_id": 2, "name": "Bob"},
+        {"customer_id": 3, "name": "Carol"},   # zero transactions
+        {"customer_id": 4, "name": "Dave"},
+    ]
+
+    transactions = [
+        {"transaction_id": "T1", "customer_id": 1, "amount": 100.50},
+        {"transaction_id": "T2", "customer_id": 1, "amount": 50.25},
+        {"transaction_id": "T3", "customer_id": 2, "amount": 200.00},
+        {"transaction_id": "T4", "customer_id": 99, "amount": 999.99},  # unknown -> ignored
+        {"transaction_id": "T5", "customer_id": 4, "amount": 75.00},
+    ]
+
+    for row in aggregate_transactions(customers, transactions):
+        print(row)

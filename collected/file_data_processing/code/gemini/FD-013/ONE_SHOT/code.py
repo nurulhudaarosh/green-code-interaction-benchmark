@@ -1,0 +1,156 @@
+import csv
+import math
+import statistics
+import sys
+from typing import Dict, List, Optional, Tuple, Union
+
+
+def is_missing(val: str) -> bool:
+    """Check if a string value represents a missing entry."""
+    return val is None or val.strip() == "" or val.strip().lower() in {"na", "n/a", "null", "none", "nan"}
+
+
+def parse_float(val: str) -> Optional[float]:
+    """Attempt to parse a string value into a float, returning None if missing or non-numeric."""
+    if is_missing(val):
+        return None
+    try:
+        f_val = float(val.strip())
+        if math.isnan(f_val):
+            return None
+        return f_val
+    except ValueError:
+        return None
+
+
+def calculate_column_stats(values: List[str]) -> Tuple[int, Optional[float], Optional[float], Optional[float], Optional[float]]:
+    """
+    Given a list of raw string values for a column, filter out missing entries
+    and return (count, min, max, mean, median).
+    """
+    valid_nums = []
+    for raw in values:
+        parsed = parse_float(raw)
+        if parsed is not None:
+            valid_nums.append(parsed)
+
+    count = len(valid_nums)
+    if count == 0:
+        return 0, None, None, None, None
+
+    min_val = min(valid_nums)
+    max_val = max(valid_nums)
+    mean_val = statistics.mean(valid_nums)
+    median_val = statistics.median(valid_nums)
+
+    return count, min_val, max_val, mean_val, median_val
+
+
+def process_csv(file_path: str) -> List[Dict[str, Union[str, int, Optional[float]]]]:
+    """
+    Reads CSV file, processes missing values per column independently,
+    and calculates statistics preserving original column order.
+    """
+    with open(file_path, mode="r", newline="", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        try:
+            headers = next(reader)
+        except StopIteration:
+            return []
+
+        # Maintain columns in input order
+        columns: Dict[str, List[str]] = {h.strip(): [] for h in headers}
+
+        for row in reader:
+            for header, val in zip(headers, row):
+                columns[header.strip()].append(val)
+
+    stats_summary = []
+    for header in headers:
+        col_name = header.strip()
+        col_values = columns[col_name]
+        count, min_v, max_v, mean_v, median_v = calculate_column_stats(col_values)
+
+        stats_summary.append({
+            "Column": col_name,
+            "Count": count,
+            "Min": min_v,
+            "Max": max_v,
+            "Mean": mean_v,
+            "Median": median_v
+        })
+
+    return stats_summary
+
+
+def print_stats_table(stats: List[Dict[str, Union[str, int, Optional[float]]]]):
+    """Print the calculated statistics in a formatted table."""
+    if not stats:
+        print("No data or headers found in CSV.")
+        return
+
+    headers = ["Column", "Count", "Min", "Max", "Mean", "Median"]
+    
+    def fmt(val):
+        if val is None:
+            return "N/A"
+        if isinstance(val, float):
+            return f"{val:.4f}"
+        return str(val)
+
+    # Format rows and compute column widths for clean output
+    rows = [[fmt(item[h]) for h in headers] for item in stats]
+    col_widths = [max(len(h), max((len(r[i]) for r in rows), default=0)) for i, h in enumerate(headers)]
+
+    header_line = " | ".join(f"{h:<{w}}" for h, w in zip(headers, col_widths))
+    divider = "-+-".join("-" * w for w in col_widths)
+
+    print(header_line)
+    print(divider)
+    for row in rows:
+        print(" | ".join(f"{val:<{w}}" for val, w in zip(row, col_widths)))
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        filepath = sys.argv[1]
+    else:
+        # Example usage with sample CSV data if no file path provided
+        import io
+
+        sample_csv = """Age, Salary, Score, City
+25, 50000, 88.5, NYC
+30, N/A, 92.0, LA
+, 65000, , Chicago
+40, 70000, 78.5, NYC
+NaN, 55000, 95.0, 
+35, 120000, NaN, SF"""
+
+        print("No file argument provided. Running on sample CSV dataset:\n")
+        print(sample_csv.strip())
+        print("\n" + "=" * 50 + "\n")
+
+        reader = csv.reader(io.StringIO(sample_csv))
+        headers = [h.strip() for h in next(reader)]
+        columns = {h: [] for h in headers}
+        for row in reader:
+            for h, v in zip(headers, row):
+                columns[h].append(v)
+
+        stats_summary = []
+        for h in headers:
+            cnt, min_v, max_v, mean_v, med_v = calculate_column_stats(columns[h])
+            stats_summary.append({
+                "Column": h,
+                "Count": cnt,
+                "Min": min_v,
+                "Max": max_v,
+                "Mean": mean_v,
+                "Median": med_v
+            })
+
+        print_stats_table(stats_summary)
+        sys.exit(0)
+
+    results = process_csv(filepath)
+    print_stats_table(results)

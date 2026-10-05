@@ -1,0 +1,77 @@
+import os
+import cv2
+import numpy as np
+import pandas as pd
+
+
+def analyze_brightness(
+    input_dir: str, dark_threshold: float = 85.0, bright_threshold: float = 170.0
+) -> pd.DataFrame:
+    """Analyzes brightness for all images in a given directory.
+
+    Args:
+        input_dir (str): Directory containing image files.
+        dark_threshold (float): Brightness score below this value is classified
+          as 'Dark'.
+        bright_threshold (float): Brightness score above this value is
+          classified as 'Bright'.
+
+    Returns:
+        pd.DataFrame: Table with filename, per-channel means, overall
+        brightness, and classification.
+    """
+    valid_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
+    results = []
+
+    if not os.path.isdir(input_dir):
+        raise ValueError(f"Directory not found: {input_dir}")
+
+    for filename in sorted(os.listdir(input_dir)):
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in valid_extensions:
+            continue
+
+        filepath = os.path.join(input_dir, filename)
+        # Load image (OpenCV loads in BGR format)
+        img_bgr = cv2.imread(filepath)
+
+        if img_bgr is None:
+            print(f"Warning: Could not read image '{filename}'. Skipping.")
+            continue
+
+        # Compute per-channel means (convert BGR -> RGB order)
+        b_mean, g_mean, r_mean = cv2.mean(img_bgr)[:3]
+
+        # Convert to Grayscale to derive overall perceptual brightness
+        img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+        overall_brightness = float(np.mean(img_gray))
+
+        # Classify brightness level
+        if overall_brightness < dark_threshold:
+            classification = "Dark"
+        elif overall_brightness > bright_threshold:
+            classification = "Bright"
+        else:
+            classification = "Normal"
+
+        results.append(
+            {
+                "filename": filename,
+                "red_mean": round(r_mean, 2),
+                "green_mean": round(g_mean, 2),
+                "blue_mean": round(b_mean, 2),
+                "overall_brightness": round(overall_brightness, 2),
+                "classification": classification,
+            }
+        )
+
+    return pd.DataFrame(results)
+
+
+# Example usage:
+if __name__ == "__main__":
+    # Replace with your image directory path
+    image_directory = "./images"
+
+    df = analyze_brightness(image_directory)
+    print(df)

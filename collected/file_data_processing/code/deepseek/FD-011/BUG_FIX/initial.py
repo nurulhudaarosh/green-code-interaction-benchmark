@@ -1,0 +1,95 @@
+import pandas as pd
+import numpy as np
+from io import StringIO
+
+
+def process_sensor_readings(
+    csv_input,
+    output_path=None,
+    timestamp_col="timestamp",
+    sensor_col="sensor_id",
+    value_col="value",
+):
+    """
+    Sort readings per sensor, fill missing interior hourly timestamps by linear
+    interpolation, mark inserted rows, and (optionally) write deterministic output.
+
+    Parameters
+    ----------
+    csv_input : str or file-like
+        Path to CSV, or a CSV string / StringIO.
+    output_path : str, optional
+        If provided, writes the processed DataFrame to this CSV path.
+    timestamp_col, sensor_col, value_col : str
+        Column names in the input.
+
+    Returns
+    -------
+    pd.DataFrame
+        Processed data with 'is_interpolated' flag, sorted deterministically.
+    """
+    # --- Load ---
+    if isinstance(csv_input, str) and ("\n" in csv_input or "," in csv_input) and not csv_input.endswith(".csv"):
+        df = pd.read_csv(StringIO(csv_input))
+    else:
+        df = pd.read_csv(csv_input)
+
+    df[timestamp_col] = pd.to_datetime(df[timestamp_col], utc=True)
+    df = df.sort_values([sensor_col, timestamp_col]).reset_index(drop=True)
+    df["is_interpolated"] = False
+
+    filled_frames = []
+
+    for sensor, group in df.groupby(sensor_col, sort=True):
+        group = group.sort_values(timestamp_col).set_index(timestamp_col)
+
+        # Full interior hourly range
+        full_range = pd.date_range(
+            start=group.index.min(),
+            end=group.index.max(),
+            freq="h",
+            tz="UTC",
+        )
+
+        # Reindex to expose missing timestamps
+        reindexed = group.reindex(full_range)
+
+        # Mark which rows were inserted
+        reindexed["is_interpolated"] = reindexed[value_col].isna()
+
+        # Linear interpolation of numeric value column
+        reindexed[value_col] = (
+            reindexed[value_col]
+            .interpolate(method="linear", limit_direction="both")
+        )
+
+        reindexed[sensor_col] = sensor
+        reindexed.index.name = timestamp_col
+        filled_frames.append(reindexed.reset_index())
+
+    result = pd.concat(filled_frames, ignore_index=True)
+
+    # Deterministic ordering & column order
+    result = result.sort_values([sensor_col, timestamp_col]).reset_index(drop=True)
+    result = result[[timestamp_col, sensor_col, value_col, "is_interpolated"]]
+
+    # Round numeric values for deterministic output
+    result[value_col] = result[value_col].round(6)
+
+    if output_path:
+        result.to_csv(output_path, index=False)
+
+    return result
+
+
+# --- Example usage ---
+if __name__ == "__main__":
+    sample_csv = """timestamp,sensor_id,value
+2024-01-01T00:00:00Z,S1,10.0
+2024-01-01T01:00:00Z,S1,12.0
+2024-01-01T04:00:00Z,S1,18.0
+2024-01-01T00:00:00Z,S2,5.0
+2024-01-01T03:00:00Z,S2,11.0
+"""
+    processed = process_sensor_readings(sample_csv, output_path="processed.csv")
+    print(processed)

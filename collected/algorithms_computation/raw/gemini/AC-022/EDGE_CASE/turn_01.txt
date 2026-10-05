@@ -1,0 +1,118 @@
+### Problem Identification and Understanding
+
+The objective is to compute the minimum number of single-character operations required to transform one string $s_1$ into another string $s_2$. The allowed operations, each with a uniform cost of 1, are:
+
+1. **Insertion:** Add a character.
+2. **Deletion:** Remove a character.
+3. **Substitution:** Replace one character with another.
+4. **Adjacent Transposition:** Swap two adjacent characters (e.g., `"ab"` $\to$ `"ba"`).
+
+This variant is commonly formulated in two ways:
+
+* **Optimal String Alignment (OSA) / Restricted Damerau–Levenshtein:** Each character substring can be edited at most once (i.e., no multiple edits over transposed substrings).
+* **True Damerau–Levenshtein Distance:** Arbitrary interleaving of operations (e.g., `"CA"` $\to$ `"ABC"` via transposition + insertion is allowed).
+
+In standard dynamic programming formulations with an explicit adjacent transposition transition over a standard 2D table $DP[i][j]$, the formulation is the **Optimal String Alignment (OSA) distance**, where adjacent characters can be swapped if $s_1[i-1] == s_2[j-2]$ and $s_1[i-2] == s_2[j-1]$.
+
+---
+
+### Constraints & Required Output
+
+* **Inputs:** Two strings $s_1$ and $s_2$ of lengths $m$ and $n$, respectively.
+* **Constraints:**
+* Standard string alphabets (ASCII, Unicode).
+* Deterministic execution using only the Python standard library.
+* Time complexity: $O(m \cdot n)$.
+* Space complexity: $O(m \cdot n)$ for full DP table tracking.
+
+
+* **Output:** A single non-negative integer representing the minimum edit distance.
+
+---
+
+### Algorithm Description
+
+We use a dynamic programming table `dp` of dimension $(m + 1) \times (n + 1)$, where `dp[i][j]` represents the minimum edit distance between the prefix $s_1[0 \dots i-1]$ and $s_2[0 \dots j-1]$.
+
+1. **Base Cases:**
+* `dp[i][0] = i` (deleting all $i$ characters from $s_1$).
+* `dp[0][j] = j` (inserting all $j$ characters of $s_2$).
+
+
+2. **Recurrence Relation:**
+* Let $\text{cost} = 0$ if $s_1[i-1] == s_2[j-1]$ else $1$.
+* Standard Levenshtein transitions:
+
+$$\text{dp}[i][j] = \min \begin{cases}      \text{dp}[i-1][j] + 1 & \text{(Deletion)} \\      \text{dp}[i][j-1] + 1 & \text{(Insertion)} \\      \text{dp}[i-1][j-1] + \text{cost} & \text{(Match / Substitution)}      \end{cases}$$
+
+
+* **Explicit Transposition Transition:**
+If $i > 1$, $j > 1$, $s_1[i-1] == s_2[j-2]$, and $s_1[i-2] == s_2[j-1]$:
+
+$$\text{dp}[i][j] = \min(\text{dp}[i][j],\; \text{dp}[i-2][j-2] + 1)$$
+
+
+
+
+3. **Result:** `dp[m][n]` contains the minimum edit distance.
+
+---
+
+### Python Implementation
+
+```python
+def optimal_string_alignment_distance(s1: str, s2: str) -> int:
+    """
+    Computes the edit distance between s1 and s2 with operations:
+    - insertion (cost 1)
+    - deletion (cost 1)
+    - substitution (cost 1)
+    - adjacent transposition (cost 1)
+    
+    Uses dynamic programming with an explicit transposition transition.
+    """
+    m, n = len(s1), len(s2)
+    
+    # Initialize DP table of size (m + 1) x (n + 1)
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    
+    # Base cases: transforming prefixes to/from empty strings
+    for i in range(m + 1):
+        dp[i][0] = i
+    for j in range(n + 1):
+        dp[0][j] = j
+        
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            cost = 0 if s1[i - 1] == s2[j - 1] else 1
+            
+            # Standard operations: deletion, insertion, substitution
+            dp[i][j] = min(
+                dp[i - 1][j] + 1,        # Deletion
+                dp[i][j - 1] + 1,        # Insertion
+                dp[i - 1][j - 1] + cost   # Match or Substitution
+            )
+            
+            # Adjacent transposition
+            if i > 1 and j > 1 and s1[i - 1] == s2[j - 2] and s1[i - 2] == s2[j - 1]:
+                dp[i][j] = min(dp[i][j], dp[i - 2][j - 2] + 1)
+                
+    return dp[m][n]
+
+
+if __name__ == "__main__":
+    # Test cases
+    test_pairs = [
+        ("kitten", "sitting"),   # 3 (sub k->s, sub e->i, insert g)
+        ("rosettacode", "raisethysword"), # 8
+        ("ca", "abc"),           # 3 under OSA (transpose 'ca' -> 'ac', then insert 'b')
+        ("ab", "ba"),           # 1 (transposition)
+        ("", "abc"),            # 3 (insertions)
+        ("abcdef", "abcdef"),   # 0
+    ]
+    
+    for str1, str2 in test_pairs:
+        dist = optimal_string_alignment_distance(str1, str2)
+        print(f"dist('{str1}', '{str2}') = {dist}")
+
+```

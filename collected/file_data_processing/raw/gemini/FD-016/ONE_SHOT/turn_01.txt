@@ -1,0 +1,67 @@
+```python
+import pandas as pd
+
+
+def process_customer_transactions(
+    customers_df: pd.DataFrame, transactions_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Aggregates transactions by customer ID, includes zero-transaction customers,
+
+    ignores unknown transaction IDs, joins with customer master data, and sorts
+    by customer ID.
+    """
+    # Filter out rows with missing or invalid transaction IDs
+    valid_transactions = transactions_df.dropna(subset=["transaction_id"])
+
+    # Aggregate transaction amounts and count per customer
+    aggregated_tx = (
+        valid_transactions.groupby("customer_id")
+        .agg(
+            total_spent=("amount", "sum"),
+            transaction_count=("transaction_id", "count"),
+        )
+        .reset_index()
+    )
+
+    # Left join customer master to aggregated transactions to retain customers with zero transactions
+    result = pd.merge(customers_df, aggregated_tx, on="customer_id", how="left")
+
+    # Fill NaN values for customers with no valid transactions
+    result["total_spent"] = result["total_spent"].fillna(0.0)
+    result["transaction_count"] = (
+        result["transaction_count"].fillna(0).astype(int)
+    )
+
+    # Sort by customer_id
+    result = result.sort_values(by="customer_id").reset_index(drop=True)
+
+    return result
+
+
+# Example Usage
+if __name__ == "__main__":
+    # Sample Customer Master Data
+    customers_data = {
+        "customer_id": [101, 102, 103, 104],
+        "name": ["Alice", "Bob", "Charlie", "David"],
+    }
+    customers = pd.DataFrame(customers_data)
+
+    # Sample Transaction Data
+    transactions_data = {
+        "transaction_id": [
+            "TX101",
+            None,
+            "TX102",
+            "TX103",
+        ],  # Contains a missing ID
+        "customer_id": [101, 101, 102, 101],
+        "amount": [150.00, 200.00, 50.50, 75.25],
+    }
+    transactions = pd.DataFrame(transactions_data)
+
+    # Process and print summary
+    summary = process_customer_transactions(customers, transactions)
+    print(summary)
+
+```

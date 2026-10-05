@@ -1,0 +1,36 @@
+import hashlib
+import os
+from collections import defaultdict
+
+
+def find_exact_duplicates(input_dir):
+    """
+    Recursively scan input_dir and group byte-identical files by SHA-256 checksum.
+
+    Returns a list of groups, where each group is a sorted list of file paths.
+    Only groups with 2 or more members are included. The list of groups is
+    also sorted (by the first path in each group) for deterministic output.
+    """
+    hashes = defaultdict(list)
+    CHUNK_SIZE = 1024 * 1024  # 1 MiB
+
+    for root, _, files in os.walk(input_dir):
+        for name in files:
+            path = os.path.join(root, name)
+            if not os.path.isfile(path):
+                continue  # skip broken symlinks, sockets, etc.
+
+            sha = hashlib.sha256()
+            try:
+                with open(path, "rb") as f:
+                    while chunk := f.read(CHUNK_SIZE):
+                        sha.update(chunk)
+            except (OSError, PermissionError):
+                # Skip files we can't read (permissions, races, etc.)
+                continue
+
+            hashes[sha.hexdigest()].append(path)
+
+    groups = [sorted(paths) for paths in hashes.values() if len(paths) >= 2]
+    groups.sort()
+    return groups

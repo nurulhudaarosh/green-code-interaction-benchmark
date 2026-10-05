@@ -1,0 +1,199 @@
+### Problem Restatement & Expected Behavior
+
+**Problem Statement:**
+In the Multi-Stage Resource Allocation problem (a 2D Multiple-Choice Knapsack Problem), we are given $N$ stages, where each stage requires choosing **exactly one** option. Each option in stage $i$ has an associated budget cost $b$, memory cost $m$, and score $s$. Given a total maximum budget capacity $B_{\max}$ and total maximum memory capacity $M_{\max}$, we must find a selection of options (one per stage) that maximizes the total score while satisfying:
+
+1. Total Budget $\le B_{\max}$
+2. Total Memory $\le M_{\max}$
+
+**Expected Tie-Breaking Behavior:**
+If multiple valid choice vectors yield the **same maximum total score** across the entire pipeline, the algorithm must select the vector that is **lexicographically smallest** (comparing choice vectors stage-by-stage: e.g., vector `[0, 1]` is smaller than `[1, 0]`).
+
+---
+
+### Bug Analysis & Defect Demonstration
+
+#### The Bug in the Previous Implementation
+
+In the previous implementation, DP states were keyed solely by `(budget, memory)`:
+`next_dp[(new_b, new_m)] = (new_score, new_choices)`
+
+When two different paths through stage $i$ reached **different** `(budget, memory)` resource footprints but yielded the **same partial score**, both were kept in `next_dp`. Later, at stage $k > i$, a smaller choice index might reach state $A$ with score $S$, while a larger choice index might reach state $B$ with score $S$.
+
+Because state pruning and local tie-breaking occurred only when key collisions occurred on `(b, m)`, local dominance did not preserve global lexicographical optimality. More critically: when reconstructing or picking the global best at the end, comparing choices associated with different `(b, m)` endpoints **does not correctly find the globally lexicographically smallest path** across all equivalent paths if a suboptimal partial state was pruned early, OR if multiple paths achieve the same final maximum score across different `(b, m)` combinations.
+
+Furthermore, propagating full lists `new_choices = prev_choices + [opt_idx]` at every DP step is memory-inefficient ($O(N \cdot B \cdot M \cdot N)$ memory/time per step) and fails when tie-breaking logic needs a standard DP reconstruction pass.
+
+#### Minimal Failing Example
+
+Consider 2 stages with $B_{\max} = 10, M_{\max} = 10$:
+
+* **Stage 0:**
+* Option 0: Budget=2, Memory=2, Score=10
+* Option 1: Budget=1, Memory=1, Score=10
+
+
+* **Stage 1:**
+* Option 0: Budget=1, Memory=1, Score=10
+
+
+
+Both `[0, 0]` and `[1, 0]` achieve the maximum score of 20 and fit within budget/memory limits:
+
+* Choice `[0, 0]`: Budget=3, Memory=3, Score=20
+* Choice `[1, 0]`: Budget=2, Memory=2, Score=20
+
+Lexicographically, `[0, 0] < [1, 0]`. Therefore, the required output choice vector MUST be `[0, 0]`.
+
+In the defective implementation, when picking the final best state across all `(b, m)` endpoints with score 20, both `(3, 3)` with choices `[0, 0]` and `(2, 2)` with choices `[1, 0]` are present. If `(2, 2)` is evaluated during iteration or if intermediate DP pruning dropped state `(3, 3)`, the previous code would select `[1, 0]` or fail to properly maintain global deterministic reconstruction.
+
+---
+
+### Corrected Implementation
+
+To solve this deterministically and efficiently using **layered 2D Dynamic Programming and Deterministic Reconstruction**:
+
+1. **Forward Pass (DP Table):** Compute `dp[stage][b][m] = max_score_attainable` using standard 2D DP.
+2. **Backward Pass (Deterministic Reconstruction):** Reconstruct the solution from stage $N-1$ down to 0. At stage $i$, iterate through options $j = 0, 1, \dots$ in **ascending order of option index**. Select the **first** option index $j$ for which `dp[i-1][b - b_{i, j}][m - m_{i, j}] + s_{i, j} == dp[i][b][m]`.
+3. **Lexicographical Guarantee:** Trying $j = 0, 1, \dots$ sequentially during backward/forward deterministic state tracking guarantees that option 0 is preferred over option 1 whenever both can lead to an optimal path.
+
+```python
+from typing import List, Tuple, Optional
+
+class Option:
+    def __init__(self, budget: int, memory: int, score: int):
+        self.budget = budget
+        self.memory = memory
+        self.score = score
+
+def solve_mckp_2d(
+    stages: List[List[Option]], 
+    max_budget: int, 
+    max_memory: int
+) -> Optional[Tuple[int, int, int, List[int]]]:
+    """
+    Solves 2D Multiple-Choice Knapsack Problem using layered 2D dynamic programming
+    and deterministic reconstruction with lexicographical tie-breaking.
+    
+    Returns:
+        (max_score, used_budget, used_memory, choice_indices) or None if infeasible.
+    """
+    N = len(stages)
+    if N == 0:
+        return 0, 0, 0, []
+
+    # dp[i][b][m] stores max score achievable at stage i using exactly b budget and m memory
+    # Initialize DP table with -1 (unreachable state)
+    dp = [[[-1] * (max_memory + 1) for _ in range(max_budget + 1)] for _ in range(N)]
+
+    # Stage 0 initialization
+    for opt_idx, opt in enumerate(stages[0]):
+        if opt.budget <= max_budget and opt.memory <= max_memory:
+            if opt.score > dp[0][opt.budget][opt.memory]:
+                dp[0][opt.budget][opt.memory] = opt.score
+
+    # Forward DP Pass for Stages 1 to N-1
+    for i in range(1, N):
+        for b in range(max_budget + 1):
+            for m in range(max_memory + 1):
+                prev_score = dp[i - 1][b][m]
+                if prev_score == -1:
+                    continue
+
+                for opt in stages[i]:
+                    nb = b + opt.budget
+                    nm = m + opt.memory
+                    if nb <= max_budget and nm <= max_memory:
+                        new_score = prev_score + opt.score
+                        if new_score > dp[i][nb][nm]:
+                            dp[i][nb][nm] = new_score
+
+    # Find global maximum score at final stage N-1
+    max_score = -1
+    for b in range(max_budget + 1):
+        for m in range(max_memory + 1):
+            if dp[N - 1][b][m] > max_score:
+                max_score = dp[N - 1][b][m]
+
+    if max_score == -1:
+        return None  # Infeasible
+
+    # Deterministic Reconstruction for Lexicographically Smallest Choice Vector
+    # We find all feasible (b_final, m_final) pairs that yield max_score,
+    # and reconstruct choice vectors to find the lexicographically smallest.
+    
+    def reconstruct(stage_idx: int, rem_b: int, rem_m: int) -> Optional[List[int]]:
+        """Reconstructs choices for stages 0..stage_idx reaching (rem_b, rem_m)."""
+        choices = []
+        curr_b, curr_m = rem_b, rem_m
+        
+        for i in range(stage_idx, 0, -1):
+            target_score = dp[i][curr_b][curr_m]
+            found = False
+            
+            # Iterate through options in ASCENDING index order for lexicographical tie-breaking
+            for opt_idx, opt in enumerate(stages[i]):
+                prev_b = curr_b - opt.budget
+                prev_m = curr_m - opt.memory
+                
+                if prev_b >= 0 and prev_m >= 0:
+                    if dp[i - 1][prev_b][prev_m] != -1:
+                        if dp[i - 1][prev_b][prev_m] + opt.score == target_score:
+                            choices.append(opt_idx)
+                            curr_b, curr_m = prev_b, prev_m
+                            found = True
+                            break  # Pick smallest option index that satisfies DP transition
+            if not found:
+                return None
+        
+        # Stage 0 choice
+        target_score = dp[0][curr_b][curr_m]
+        found_stage_0 = False
+        for opt_idx, opt in enumerate(stages[0]):
+            if opt.budget == curr_b and opt.memory == curr_m and opt.score == target_score:
+                choices.append(opt_idx)
+                found_stage_0 = True
+                break
+                
+        if not found_stage_0:
+            return None
+            
+        choices.reverse()
+        return choices
+
+    # Search across all optimal (budget, memory) endpoints for the lexicographically smallest vector
+    best_choices: Optional[List[int]] = None
+    best_b, best_m = 0, 0
+
+    for b in range(max_budget + 1):
+        for m in range(max_memory + 1):
+            if dp[N - 1][b][m] == max_score:
+                candidate_choices = reconstruct(N - 1, b, m)
+                if candidate_choices is not None:
+                    if best_choices is None or candidate_choices < best_choices:
+                        best_choices = candidate_choices
+                        best_b, best_m = b, m
+
+    return max_score, best_b, best_m, best_choices
+
+
+# Verification on the Minimal Failing Example
+if __name__ == "__main__":
+    stage_0 = [
+        Option(budget=2, memory=2, score=10), # Option 0
+        Option(budget=1, memory=1, score=10), # Option 1
+    ]
+    stage_1 = [
+        Option(budget=1, memory=1, score=10), # Option 0
+    ]
+
+    result = solve_mckp_2d([stage_0, stage_1], max_budget=10, max_memory=10)
+    
+    if result:
+        score, b_used, m_used, choices = result
+        print(f"Optimal Score: {score}")
+        print(f"Budget Used: {b_used}, Memory Used: {m_used}")
+        print(f"Choices Vector: {choices}") 
+        # Output choice vector will correctly be [0, 0] instead of [1, 0]
+
+```

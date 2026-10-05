@@ -1,0 +1,89 @@
+### Problem Overview
+
+Given a list of positive integers $A = [a_0, a_1, \dots, a_{n-1}]$ and a target integer $T$, we want to find a subset of indices $I \subseteq \{0, 1, \dots, n-1\}$ such that:
+
+1. **Target Sum:** $\sum_{i \in I} a_i = T$.
+2. **Minimality:** $\vert{}I\vert{}$ is minimized.
+3. **Lexicographical Tie-breaking:** If multiple subsets have the same minimal cardinality, select the one whose ordered index list $[i_1, i_2, \dots, i_k]$ ($i_1 < i_2 < \dots < i_k$) is lexicographically smallest.
+
+---
+
+### Key Constraints & Required Output
+
+* **Inputs:** Array of positive integers $A$ (0-indexed), Target integer $T \ge 0$.
+* **Constraints:** Elements are positive integers ($a_i > 0$).
+* **Output:** The 0-indexed list of chosen indices in strictly increasing order, or `None` if no subset sums to $T$.
+
+---
+
+### Algorithm Description
+
+We use dynamic programming with 0/1 Subset-Sum state representation:
+
+1. **DP State:** Let `dp[s]` represent the optimal tuple `(cardinality, index_list)` to achieve sum `s`.
+2. **Base Case:** `dp[0] = (0, [])`, and `dp[s] = None` for $s > 0$.
+3. **Transitions:** Process elements $a_i$ for $i = 0, \dots, n-1$ sequentially.
+* Iterate sums $s$ backward from $T$ down to $a_i$ (to ensure 0/1 item usage per step).
+* If `dp[s - a_i]` is reachable with cardinality $c$ and index list $L$, the new candidate state for sum $s$ is `(c + 1, L + [i])`.
+* Update `dp[s]` if `dp[s]` is `None`, or if the candidate has **strictly smaller cardinality**, or **same cardinality with a lexicographically smaller index sequence**.
+
+
+
+---
+
+### Python Implementation
+
+```python
+def min_subset_sum_indices(nums: list[int], target: int) -> list[int] | None:
+    """
+    Finds a subset of indices whose elements sum to `target`.
+    Optimizes for:
+      1. Minimal number of elements (cardinality).
+      2. Lexicographically smallest index list.
+    """
+    if target == 0:
+        return []
+    if target < 0:
+        return None
+
+    # dp[s] = (cardinality, index_list) for sum s
+    dp = [None] * (target + 1)
+    dp[0] = (0, [])
+
+    for i, val in enumerate(nums):
+        if val > target:
+            continue
+        
+        # Iterate backward to prevent reusing the same item multiple times
+        for s in range(target, val - 1, -1):
+            prev = dp[s - val]
+            if prev is not None:
+                cand_card = prev[0] + 1
+                cand_seq = prev[1] + [i]
+                
+                curr = dp[s]
+                if curr is None:
+                    dp[s] = (cand_card, cand_seq)
+                else:
+                    curr_card, curr_seq = curr
+                    # Tie-breaking logic: 1. Smaller cardinality, 2. Lexicographically smaller sequence
+                    if (cand_card < curr_card) or (cand_card == curr_card and cand_seq < curr_seq):
+                        dp[s] = (cand_card, cand_seq)
+
+    return dp[target][1] if dp[target] is not None else None
+
+
+# --- Example Usage ---
+if __name__ == "__main__":
+    nums = [3, 2, 5, 8, 1, 4]
+    target = 9
+
+    result = min_subset_sum_indices(nums, target)
+    print(f"Target: {target}")
+    print(f"Array: {nums}")
+    print(f"Indices: {result}")
+    if result is not None:
+        print(f"Elements: {[nums[i] for i in result]}")
+        print(f"Sum: {sum(nums[i] for i in result)}")
+
+```

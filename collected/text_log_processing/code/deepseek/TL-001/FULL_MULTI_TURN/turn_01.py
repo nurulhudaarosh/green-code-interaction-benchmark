@@ -1,0 +1,251 @@
+import re
+from collections import Counter
+from typing import Dict, Optional, Union
+import os
+
+def analyze_error_log(path: str) -> Dict[str, int]:
+    """
+    Analyze a server log file and count ERROR-level entries per normalized message.
+    
+    Args:
+        path: Path to the log file
+        
+    Returns:
+        Dictionary mapping normalized error messages to their counts
+        
+    Raises:
+        FileNotFoundError: If the log file doesn't exist
+        PermissionError: If the file can't be read
+    """
+    
+    # Common log format patterns
+    # Example: [2024-01-15 10:23:45] ERROR: Database connection failed for user 'john' at 192.168.1.1
+    error_pattern = re.compile(
+        r'\[?[\d\-:\s]+\]?\s*'  # timestamp (optional brackets)
+        r'ERROR[:\s]+'           # ERROR level indicator
+        r'(.+?)$',               # error message (rest of line)
+        re.IGNORECASE | re.MULTILINE
+    )
+    
+    # Patterns to normalize (remove variable data)
+    normalization_patterns = [
+        # IP addresses
+        (re.compile(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'), '<IP>'),
+        # Port numbers
+        (re.compile(r':\d{2,5}\b'), ':<PORT>'),
+        # UUIDs
+        (re.compile(r'\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b', re.I), '<UUID>'),
+        # Email addresses
+        (re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'), '<EMAIL>'),
+        # File paths (unix/windows)
+        (re.compile(r'(?:[A-Za-z]:)?[/\\](?:[^/\\\s]+[/\\])*[^/\\\s]+'), '<PATH>'),
+        # Numbers (standalone)
+        (re.compile(r'\b\d+\b'), '<NUM>'),
+        # Quoted strings (often variable data)
+        (re.compile(r"'[^']*'"), "'<STR>'"),
+        (re.compile(r'"[^"]*"'), '"<STR>"'),
+        # Hex values
+        (re.compile(r'\b0x[0-9a-fA-F]+\b'), '<HEX>'),
+        # Timestamps within messages
+        (re.compile(r'\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?'), '<TIMESTAMP>'),
+        # Session/request IDs (alphanumeric strings of 8+ chars)
+        (re.compile(r'\b[A-Za-z0-9]{8,}\b'), '<ID>'),
+    ]
+    
+    error_counts = Counter()
+    
+    # Verify file exists and is readable
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Log file not found: {path}")
+    
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as file:
+            for line in file:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # Check if this is an ERROR line
+                match = error_pattern.search(line)
+                if match:
+                    message = match.group(1).strip()
+                    
+                    # Normalize the message
+                    normalized = normalize_message(message, normalization_patterns)
+                    error_counts[normalized] += 1
+                    
+    except PermissionError:
+        raise PermissionError(f"Cannot read log file: {path}")
+    except UnicodeDecodeError:
+        # Try with different encoding
+        with open(path, 'r', encoding='latin-1', errors='replace') as file:
+            for line in file:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                match = error_pattern.search(line)
+                if match:
+                    message = match.group(1).strip()
+                    normalized = normalize_message(message, normalization_patterns)
+                    error_counts[normalized] += 1
+    
+    return dict(error_counts)
+
+
+def normalize_message(message: str, patterns: list) -> str:
+    """
+    Normalize an error message by replacing variable data with placeholders.
+    
+    Args:
+        message: The raw error message
+        patterns: List of (compiled_regex, replacement) tuples
+        
+    Returns:
+        Normalized message string
+    """
+    normalized = message
+    
+    # Apply all normalization patterns
+    for pattern, replacement in patterns:
+        normalized = pattern.sub(replacement, normalized)
+    
+    # Remove extra whitespace
+    normalized = ' '.join(normalized.split())
+    
+    # Convert to lowercase for case-insensitive grouping (optional)
+    # normalized = normalized.lower()
+    
+    return normalized
+
+
+def analyze_error_log_advanced(path: str, 
+                               additional_patterns: Optional[list] = None,
+                               case_sensitive: bool = False) -> Dict[str, int]:
+    """
+    Advanced version with customizable normalization patterns.
+    
+    Args:
+        path: Path to the log file
+        additional_patterns: Additional (regex, replacement) tuples for normalization
+        case_sensitive: Whether to treat messages as case-sensitive
+        
+    Returns:
+        Dictionary mapping normalized error messages to their counts
+    """
+    import logging
+    
+    # Set up logging
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+    
+    error_counts = Counter()
+    total_lines = 0
+    error_lines = 0
+    
+    # More flexible error detection
+    error_indicators = [
+        re.compile(r'\bERROR\b', re.IGNORECASE),
+        re.compile(r'\bERR\b', re.IGNORECASE),
+        re.compile(r'\bFATAL\b', re.IGNORECASE),
+        re.compile(r'\bCRITICAL\b', re.IGNORECASE),
+        re.compile(r'level[=:]\s*error', re.IGNORECASE),
+        re.compile(r'severity[=:]\s*error', re.IGNORECASE),
+    ]
+    
+    # Base normalization patterns
+    base_patterns = [
+        (re.compile(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'), '<IP>'),
+        (re.compile(r':\d{2,5}\b'), ':<PORT>'),
+        (re.compile(r'\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b', re.I), '<UUID>'),
+        (re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'), '<EMAIL>'),
+        (re.compile(r'\b\d+\b'), '<NUM>'),
+    ]
+    
+    if additional_patterns:
+        base_patterns.extend(additional_patterns)
+    
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as file:
+            for line_num, line in enumerate(file, 1):
+                total_lines += 1
+                line = line.strip()
+                
+                if not line:
+                    continue
+                
+                # Check if line contains error indicator
+                is_error = any(pattern.search(line) for pattern in error_indicators)
+                
+                if is_error:
+                    error_lines += 1
+                    
+                    # Extract the message portion (after error indicator)
+                    # This is a simplified extraction - adjust based on your log format
+                    message = line
+                    for pattern in error_indicators:
+                        match = pattern.search(line)
+                        if match:
+                            # Take everything after the error indicator
+                            message = line[match.end():].strip()
+                            break
+                    
+                    if not message:
+                        message = line  # Use full line if no message extracted
+                    
+                    # Normalize
+                    normalized = normalize_message(message, base_patterns)
+                    
+                    if not case_sensitive:
+                        normalized = normalized.lower()
+                    
+                    error_counts[normalized] += 1
+                    
+    except FileNotFoundError:
+        logger.error(f"Log file not found: {path}")
+        raise
+    except PermissionError:
+        logger.error(f"Permission denied reading: {path}")
+        raise
+    except Exception as e:
+        logger.error(f"Error processing log file: {e}")
+        raise
+    
+    logger.info(f"Processed {total_lines} lines, found {error_lines} error entries")
+    logger.info(f"Identified {len(error_counts)} unique error patterns")
+    
+    return dict(error_counts)
+
+
+# Example usage and testing
+if __name__ == "__main__":
+    # Create a sample log file for testing
+    sample_log = """[2024-01-15 10:23:45] INFO: Server started on port 8080
+[2024-01-15 10:23:46] ERROR: Database connection failed for user 'john' at 192.168.1.1:5432
+[2024-01-15 10:23:47] WARNING: High memory usage: 85%
+[2024-01-15 10:23:48] ERROR: Database connection failed for user 'jane' at 192.168.1.2:5432
+[2024-01-15 10:23:49] ERROR: File not found: /var/log/app.log
+[2024-01-15 10:23:50] INFO: Request processed in 120ms
+[2024-01-15 10:23:51] ERROR: Database connection failed for user 'bob' at 10.0.0.1:3306
+[2024-01-15 10:23:52] ERROR: File not found: /etc/config/settings.json
+[2024-01-15 10:23:53] ERROR: Authentication failed for user ID: abc123def456
+[2024-01-15 10:23:54] ERROR: Authentication failed for user ID: xyz789uvw012
+"""
+    
+    # Write sample log
+    with open('/tmp/sample.log', 'w') as f:
+        f.write(sample_log)
+    
+    # Test the basic function
+    print("Basic analysis:")
+    results = analyze_error_log('/tmp/sample.log')
+    for message, count in sorted(results.items(), key=lambda x: x[1], reverse=True):
+        print(f"  {count:3d} x {message}")
+    
+    print("\nAdvanced analysis:")
+    results = analyze_error_log_advanced('/tmp/sample.log')
+    for message, count in sorted(results.items(), key=lambda x: x[1], reverse=True):
+        print(f"  {count:3d} x {message}")
+    
+    # Clean up
+    os.remove('/tmp/sample.log')

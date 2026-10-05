@@ -1,0 +1,1 @@
+There's no update. The code is unchanged, because the 1x1 case already worked. Here it is in full, as in `image_stats.py`:

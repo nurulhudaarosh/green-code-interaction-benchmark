@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""CSV statistics utility.
+
+Computes count, min, max, mean, and median for each column of a CSV file.
+Missing values are handled independently per column: a cell that is empty,
+whitespace-only, or a common "null" token (NA, N/A, NaN, null, none, -) is
+skipped for that column only, so one column's gaps never affect another's.
+Columns are reported in the same order they appear in the input.
+
+Usage:
+    python csv_stats.py data.csv
+    python csv_stats.py data.csv --delimiter ";" --no-header
+    cat data.csv | python csv_stats.py -
+"""
+
+import argparse
+import csv
+import math
+import statistics
+import sys
+from typing import Dict, List, Optional, TextIO
+
+MISSING_TOKENS = {"", "na", "n/a", "nan", "null", "none", "-"}
+
+
+def is_missing(cell: Optional[str]) -> bool:
+    """Return True if the cell should be treated as a missing value."""
+    return cell is None or cell.strip().lower() in MISSING_TOKENS
+
+
+def parse_number(cell: str) -> Optional[float]:
+    """Parse a cell as a finite float, or return None if it isn't numeric."""
+    try:
+        value = float(cell.strip().replace(",", "")) if "," in cell and cell.replace(",", "").strip().replace(".", "", 1).lstrip("+-").isdigit() else float(cell.strip())
+    except ValueError:
+        return None
+    return value if math.isfinite(value) else None
+
+
+def compute_stats(reader: csv.reader, has_header: bool) -> List[Dict]:
+    """Read rows and return per-column stats, preserving input column order."""
+    rows = iter(reader)
+    try:
+        first = next(rows)
+    except StopIteration:
+        return []
+
+    if has_header:
+        names = [n.strip() or f"column_{i + 1}" for i, n in enumerate(first)]
+        pending = []
+    else:
+        names = [f"column_{i + 1}" for i in range(len(first))]
+        pending = [first]
+
+    values: List[List[float]] = [[] for _ in names]
+    missing = [0] * len(names)
+    invalid = [0] * len(names)
+
+    def ingest(row: List[str]) -> None:
+        # Grow columns if a row is wider than the header.
+        while len(row) > len(names):
+            names.append(f"column_{len(names) + 1}")
+            values.append([])
+            missing.append(0)
+            invalid.append(0)
+        for i in range(len(names)):
+            cell = row[i] if i < len(row) else None  # short rows => missing
+            if is_missing(cell):
+                missing[i] += 1
+                continue
+            number = parse_number(cell)
+            if number is None:
+                invalid[i] += 1
+            else:
+                values[i].append(number)
+
+    for row in pending:
+        ingest(row)
+    for row in rows:
+        if not row:  # skip fully blank lines
+            continue
+        ingest(row)
+
+    results = []
+    for i, name in enumerate(names):
+        data = values[i]
+        entry = {
+            "column": name,
+            "count": len(data),
+            "min": min(data) if data else None,
+            "max": max(data) if data else None,
+            "mean": statistics.fmean(data) if data else None,
+            "median": statistics.median(data) if data else None,
+            "missing": missing[i],
+            "non_numeric": invalid[i],
+        }
+        results.append(entry)
+    return results
+
+
+def fmt(value: Optional[float]) -> str:
+    """Format a statistic for display."""
+    if value is None:
+        return "n/a"
+    return f"{value:.6g}"
+
+
+def print_report(results: List[Dict], out: TextIO) -> None:
+    """Print an aligned table of results."""
+    if not results:
+        out.write("No data found.\n")
+        return
+    headers = ["column", "count", "min", "max", "mean", "median", "missing", "non_numeric"]
+    table = [headers]
+    for r in results:
+        table.append([
+            r["column"],
+            str(r["count"]),
+            fmt(r["min"]),
+            fmt(r["max"]),
+            fmt(r["mean"]),
+            fmt(r["median"]),
+            str(r["missing"]),
+            str(r["non_numeric"]),
+        ])
+    widths = [max(len(row[c]) for row in table) for c in range(len(headers))]
+    for n, row in enumerate(table):
+        line = "  ".join(
+            cell.ljust(widths[c]) if c == 0 else cell.rjust(widths[c])
+            for c, cell in enumerate(row)
+        )
+        out.write(line.rstrip() + "\n")
+        if n == 0:
+            out.write("  ".join("-" * w for w in widths) + "\n")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Per-column CSV statistics (count, min, max, mean, median)."
+    )
+    parser.add_argument("path", help="CSV file path, or '-' for stdin")
+    parser.add_argument("-d", "--delimiter", default=",", help="field delimiter (default: ,)")
+    parser.add_argument("--no-header", action="store_true", help="input has no header row")
+    parser.add_argument("--encoding", default="utf-8-sig", help="file encoding (default: utf-8-sig)")
+    args = parser.parse_args()
+
+    try:
+        if args.path == "-":
+            reader = csv.reader(sys.stdin, delimiter=args.delimiter)
+            results = compute_stats(reader, has_header=not args.no_header)
+        else:
+            with open(args.path, newline="", encoding=args.encoding) as f:
+                reader = csv.reader(f, delimiter=args.delimiter)
+                results = compute_stats(reader, has_header=not args.no_header)
+    except (OSError, UnicodeDecodeError, csv.Error) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print_report(results, sys.stdout)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

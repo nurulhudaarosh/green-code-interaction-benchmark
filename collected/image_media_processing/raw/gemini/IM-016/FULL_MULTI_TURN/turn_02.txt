@@ -1,0 +1,92 @@
+In the original code, the array definitions were labeled correctly:
+
+
+However, the bug is how **`cv2.filter2D` performs spatial convolution**:
+
+Mathematically, 2D convolution flips the kernel horizontally and vertically before applying cross-correlation ($K_{\text{conv}}(i, j) = K(-i, -j)$). Because the $G_x$ matrix is anti-symmetric horizontally ($G_x(i, j) = -G_x(i, -j)$), flipping it horizontally negates the values across columns:
+
+$$\text{Flipped } G_x = \begin{bmatrix} 1 & 0 & -1 \\ 2 & 0 & -2 \\ 1 & 0 & -1 \end{bmatrix}$$
+
+When `cv2.filter2D` convolves `img` with this kernel over a vertical edge where left pixels are dark ($0$) and right pixels are bright ($255$), the output at the boundary computes as $0 \cdot 1 + 255 \cdot (-1) = -255$ rather than $+255$.
+
+More importantly, if you pass `kernel=Gx` into `cv2.filter2D`, OpenCV performs correlation/convolution directly on matrix rows and columns without adjusting for standard Cartesian coordinates.
+
+Here is the corrected code that explicitly aligns $G_x$ and $G_y$ with mathematical cross-correlation so that a **vertical edge** (gradient across $x$, i.e., left-to-right intensity change) yields a strong positive response in $G_x$ and zero response in $G_y$:
+
+```python
+import os
+from pathlib import Path
+import cv2
+import numpy as np
+
+
+def sobel_edges(input_dir: str | Path, output_dir: str | Path) -> None:
+    """Applies explicit Sobel edge detection to all images in input_dir and saves
+
+    the gradient magnitude as grayscale PNGs in output_dir.
+    """
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # Explicit Sobel Cross-Correlation / Derivative Kernels
+    #
+    # Gx computes partial derivative w.r.t. x (columns): dI / dx
+    # A step change from dark on left to bright on right gives positive response.
+    Gx = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=np.float32)
+
+    # Gy computes partial derivative w.r.t. y (rows): dI / dy
+    # A step change from dark on top to bright on bottom gives positive response.
+    Gy = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=np.float32)
+
+    valid_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
+
+    for file_path in input_path.iterdir():
+        if file_path.is_file() and file_path.suffix.lower() in valid_extensions:
+            img = cv2.imread(str(file_path), cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                continue
+
+            img_float = img.astype(np.float32)
+
+            # Use cv2.filter2D with anchor=(-1,-1)
+            # Use cv2.BORDER_REFLECT_101 for standard mirror padding
+            # Note: cv2.filter2D calculates cross-correlation. To strictly enforce 
+            # spatial correlation matching the partial derivatives dI/dx and dI/dy:
+            grad_x = cv2.filter2D(img_float, ddepth=cv2.CV_32F, kernel=Gx)
+            grad_y = cv2.filter2D(img_float, ddepth=cv2.CV_32F, kernel=Gy)
+
+            # Gradient Magnitude: sqrt(Gx^2 + Gy^2)
+            magnitude = np.sqrt(grad_x**2 + grad_y**2)
+
+            # Clip magnitude to [0, 255] and cast to uint8
+            magnitude_clipped = np.clip(magnitude, 0, 255).astype(np.uint8)
+
+            output_filename = output_path / f"{file_path.stem}_sobel.png"
+            cv2.imwrite(str(output_filename), magnitude_clipped)
+
+
+if __name__ == "__main__":
+    # Synthetic verification test for Gx (vertical edge):
+    synthetic_img = np.zeros((10, 10), dtype=np.float32)
+    synthetic_img[:, 5:] = 255.0  # Vertical step edge at x=5
+
+    Gx = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=np.float32)
+    Gy = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=np.float32)
+
+    gx_response = cv2.filter2D(synthetic_img, ddepth=-1, kernel=Gx)
+    gy_response = cv2.filter2D(synthetic_img, ddepth=-1, kernel=Gy)
+
+    print(
+        f"Synthetic Vertical Edge -> Max Gx: {np.max(np.abs(gx_response))}, Max Gy: {np.max(np.abs(gy_response))}"
+    )
+    # Output: Synthetic Vertical Edge -> Max Gx: 1020.0, Max Gy: 0.0
+
+```
+
+### Verification
+
+When testing against a purely vertical synthetic edge (`synthetic_img[:, 5:] = 255.0`):
+
+* $G_x$ produces a strong response ($\text{max } \vert{}G_x\vert{} = 1020.0$) along the edge boundary.
+* $G_y$ produces a zero response ($\text{max } \vert{}G_y\vert{} = 0.0$), confirming $G_x$ isolates horizontal gradients / vertical lines as expected.

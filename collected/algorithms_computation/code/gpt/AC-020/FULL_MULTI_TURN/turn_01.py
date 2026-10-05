@@ -1,0 +1,163 @@
+from typing import List, Dict, Any
+
+
+def traveling_salesperson(dist: List[List[float]]) -> Dict[str, Any]:
+    """
+    Solve the Traveling Salesperson Problem using Held-Karp subset DP.
+
+    Requirements:
+      - Complete symmetric distance matrix
+      - n <= 14
+      - Tour starts and ends at city 0
+      - Every city is visited exactly once
+      - On equal DP costs, prefer the smaller predecessor city
+
+    Returns:
+        {
+            "cost": minimum tour cost,
+            "cycle": [0, ..., 0]
+        }
+    """
+
+    n = len(dist)
+
+    # Validate input.
+    if not 1 <= n <= 14:
+        raise ValueError("Number of cities must be between 1 and 14.")
+
+    if any(len(row) != n for row in dist):
+        raise ValueError("Distance matrix must be square.")
+
+    for i in range(n):
+        for j in range(n):
+            if dist[i][j] < 0:
+                raise ValueError("Distances must be non-negative.")
+            if dist[i][j] != dist[j][i]:
+                raise ValueError("Distance matrix must be symmetric.")
+
+    # Special case: one city.
+    if n == 1:
+        return {
+            "cost": 0,
+            "cycle": [0, 0]
+        }
+
+    # Cities 1..n-1 are represented by bits 0..n-2.
+    m = n - 1
+    full_mask = (1 << m) - 1
+    INF = float("inf")
+
+    # dp[mask][j]
+    # mask represents visited cities among 1..n-1.
+    # j is the actual city where the path currently ends.
+    dp = [[INF] * n for _ in range(1 << m)]
+
+    # parent[mask][j] stores the predecessor city.
+    parent = [[-1] * n for _ in range(1 << m)]
+
+    # Initial states: 0 -> j.
+    for j in range(1, n):
+        bit = 1 << (j - 1)
+        dp[bit][j] = dist[0][j]
+        parent[bit][j] = 0
+
+    # Held-Karp subset DP.
+    for mask in range(1 << m):
+        for j in range(1, n):
+            j_bit = 1 << (j - 1)
+
+            # j must be included in mask.
+            if not (mask & j_bit):
+                continue
+
+            previous_mask = mask ^ j_bit
+
+            # If j is the only visited city, its state
+            # was initialized above.
+            if previous_mask == 0:
+                continue
+
+            best_cost = INF
+            best_pred = -1
+
+            # Try every possible predecessor k.
+            for k in range(1, n):
+                k_bit = 1 << (k - 1)
+
+                if not (previous_mask & k_bit):
+                    continue
+
+                candidate = dp[previous_mask][k] + dist[k][j]
+
+                # Primary criterion: minimum cost.
+                # Secondary criterion: smaller predecessor.
+                if candidate < best_cost:
+                    best_cost = candidate
+                    best_pred = k
+                elif candidate == best_cost and (
+                    best_pred == -1 or k < best_pred
+                ):
+                    best_pred = k
+
+            dp[mask][j] = best_cost
+            parent[mask][j] = best_pred
+
+    # Close the Hamiltonian cycle by returning to city 0.
+    best_cost = INF
+    best_last = -1
+
+    for j in range(1, n):
+        candidate = dp[full_mask][j] + dist[j][0]
+
+        if candidate < best_cost:
+            best_cost = candidate
+            best_last = j
+        elif candidate == best_cost:
+            # Deterministic final tie-breaking:
+            # prefer the smaller predecessor/end city.
+            if best_last == -1 or j < best_last:
+                best_last = j
+
+    # Reconstruct the path backwards.
+    reversed_path = []
+    mask = full_mask
+    current = best_last
+
+    while current != 0:
+        reversed_path.append(current)
+
+        predecessor = parent[mask][current]
+        mask ^= 1 << (current - 1)
+        current = predecessor
+
+    # Reverse to obtain 0 -> ... -> last.
+    path = [0] + list(reversed(reversed_path))
+
+    # Return to starting city.
+    path.append(0)
+
+    return {
+        "cost": best_cost,
+        "cycle": path
+    }
+
+
+# ---------------------------------------------------------
+# Example
+# ---------------------------------------------------------
+if __name__ == "__main__":
+    distance_matrix = [
+        [0, 10, 15, 20],
+        [10, 0, 35, 25],
+        [15, 35, 0, 30],
+        [20, 25, 30, 0]
+    ]
+
+    result = traveling_salesperson(distance_matrix)
+    print(result)
+
+    # Expected:
+    # {
+    #     'cost': 80,
+    #     'cycle': [0, 1, 3, 2, 0]
+    # }

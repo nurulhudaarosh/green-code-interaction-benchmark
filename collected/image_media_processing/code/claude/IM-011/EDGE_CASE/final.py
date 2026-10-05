@@ -1,0 +1,73 @@
+import shutil
+from pathlib import Path
+
+from PIL import Image, UnidentifiedImageError
+
+SMALL_MAX = 640
+MEDIUM_MAX = 1920
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff", ".webp"}
+
+
+def _bucket(longest_side: int) -> str:
+    if longest_side < SMALL_MAX:
+        return "small"
+    if longest_side <= MEDIUM_MAX:
+        return "medium"
+    return "large"
+
+
+def _unique_path(path: Path) -> Path:
+    """Avoid overwriting: photo.jpg -> photo_1.jpg, photo_2.jpg, ..."""
+    if not path.exists():
+        return path
+    i = 1
+    while True:
+        candidate = path.with_name(f"{path.stem}_{i}{path.suffix}")
+        if not candidate.exists():
+            return candidate
+        i += 1
+
+
+def organize_by_resolution(input_dir, output_dir):
+    """
+    Copy images from input_dir into output_dir/{small,medium,large}
+    based on max(width, height):
+        small:  < 640
+        medium: 640 - 1920 (lower bound inclusive)
+        large:  > 1920
+
+    Returns a dict with counts per folder (plus "skipped" for unreadable files).
+    """
+    input_dir, output_dir = Path(input_dir), Path(output_dir)
+    if not input_dir.is_dir():
+        raise NotADirectoryError(f"Input directory not found: {input_dir}")
+
+    for name in ("small", "medium", "large"):
+        (output_dir / name).mkdir(parents=True, exist_ok=True)
+
+    counts = {"small": 0, "medium": 0, "large": 0, "skipped": 0}
+
+    for path in sorted(input_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in IMAGE_EXTS:
+            continue
+        try:
+            with Image.open(path) as img:  # reads header only, not full pixels
+                width, height = img.size
+        except (UnidentifiedImageError, OSError):
+            counts["skipped"] += 1
+            continue
+
+        bucket = _bucket(max(width, height))
+        dest = _unique_path(output_dir / bucket / path.name)
+        shutil.copy2(path, dest)
+        counts[bucket] += 1
+
+    return counts
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) != 3:
+        sys.exit("Usage: python organize_by_resolution.py <input_dir> <output_dir>")
+    print(organize_by_resolution(sys.argv[1], sys.argv[2]))

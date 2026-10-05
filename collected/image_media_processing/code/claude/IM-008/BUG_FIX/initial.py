@@ -1,0 +1,35 @@
+import hashlib
+import os
+from collections import defaultdict
+
+
+def find_exact_duplicates(input_dir, chunk_size=1 << 20):
+    """Return {sha256_hex: [sorted paths]} for groups of 2+ byte-identical files."""
+    # Pass 1: bucket by size, since files with different sizes can't be identical
+    by_size = defaultdict(list)
+    for root, _, names in os.walk(input_dir):
+        for name in names:
+            path = os.path.join(root, name)
+            if os.path.islink(path):
+                continue
+            try:
+                by_size[os.path.getsize(path)].append(path)
+            except OSError:
+                continue
+
+    # Pass 2: hash only files that share a size with at least one other file
+    by_hash = defaultdict(list)
+    for paths in by_size.values():
+        if len(paths) < 2:
+            continue
+        for path in paths:
+            digest = hashlib.sha256()
+            try:
+                with open(path, "rb") as f:
+                    while chunk := f.read(chunk_size):
+                        digest.update(chunk)
+            except OSError:
+                continue
+            by_hash[digest.hexdigest()].append(path)
+
+    return {h: sorted(p) for h, p in by_hash.items() if len(p) >= 2}

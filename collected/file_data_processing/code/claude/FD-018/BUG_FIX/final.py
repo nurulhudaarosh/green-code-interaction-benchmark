@@ -1,0 +1,302 @@
+#!/usr/bin/env python3
+"""
+Duplicate-record detector.
+
+Normalizes `title` and `description` so that differences in letter case and
+in repeated/odd whitespace never prevent a match, groups records whose
+normalized (title, description, date) triple is identical, and reports
+deterministic duplicate ID groups (only groups with 2+ distinct IDs).
+
+Normalization (applied to title and description):
+  - Unicode NFKC, then casefold (so "STRASSE", "Straße", "strasse" all match)
+  - leading/trailing whitespace removed
+  - any run of whitespace (spaces, tabs, newlines, NBSP, other Unicode
+    spaces) collapsed to a single space
+  - invisible format characters (zero-width space, soft hyphen, BOM) removed
+  - accents stripped
+  - punctuation/symbols treated as separators (disable with --keep-punctuation)
+
+Determinism:
+  - IDs inside a group are sorted naturally (A2 before A10)
+  - groups are sorted by first ID, then by key
+  - JSON output uses sorted keys; nothing depends on set/dict iteration order
+
+Usage:
+    python dedupe.py records.json
+    python dedupe.py records.csv --format json
+    python dedupe.py records.csv --dayfirst --keep-punctuation
+    python dedupe.py                      # built-in demo
+
+Input: .json (list of objects) or .csv (header row), with the fields
+id, title, description, date.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import re
+import sys
+import unicodedata
+from collections import defaultdict
+from datetime import date, datetime
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+# --------------------------------------------------------------------------
+# Text normalization
+# --------------------------------------------------------------------------
+
+
+def normalize_text(value: Any, strip_punctuation: bool = True) -> str:
+    """Canonical form of free text; case and whitespace never affect equality."""
+    if value is None:
+        return ""
+
+    text = unicodedata.normalize("NFKC", str(value))
+    text = text.casefold()
+    text = unicodedata.normalize("NFKC", text)  # casefold can denormalize
+
+    # Decompose to drop accents; drop invisible format chars (Cf) entirely.
+    text = unicodedata.normalize("NFD", text)
+    kept = []
+    for ch in text:
+        cat = unicodedata.category(ch)
+        if cat == "Mn" or cat == "Cf":
+            continue
+        if strip_punctuation and cat[0] in ("P", "S"):
+            kept.append(" ")
+        else:
+            kept.append(ch)
+    text = unicodedata.normalize("NFC", "".join(kept))
+
+    # str.split() with no args splits on ALL Unicode whitespace and discards
+    # empty pieces, so this both trims and collapses repeated whitespace.
+    return " ".join(text.split())
+
+
+# --------------------------------------------------------------------------
+# Date normalization
+# --------------------------------------------------------------------------
+
+_BASE_FORMATS = (
+    "%Y-%m-%d",
+    "%Y/%m/%d",
+    "%Y.%m.%d",
+    "%Y%m%d",
+    "%b %d, %Y",
+    "%B %d, %Y",
+    "%d %b %Y",
+    "%d %B %Y",
+)
+_DAY_FIRST = ("%d-%m-%Y", "%d/%m/%Y", "%d.%m.%Y")
+_MONTH_FIRST = ("%m-%d-%Y", "%m/%d/%Y", "%m.%d.%Y")
+
+_ISO_HEAD_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:[T ].*)?$")
+
+
+def normalize_date(value: Any, dayfirst: bool = False) -> str:
+    """
+    Canonical ISO `YYYY-MM-DD`. Time of day is ignored.
+    Ambiguous numeric dates (03/05/2024) are month-first unless dayfirst=True.
+    Unparseable values become "raw:<normalized text>" so identical raw
+    values still group together.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+
+    s = " ".join(str(value).split())  # whitespace-insensitive here too
+    if not s:
+        return ""
+
+    m = _ISO_HEAD_RE.match(s)
+    if m:
+        try:
+            return datetime.strptime(m.group(1), "%Y-%m-%d").date().isoformat()
+        except ValueError:
+            pass
+
+    formats = _BASE_FORMATS + (_DAY_FIRST + _MONTH_FIRST if dayfirst else _MONTH_FIRST + _DAY_FIRST)
+    for fmt in formats:
+        try:
+            return datetime.strptime(s, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return "raw:" + normalize_text(s)
+
+
+# --------------------------------------------------------------------------
+# Deterministic ordering
+# --------------------------------------------------------------------------
+
+_NUM_SPLIT_RE = re.compile(r"(\d+)")
+
+
+def natural_key(value: Any) -> Tuple:
+    """Natural sort key ('a2' < 'a10'), type-stable, with raw string tie-break."""
+    s = str(value)
+    parts = []
+    for chunk in _NUM_SPLIT_RE.split(s):
+        if chunk == "":
+            continue
+        parts.append((0, int(chunk), "") if chunk.isdigit() else (1, 0, chunk))
+    return (tuple(parts), s)
+
+
+# --------------------------------------------------------------------------
+# Detection
+# --------------------------------------------------------------------------
+
+GroupKey = Tuple[str, str, str]  # (norm_title, norm_description, norm_date)
+
+
+def build_key(
+    record: Dict[str, Any],
+    strip_punctuation: bool = True,
+    dayfirst: bool = False,
+) -> GroupKey:
+    return (
+        normalize_text(record.get("title"), strip_punctuation),
+        normalize_text(record.get("description"), strip_punctuation),
+        normalize_date(record.get("date"), dayfirst),
+    )
+
+
+def find_duplicate_groups(
+    records: Iterable[Dict[str, Any]],
+    strip_punctuation: bool = True,
+    dayfirst: bool = False,
+) -> List[Dict[str, Any]]:
+    """
+    Returns deterministically ordered duplicate groups:
+        [{"group_id": "DUP-0001", "key": {...}, "ids": [...], "count": n}, ...]
+    A repeated ID is counted once, so it cannot duplicate itself.
+    """
+    buckets: Dict[GroupKey, set] = defaultdict(set)
+
+    for idx, rec in enumerate(records):
+        rid = rec.get("id")
+        if rid is None or str(rid).strip() == "":
+            raise ValueError(f"Record at position {idx} has no 'id': {rec!r}")
+        buckets[build_key(rec, strip_punctuation, dayfirst)].add(str(rid).strip())
+
+    groups = []
+    for key, id_set in buckets.items():
+        if len(id_set) < 2:
+            continue
+        ids = sorted(id_set, key=natural_key)
+        groups.append(
+            {
+                "key": {"title": key[0], "description": key[1], "date": key[2]},
+                "ids": ids,
+                "count": len(ids),
+            }
+        )
+
+    groups.sort(
+        key=lambda g: (
+            natural_key(g["ids"][0]),
+            g["key"]["title"],
+            g["key"]["description"],
+            g["key"]["date"],
+        )
+    )
+    for n, g in enumerate(groups, start=1):
+        g["group_id"] = f"DUP-{n:04d}"
+    return groups
+
+
+# --------------------------------------------------------------------------
+# I/O and rendering
+# --------------------------------------------------------------------------
+
+
+def load_records(path: str) -> List[Dict[str, Any]]:
+    lower = path.lower()
+    if lower.endswith(".json"):
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not isinstance(data, list):
+            raise ValueError("JSON input must be a list of record objects.")
+        return data
+    if lower.endswith(".csv"):
+        with open(path, "r", encoding="utf-8", newline="") as fh:
+            return list(csv.DictReader(fh))
+    raise ValueError("Unsupported input type; use .json or .csv")
+
+
+def render_text(groups: List[Dict[str, Any]], total_records: int) -> str:
+    if not groups:
+        return f"No duplicates found among {total_records} record(s)."
+    involved = sum(g["count"] for g in groups)
+    lines = [
+        f"Scanned {total_records} record(s): {len(groups)} duplicate group(s), "
+        f"{involved} record(s) involved.",
+        "",
+    ]
+    for g in groups:
+        k = g["key"]
+        lines.append(f"{g['group_id']}  ids={', '.join(g['ids'])}")
+        lines.append(f"    title       : {k['title']!r}")
+        lines.append(f"    description : {k['description']!r}")
+        lines.append(f"    date        : {k['date']!r}")
+    return "\n".join(lines)
+
+
+def render_json(groups: List[Dict[str, Any]], total_records: int) -> str:
+    payload = {
+        "total_records": total_records,
+        "duplicate_group_count": len(groups),
+        "groups": groups,
+    }
+    return json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False)
+
+
+# --------------------------------------------------------------------------
+# Demo + CLI
+# --------------------------------------------------------------------------
+
+DEMO_RECORDS = [
+    # Case + repeated whitespace differences only -> must match
+    {"id": "A10", "title": "Quarterly Report", "description": "Revenue summary for Q1", "date": "2024-03-05"},
+    {"id": "A2",  "title": "  QUARTERLY    report ", "description": "revenue\tSUMMARY\nfor   q1", "date": "2024-03-05"},
+    {"id": "A3",  "title": "quarterly report", "description": "Revenue summary for Q1", "date": "2024-03-06"},  # different date
+    # Non-breaking space, mixed case, ISO datetime with time part
+    {"id": "B1",  "title": "Cafe\u00a0Menu", "description": "Spring  specials", "date": "2024-04-01T09:30:00Z"},
+    {"id": "B7",  "title": "CAFE   MENU", "description": "SPRING SPECIALS", "date": "2024-04-01"},
+    {"id": "C1",  "title": "Unique item", "description": "Nothing like it", "date": "2024-01-01"},
+]
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description="Detect duplicate records.")
+    parser.add_argument("input", nargs="?", help="Path to .json or .csv (omit for demo)")
+    parser.add_argument("--format", choices=("text", "json"), default="text")
+    parser.add_argument("--keep-punctuation", action="store_true",
+                        help="Do not treat punctuation as whitespace when comparing text.")
+    parser.add_argument("--dayfirst", action="store_true",
+                        help="Parse ambiguous numeric dates like 03/05/2024 as day/month/year.")
+    args = parser.parse_args(argv)
+
+    try:
+        records = load_records(args.input) if args.input else DEMO_RECORDS
+        groups = find_duplicate_groups(
+            records,
+            strip_punctuation=not args.keep_punctuation,
+            dayfirst=args.dayfirst,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    render = render_json if args.format == "json" else render_text
+    print(render(groups, len(records)))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

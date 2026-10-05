@@ -1,0 +1,146 @@
+```python
+from typing import Any, Dict, List
+
+
+def get_nested_value(config: Dict[str, Any], path: str):
+    """Return a nested configuration value using dot notation."""
+    current = config
+
+    for part in path.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None, False
+        current = current[part]
+
+    return current, True
+
+
+def validate_rule(config: Dict[str, Any], rule: Dict[str, Any]) -> bool:
+    """Validate one configuration rule."""
+    path = rule.get("path")
+    expected_type = rule.get("type")
+
+    if not isinstance(path, str) or not path:
+        return False
+
+    value, exists = get_nested_value(config, path)
+
+    if not exists:
+        return False
+
+    if expected_type is not None:
+        type_map = {
+            "string": str,
+            "int": int,
+            "float": float,
+            "number": (int, float),
+            "bool": bool,
+            "list": list,
+            "dict": dict,
+        }
+
+        expected = type_map.get(expected_type)
+        if expected is None:
+            return False
+
+        # bool is a subclass of int, so handle it explicitly.
+        if expected_type == "int" and isinstance(value, bool):
+            return False
+
+        if expected_type == "number" and isinstance(value, bool):
+            return False
+
+        if not isinstance(value, expected):
+            return False
+
+    if "required" in rule and rule["required"] and value is None:
+        return False
+
+    if "min" in rule:
+        try:
+            if value < rule["min"]:
+                return False
+        except TypeError:
+            return False
+
+    if "max" in rule:
+        try:
+            if value > rule["max"]:
+                return False
+        except TypeError:
+            return False
+
+    if "allowed" in rule:
+        if value not in rule["allowed"]:
+            return False
+
+    return True
+
+
+def validate_config(
+    config: Dict[str, Any],
+    rules: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    Validate a configuration against a list of rules.
+
+    Each rule may contain:
+      - path: nested configuration path
+      - type: expected type
+      - required: whether the value must exist
+      - min: minimum value
+      - max: maximum value
+      - allowed: list of allowed values
+
+    Returns a structured validation result.
+    """
+    if not isinstance(config, dict):
+        return {
+            "valid": False,
+            "errors": ["Configuration must be a dictionary."]
+        }
+
+    if not isinstance(rules, list):
+        return {
+            "valid": False,
+            "errors": ["Validation rules must be a list."]
+        }
+
+    errors = []
+
+    for index, rule in enumerate(rules):
+        if not isinstance(rule, dict):
+            errors.append(f"Rule {index} must be a dictionary.")
+            continue
+
+        path = rule.get("path", f"rule[{index}]")
+
+        if not validate_rule(config, rule):
+            errors.append(f"Validation failed for '{path}'.")
+
+    return {
+        "valid": len(errors) == 0,
+        "errors": errors
+    }
+
+
+if __name__ == "__main__":
+    config = {
+        "server": {
+            "host": "localhost",
+            "port": 8080,
+            "debug": True
+        },
+        "database": {
+            "name": "app_db"
+        }
+    }
+
+    rules = [
+        {"path": "server.host", "type": "string", "required": True},
+        {"path": "server.port", "type": "int", "min": 1, "max": 65535},
+        {"path": "server.debug", "type": "bool"},
+        {"path": "database.name", "type": "string", "required": True}
+    ]
+
+    print(validate_config(config, rules))
+```

@@ -1,0 +1,144 @@
+import argparse
+import logging
+import shutil
+from pathlib import Path
+
+# Mapping of folder names to associated file extensions
+CATEGORY_MAPPING = {
+    "Images": {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp", ".tiff"},
+    "Documents": {
+        ".pdf",
+        ".docx",
+        ".doc",
+        ".txt",
+        ".rtf",
+        ".odt",
+        ".xls",
+        ".xlsx",
+        ".ppt",
+        ".pptx",
+        ".csv",
+    },
+    "Audio": {".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a"},
+    "Videos": {".mp4", ".mkv", ".avi", ".mov", ".flv", ".wmv", ".webm"},
+    "Archives": {".zip", ".tar", ".gz", ".7z", ".rar", ".bz2"},
+    "Code_Scripts": {
+        ".py",
+        ".js",
+        ".html",
+        ".css",
+        ".java",
+        ".cpp",
+        ".c",
+        ".json",
+        ".xml",
+        ".sh",
+    },
+    "Executables": {".exe", ".msi", ".dmg", ".pkg", ".deb"},
+}
+
+
+def get_category(file_extension: str) -> str:
+    """Returns the matching category folder name for a given file extension."""
+    ext = file_extension.lower()
+    for category, extensions in CATEGORY_MAPPING.items():
+        if ext in extensions:
+            return category
+    return "Others"
+
+
+def resolve_duplicate_path(destination_path: Path) -> Path:
+    """Handles naming collisions by appending a counter before the extension."""
+    if not destination_path.exists():
+        return destination_path
+
+    stem = destination_path.stem
+    suffix = destination_path.suffix
+    parent = destination_path.parent
+    counter = 1
+
+    while True:
+        new_path = parent / f"{stem}_{counter}{suffix}"
+        if not new_path.exists():
+            return new_path
+        counter += 1
+
+
+def organize_directory(target_dir: Path, dry_run: bool = False) -> None:
+    """Scans and organizes files in target_dir into category subfolders."""
+    if not target_dir.exists() or not target_dir.is_dir():
+        logging.error(
+            f"The provided path does not exist or is not a directory: {target_dir}"
+        )
+        return
+
+    logging.info(
+        f"Starting file organization for: {target_dir.resolve()}"
+        + (" (DRY RUN)" if dry_run else "")
+    )
+
+    moved_count = 0
+    skipped_count = 0
+
+    # Iterate only through items in the target directory (non-recursive)
+    for item in target_dir.iterdir():
+        # Skip subdirectories to prevent moving created category folders
+        if item.is_dir():
+            continue
+
+        # Skip system or hidden files (e.g., .DS_Store, .gitignore)
+        if item.name.startswith("."):
+            skipped_count += 1
+            continue
+
+        category = get_category(item.suffix)
+        category_folder = target_dir / category
+        destination = resolve_duplicate_path(category_folder / item.name)
+
+        if dry_run:
+            logging.info(
+                f"[DRY RUN] Would move: '{item.name}' -> '{category}/{destination.name}'"
+            )
+        else:
+            category_folder.mkdir(exist_ok=True)
+            shutil.move(str(item), str(destination))
+            logging.info(
+                f"Moved: '{item.name}' -> '{category}/{destination.name}'"
+            )
+
+        moved_count += 1
+
+    summary_prefix = "[DRY RUN] Summary" if dry_run else "Summary"
+    logging.info(
+        f"{summary_prefix}: {moved_count} file(s) processed, {skipped_count} hidden/system file(s) skipped."
+    )
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Organize files in a directory into categorical subfolders."
+    )
+    parser.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        help="Path to target directory (defaults to current working directory).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview changes without actually moving any files.",
+    )
+
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    )
+
+    target_path = Path(args.path)
+    organize_directory(target_path, dry_run=args.dry_run)
+
+
+if __name__ == "__main__":
+    main()

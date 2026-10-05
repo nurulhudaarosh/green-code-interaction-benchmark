@@ -1,72 +1,640 @@
+Here's a comprehensive configuration validation implementation with all rules:
+
 ```python
+#!/usr/bin/env python3
+"""
+Configuration Validation System
+Implements all common config-validation rules with clear error reporting.
+"""
+
+from __future__ import annotations
+
+import ipaddress
 import json
-import traceback
+import os
+import re
+from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Union
+from urllib.parse import urlparse
 
-DATASET_PATH = "dataset.json"
 
-def load_dataset(path):
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"'{path}' not found. Check the path.")
-    with open(p, "r", encoding="utf-8") as f:
-        return json.load(f)
+# ============================================================
+# 1. Validation Result & Error Types
+# ============================================================
+class Severity(Enum):
+    ERROR = "error"
+    WARNING = "warning"
+    INFO = "info"
 
-def safe_get(lst, index, default=None, label="list"):
-    """Access list[index] safely, logging instead of crashing."""
-    try:
-        return lst[index]
-    except IndexError:
-        print(f"IndexError: {label} has length {len(lst)}, but index {index} was requested.")
-        return default
 
-def diagnose_index_errors(data):
-    issues = []
-    interactions = data.get("interactions", []) if isinstance(data, dict) else []
+@dataclass
+class ValidationIssue:
+    path: str           # dotted path e.g. "server.port"
+    message: str
+    severity: Severity = Severity.ERROR
+    rule: str = ""      # rule name
+    value: Any = None
 
-    if not interactions:
-        issues.append("'interactions' list is empty — nothing to advance through.")
-        return issues
+    def __str__(self) -> str:
+        return f"[{self.severity.value.upper()}] {self.path}: {self.message} (rule={self.rule}, value={self.value!r})"
 
-    for i, interaction in enumerate(interactions):
+
+@dataclass
+class ValidationResult:
+    issues: List[ValidationIssue] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not any(i.severity == Severity.ERROR for i in self.issues)
+
+    def add(self, issue: ValidationIssue) -> None:
+        self.issues.append(issue)
+
+    def errors(self) -> List[ValidationIssue]:
+        return [i for i in self.issues if i.severity == Severity.ERROR]
+
+    def warnings(self) -> List[ValidationIssue]:
+        return [i for i in self.issues if i.severity == Severity.WARNING]
+
+    def report(self) -> str:
+        if not self.issues:
+            return "✅ Configuration is valid."
+        lines = [f"Validation finished: {len(self.errors())} error(s), {len(self.warnings())} warning(s)"]
+        lines += [str(i) for i in self.issues]
+        return "\n".join(lines)
+
+
+# ============================================================
+# 2. Rule Engine
+# ============================================================
+class Rule:
+    """A single validation rule applied to a config path."""
+    name = "rule"
+
+    def check(self, path: str, value: Any, config: dict) -> Optional[ValidationIssue]:
+        raise NotImplementedError
+
+
+# ---------- Rule: required ----------
+class Required(Rule):
+    name = "required"
+
+    def check(self, path, value, config):
+        if value is None or value == "":
+            return ValidationIssue(path, "is required", rule=self.name, value=value)
+        return None
+
+
+# ---------- Rule: type ----------
+class TypeRule(Rule):
+    name = "type"
+
+    def __init__(self, expected: Union[type, tuple]):
+        self.expected = expected
+
+    def check(self, path, value, config):
+        if value is None:
+            return None
+        # bool is subclass of int in Python, exclude it explicitly
+        if isinstance(value, bool) and self.expected is int:
+            return ValidationIssue(path, f"must be int, got bool", rule=self.name, value=value)
+        if not isinstance(value, self.expected):
+            names = self.expected.__name__ if isinstance(self.expected, type) else \
+                    "/".join(t.__name__ for t in self.expected)
+            return ValidationIssue(path, f"must be {names}, got {type(value).__name__}",
+                                   rule=self.name, value=value)
+        return None
+
+
+# ---------- Rule: range (min/max) ----------
+class Range(Rule):
+    name = "range"
+
+    def __init__(self, min_val=None, max_val=None, inclusive=True):
+        self.min_val = min_val
+        self.max_val = max_val
+        self.inclusive = inclusive
+
+    def check(self, path, value, config):
+        if value is None or not isinstance(value, (int, float)) or isinstance(value, bool):
+            return None
+        if self.min_val is not None:
+            bad = value < self.min_val if self.inclusive else value <= self.min_val
+            if bad:
+                op = ">=" if self.inclusive else ">"
+                return ValidationIssue(path, f"must be {op} {self.min_val}, got {value}",
+                                       rule=self.name, value=value)
+        if self.max_val is not None:
+            bad = value > self.max_val if self.inclusive else value >= self.max_val
+            if bad:
+                op = "<=" if self.inclusive else "<"
+                return ValidationIssue(path, f"must be {op} {self.max_val}, got {value}",
+                                       rule=self.name, value=value)
+        return None
+
+
+# ---------- Rule: length ----------
+class Length(Rule):
+    name = "length"
+
+    def __init__(self, min_len=None, max_len=None, exact=None):
+        self.min_len, self.max_len, self.exact = min_len, max_len, exact
+
+    def check(self, path, value, config):
+        if value is None:
+            return None
         try:
-            # Example of the kind of indexing that typically throws this error:
-            # accessing a sub-list/messages array without checking length first
-            messages = interaction.get("messages", []) if isinstance(interaction, dict) else []
-            if not messages:
-                issues.append(f"Interaction {i}: 'messages' is empty — indexing into it would fail.")
+            n = len(value)
+        except TypeError:
+            return None
+        if self.exact is not None and n != self.exact:
+            return ValidationIssue(path, f"length must be exactly {self.exact}, got {n}",
+                                   rule=self.name, value=value)
+        if self.min_len is not None and n < self.min_len:
+            return ValidationIssue(path, f"length must be >= {self.min_len}, got {n}",
+                                   rule=self.name, value=value)
+        if self.max_len is not None and n > self.max_len:
+            return ValidationIssue(path, f"length must be <= {self.max_len}, got {n}",
+                                   rule=self.name, value=value)
+        return None
+
+
+# ---------- Rule: regex pattern ----------
+class Pattern(Rule):
+    name = "pattern"
+
+    def __init__(self, regex: str, flags: int = 0):
+        self.regex = re.compile(regex, flags)
+
+    def check(self, path, value, config):
+        if value is None or not isinstance(value, str):
+            return None
+        if not self.regex.fullmatch(value):
+            return ValidationIssue(path, f"must match pattern {self.regex.pattern!r}",
+                                   rule=self.name, value=value)
+        return None
+
+
+# ---------- Rule: choices / enum ----------
+class Choices(Rule):
+    name = "choices"
+
+    def __init__(self, options: List[Any], case_sensitive=True):
+        self.options = options
+        self.case_sensitive = case_sensitive
+
+    def check(self, path, value, config):
+        if value is None:
+            return None
+        candidates = self.options
+        v = value
+        if not self.case_sensitive and isinstance(value, str):
+            candidates = [o.lower() if isinstance(o, str) else o for o in self.options]
+            v = value.lower()
+        if v not in candidates:
+            return ValidationIssue(path, f"must be one of {self.options}, got {value!r}",
+                                   rule=self.name, value=value)
+        return None
+
+
+# ---------- Rule: custom callable ----------
+class Custom(Rule):
+    name = "custom"
+
+    def __init__(self, func: Callable[[Any, dict], bool], message: str = "failed custom check"):
+        self.func, self.message = func, message
+
+    def check(self, path, value, config):
+        if value is None:
+            return None
+        try:
+            if not self.func(value, config):
+                return ValidationIssue(path, self.message, rule=self.name, value=value)
+        except Exception as e:
+            return ValidationIssue(path, f"custom check raised {e!r}", rule=self.name, value=value)
+        return None
+
+
+# ---------- Rule: URL ----------
+class URL(Rule):
+    name = "url"
+
+    def __init__(self, schemes: Optional[List[str]] = None, require_host: bool = True):
+        self.schemes = schemes or ["http", "https"]
+        self.require_host = require_host
+
+    def check(self, path, value, config):
+        if value is None or not isinstance(value, str):
+            return None
+        try:
+            parsed = urlparse(value)
+        except Exception as e:
+            return ValidationIssue(path, f"invalid URL: {e}", rule=self.name, value=value)
+        if parsed.scheme not in self.schemes:
+            return ValidationIssue(path, f"URL scheme must be one of {self.schemes}",
+                                   rule=self.name, value=value)
+        if self.require_host and not parsed.hostname:
+            return ValidationIssue(path, "URL must have a host", rule=self.name, value=value)
+        return None
+
+
+# ---------- Rule: email ----------
+class Email(Rule):
+    name = "email"
+    _re = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+    def check(self, path, value, config):
+        if value is None or not isinstance(value, str):
+            return None
+        if not self._re.match(value):
+            return ValidationIssue(path, "must be a valid email", rule=self.name, value=value)
+        return None
+
+
+# ---------- Rule: hostname ----------
+class Hostname(Rule):
+    name = "hostname"
+    _re = re.compile(r"^(?=.{1,253}$)([a-zA-Z0-9](-?[a-zA-Z0-9])*)(\.[a-zA-Z0-9](-?[a-zA-Z0-9])*)*$")
+
+    def check(self, path, value, config):
+        if value is None or not isinstance(value, str):
+            return None
+        if not self._re.match(value):
+            return ValidationIssue(path, "must be a valid hostname", rule=self.name, value=value)
+        return None
+
+
+# ---------- Rule: IP address ----------
+class IPAddress(Rule):
+    name = "ip"
+
+    def __init__(self, version: Optional[int] = None):
+        self.version = version  # 4, 6 or None
+
+    def check(self, path, value, config):
+        if value is None or not isinstance(value, str):
+            return None
+        try:
+            ip = ipaddress.ip_address(value)
+        except ValueError:
+            return ValidationIssue(path, "must be a valid IP address", rule=self.name, value=value)
+        if self.version and ip.version != self.version:
+            return ValidationIssue(path, f"must be IPv{self.version}", rule=self.name, value=value)
+        return None
+
+
+# ---------- Rule: port ----------
+class Port(Rule):
+    name = "port"
+
+    def check(self, path, value, config):
+        if value is None:
+            return None
+        if not isinstance(value, int) or isinstance(value, bool):
+            return ValidationIssue(path, "port must be an integer", rule=self.name, value=value)
+        if not (1 <= value <= 65535):
+            return ValidationIssue(path, "port must be between 1 and 65535",
+                                   rule=self.name, value=value)
+        return None
+
+
+# ---------- Rule: depends_on (cross-field) ----------
+class DependsOn(Rule):
+    """If `value` is truthy, the referenced path must also be present."""
+    name = "depends_on"
+
+    def __init__(self, other_path: str):
+        self.other_path = other_path
+
+    def _get(self, config: dict, dotted: str):
+        cur = config
+        for part in dotted.split("."):
+            if isinstance(cur, dict) and part in cur:
+                cur = cur[part]
+            else:
+                return None
+        return cur
+
+    def check(self, path, value, config):
+        if not value:
+            return None
+        other = self._get(config, self.other_path)
+        if other is None or other == "":
+            return ValidationIssue(path, f"requires '{self.other_path}' to be set",
+                                   rule=self.name, value=value)
+        return None
+
+
+# ---------- Rule: mutually_exclusive ----------
+class MutuallyExclusive(Rule):
+    name = "mutually_exclusive"
+
+    def __init__(self, others: List[str]):
+        self.others = others
+
+    def _get(self, config, dotted):
+        cur = config
+        for part in dotted.split("."):
+            if isinstance(cur, dict) and part in cur:
+                cur = cur[part]
+            else:
+                return None
+        return cur
+
+    def check(self, path, value, config):
+        if value in (None, "", [], {}):
+            return None
+        for other in self.others:
+            if self._get(config, other) not in (None, "", [], {}):
+                return ValidationIssue(path, f"mutually exclusive with '{other}'",
+                                       rule=self.name, value=value)
+        return None
+
+
+# ---------- Rule: forbidden_keys ----------
+class NoExtraKeys(Rule):
+    name = "no_extra_keys"
+
+    def __init__(self, allowed: List[str]):
+        self.allowed = set(allowed)
+
+    def check(self, path, value, config):
+        if not isinstance(value, dict):
+            return None
+        extras = set(value) - self.allowed
+        if extras:
+            return ValidationIssue(path, f"unexpected keys: {sorted(extras)}",
+                                   rule=self.name, value=sorted(extras))
+        return None
+
+
+# ============================================================
+# 3. Schema Definition
+# ============================================================
+@dataclass
+class FieldSchema:
+    path: str
+    rules: List[Rule] = field(default_factory=list)
+    optional: bool = True   # if True, `required` rule will be skipped when value is None
+
+    def validate(self, config: dict, result: ValidationResult) -> Any:
+        value = self._get(config, self.path)
+        for rule in self.rules:
+            if isinstance(rule, Required) and (self.optional and value is None):
                 continue
+            issue = rule.check(self.path, value, config)
+            if issue:
+                result.add(issue)
+        return value
 
-            first_msg = safe_get(messages, 0, label=f"interaction[{i}].messages")
-            last_msg = safe_get(messages, len(messages) - 1, label=f"interaction[{i}].messages")
+    @staticmethod
+    def _get(config, dotted: str):
+        cur = config
+        for part in dotted.split("."):
+            if isinstance(cur, dict) and part in cur:
+                cur = cur[part]
+            else:
+                return None
+        return cur
 
-            if first_msg is None or last_msg is None:
-                issues.append(f"Interaction {i}: could not safely access first/last message.")
 
+@dataclass
+class ConfigSchema:
+    fields: List[FieldSchema] = field(default_factory=list)
+
+    def field(self, path: str, *rules: Rule, optional: bool = True) -> "ConfigSchema":
+        self.fields.append(FieldSchema(path=path, rules=list(rules), optional=optional))
+        return self
+
+    def validate(self, config: dict) -> ValidationResult:
+        result = ValidationResult()
+        for f in self.fields:
+            f.validate(config, result)
+        return result
+
+
+# ============================================================
+# 4. Example: Application Configuration Schema
+# ============================================================
+def build_app_schema() -> ConfigSchema:
+    schema = ConfigSchema()
+
+    # --- app ---
+    schema.field("app.name",
+                 Required(), TypeRule(str), Length(min_len=1, max_len=64),
+                 optional=False)
+    schema.field("app.env",
+                 Required(), Choices(["dev", "staging", "prod"]),
+                 optional=False)
+    schema.field("app.debug",
+                 TypeRule(bool))
+    schema.field("app.version",
+                 Pattern(r"\d+\.\d+\.\d+"))
+
+    # --- server ---
+    schema.field("server.host",
+                 TypeRule(str), Hostname())
+    schema.field("server.port",
+                 Required(), Port(),
+                 optional=False)
+    schema.field("server.workers",
+                 TypeRule(int), Range(min_val=1, max_val=128))
+    schema.field("server.timeout",
+                 TypeRule((int, float)), Range(min_val=0.1, max_val=300))
+    schema.field("server.protocol",
+                 Choices(["http", "https"], case_sensitive=False))
+
+    # --- database ---
+    schema.field("database.url",
+                 Required(), TypeRule(str), URL(schemes=["postgres", "mysql", "sqlite"]),
+                 optional=False)
+    schema.field("database.pool_size",
+                 TypeRule(int), Range(min_val=1, max_val=100))
+    schema.field("database.ssl",
+                 TypeRule(bool))
+
+    # --- cache ---
+    schema.field("cache.enabled",
+                 TypeRule(bool))
+    schema.field("cache.host",
+                 DependsOn("cache.enabled"), IPAddress(version=4))
+    schema.field("cache.port",
+                 DependsOn("cache.enabled"), Port())
+
+    # --- auth ---
+    schema.field("auth.mode",
+                 Choices(["none", "basic", "jwt", "oauth"]))
+    schema.field("auth.secret",
+                 DependsOn("auth.mode"),
+                 Length(min_len=16),
+                 Pattern(r"[A-Za-z0-9_\-]+"))
+
+    # --- email ---
+    schema.field("notifications.email",
+                 Email())
+    schema.field("notifications.webhook",
+                 URL(schemes=["https"]))
+
+    # --- cross-field: mutually exclusive ---
+    schema.field("auth.basic_user",
+                 MutuallyExclusive(["auth.jwt_token"]))
+    schema.field("auth.jwt_token",
+                 MutuallyExclusive(["auth.basic_user"]))
+
+    # --- custom rule example ---
+    def no_privileged_port(cfg_value, full_cfg):
+        # Non-root users can't bind < 1024 unless explicitly allowed
+        if isinstance(cfg_value, int) and cfg_value < 1024:
+            return full_cfg.get("app", {}).get("allow_privileged_ports", False)
+        return True
+
+    schema.field("server.port",
+                 Custom(no_privileged_port,
+                        "port < 1024 requires app.allow_privileged_ports=true"))
+
+    # --- nested object extras ---
+    schema.field("app",
+                 NoExtraKeys(["name", "env", "debug", "version",
+                              "allow_privileged_ports"]))
+
+    return schema
+
+
+# ============================================================
+# 5. Loader with environment override
+# ============================================================
+def load_config(path: Optional[str] = None, env_prefix: str = "APP_") -> dict:
+    cfg: dict = {}
+    if path and Path(path).exists():
+        with open(path) as f:
+            cfg = json.load(f)
+
+    # environment overrides: APP_SERVER__PORT=8080 -> server.port
+    for key, val in os.environ.items():
+        if not key.startswith(env_prefix):
+            continue
+        dotted = key[len(env_prefix):].lower().replace("__", ".")
+        set_nested(cfg, dotted, _coerce(val))
+    return cfg
+
+
+def set_nested(cfg: dict, dotted: str, value: Any) -> None:
+    parts = dotted.split(".")
+    cur = cfg
+    for p in parts[:-1]:
+        cur = cur.setdefault(p, {})
+    cur[parts[-1]] = value
+
+
+def _coerce(v: str) -> Any:
+    for cast in (json.loads,):
+        try:
+            return cast(v)
         except Exception:
-            issues.append(f"Interaction {i}: unexpected error:\n{traceback.format_exc()}")
+            pass
+    return v
 
-    return issues
 
+# ============================================================
+# 6. Demo
+# ============================================================
 def main():
-    try:
-        data = load_dataset(DATASET_PATH)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"Failed to load dataset: {e}")
-        return
+    # A deliberately broken config to exercise many rules
+    bad_config = {
+        "app": {
+            "name": "",                       # required/length violation
+            "env": "development",             # choices violation
+            "debug": "yes",                   # type violation
+            "version": "1.0",                 # pattern violation
+            "unknown_key": 42,                # no_extra_keys violation
+        },
+        "server": {
+            "host": "not a host!",            # hostname violation
+            "port": 80,                       # custom rule (privileged port)
+            "workers": 500,                   # range violation
+            "timeout": 0.01,                  # range violation
+            "protocol": "FTP",                # choices violation
+        },
+        "database": {
+            # url missing                    # required violation
+            "pool_size": 0,                   # range violation
+            "ssl": "maybe",                   # type violation
+        },
+        "cache": {
+            "enabled": True,
+            "host": "999.1.1.1",              # IP violation
+            "port": 70000,                    # port violation
+        },
+        "auth": {
+            "mode": "jwt",
+            "secret": "short",                # length violation
+            "basic_user": "admin",            # mutually exclusive
+            "jwt_token": "tok",               # mutually exclusive
+        },
+        "notifications": {
+            "email": "bad-email",             # email violation
+            "webhook": "ftp://example.com",   # URL scheme violation
+        },
+    }
 
-    issues = diagnose_index_errors(data)
+    schema = build_app_schema()
+    result = schema.validate(bad_config)
 
-    if issues:
-        print("Issues found (likely causes of 'list index out of range'):")
-        for issue in issues:
-            print(f"  - {issue}")
-    else:
-        print("No obvious index issues found — the error may be occurring elsewhere in your pipeline.")
-        print("Check any loop like `data[i]` or `list[-1]` where the list could be shorter than expected.")
+    print("=== BAD CONFIG ===")
+    print(result.report())
+    print()
+
+    # A valid config
+    good_config = {
+        "app": {"name": "myapp", "env": "prod", "debug": False, "version": "1.2.3"},
+        "server": {"host": "api.example.com", "port": 8443,
+                   "workers": 4, "timeout": 30, "protocol": "https"},
+        "database": {"url": "postgres://db:5432/app",
+                     "pool_size": 10, "ssl": True},
+        "cache": {"enabled": True, "host": "10.0.0.5", "port": 6379},
+        "auth": {"mode": "jwt", "secret": "s3cr3t-key-1234567890"},
+        "notifications": {"email": "ops@example.com",
+                          "webhook": "https://hooks.example.com/x"},
+    }
+
+    print("=== GOOD CONFIG ===")
+    print(schema.validate(good_config).report())
+
 
 if __name__ == "__main__":
     main()
 ```
 
-This assumes a `messages` list nested inside each interaction — swap that key/structure for whatever your actual pipeline indexes into. If you can share the traceback with a line number, I can point at the exact line instead of guessing at the shape.
+## Rules Implemented
+
+| # | Rule class | Purpose |
+|---|-----------|---------|
+| 1 | `Required` | Field must be present and non-empty |
+| 2 | `TypeRule` | Type check (int/str/bool/list/dict/tuple, bool-vs-int safe) |
+| 3 | `Range` | Numeric min/max with inclusive/exclusive option |
+| 4 | `Length` | Length for str/list/dict/tuple — exact, min, max |
+| 5 | `Pattern` | Regex full-match |
+| 6 | `Choices` | Enum / allowed values, case-insensitive option |
+| 7 | `Custom` | User-supplied lambda `(value, config) -> bool` |
+| 8 | `URL` | Scheme whitelist + host requirement |
+| 9 | `Email` | Format check |
+| 10 | `Hostname` | RFC-ish hostname |
+| 11 | `IPAddress` | IPv4/IPv6 with version pinning |
+| 12 | `Port` | 1–65535 integer |
+| 13 | `DependsOn` | Cross-field conditional requirement |
+| 14 | `MutuallyExclusive` | Cross-field exclusivity |
+| 15 | `NoExtraKeys` | Reject unknown keys in a nested object |
+
+## Features
+
+- **Severity levels** — `ERROR` / `WARNING` / `INFO`, with `result.ok` short-circuit
+- **Dotted paths** — `server.port`, `database.url` traverse nested dicts
+- **Optional vs required** — `optional=False` combined with `Required()`
+- **Fluent schema builder** — `schema.field("x", Required(), Port())`
+- **Env overrides** — `APP_SERVER__PORT=8080` → `server.port`, JSON-coerced
+- **Structured report** — one line per issue with path, rule, value
+- **Extensible** — add a new rule by subclassing `Rule` and implementing `check()`
+
+The demo runs against a deliberately broken config (hits ~18 rules) and a valid one. Run `python3 validate.py` to see the full error report.

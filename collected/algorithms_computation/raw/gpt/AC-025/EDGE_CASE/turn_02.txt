@@ -1,0 +1,563 @@
+```python
+"""
+Multi-Stage Resource Allocation
+
+Problem:
+Each stage contains one or more options. Exactly one option must be selected
+from every stage.
+
+Each option has:
+    - budget cost
+    - memory cost
+    - score
+
+The goal is to maximize total score while satisfying both global limits:
+    total budget <= budget_limit
+    total memory <= memory_limit
+
+If several valid allocations have the same maximum score, return the
+lexicographically smallest choice vector, where each value is the selected
+option's index within its stage.
+
+Original output:
+    {
+        "max_score": maximum achievable score,
+        "choice_vector": lexicographically smallest optimal option indices
+    }
+
+If no valid allocation exists:
+    {
+        "max_score": None,
+        "choice_vector": []
+    }
+
+Additional difficult cases handled explicitly:
+    1. Smallest permitted input:
+       - no stages
+       - result is score 0 with an empty choice vector.
+    2. A stage with no options:
+       - exactly one option is required from every stage, so the instance is
+         infeasible.
+    3. Very small single-stage/single-option instances.
+    4. Resource limits of zero.
+    5. Feasible and infeasible boundary cases.
+    6. Equal-score alternatives requiring deterministic lexicographic
+       tie-breaking.
+    7. "Disconnected" resource-state structures:
+       different combinations can reach separate (budget, memory) states, and
+       only reachable states are retained by the layered DP.
+
+Algorithm:
+Use layered two-resource dynamic programming.
+
+For each processed stage, maintain:
+    (used_budget, used_memory) -> (best_score, lexicographically smallest
+                                   choice vector)
+
+For every reachable state, try every option of the next stage. Options that
+exceed either global resource limit are discarded.
+
+For the same resource state:
+    - keep the larger score;
+    - if scores tie, keep the lexicographically smaller choice vector.
+
+After all stages are processed, compare every reachable final state using the
+same score-first and lexicographic tie-breaking rules.
+
+Complexity:
+Let:
+    S = number of stages
+    B = budget limit
+    M = memory limit
+    K = maximum options in one stage
+
+Worst-case time: O(S * B * M * K)
+Worst-case DP-state space: O(B * M)
+
+Only the Python standard library is used.
+No network, APIs, external services, randomness, or human interaction.
+"""
+
+from typing import List, Tuple, Dict, Any
+
+
+def multi_stage_resource_allocation(
+    stages: List[List[Tuple[int, int, int]]],
+    budget_limit: int,
+    memory_limit: int,
+) -> Dict[str, Any]:
+    """
+    Solve Multi-Stage Resource Allocation.
+
+    Each option is:
+        (budget_cost, memory_cost, score)
+
+    The option's position in its stage is its option index.
+    """
+
+    # Negative global limits cannot contain any non-negative resource usage.
+    if budget_limit < 0 or memory_limit < 0:
+        return {
+            "max_score": None,
+            "choice_vector": [],
+        }
+
+    # Smallest permitted input:
+    # with no stages, there is nothing to choose.
+    if not stages:
+        return {
+            "max_score": 0,
+            "choice_vector": [],
+        }
+
+    # Exactly one option is required from every stage.
+    # Therefore, an empty stage makes the whole instance infeasible.
+    if any(len(stage) == 0 for stage in stages):
+        return {
+            "max_score": None,
+            "choice_vector": [],
+        }
+
+    # DP state:
+    # (used_budget, used_memory)
+    #     -> (best_score, lexicographically smallest choice vector)
+    #
+    # The empty allocation is the initial reachable state.
+    dp: Dict[Tuple[int, int], Tuple[int, Tuple[int, ...]]] = {
+        (0, 0): (0, ())
+    }
+
+    for stage in stages:
+        next_dp: Dict[Tuple[int, int], Tuple[int, Tuple[int, ...]]] = {}
+
+        for (used_budget, used_memory), (current_score, current_vector) in dp.items():
+
+            for option_index, option in enumerate(stage):
+                if len(option) != 3:
+                    raise ValueError(
+                        "Each option must be a (budget, memory, score) tuple."
+                    )
+
+                option_budget, option_memory, option_score = option
+
+                if option_budget < 0 or option_memory < 0:
+                    raise ValueError(
+                        "Budget and memory costs must be non-negative."
+                    )
+
+                new_budget = used_budget + option_budget
+                new_memory = used_memory + option_memory
+
+                # Resource-limit boundary.
+                if new_budget > budget_limit or new_memory > memory_limit:
+                    continue
+
+                new_score = current_score + option_score
+                new_vector = current_vector + (option_index,)
+                state = (new_budget, new_memory)
+
+                old = next_dp.get(state)
+
+                if old is None:
+                    next_dp[state] = (new_score, new_vector)
+                else:
+                    old_score, old_vector = old
+
+                    # Preserve the original deterministic tie-breaking rule.
+                    if (
+                        new_score > old_score
+                        or (
+                            new_score == old_score
+                            and new_vector < old_vector
+                        )
+                    ):
+                        next_dp[state] = (new_score, new_vector)
+
+        # If no state survived this stage, no complete allocation is possible.
+        if not next_dp:
+            return {
+                "max_score": None,
+                "choice_vector": [],
+            }
+
+        dp = next_dp
+
+    # Select the best reachable final state.
+    best_score = None
+    best_vector = None
+
+    for score, vector in dp.values():
+        if best_score is None or score > best_score:
+            best_score = score
+            best_vector = vector
+        elif score == best_score and vector < best_vector:
+            best_vector = vector
+
+    if best_score is None or best_vector is None:
+        return {
+            "max_score": None,
+            "choice_vector": [],
+        }
+
+    return {
+        "max_score": best_score,
+        "choice_vector": list(best_vector),
+    }
+
+
+# ============================================================================
+# Tests
+# ============================================================================
+
+if __name__ == "__main__":
+
+    # ------------------------------------------------------------------------
+    # Test 1: Smallest permitted input
+    #
+    # There are zero stages. No option needs to be selected.
+    # ------------------------------------------------------------------------
+    result = multi_stage_resource_allocation(
+        [],
+        budget_limit=0,
+        memory_limit=0,
+    )
+
+    assert result == {
+        "max_score": 0,
+        "choice_vector": [],
+    }
+
+    # ------------------------------------------------------------------------
+    # Test 2: Empty stage
+    #
+    # Exactly one option is required from every stage. An empty stage therefore
+    # makes the entire instance infeasible.
+    # ------------------------------------------------------------------------
+    result = multi_stage_resource_allocation(
+        [[]],
+        budget_limit=0,
+        memory_limit=0,
+    )
+
+    assert result == {
+        "max_score": None,
+        "choice_vector": [],
+    }
+
+    # ------------------------------------------------------------------------
+    # Test 3: Empty stage surrounded by valid stages
+    #
+    # This explicitly checks that an empty/disconnected-looking stage cannot
+    # simply be skipped.
+    # ------------------------------------------------------------------------
+    result = multi_stage_resource_allocation(
+        [
+            [(0, 0, 10)],
+            [],
+            [(0, 0, 20)],
+        ],
+        budget_limit=0,
+        memory_limit=0,
+    )
+
+    assert result == {
+        "max_score": None,
+        "choice_vector": [],
+    }
+
+    # ------------------------------------------------------------------------
+    # Test 4: Smallest non-empty input
+    #
+    # One stage, one option.
+    # ------------------------------------------------------------------------
+    result = multi_stage_resource_allocation(
+        [
+            [(0, 0, 7)],
+        ],
+        budget_limit=0,
+        memory_limit=0,
+    )
+
+    assert result == {
+        "max_score": 7,
+        "choice_vector": [0],
+    }
+
+    # ------------------------------------------------------------------------
+    # Test 5: Single option exactly reaches both resource limits.
+    # ------------------------------------------------------------------------
+    result = multi_stage_resource_allocation(
+        [
+            [(5, 7, 20)],
+        ],
+        budget_limit=5,
+        memory_limit=7,
+    )
+
+    assert result == {
+        "max_score": 20,
+        "choice_vector": [0],
+    }
+
+    # ------------------------------------------------------------------------
+    # Test 6: Single option exceeds budget by one.
+    # ------------------------------------------------------------------------
+    result = multi_stage_resource_allocation(
+        [
+            [(6, 7, 20)],
+        ],
+        budget_limit=5,
+        memory_limit=7,
+    )
+
+    assert result == {
+        "max_score": None,
+        "choice_vector": [],
+    }
+
+    # ------------------------------------------------------------------------
+    # Test 7: Single option exceeds memory by one.
+    # ------------------------------------------------------------------------
+    result = multi_stage_resource_allocation(
+        [
+            [(5, 8, 20)],
+        ],
+        budget_limit=5,
+        memory_limit=7,
+    )
+
+    assert result == {
+        "max_score": None,
+        "choice_vector": [],
+    }
+
+    # ------------------------------------------------------------------------
+    # Test 8: Zero resource limits with zero-cost options.
+    # ------------------------------------------------------------------------
+    result = multi_stage_resource_allocation(
+        [
+            [(0, 0, 3), (1, 0, 100)],
+            [(0, 0, 4), (0, 1, 100)],
+        ],
+        budget_limit=0,
+        memory_limit=0,
+    )
+
+    assert result == {
+        "max_score": 7,
+        "choice_vector": [0, 0],
+    }
+
+    # ------------------------------------------------------------------------
+    # Test 9: Lexicographic tie-breaking.
+    #
+    # [0, 1] and [1, 0] both have score 10.
+    # [0, 1] is lexicographically smaller.
+    # ------------------------------------------------------------------------
+    result = multi_stage_resource_allocation(
+        [
+            [(1, 1, 5), (2, 1, 5)],
+            [(2, 1, 5), (1, 1, 5)],
+        ],
+        budget_limit=3,
+        memory_limit=2,
+    )
+
+    assert result == {
+        "max_score": 10,
+        "choice_vector": [0, 1],
+    }
+
+    # ------------------------------------------------------------------------
+    # Test 10: Highest-scoring choices are infeasible.
+    # ------------------------------------------------------------------------
+    result = multi_stage_resource_allocation(
+        [
+            [(5, 5, 100), (2, 2, 40)],
+            [(5, 5, 100), (2, 2, 40)],
+        ],
+        budget_limit=4,
+        memory_limit=4,
+    )
+
+    assert result == {
+        "max_score": 80,
+        "choice_vector": [1, 1],
+    }
+
+    # ------------------------------------------------------------------------
+    # Test 11: Disconnected resource-state structure.
+    #
+    # After the first stage, only two resource states are reachable:
+    #   option 0 -> (0, 4)
+    #   option 1 -> (4, 0)
+    #
+    # The states (1, 1), (2, 2), etc. are not reachable. The DP must not
+    # invent transitions from those nonexistent states.
+    # ------------------------------------------------------------------------
+    result = multi_stage_resource_allocation(
+        [
+            [(0, 4, 5), (4, 0, 5)],
+            [(0, 4, 5), (4, 0, 5)],
+        ],
+        budget_limit=4,
+        memory_limit=4,
+    )
+
+    # Valid combinations:
+    # [0, 0] -> memory 8, invalid
+    # [0, 1] -> budget 4, memory 4, score 10
+    # [1, 0] -> budget 4, memory 4, score 10
+    # [1, 1] -> budget 8, invalid
+    #
+    # [0, 1] wins the tie lexicographically.
+    assert result == {
+        "max_score": 10,
+        "choice_vector": [0, 1],
+    }
+
+    # ------------------------------------------------------------------------
+    # Test 12: Several disconnected states with different scores.
+    # ------------------------------------------------------------------------
+    result = multi_stage_resource_allocation(
+        [
+            [(0, 3, 4), (3, 0, 6)],
+            [(0, 3, 4), (3, 0, 8)],
+            [(0, 3, 4), (3, 0, 9)],
+        ],
+        budget_limit=6,
+        memory_limit=6,
+    )
+
+    # Best feasible combination:
+    # [1, 0, 0] -> budget 3, memory 6, score 14
+    # [0, 1, 0] -> budget 3, memory 6, score 16
+    # [0, 0, 1] -> budget 3, memory 6, score 17
+    #
+    # Thus [0, 0, 1] is optimal.
+    assert result == {
+        "max_score": 17,
+        "choice_vector": [0, 0, 1],
+    }
+
+    # ------------------------------------------------------------------------
+    # Test 13: Negative scores are allowed.
+    #
+    # Exactly one option per stage is still mandatory.
+    # ------------------------------------------------------------------------
+    result = multi_stage_resource_allocation(
+        [
+            [(1, 1, -5), (2, 1, -10)],
+            [(1, 1, -3), (2, 1, -20)],
+        ],
+        budget_limit=2,
+        memory_limit=2,
+    )
+
+    assert result == {
+        "max_score": -8,
+        "choice_vector": [0, 0],
+    }
+
+    # ------------------------------------------------------------------------
+    # Test 14: All feasible choices have identical score.
+    #
+    # The lexicographically smallest complete vector must be selected.
+    # ------------------------------------------------------------------------
+    result = multi_stage_resource_allocation(
+        [
+            [(0, 0, 5), (0, 0, 5), (0, 0, 5)],
+            [(0, 0, 5), (0, 0, 5)],
+            [(0, 0, 5), (0, 0, 5)],
+        ],
+        budget_limit=0,
+        memory_limit=0,
+    )
+
+    assert result == {
+        "max_score": 15,
+        "choice_vector": [0, 0, 0],
+    }
+
+    # ------------------------------------------------------------------------
+    # Test 15: No feasible complete allocation because every combination
+    # violates at least one resource limit.
+    # ------------------------------------------------------------------------
+    result = multi_stage_resource_allocation(
+        [
+            [(2, 0, 10), (0, 2, 9)],
+            [(2, 0, 10), (0, 2, 9)],
+        ],
+        budget_limit=1,
+        memory_limit=1,
+    )
+
+    assert result == {
+        "max_score": None,
+        "choice_vector": [],
+    }
+
+    # ------------------------------------------------------------------------
+    # Test 16: Boundary case where a valid solution uses the entire budget
+    # but not the entire memory.
+    # ------------------------------------------------------------------------
+    result = multi_stage_resource_allocation(
+        [
+            [(2, 1, 5), (1, 2, 4)],
+            [(3, 1, 8), (1, 3, 6)],
+        ],
+        budget_limit=5,
+        memory_limit=5,
+    )
+
+    # [0, 0] -> budget 5, memory 2, score 13
+    assert result == {
+        "max_score": 13,
+        "choice_vector": [0, 0],
+    }
+
+    # ------------------------------------------------------------------------
+    # Test 17: Multiple states collapse into the same resource state.
+    #
+    # The DP must keep the higher score for the same (budget, memory), and if
+    # scores tie, keep the lexicographically smaller vector.
+    # ------------------------------------------------------------------------
+    result = multi_stage_resource_allocation(
+        [
+            [(1, 1, 5), (0, 0, 0)],
+            [(0, 0, 5), (1, 1, 0)],
+        ],
+        budget_limit=1,
+        memory_limit=1,
+    )
+
+    # [0, 0] -> (1, 1), score 10
+    # [1, 1] -> (1, 1), score 0
+    # The higher-score state must survive.
+    assert result == {
+        "max_score": 10,
+        "choice_vector": [0, 0],
+    }
+
+    # ------------------------------------------------------------------------
+    # Test 18: Same resource state and same score, requiring lexicographic
+    # reconstruction.
+    # ------------------------------------------------------------------------
+    result = multi_stage_resource_allocation(
+        [
+            [(1, 0, 5), (0, 1, 5)],
+            [(0, 1, 5), (1, 0, 5)],
+        ],
+        budget_limit=1,
+        memory_limit=1,
+    )
+
+    # [0, 1] and [1, 0] both use (1, 1) and score 10.
+    # [0, 1] must be returned.
+    assert result == {
+        "max_score": 10,
+        "choice_vector": [0, 1],
+    }
+
+    print("All tests passed.")
+```

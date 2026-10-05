@@ -1,0 +1,119 @@
+from pathlib import Path
+import numpy as np
+from PIL import Image
+
+
+def analyze_brightness(
+    input_dir: str | Path,
+    dark_threshold: float = 85.0,
+    bright_threshold: float = 170.0,
+    custom_thresholds: tuple[float, float] | None = None,
+) -> list[dict]:
+    """Analyzes brightness metrics for all valid images in a directory using PIL 'L' mode.
+
+    Args:
+        input_dir: Path to directory containing images.
+        dark_threshold: Grayscale mean threshold below which an image is 'dark'.
+        bright_threshold: Grayscale mean threshold above which an image is 'bright'.
+        custom_thresholds: Optional (dark_max, bright_min) tuple overriding
+          dark_threshold and bright_threshold.
+
+    Returns:
+        A list of dictionaries with image stats and classification.
+    """
+    if custom_thresholds is not None:
+        dark_max, bright_min = custom_thresholds
+    else:
+        dark_max, bright_min = dark_threshold, bright_threshold
+
+    if dark_max > bright_min:
+        raise ValueError(
+            f"dark threshold ({dark_max}) cannot be greater than bright threshold ({bright_min})"
+        )
+
+    path = Path(input_dir)
+    if not path.is_dir():
+        raise ValueError(f"Directory non-existent or invalid: {input_dir}")
+
+    valid_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
+    results = []
+
+    for file_path in sorted(path.iterdir()):
+        if file_path.suffix.lower() not in valid_extensions:
+            continue
+
+        try:
+            with Image.open(file_path) as img:
+                # Ensure RGB mode to handle RGBA/grayscale/palette inputs consistently
+                img_rgb = img.convert("RGB")
+                arr_rgb = np.array(img_rgb, dtype=np.float64)
+
+                # 1. Per-channel means (RGB)
+                r_mean = float(np.mean(arr_rgb[:, :, 0]))
+                g_mean = float(np.mean(arr_rgb[:, :, 1]))
+                b_mean = float(np.mean(arr_rgb[:, :, 2]))
+
+                # 2. Perceptual luminance using PIL 'L' mode
+                # Converting to float64 prevents integer truncation/overflow during mean computation
+                img_gray = img_rgb.convert("L")
+                arr_gray = np.array(img_gray, dtype=np.float64)
+                grayscale_brightness = float(np.mean(arr_gray))
+
+                # 3. Determine classification (using strictly < and > boundaries)
+                if grayscale_brightness < dark_max:
+                    classification = "dark"
+                elif grayscale_brightness > bright_min:
+                    classification = "bright"
+                else:
+                    classification = "normal"
+
+                results.append(
+                    {
+                        "filename": file_path.name,
+                        "path": str(file_path),
+                        "means_rgb": {
+                            "red": round(r_mean, 2),
+                            "green": round(g_mean, 2),
+                            "blue": round(b_mean, 2),
+                        },
+                        "brightness": round(grayscale_brightness, 2),
+                        "classification": classification,
+                        "thresholds_used": (dark_max, bright_min),
+                    }
+                )
+        except Exception:
+            continue
+
+    return results
+
+
+# Verification Test for 50/50 Black-and-White Checkerboard
+def test_checkerboard_edge_case(tmp_path: Path):
+    """Creates a 50/50 black-and-white checkerboard image and tests analyze_brightness."""
+    # Create an 8x8 checkerboard array with 50% 0 (black) and 50% 255 (white)
+    pattern = np.array([[0, 255] * 4, [255, 0] * 4] * 4, dtype=np.uint8)
+    img = Image.fromarray(pattern, mode="L")
+    
+    img_path = tmp_path / "checkerboard.png"
+    img.save(img_path)
+
+    results = analyze_brightness(tmp_path)
+    res = results[0]
+
+    print(f"File: {res['filename']}")
+    print(f"Calculated Brightness: {res['brightness']}")
+    print(f"Classification: {res['classification']}")
+
+    assert np.isclose(res["brightness"], 127.5, atol=1e-2), (
+        f"Expected 127.5, got {res['brightness']}"
+    )
+    assert res["classification"] == "normal", (
+        f"Expected 'normal', got {res['classification']}"
+    )
+    print("✓ Edge case test passed successfully!")
+
+
+if __name__ == "__main__":
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        test_checkerboard_edge_case(Path(tmp_dir))

@@ -1,0 +1,54 @@
+**Problem.** Given two integer polynomials, each represented as a coefficient array, compute their product exactly and return its coefficient array.
+
+**Key constraints and details**
+- Coefficients are integers and may be negative.
+- The input arrays are in ascending order of degree, so `a[i]` is the coefficient of x^i (a common convention; the code notes how to adapt it).
+- The product of degrees m-1 and n-1 has degree m+n-2, so the output has length m+n-1.
+- Exactness is required. Python integers are arbitrary precision, so there is no overflow or rounding.
+- Edge case: an empty input means the zero polynomial, and the result is `[0]`.
+- The result should be deterministic and use only the standard library.
+
+**Output.** A list of integers `c` of length len(a)+len(b)-1, where `c[k] = Σ a[i]·b[k-i]` over all valid i.
+
+**Algorithm.** Direct convolution: for each pair (i, j), add `a[i]*b[j]` into `c[i+j]`. This takes O(m·n) time and O(m+n) space, which is practical for the expected input sizes. Zero coefficients are skipped as a small optimization that doesn't change the result.
+
+```python
+from typing import List
+
+
+def multiply_polynomials(a: List[int], b: List[int]) -> List[int]:
+    """Multiply two integer polynomials exactly.
+
+    a[i] and b[i] are coefficients of x^i (ascending order).
+    Returns the coefficient list of the product, length len(a)+len(b)-1.
+    An empty input is treated as the zero polynomial, giving [0].
+    """
+    if not a or not b:
+        return [0]
+
+    result = [0] * (len(a) + len(b) - 1)
+    for i, ai in enumerate(a):
+        if ai == 0:
+            continue
+        for j, bj in enumerate(b):
+            result[i + j] += ai * bj
+    return result
+
+
+if __name__ == "__main__":
+    # (1 + 2x)(3 - x) = 3 + 5x - 2x^2
+    assert multiply_polynomials([1, 2], [3, -1]) == [3, 5, -2]
+    # (1 - x)(1 + x) = 1 - x^2
+    assert multiply_polynomials([1, -1], [1, 1]) == [1, 0, -1]
+    # Zero polynomial
+    assert multiply_polynomials([0], [5, 7]) == [0, 0]
+    # Empty input
+    assert multiply_polynomials([], [1, 2]) == [0]
+    # Big integers stay exact
+    assert multiply_polynomials([10**30, -1], [10**30]) == [10**60, -(10**30)]
+    print("All tests passed.")
+```
+
+**Notes**
+- If the input uses descending order (highest degree first), the same code works unchanged, because convolution of the reversed arrays yields the reversed product. The result is then also in descending order.
+- The product of two nonzero-length arrays whose leading coefficients are zero (like `[0]`) yields trailing zeros; I keep them rather than trimming, so the output length is always m+n-1. If your specification wants trimming, strip trailing zeros while `len(result) > 1`.

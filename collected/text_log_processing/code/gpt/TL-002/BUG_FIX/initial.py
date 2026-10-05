@@ -1,0 +1,66 @@
+import csv
+import re
+
+
+def convert_access_log(in_path, out_path, methods, status_classes):
+    pattern = re.compile(
+        r'^(?P<ip>\S+)\s+\S+\s+\S+\s+'
+        r'\[(?P<timestamp>[^\]]+)\]\s+'
+        r'"(?P<method>\S+)\s+(?P<url>\S+)(?:\s+[^"]+)?"\s+'
+        r'(?P<status>\d{3})\s+(?P<size>\S+)'
+    )
+
+    methods = set(methods)
+    status_classes = set(status_classes)
+
+    written = 0
+    skipped = 0
+
+    with open(in_path, "r", encoding="utf-8", errors="replace") as src, \
+         open(out_path, "w", newline="", encoding="utf-8") as dst:
+
+        writer = csv.writer(dst)
+        writer.writerow([
+            "ip", "timestamp", "method", "url",
+            "status", "statusClass", "size"
+        ])
+
+        for line in src:
+            match = pattern.match(line.strip())
+
+            if not match:
+                skipped += 1
+                continue
+
+            data = match.groupdict()
+            status = int(data["status"])
+            status_class = f"{status // 100}xx"
+
+            if data["method"] not in methods:
+                continue
+
+            if status_class not in status_classes:
+                continue
+
+            if data["size"] == "-":
+                size = 0
+            else:
+                try:
+                    size = int(data["size"])
+                except ValueError:
+                    skipped += 1
+                    continue
+
+            writer.writerow([
+                data["ip"],
+                data["timestamp"],
+                data["method"],
+                data["url"],
+                status,
+                status_class,
+                size,
+            ])
+
+            written += 1
+
+    return {"written": written, "skipped": skipped}

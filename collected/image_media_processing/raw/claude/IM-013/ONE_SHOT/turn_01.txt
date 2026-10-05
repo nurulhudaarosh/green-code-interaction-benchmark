@@ -1,0 +1,75 @@
+```python
+from math import ceil
+from pathlib import Path
+
+from PIL import Image, ImageOps, UnidentifiedImageError
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff", ".webp"}
+
+
+def build_contact_sheet(input_dir, output_path, thumb_size, columns,
+                        padding=8, background=(255, 255, 255)):
+    """Tile all images in `input_dir` into a grid contact sheet.
+
+    Args:
+        input_dir:   Directory containing images (non-recursive, sorted by filename).
+        output_path: Where to save the sheet (format inferred from extension).
+        thumb_size:  int (square cell) or (width, height) of each thumbnail cell.
+        columns:     Fixed number of columns; rows are computed as needed.
+        padding:     Pixels of spacing between and around cells.
+        background:  Sheet background color.
+
+    Returns:
+        The number of images placed on the sheet.
+    """
+    if columns < 1:
+        raise ValueError("columns must be >= 1")
+    if isinstance(thumb_size, int):
+        thumb_size = (thumb_size, thumb_size)
+    tw, th = thumb_size
+
+    paths = sorted(
+        p for p in Path(input_dir).iterdir()
+        if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+    )
+
+    thumbs = []
+    for p in paths:
+        try:
+            with Image.open(p) as img:
+                img = ImageOps.exif_transpose(img)  # respect camera rotation
+                img = img.convert("RGB")
+                img.thumbnail((tw, th), Image.LANCZOS)  # keeps aspect ratio
+                thumbs.append(img.copy())
+        except (UnidentifiedImageError, OSError):
+            continue  # skip unreadable / corrupt files
+
+    if not thumbs:
+        raise ValueError(f"No readable images found in {input_dir}")
+
+    rows = ceil(len(thumbs) / columns)
+    sheet_w = columns * tw + (columns + 1) * padding
+    sheet_h = rows * th + (rows + 1) * padding
+    sheet = Image.new("RGB", (sheet_w, sheet_h), background)
+
+    for i, thumb in enumerate(thumbs):
+        row, col = divmod(i, columns)
+        cell_x = padding + col * (tw + padding)
+        cell_y = padding + row * (th + padding)
+        # center each thumbnail within its cell
+        x = cell_x + (tw - thumb.width) // 2
+        y = cell_y + (th - thumb.height) // 2
+        sheet.paste(thumb, (x, y))
+
+    sheet.save(output_path)
+    return len(thumbs)
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) != 5:
+        sys.exit("usage: contact_sheet.py INPUT_DIR OUTPUT_PATH THUMB_SIZE COLUMNS")
+    n = build_contact_sheet(sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]))
+    print(f"Placed {n} images in {sys.argv[2]}")
+```

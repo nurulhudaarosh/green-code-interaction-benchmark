@@ -1,0 +1,122 @@
+import pandas as pd
+
+
+class EventPivotUtility:
+    """
+    Validates event records, aggregates counts by date and region,
+    derives deterministic event-type columns, fills missing cells with zero,
+    and sorts rows.
+    """
+
+    REQUIRED_COLUMNS = {"date", "region", "event_type"}
+
+    def __init__(self, records):
+        """
+        records: list of dicts, e.g.
+            [{"date": "2024-01-01", "region": "NA", "event_type": "click"}, ...]
+        """
+        self.records = records
+        self.df = None
+
+    # ------------------------------------------------------------------
+    # Validation
+    # ------------------------------------------------------------------
+    def validate(self):
+        if not isinstance(self.records, list):
+            raise TypeError("records must be a list of dicts")
+
+        for i, rec in enumerate(self.records):
+            if not isinstance(rec, dict):
+                raise TypeError(f"Record at index {i} is not a dict")
+            missing = self.REQUIRED_COLUMNS - rec.keys()
+            if missing:
+                raise ValueError(
+                    f"Record at index {i} missing required fields: {sorted(missing)}"
+                )
+            for col in self.REQUIRED_COLUMNS:
+                val = rec[col]
+                if val is None or (isinstance(val, str) and val.strip() == ""):
+                    raise ValueError(
+                        f"Record at index {i} has empty value for '{col}'"
+                    )
+
+        df = pd.DataFrame(self.records)
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        if df["date"].isna().any():
+            bad = df[df["date"].isna()].index.tolist()
+            raise ValueError(f"Invalid date values at record indices: {bad}")
+
+        df["region"] = df["region"].astype(str).str.strip()
+        df["event_type"] = df["event_type"].astype(str).str.strip()
+
+        self.df = df
+        return self
+
+    # ------------------------------------------------------------------
+    # Pivot / aggregation
+    # ------------------------------------------------------------------
+    def pivot(self):
+        if self.df is None:
+            self.validate()
+
+        df = self.df.copy()
+
+        # Aggregate counts per (date, region, event_type)
+        grouped = (
+            df.groupby(["date", "region", "event_type"])
+            .size()
+            .reset_index(name="count")
+        )
+
+        # Derive deterministic event-type columns (sorted alphabetically)
+        event_types = sorted(grouped["event_type"].unique().tolist())
+
+        pivot = grouped.pivot_table(
+            index=["date", "region"],
+            columns="event_type",
+            values="count",
+            fill_value=0,
+            aggfunc="sum",
+        )
+
+        # Ensure all event-type columns exist, even if absent in data
+        for et in event_types:
+            if et not in pivot.columns:
+                pivot[et] = 0
+
+        # Deterministic column order
+        pivot = pivot[event_types]
+
+        # Fill any remaining missing cells with zero and cast to int
+        pivot = pivot.fillna(0).astype(int)
+
+        # Sort rows by date, then region
+        pivot = pivot.sort_index(level=["date", "region"])
+
+        # Flatten column name
+        pivot.columns.name = None
+
+        return pivot.reset_index()
+
+    # ------------------------------------------------------------------
+    # Convenience
+    # ------------------------------------------------------------------
+    def run(self):
+        return self.pivot()
+
+
+def build_event_pivot(records):
+    """Functional shortcut."""
+    return EventPivotUtility(records).validate().pivot()
+
+
+if __name__ == "__main__":
+    sample = [
+        {"date": "2024-01-02", "region": "NA", "event_type": "click"},
+        {"date": "2024-01-01", "region": "EU", "event_type": "view"},
+        {"date": "2024-01-01", "region": "NA", "event_type": "click"},
+        {"date": "2024-01-01", "region": "NA", "event_type": "click"},
+        {"date": "2024-01-02", "region": "EU", "event_type": "view"},
+        {"date": "2024-01-03", "region": "APAC", "event_type": "purchase"},
+    ]
+    print(build_event_pivot(sample))

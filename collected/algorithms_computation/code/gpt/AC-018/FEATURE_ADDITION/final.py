@@ -1,0 +1,175 @@
+"""
+Exact Polynomial Product
+
+Original problem:
+Given two polynomials represented by integer coefficient arrays, multiply them
+exactly and return the coefficient array of their product. Coefficients may be
+negative.
+
+Original required output:
+- Return the coefficient array in increasing order of degree.
+- For inputs A and B:
+      C[k] = sum(A[i] * B[k-i])
+  over all valid i.
+- For two non-empty inputs, the result length is:
+      len(A) + len(B) - 1
+- Negative coefficients must be handled exactly.
+- Empty input returns [].
+
+Algorithm:
+Use direct coefficient convolution. For every pair (A[i], B[j]), multiply
+the two coefficients and add the product to result[i + j].
+
+Time complexity: O(len(A) * len(B))
+Space complexity: O(len(A) + len(B))
+
+Added feature:
+An optional `include_operation_summary` flag is provided.
+
+When disabled (the default), the original output is returned unchanged:
+    list[int]
+
+When enabled, the function returns:
+    {
+        "coefficients": [...],
+        "operation_summary": {
+            "major_operations": <deterministic integer>
+        }
+    }
+
+For this task, `major_operations` is the number of coefficient-pair
+multiplications/additions performed by the direct convolution:
+    len(A) * len(B)
+
+For an empty input, no convolution operations are performed, so the count is 0.
+
+All original requirements remain unchanged when the feature is disabled.
+
+Constraints:
+- Integer coefficients, including negative values.
+- Exact integer arithmetic.
+- Direct quadratic convolution is required.
+- Input sizes are bounded so quadratic computation is practical.
+- Deterministic behavior.
+- Standard library only.
+- No network access, APIs, external services, randomness, or human interaction.
+"""
+
+from typing import List, Union, Dict, Any
+
+
+def polynomial_product(
+    a: List[int],
+    b: List[int],
+    include_operation_summary: bool = False
+) -> Union[List[int], Dict[str, Any]]:
+    """
+    Multiply two integer polynomials using direct coefficient convolution.
+
+    Default behavior preserves the original output format:
+        list[int]
+
+    If include_operation_summary=True:
+        {
+            "coefficients": list[int],
+            "operation_summary": {
+                "major_operations": int
+            }
+        }
+    """
+
+    if not a or not b:
+        result = []
+
+        if include_operation_summary:
+            return {
+                "coefficients": result,
+                "operation_summary": {
+                    "major_operations": 0
+                }
+            }
+
+        return result
+
+    result = [0] * (len(a) + len(b) - 1)
+
+    major_operations = 0
+
+    for i, coeff_a in enumerate(a):
+        for j, coeff_b in enumerate(b):
+            result[i + j] += coeff_a * coeff_b
+            major_operations += 1
+
+    if include_operation_summary:
+        return {
+            "coefficients": result,
+            "operation_summary": {
+                "major_operations": major_operations
+            }
+        }
+
+    return result
+
+
+# Deterministic tests
+def _run_tests() -> None:
+    # Original behavior remains unchanged by default.
+    assert polynomial_product([1, 2], [3, 4]) == [3, 10, 8]
+
+    # Negative coefficients.
+    assert polynomial_product([1, -2, 3], [4, -5]) == [
+        4, -13, 22, -15
+    ]
+
+    # Zero polynomial.
+    assert polynomial_product([0], [7, -2]) == [0, 0]
+
+    # Empty inputs.
+    assert polynomial_product([], [1, 2]) == []
+    assert polynomial_product([1, 2], []) == []
+
+    # Single coefficients.
+    assert polynomial_product([5], [6]) == [30]
+
+    # Negative coefficients in both polynomials.
+    assert polynomial_product([-1, -2], [-3, 4]) == [3, 2, -8]
+
+    # Operation summary enabled.
+    assert polynomial_product(
+        [1, 2],
+        [3, 4],
+        include_operation_summary=True
+    ) == {
+        "coefficients": [3, 10, 8],
+        "operation_summary": {
+            "major_operations": 4
+        }
+    }
+
+    # Summary count for different sizes.
+    assert polynomial_product(
+        [1, 2, 3],
+        [4, 5],
+        include_operation_summary=True
+    ) == {
+        "coefficients": [4, 13, 22, 15],
+        "operation_summary": {
+            "major_operations": 6
+        }
+    }
+
+    # Empty input performs zero convolution operations.
+    assert polynomial_product(
+        [],
+        [1, 2],
+        include_operation_summary=True
+    ) == {
+        "coefficients": [],
+        "operation_summary": {
+            "major_operations": 0
+        }
+    }
+
+
+if __name__ == "__main__":
+    _run_tests()

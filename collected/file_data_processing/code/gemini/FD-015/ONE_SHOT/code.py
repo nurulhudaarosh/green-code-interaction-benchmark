@@ -1,0 +1,120 @@
+import json
+import sys
+from typing import Any, Dict, List, Tuple
+
+
+def process_jsonl(
+    input_path: str,
+    output_path: str,
+    min_score: float = 0.0,
+    active_only: bool = True,
+) -> Dict[str, int]:
+    """Filters, sorts, and processes JSONL records.
+
+    Args:
+        input_path: Path to input JSONL file.
+        output_path: Path to write processed JSONL file.
+        min_score: Minimum required score threshold (inclusive).
+        active_only: If True, filters out records where status is not 'active'.
+
+    Returns:
+        Dict with counts of total, kept, invalid, and low score/inactive skipped
+        records.
+    """
+    valid_records: List[Dict[str, Any]] = []
+    stats = {
+        "total_read": 0,
+        "kept": 0,
+        "skipped_invalid_json": 0,
+        "skipped_invalid_schema": 0,
+        "skipped_filtered": 0,
+    }
+
+    with open(input_path, "r", encoding="utf-8") as infile:
+        for line_num, line in enumerate(infile, 1):
+            line = line.strip()
+            if not line:
+                continue
+
+            stats["total_read"] += 1
+
+            # 1. Validate JSON structure
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                stats["skipped_invalid_json"] += 1
+                continue
+
+            # 2. Validate schema & data types
+            if not isinstance(record, dict):
+                stats["skipped_invalid_schema"] += 1
+                continue
+
+            req_keys = {"id", "category", "score", "status"}
+            if not req_keys.issubset(record.keys()):
+                stats["skipped_invalid_schema"] += 1
+                continue
+
+            score = record.get("score")
+            status = record.get("status")
+
+            if not isinstance(score, (int, float)) or not isinstance(status, str):
+                stats["skipped_invalid_schema"] += 1
+                continue
+
+            # 3. Filter criteria (active status & score threshold)
+            is_active = status.lower() == "active" if active_only else True
+            meets_score = score >= min_score
+
+            if not (is_active and meets_score):
+                stats["skipped_filtered"] += 1
+                continue
+
+            valid_records.append(record)
+
+    # 4. Sort records by Category (ascending), Score (descending), ID (ascending)
+    valid_records.sort(
+        key=lambda r: (
+            str(r.get("category", "")),
+            -float(r.get("score", 0)),
+            str(r.get("id", "")),
+        )
+    )
+
+    # 5. Write filtered and sorted records
+    with open(output_path, "w", encoding="utf-8") as outfile:
+        for record in valid_records:
+            outfile.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    stats["kept"] = len(valid_records)
+    return stats
+
+
+if __name__ == "__main__":
+    # Example usage
+    import tempfile
+
+    sample_data = """{"id": "A1", "category": "Tech", "score": 88.5, "status": "active"}
+{"id": "A2", "category": "Tech", "score": 95.0, "status": "active"}
+{"id": "A3", "category": "Tech", "score": 95.0, "status": "inactive"}
+{"id": "B1", "category": "Health", "score": 72.0, "status": "active"}
+{"invalid_json": 
+{"id": "B2", "category": "Health", "score": "not_a_number", "status": "active"}
+{"id": "B3", "category": "Health", "score": 40.0, "status": "active"}"""
+
+    with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".jsonl") as infile, \
+         tempfile.NamedTemporaryFile("r+", delete=False, suffix=".jsonl") as outfile:
+        
+        infile.write(sample_data)
+        infile.flush()
+
+        # Run processor with score threshold of 50.0
+        results = process_jsonl(infile.name, outfile.name, min_score=50.0)
+
+        print("--- Processing Stats ---")
+        for key, value in results.items():
+            print(f"{key}: {value}")
+
+        print("\n--- Output JSONL Content ---")
+        outfile.seek(0)
+        print(outfile.read())

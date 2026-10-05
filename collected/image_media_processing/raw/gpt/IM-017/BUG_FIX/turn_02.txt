@@ -1,0 +1,49 @@
+Yes—the fix is to read `img.text`, which Pillow documents as the mapping containing the `tEXt`, `zTXt`, and `iTXt` PNG text chunks. [GitHub](https://github.com/python-pillow/Pillow/blob/main/docs/handbook/image-file-formats.rst?utm_source=chatgpt.com)
+
+```python
+from PIL import Image, PngImagePlugin
+
+
+def embed_tags(input_path, output_path, tags):
+    """
+    Copy a PNG image and embed custom string key/value metadata
+    as PNG text chunks.
+    """
+    if not isinstance(tags, dict):
+        raise TypeError("tags must be a dictionary")
+
+    for key, value in tags.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise TypeError("PNG metadata keys and values must be strings")
+
+    with Image.open(input_path) as img:
+        pnginfo = PngImagePlugin.PngInfo()
+
+        # Preserve existing text metadata.
+        for key, value in getattr(img, "text", {}).items():
+            pnginfo.add_text(key, value)
+
+        # Add/overwrite requested tags.
+        for key, value in tags.items():
+            pnginfo.add_text(key, value)
+
+        img.save(output_path, format="PNG", pnginfo=pnginfo)
+
+
+def read_tags(image_path):
+    """
+    Return all text-based PNG metadata as a dictionary.
+
+    Pillow's img.text contains the values from tEXt, zTXt,
+    and iTXt PNG chunks.
+    """
+    with Image.open(image_path) as img:
+        return dict(getattr(img, "text", {}))
+```
+
+The important correction is:
+
+
+rather than trying to retrieve a `"text"` entry from `img.info`. Pillow's PNG reader populates `Image.text` specifically for the PNG text chunks. [GitHub](https://github.com/python-pillow/Pillow/blob/main/docs/handbook/image-file-formats.rst?utm_source=chatgpt.com)
+
+This also retrieves compressed `zTXt` and international `iTXt` text chunks, not just ordinary `tEXt` chunks. [GitHub](https://github.com/python-pillow/Pillow/blob/main/src/PIL/PngImagePlugin.py?utm_source=chatgpt.com)

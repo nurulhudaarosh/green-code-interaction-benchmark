@@ -1,0 +1,753 @@
+import json
+import math
+import statistics
+from typing import Dict, List, Tuple, Optional, Any
+from dataclasses import dataclass, field
+from enum import Enum
+
+
+# ============================================================
+# 1. ERRORS & VALIDATION
+# ============================================================
+class ValidationError(ValueError):
+    """Raised when a score, weight, name, or subject fails validation."""
+
+
+PASS_MARK = 60.0            # exact pass threshold (inclusive)
+EPS = 1e-9                  # tolerance for float comparisons at the boundary
+
+
+def validate_score(value, *, label: str = "Score") -> float:
+    """Score must be a finite real number in [0, 100]."""
+    if isinstance(value, bool):
+        raise ValidationError(f"{label} must be numeric, not bool: {value!r}")
+    if not isinstance(value, (int, float)):
+        raise ValidationError(
+            f"{label} must be int or float, got {type(value).__name__}: {value!r}"
+        )
+    v = float(value)
+    if math.isnan(v) or math.isinf(v):
+        raise ValidationError(f"{label} must be finite, got {value!r}")
+    if not (0.0 <= v <= 100.0):
+        raise ValidationError(f"{label} must be within [0, 100], got {v}")
+    return v
+
+
+def validate_weight(value, *, label: str = "Weight") -> float:
+    """Weight must be a finite real number in (0, 1]."""
+    if isinstance(value, bool):
+        raise ValidationError(f"{label} must be numeric, not bool: {value!r}")
+    if not isinstance(value, (int, float)):
+        raise ValidationError(
+            f"{label} must be int or float, got {type(value).__name__}: {value!r}"
+        )
+    v = float(value)
+    if math.isnan(v) or math.isinf(v):
+        raise ValidationError(f"{label} must be finite, got {value!r}")
+    if not (0.0 < v <= 1.0):
+        raise ValidationError(f"{label} must be within (0, 1], got {v}")
+    return v
+
+
+def validate_nonempty_str(value, *, label: str = "Value") -> str:
+    if not isinstance(value, str):
+        raise ValidationError(f"{label} must be a string, got {type(value).__name__}: {value!r}")
+    s = value.strip()
+    if not s:
+        raise ValidationError(f"{label} must be a non-empty string")
+    return s
+
+
+def validate_weights_sum(weights: Dict[str, float], *, tol: float = 1e-6) -> None:
+    if not weights:
+        raise ValidationError("Weights cannot be empty; at least one subject is required.")
+    total = sum(weights.values())
+    if abs(total - 1.0) > tol:
+        pretty = {k: round(v, 6) for k, v in weights.items()}
+        raise ValidationError(
+            f"Subject weights must sum to 1.0, got {total:.6f}. Weights: {pretty}"
+        )
+
+
+def is_pass(value: float, threshold: float = PASS_MARK) -> bool:
+    """Exact-threshold comparison with tiny epsilon tolerance."""
+    return value + EPS >= threshold
+
+
+# ============================================================
+# 2. GRADE SCALE
+# ============================================================
+class GradeScale(Enum):
+    A_PLUS = 90
+    A = 85
+    B_PLUS = 80
+    B = 75
+    C_PLUS = 70
+    C = 65
+    D_PLUS = 60
+    D = 55
+    F = 0
+
+
+def letter_for(avg: float) -> str:
+    for grade in GradeScale:
+        if avg + EPS >= grade.value:
+            return grade.name.replace("_PLUS", "+")
+    return "F"
+
+
+# ============================================================
+# 3. ASSESSMENT PARSER (malformed input handling)
+# ============================================================
+@dataclass
+class ParseIssue:
+    student_id: str
+    subject: str
+    raw_value: Any
+    reason: str
+
+
+@dataclass
+class ParseResult:
+    accepted: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    issues: List[ParseIssue] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not self.issues
+
+    def accepted_count(self) -> int:
+        return sum(len(v) for v in self.accepted.values())
+
+
+def parse_assessment(raw: Any) -> ParseResult:
+    """Parse an arbitrary JSON-like structure into {student_id: {subject: score}}.
+
+    Tolerant: malformed entries are recorded in `issues` and skipped.
+    """
+    result = ParseResult()
+    if raw is None:
+        result.issues.append(ParseIssue("<root>", "<root>", raw, "payload is None"))
+        return result
+    if not isinstance(raw, dict):
+        result.issues.append(
+            ParseIssue("<root>", "<root>", raw,
+                       f"root must be dict, got {type(raw).__name__}")
+        )
+        return result
+
+    for sid_raw, payload in raw.items():
+        try:
+            sid = validate_nonempty_str(sid_raw, label="student_id")
+        except ValidationError as e:
+            result.issues.append(ParseIssue(str(sid_raw), "<root>", sid_raw, str(e)))
+            continue
+
+        result.accepted.setdefault(sid, {})
+
+        if isinstance(payload, dict):
+            items = list(payload.items())
+        elif isinstance(payload, list):
+            items = []
+            for entry in payload:
+                if not isinstance(entry, dict):
+                    result.issues.append(
+                        ParseIssue(sid, "<unknown>", entry,
+                                   f"list entry must be dict, got {type(entry).__name__}")
+                    )
+                    continue
+                items.append((entry.get("subject"), entry.get("score")))
+        elif payload is None:
+            continue
+        else:
+            result.issues.append(
+                ParseIssue(sid, "<root>", payload,
+                           f"payload must be dict/list/None, got {type(payload).__name__}")
+            )
+            continue
+
+        for subj_raw, score_raw in items:
+            try:
+                subj = validate_nonempty_str(subj_raw, label="Subject")
+            except ValidationError as e:
+                result.issues.append(ParseIssue(sid, str(subj_raw), subj_raw, str(e)))
+                continue
+            try:
+                sc = validate_score(score_raw)
+            except ValidationError as e:
+                result.issues.append(ParseIssue(sid, subj, score_raw, str(e)))
+                continue
+            result.accepted[sid][subj] = sc
+
+    return result
+
+
+def parse_weights(raw: Any, subjects: Optional[List[str]] = None) -> Dict[str, float]:
+    """Parse and validate a weight mapping. Strict: raises on malformed input."""
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        items = list(raw.items())
+    elif isinstance(raw, list):
+        items = []
+        for entry in raw:
+            if not isinstance(entry, dict):
+                raise ValidationError(
+                    f"weight list entries must be dicts, got {type(entry).__name__}"
+                )
+            items.append((entry.get("subject"), entry.get("weight")))
+    else:
+        raise ValidationError(
+            f"weights must be dict or list of dicts, got {type(raw).__name__}"
+        )
+
+    clean: Dict[str, float] = {}
+    for subj_raw, w_raw in items:
+        subj = validate_nonempty_str(subj_raw, label="Subject")
+        clean[subj] = validate_weight(w_raw, label=f"Weight[{subj}]")
+
+    if subjects is not None and clean:
+        expected = set(subjects)
+        provided = set(clean)
+        if provided != expected:
+            missing = expected - provided
+            extra = provided - expected
+            parts = []
+            if missing:
+                parts.append(f"missing {sorted(missing)}")
+            if extra:
+                parts.append(f"extra {sorted(extra)}")
+            raise ValidationError("Weight subjects mismatch: " + ", ".join(parts))
+
+    if clean:
+        validate_weights_sum(clean)
+    return clean
+
+
+# ============================================================
+# 4. STUDENT MODEL
+# ============================================================
+@dataclass
+class Student:
+    student_id: str
+    name: str
+    scores: Dict[str, float] = field(default_factory=dict)
+    weights: Dict[str, float] = field(default_factory=dict)
+
+    def add_score(self, subject: str, score) -> None:
+        subj = validate_nonempty_str(subject, label="Subject")
+        self.scores[subj] = validate_score(score)
+
+    def set_weights(self, weights: Dict[str, float]) -> None:
+        if not isinstance(weights, dict):
+            raise ValidationError(f"weights must be a dict, got {type(weights).__name__}")
+        clean: Dict[str, float] = {}
+        for subj, w in weights.items():
+            clean[validate_nonempty_str(subj, label="Subject")] = validate_weight(w)
+        validate_weights_sum(clean)
+        self.weights = clean
+
+    def has_complete_weights(self) -> bool:
+        if not self.scores or set(self.scores) != set(self.weights):
+            return False
+        try:
+            validate_weights_sum(self.weights)
+            return True
+        except ValidationError:
+            return False
+
+    def average(self) -> Optional[float]:
+        if not self.scores:
+            return None
+        if self.has_complete_weights():
+            return sum(self.scores[s] * self.weights[s] for s in self.scores)
+        return sum(self.scores.values()) / len(self.scores)
+
+    def letter_grade(self) -> Optional[str]:
+        avg = self.average()
+        return None if avg is None else letter_for(avg)
+
+    def passed(self, threshold: float = PASS_MARK) -> Optional[bool]:
+        avg = self.average()
+        return None if avg is None else is_pass(avg, threshold)
+
+    # -------- deterministic tiebreakers --------
+    def min_score(self) -> Optional[float]:
+        return min(self.scores.values()) if self.scores else None
+
+    def subject_count(self) -> int:
+        return len(self.scores)
+
+    def sorted_scores_desc(self) -> Tuple[float, ...]:
+        return tuple(sorted(self.scores.values(), reverse=True))
+
+    def rank_key(self) -> Tuple:
+        if not self.scores:
+            return (-1.0, -1.0, -1, ())
+        return (
+            round(self.average() or 0.0, 6),
+            self.min_score() or 0.0,
+            self.subject_count(),
+            self.sorted_scores_desc(),
+        )
+
+    def has_scores(self) -> bool:
+        return bool(self.scores)
+
+
+# ============================================================
+# 5. ANALYZER
+# ============================================================
+class StudentPerformanceAnalyzer:
+    def __init__(self) -> None:
+        self.students: Dict[str, Student] = {}
+
+    # ---------- CRUD ----------
+    def add_student(self, student_id: str, name: str) -> Student:
+        sid = validate_nonempty_str(student_id, label="student_id")
+        nm = validate_nonempty_str(name, label="name")
+        if sid in self.students:
+            raise ValidationError(f"Student {sid!r} already exists")
+        s = Student(sid, nm)
+        self.students[sid] = s
+        return s
+
+    def remove_student(self, student_id: str) -> None:
+        sid = validate_nonempty_str(student_id, label="student_id")
+        if sid not in self.students:
+            raise KeyError(f"Student {sid!r} not found")
+        del self.students[sid]
+
+    def get_student(self, student_id: str) -> Student:
+        sid = validate_nonempty_str(student_id, label="student_id")
+        if sid not in self.students:
+            raise KeyError(f"Student {sid!r} not found")
+        return self.students[sid]
+
+    def record_score(self, student_id: str, subject: str, score) -> None:
+        self.get_student(student_id).add_score(subject, score)
+
+    def set_weights(self, student_id: str, weights: Dict[str, float]) -> None:
+        self.get_student(student_id).set_weights(weights)
+
+    # ---------- Bulk import ----------
+    def import_assessments(self, raw: Any,
+                           names: Optional[Dict[str, str]] = None) -> ParseResult:
+        result = parse_assessment(raw)
+        names = names or {}
+        for sid, subject_scores in result.accepted.items():
+            if sid not in self.students:
+                nm = names.get(sid, sid)
+                self.add_student(sid, validate_nonempty_str(nm, label="name"))
+            for subj, sc in subject_scores.items():
+                self.students[sid].add_score(subj, sc)
+        return result
+
+    # ---------- Deterministic ordering ----------
+    def _ordered_scored(self) -> List[Student]:
+        scored = [s for s in self.students.values() if s.has_scores()]
+        by_id = sorted(scored, key=lambda s: s.student_id)
+        return sorted(by_id, key=lambda s: s.rank_key(), reverse=True)
+
+    def _ordered_all(self) -> List[Student]:
+        scored = self._ordered_scored()
+        unscored = sorted(
+            (s for s in self.students.values() if not s.has_scores()),
+            key=lambda s: s.student_id,
+        )
+        return scored + unscored
+
+    # ---------- Ranking ----------
+    def rank_students(self) -> List[Tuple[int, str, str, Optional[float], Optional[str]]]:
+        ordered = self._ordered_all()
+        result: List[Tuple[int, str, str, Optional[float], Optional[str]]] = []
+        prev_key: Optional[Tuple] = None
+        prev_rank = 0
+        for idx, s in enumerate(ordered, start=1):
+            if not s.has_scores():
+                result.append((0, s.student_id, s.name, None, None))
+                continue
+            key = s.rank_key()
+            if prev_key is None or key != prev_key:
+                prev_rank = idx
+            prev_key = key
+            result.append((prev_rank, s.student_id, s.name,
+                           round(s.average() or 0.0, 2), s.letter_grade()))
+        return result
+
+    def top_performers(self, n: int = 3) -> List[Tuple[str, float]]:
+        if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+            raise ValidationError(f"n must be a non-negative int, got {n!r}")
+        return [(s.name, round(s.average() or 0.0, 2)) for s in self._ordered_scored()[:n]]
+
+    def at_risk_students(self, threshold: float = PASS_MARK) -> List[Tuple[str, float]]:
+        t = validate_score(threshold, label="threshold")
+        return [
+            (s.name, round(s.average() or 0.0, 2))
+            for s in self._ordered_scored()
+            if not is_pass(s.average() or 0.0, t)
+        ]
+
+    # ---------- Analytics ----------
+    def class_average(self, subject: Optional[str] = None) -> Optional[float]:
+        if not self.students:
+            return None
+        if subject is not None:
+            subj = validate_nonempty_str(subject, label="Subject")
+            vals = [s.scores[subj] for s in self.students.values() if subj in s.scores]
+            return statistics.mean(vals) if vals else None
+        avgs = [s.average() for s in self.students.values() if s.has_scores()]
+        return statistics.mean(avgs) if avgs else None  # type: ignore[arg-type]
+
+    def pass_rate(self, threshold: float = PASS_MARK) -> Optional[float]:
+        scored = [s for s in self.students.values() if s.has_scores()]
+        if not scored:
+            return None
+        t = validate_score(threshold, label="threshold")
+        passed = sum(1 for s in scored if is_pass(s.average() or 0.0, t))
+        return passed / len(scored)
+
+    def subject_statistics(self) -> Dict[str, Dict[str, float]]:
+        subjects = {subj for s in self.students.values() for subj in s.scores}
+        out: Dict[str, Dict[str, float]] = {}
+        for subj in sorted(subjects):
+            vals = [s.scores[subj] for s in self.students.values() if subj in s.scores]
+            if vals:
+                out[subj] = {
+                    "mean": statistics.mean(vals),
+                    "median": statistics.median(vals),
+                    "stdev": statistics.pstdev(vals) if len(vals) > 1 else 0.0,
+                    "min": min(vals),
+                    "max": max(vals),
+                    "count": len(vals),
+                }
+        return out
+
+    def grade_distribution(self) -> Dict[str, int]:
+        dist: Dict[str, int] = {}
+        for s in self.students.values():
+            g = s.letter_grade()
+            if g is not None:
+                dist[g] = dist.get(g, 0) + 1
+        return dist
+
+    # ---------- Report ----------
+    def generate_report(self) -> str:
+        L: List[str] = ["=" * 64, "STUDENT PERFORMANCE REPORT", "=" * 64]
+        L.append(f"Total students : {len(self.students)}")
+        L.append(f"Scored students: {sum(1 for s in self.students.values() if s.has_scores())}")
+        L.append(f"Pass mark (inclusive): {PASS_MARK:.1f}\n")
+
+        if not any(s.has_scores() for s in self.students.values()):
+            L.append("⚠  NO ASSESSMENT DATA AVAILABLE")
+            L.append("   Add scores via .record_score() or .import_assessments().")
+            if self.students:
+                L.append("\n--- Roster (unscored) ---")
+                for sid in sorted(self.students):
+                    L.append(f"  [{sid}] {self.students[sid].name}")
+            L.append("=" * 64)
+            return "\n".join(L)
+
+        L.append("--- Rankings (ties broken by min → count → score vector → id) ---")
+        for rank, sid, name, avg, grade in self.rank_students():
+            if rank == 0:
+                L.append(f"   –. [{sid}] {name:<20} (no scores)")
+            else:
+                marker = "PASS" if is_pass(avg or 0.0) else "FAIL"
+                L.append(f"  {rank:>2}. [{sid}] {name:<20} Avg: {avg:>6.2f}  "
+                         f"Grade: {grade:<2}  {marker}")
+
+        L.append("\n--- Subject Statistics ---")
+        for subj, st in self.subject_statistics().items():
+            L.append(f"  {subj}:")
+            L.append(f"    Mean: {st['mean']:.2f} | Median: {st['median']:.2f} | "
+                     f"StDev: {st['stdev']:.2f}")
+            L.append(f"    Min: {st['min']:.2f} | Max: {st['max']:.2f} | "
+                     f"Count: {st['count']}")
+
+        L.append("\n--- Grade Distribution ---")
+        dist = self.grade_distribution()
+        if not dist:
+            L.append("  (no grades recorded)")
+        else:
+            for grade, count in sorted(dist.items()):
+                L.append(f"  {grade:<3}: {'*' * count} ({count})")
+
+        L.append("\n--- Top Performers ---")
+        tops = self.top_performers(3)
+        L.append("  (none)" if not tops else "\n".join(f"  {n}: {a}" for n, a in tops))
+
+        L.append(f"\n--- At-Risk Students (avg < {PASS_MARK:.1f}) ---")
+        at_risk = self.at_risk_students()
+        L.append("  None 🎉" if not at_risk else "\n".join(f"  {n}: {a}" for n, a in at_risk))
+
+        cls_avg = self.class_average()
+        pr = self.pass_rate()
+        L.append("\n--- Summary ---")
+        L.append(f"  Class average : {cls_avg:.2f}" if cls_avg is not None else "  Class average : n/a")
+        L.append(f"  Pass rate     : {pr*100:.1f}%" if pr is not None else "  Pass rate     : n/a")
+        L.append("=" * 64)
+        return "\n".join(L)
+
+    # ---------- Persistence ----------
+    def save(self, path: str) -> None:
+        payload = {
+            sid: {"name": s.name, "scores": s.scores, "weights": s.weights}
+            for sid, s in self.students.items()
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, sort_keys=True)
+
+    def load(self, path: str) -> None:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        new_students: Dict[str, Student] = {}
+        for sid, info in data.items():
+            s = Student(validate_nonempty_str(sid, label="student_id"),
+                        validate_nonempty_str(info["name"], label="name"))
+            for subj, sc in info.get("scores", {}).items():
+                s.add_score(subj, sc)
+            if info.get("weights"):
+                s.set_weights(info["weights"])
+            new_students[s.student_id] = s
+        self.students = new_students
+
+
+# ============================================================
+# 6. EDGE-CASE TESTS
+# ============================================================
+def _t(desc: str, fn, should_pass: bool) -> None:
+    try:
+        fn()
+        ok = should_pass
+    except (ValidationError, KeyError, TypeError, ValueError):
+        ok = not should_pass
+    print(f"  {'✅' if ok else '❌ FAIL'} {desc}")
+
+
+def run_edge_case_tests() -> None:
+    print("=" * 64)
+    print("EDGE-CASE TESTS")
+    print("=" * 64)
+
+    # ---------------- Empty data ----------------
+    print("\n[Empty data] All reads must return None / empty, never crash")
+    empty = StudentPerformanceAnalyzer()
+    assert empty.class_average() is None
+    assert empty.class_average("Math") is None
+    assert empty.pass_rate() is None
+    assert empty.subject_statistics() == {}
+    assert empty.grade_distribution() == {}
+    assert empty.rank_students() == []
+    assert empty.top_performers(3) == []
+    assert empty.at_risk_students() == []
+    print("  ✅ empty analyzer returns None/[]/{} for all queries")
+
+    assert "NO ASSESSMENT DATA" in empty.generate_report()
+    print("  ✅ empty report contains explicit warning")
+
+    roster = StudentPerformanceAnalyzer()
+    roster.add_student("S1", "A")
+    roster.add_student("S2", "B")
+    assert roster.class_average() is None
+    assert roster.pass_rate() is None
+    assert roster.top_performers(3) == []
+    assert roster.rank_students() == [(0, "S1", "A", None, None),
+                                      (0, "S2", "B", None, None)]
+    print("  ✅ roster-only analyzer: unscored students get rank 0")
+
+    # ---------------- Exact pass marks ----------------
+    print("\n[Exact pass mark] Boundary at 60.0 must pass")
+    a = StudentPerformanceAnalyzer()
+    cases = [("S60", 60.0, True), ("S599", 59.9, False),
+             ("S6001", 60.01, True), ("S0", 0.0, False), ("S100", 100.0, True)]
+    for sid, sc, _ in cases:
+        a.add_student(sid, sid)
+        a.record_score(sid, "Math", sc)
+    for sid, sc, expected in cases:
+        assert a.get_student(sid).passed() is expected, (sid, sc)
+    print("  ✅ exactly 60.0 → PASS, 59.9 → FAIL, 0.0 → FAIL, 100.0 → PASS")
+
+    assert is_pass(60.0) is True
+    assert is_pass(60.0 - EPS / 2) is True
+    assert is_pass(59.9) is False
+    print("  ✅ epsilon tolerance protects against float-rounding at the boundary")
+
+    assert letter_for(90.0) == "A+"
+    assert letter_for(89.0) == "A"
+    print("  ✅ letter-grade boundaries use the same epsilon")
+
+    a2 = StudentPerformanceAnalyzer()
+    for sid, sc in [("A", 60.0), ("B", 59.9), ("C", 80.0), ("D", 40.0)]:
+        a2.add_student(sid, sid)
+        a2.record_score(sid, "M", sc)
+    assert a2.pass_rate() == 0.5, a2.pass_rate()
+    print("  ✅ pass_rate correctly counts inclusive-threshold passes")
+
+    # ---------------- Ties ----------------
+    print("\n[Ties] Deterministic resolution across all tiebreaker levels")
+    t = StudentPerformanceAnalyzer()
+    entries = [
+        ("T1", "Zed",  {"M": 80, "S": 80}),
+        ("T2", "Yara", {"M": 80, "S": 80}),
+        ("T3", "Xena", {"M": 100, "S": 60}),
+        ("T4", "Wade", {"M": 70, "S": 90}),
+    ]
+    for sid, name, sc in entries:
+        t.add_student(sid, name)
+        for subj, v in sc.items():
+            t.record_score(sid, subj, v)
+
+    ranks = [(sid, r) for r, sid, *_ in t.rank_students()]
+    assert ranks == [("T1", 1), ("T2", 1), ("T4", 3), ("T3", 4)], ranks
+    print(f"  ✅ tie cascade: {ranks}  (twins share rank 1; min breaks rest)")
+
+    t2 = StudentPerformanceAnalyzer()
+    for sid, name, sc in reversed(entries):
+        t2.add_student(sid, name)
+        for subj, v in sc.items():
+            t2.record_score(sid, subj, v)
+    assert t2.rank_students() == t.rank_students()
+    print("  ✅ insertion order does not affect ranking")
+
+    t3 = StudentPerformanceAnalyzer()
+    for sid in ["Z", "A", "M"]:
+        t3.add_student(sid, sid)
+        t3.record_score(sid, "X", 75)
+    assert [r for r, *_ in t3.rank_students()] == [1, 1, 1]
+    assert [s for _, s, *_ in t3.rank_students()] == ["A", "M", "Z"]
+    print("  ✅ three identical students → all rank 1, ordered by id ascending")
+
+    # ---------------- Malformed assessments ----------------
+    print("\n[Malformed assessments] Tolerated with issue reporting")
+    malformed = {
+        "S1": {"Math": 90, "Sci": "eighty"},
+        "S2": {"Math": -5, "Sci": 110},
+        "S3": {"Math": None, "Sci": float("nan")},
+        "":   {"Math": 80},
+        "S4": [{"subject": "Math", "score": 70},
+               {"subject": "", "score": 80},
+               {"subject": "Sci", "score": True},
+               "not-a-dict"],
+        "S5": None,
+        "S6": "oops",
+        "S7": {"Math": 100},
+    }
+    analyzer = StudentPerformanceAnalyzer()
+    result = analyzer.import_assessments(malformed,
+                                         names={"S1": "Alpha", "S7": "Valid"})
+    print(f"  accepted entries: {result.accepted_count()}")
+    print(f"  issues reported : {len(result.issues)}")
+    for iss in result.issues:
+        print(f"    - [{iss.student_id}/{iss.subject}] {iss.reason}")
+
+    assert "S1" in result.accepted and result.accepted["S1"] == {"Math": 90.0}
+    assert "S2" in result.accepted and result.accepted["S2"] == {}
+    assert "S7" in result.accepted and result.accepted["S7"] == {"Math": 100.0}
+    assert "S5" in result.accepted and result.accepted["S5"] == {}
+    assert len(result.issues) >= 5
+    print("  ✅ valid entries imported, malformed logged and skipped")
+    print("  ✅ report renders cleanly with mixed valid/invalid data")
+
+    # ---------------- Malformed weights ----------------
+    print("\n[Malformed weights] Subject mismatch and bad values")
+    _t("reject weight list entry not a dict",
+       lambda: parse_weights([{"subject": "M", "weight": 0.5}, "bad"]),
+       should_pass=False)
+    _t("reject weight sum != 1",
+       lambda: parse_weights({"M": 0.4, "S": 0.4}),
+       should_pass=False)
+    _t("reject missing subject in weights",
+       lambda: parse_weights({"M": 1.0}, subjects=["M", "S"]),
+       should_pass=False)
+    _t("reject extra subject in weights",
+       lambda: parse_weights({"M": 0.5, "S": 0.3, "X": 0.2}, subjects=["M", "S"]),
+       should_pass=False)
+    _t("accept list-form weights",
+       lambda: parse_weights([{"subject": "M", "weight": 0.5},
+                              {"subject": "S", "weight": 0.5}],
+                             subjects=["M", "S"]),
+       should_pass=True)
+    print("  ✅ weight parsing enforces dict/list form, sum==1.0, subject match")
+
+    # ---------------- Persistence round-trip ----------------
+    print("\n[Persistence] Round-trip with empty scores and exact pass")
+    mix = StudentPerformanceAnalyzer()
+    mix.add_student("EMPTY", "No Scores")
+    mix.add_student("SCORED", "Has Scores")
+    mix.record_score("SCORED", "Math", 60.0)
+    mix.set_weights("SCORED", {"Math": 1.0})
+    mix.save("mixed.json")
+
+    reloaded = StudentPerformanceAnalyzer()
+    reloaded.load("mixed.json")
+    assert reloaded.get_student("EMPTY").average() is None
+    assert reloaded.get_student("SCORED").passed() is True
+    assert reloaded.rank_students() == mix.rank_students()
+    print("  ✅ empty + exact-pass students survive save/load identically")
+
+    print("\nAll edge-case tests passed ✅")
+
+
+# ============================================================
+# 7. DEMO
+# ============================================================
+def run_demo() -> None:
+    print("\n" + "=" * 64)
+    print("FULL DEMO — mixed valid, boundary, tied, and malformed input")
+    print("=" * 64)
+
+    analyzer = StudentPerformanceAnalyzer()
+    weights = {"Math": 0.30, "Science": 0.30, "English": 0.25, "History": 0.15}
+
+    sample = [
+        ("S001", "Alice Johnson", {"Math": 95, "Science": 92, "English": 88, "History": 90}),
+        ("S002", "Bob Smith",     {"Math": 72, "Science": 68, "English": 75, "History": 70}),
+        ("S003", "Carol White",   {"Math": 88, "Science": 91, "English": 85, "History": 89}),
+        ("S004", "David Brown",   {"Math": 55, "Science": 58, "English": 62, "History": 50}),
+        ("S005", "Eva Green",     {"Math": 78, "Science": 82, "English": 80, "History": 76}),
+        ("S006", "Frank Miller",  {"Math": 45, "Science": 52, "English": 48, "History": 55}),
+        ("S007", "Twin Alpha",    {"Math": 85, "Science": 85, "English": 85, "History": 85}),
+        ("S008", "Twin Beta",     {"Math": 85, "Science": 85, "English": 85, "History": 85}),
+        ("S009", "Edge Exactly60",{"Math": 60, "Science": 60, "English": 60, "History": 60}),
+    ]
+
+    for sid, name, scores in sample:
+        analyzer.add_student(sid, name)
+        for subj, sc in scores.items():
+            analyzer.record_score(sid, subj, sc)
+        analyzer.set_weights(sid, weights)
+
+    # Also demonstrate tolerant bulk import inside the demo
+    analyzer.import_assessments({
+        "S010": {"Math": 77, "Science": "bad", "English": 66, "History": 70},
+        "S011": [{"subject": "Math", "score": 81},
+                 {"subject": "Science", "score": 79},
+                 {"subject": "English", "score": 83},
+                 {"subject": "History", "score": 88}],
+    }, names={"S010": "Half-Bad Import", "S011": "List Form"})
+    for sid in ["S010", "S011"]:
+        subj_set = set(analyzer.get_student(sid).scores)
+        w = {k: v for k, v in weights.items() if k in subj_set}
+        if w:
+            total = sum(w.values())
+            w = {k: v / total for k, v in w.items()}
+            analyzer.set_weights(sid, w)
+
+    print(analyzer.generate_report())
+
+    analyzer.save("students.json")
+    print("\nSaved → students.json")
+
+    reloaded = StudentPerformanceAnalyzer()
+    reloaded.load("students.json")
+    print(f"Reloaded {len(reloaded.students)} students; "
+          f"class avg = {reloaded.class_average():.2f}; "
+          f"pass rate = {reloaded.pass_rate()*100:.1f}%")
+    assert reloaded.rank_students() == analyzer.rank_students()
+    print("✅ Ranking identical after save/load round-trip")
+
+
+if __name__ == "__main__":
+    run_edge_case_tests()
+    run_demo()

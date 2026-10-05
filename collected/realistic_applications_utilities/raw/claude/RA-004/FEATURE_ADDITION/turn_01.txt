@@ -1,0 +1,54 @@
+```python
+import os
+import sys
+from bisect import bisect_right
+from collections import defaultdict
+from pathlib import Path
+
+# ---------- config ----------
+EDGES = [1_024, 100 * 1_024, 1_024**2, 10 * 1_024**2, 100 * 1_024**2, 1_024**3]
+LABELS = ["tiny (<1 KB)", "small (<100 KB)", "medium (<1 MB)",
+          "large (<10 MB)", "xlarge (<100 MB)", "huge (<1 GB)", "massive (>=1 GB)"]
+
+# ---------- build ----------
+def build(root="."):
+    records = []
+    for dirpath, _, filenames in os.walk(root):
+        for name in filenames:
+            p = Path(dirpath) / name
+            try:
+                records.append({"path": str(p), "size": p.stat().st_size})
+            except OSError:
+                pass  # unreadable file / broken symlink
+    return records
+
+# ---------- size-bucket classification ----------
+def classify(records):
+    buckets = defaultdict(list)
+    for r in records:
+        r["bucket"] = LABELS[bisect_right(EDGES, r["size"])]
+        buckets[r["bucket"]].append(r)
+    return buckets
+
+def human(n):
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return f"{n:.1f} {unit}"
+        n /= 1024
+
+# ---------- run ----------
+root = sys.argv[1] if len(sys.argv) > 1 else "."
+records = build(root)
+buckets = classify(records)
+
+print(f"Scanned: {os.path.abspath(root)}  ({len(records)} files)\n")
+print(f"{'Bucket':<20}{'Files':>8}{'Total':>14}")
+print("-" * 42)
+for label in LABELS:
+    items = buckets.get(label, [])
+    print(f"{label:<20}{len(items):>8}{human(sum(i['size'] for i in items)):>14}")
+
+print("\nTop 10 largest files:")
+for r in sorted(records, key=lambda r: r["size"], reverse=True)[:10]:
+    print(f"{human(r['size']):>12}  {r['bucket']:<18}  {r['path']}")
+```

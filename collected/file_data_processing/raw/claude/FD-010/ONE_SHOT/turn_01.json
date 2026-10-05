@@ -1,0 +1,11 @@
+{
+  "task_id": "FD-010",
+  "model": "claude",
+  "interaction": "ONE_SHOT",
+  "turn": 1,
+  "saved_at": "2026-09-29T22:24:52.909026+00:00",
+  "response_sha256": "cfde482a69d0e462a61b78edd2a8afd117b052e5240f510bd54cda06de825d00",
+  "code_sha256": "07199b562b7741676e5977f1b9019d0a8e08ae61a660dc99a795ee1984232d2c",
+  "raw_file": ".collection/raw/claude/FD-010/ONE_SHOT/turn_01.txt",
+  "code_file": ".collection/code/claude/FD-010/ONE_SHOT/code.py"
+}

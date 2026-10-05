@@ -1,0 +1,108 @@
+## Restated problem
+
+**Exact Polynomial Product.** Given two integer polynomials as coefficient arrays (ascending order, `a[i]` is the coefficient of x^i, coefficients may be negative), multiply them exactly and return the product's coefficient array.
+
+**Existing required outputs (unchanged)**
+- A list of integers `c` of length `len(a) + len(b) - 1`, where `c[k] = Σ a[i]·b[k-i]`.
+- Exact arithmetic (Python big integers, no rounding or overflow).
+- An empty input means the zero polynomial, and the result is `[0]`.
+- Trailing zeros are kept, and the result is deterministic.
+- Standard library only, with no network, randomness, or interaction.
+
+## New feature: `operation_summary`
+
+It is opt-in through `include_summary=True`. With the default `False`, the function returns exactly the same plain list as before, so existing callers are unaffected. When enabled, it returns a dict with two keys: `coefficients` (the original output, unchanged) and `operation_summary`.
+
+The summary counts the algorithm's major operations:
+
+| Field | Meaning |
+|---|---|
+| `decisions` | Branch decisions: 1 empty-input check, plus one zero-coefficient check per element of `a` |
+| `zero_rows_skipped` | Coefficients of `a` that were zero, so their inner loop was skipped |
+| `multiplications` | Number of `a[i]*b[j]` products computed |
+| `additions` | Number of accumulations into `result[i+j]` |
+| `total_operations` | `decisions + multiplications + additions` |
+
+```python
+from typing import Dict, List, Union
+
+
+def multiply_polynomials(
+    a: List[int],
+    b: List[int],
+    include_summary: bool = False,
+) -> Union[List[int], Dict[str, object]]:
+    """Multiply two integer polynomials exactly (ascending-degree coefficients).
+
+    Default (include_summary=False): returns the coefficient list, exactly as
+    before. Length is len(a)+len(b)-1; empty input gives [0].
+
+    include_summary=True: returns
+        {"coefficients": <same list>, "operation_summary": {...}}
+    """
+    decisions = 1  # the empty-input check
+    zero_rows_skipped = 0
+    multiplications = 0
+    additions = 0
+
+    if not a or not b:
+        result = [0]
+    else:
+        result = [0] * (len(a) + len(b) - 1)
+        for i, ai in enumerate(a):
+            decisions += 1  # zero-coefficient check
+            if ai == 0:
+                zero_rows_skipped += 1
+                continue
+            for j, bj in enumerate(b):
+                result[i + j] += ai * bj
+                multiplications += 1
+                additions += 1
+
+    if not include_summary:
+        return result
+
+    return {
+        "coefficients": result,
+        "operation_summary": {
+            "decisions": decisions,
+            "zero_rows_skipped": zero_rows_skipped,
+            "multiplications": multiplications,
+            "additions": additions,
+            "total_operations": decisions + multiplications + additions,
+        },
+    }
+
+
+if __name__ == "__main__":
+    # Original behavior is unchanged when the feature is off.
+    assert multiply_polynomials([1, 2], [3, -1]) == [3, 5, -2]
+    assert multiply_polynomials([1, -1], [1, 1]) == [1, 0, -1]
+    assert multiply_polynomials([0], [5, 7]) == [0, 0]
+    assert multiply_polynomials([], [1, 2]) == [0]
+    assert multiply_polynomials([10**30, -1], [10**30]) == [10**60, -(10**30)]
+
+    # Feature enabled: same coefficients plus a deterministic summary.
+    r = multiply_polynomials([1, 2], [3, -1], include_summary=True)
+    assert r["coefficients"] == [3, 5, -2]
+    assert r["operation_summary"] == {
+        "decisions": 3, "zero_rows_skipped": 0,
+        "multiplications": 4, "additions": 4, "total_operations": 11,
+    }
+
+    r = multiply_polynomials([0], [5, 7], include_summary=True)
+    assert r["coefficients"] == [0, 0]
+    assert r["operation_summary"]["zero_rows_skipped"] == 1
+    assert r["operation_summary"]["total_operations"] == 2
+
+    r = multiply_polynomials([], [1, 2], include_summary=True)
+    assert r["coefficients"] == [0]
+    assert r["operation_summary"]["total_operations"] == 1
+
+    print("All tests passed.")
+```
+
+**Notes**
+- For non-empty inputs, `multiplications == additions == (non-zero coefficients of a) × len(b)`, so the summary reflects how much work the zero-skip optimization saved.
+- The counts depend only on the inputs, so repeated runs give identical summaries.
+- If you'd rather have the summary as a separate return value (a tuple) instead of a dict, that's a small change, but the dict makes it clear which fields are original and which are new.

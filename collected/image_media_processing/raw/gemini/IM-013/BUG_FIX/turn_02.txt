@@ -1,0 +1,80 @@
+To analyze how the row count was calculated in the implementation, let's examine the integer arithmetic expression used:
+
+$$\text{rows} = \frac{\text{total\_images} + \text{columns} - 1}{\text{columns}}$$
+
+Let $n = \text{total\_images}$ and $c = \text{columns}$:
+
+1. **Standard floor division:** $n \mathbin{/\!/} c$
+* For $n = 10$ images and $c = 4$ columns: $10 \mathbin{/\!/} 4 = 2$ rows (which would drop 2 images).
+
+
+2. **The implemented expression:** $(n + c - 1) \mathbin{/\!/} c$
+* For $n = 10$ images and $c = 4$ columns: $(10 + 4 - 1) \mathbin{/\!/} 4 = 13 \mathbin{/\!/} 4 = 3$ rows.
+* For $n = 12$ images and $c = 4$ columns: $(12 + 4 - 1) \mathbin{/\!/} 4 = 15 \mathbin{/\!/} 4 = 3$ rows.
+* For $n = 1$ image and $c = 4$ columns: $(1 + 4 - 1) \mathbin{/\!/} 4 = 4 \mathbin{/\!/} 4 = 1$ row.
+
+
+3. **Mathematical ceiling division:** $\lceil n / c \rceil$
+* For $n = 10, c = 4$: $\lceil 10 / 4 \rceil = \lceil 2.5 \rceil = 3$ rows.
+
+
+
+The expression `(total_images + columns - 1) // columns` is the standard integer formula for ceiling division $\lceil n / c \rceil$, so the original implementation was already correctly accounting for partial trailing rows and not dropping any images.
+
+However, to eliminate ambiguity and make the intent explicit to readers, we can replace the integer trick with `math.ceil()`:
+
+```python
+import math
+import os
+from PIL import Image, ImageOps
+
+def build_contact_sheet(input_dir: str, output_path: str, thumb_size: tuple[int, int], columns: int, padding: int = 10, bg_color: str = "white") -> None:
+    valid_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.webp')
+    
+    image_paths = [
+        os.path.join(input_dir, f) for f in sorted(os.listdir(input_dir))
+        if f.lower().endswith(valid_extensions)
+    ]
+    
+    if not image_paths:
+        raise ValueError(f"No supported images found in '{input_dir}'.")
+
+    cell_width, cell_height = thumb_size
+    total_images = len(image_paths)
+    
+    # Explicit ceiling division
+    rows = math.ceil(total_images / columns)
+    
+    canvas_width = columns * cell_width + (columns + 1) * padding
+    canvas_height = rows * cell_height + (rows + 1) * padding
+    
+    contact_sheet = Image.new("RGB", (canvas_width, canvas_height), color=bg_color)
+    
+    for idx, path in enumerate(image_paths):
+        row = idx // columns
+        col = idx % columns
+        
+        x = padding + col * (cell_width + padding)
+        y = padding + row * (cell_height + padding)
+        
+        try:
+            with Image.open(path) as img:
+                img = ImageOps.exif_transpose(img)
+                img = img.convert("RGBA")
+                
+                img.thumbnail((cell_width, cell_height), Image.Resampling.LANCZOS)
+                
+                offset_x = x + (cell_width - img.width) // 2
+                offset_y = y + (cell_height - img.height) // 2
+                
+                cell_bg = Image.new("RGBA", img.size, bg_color)
+                composite = Image.alpha_composite(cell_bg, img).convert("RGB")
+                
+                contact_sheet.paste(composite, (offset_x, offset_y))
+        except Exception as e:
+            print(f"Warning: Could not process '{path}': {e}")
+            
+    contact_sheet.save(output_path)
+    print(f"Contact sheet saved successfully to '{output_path}'.")
+
+```

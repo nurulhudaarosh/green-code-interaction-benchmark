@@ -1,0 +1,90 @@
+import heapq
+
+def simulate_queue(jobs, return_summary=False):
+    """
+    Simulates a non-preemptive priority queue server.
+    
+    :param jobs: List of tuples representing jobs:
+                 (job_id, arrival_time, duration, priority)
+    :param return_summary: Bool flag to request operation_summary output.
+    :return: (results_dict, avg_waiting_time) if return_summary=False,
+             else (results_dict, avg_waiting_time, operation_summary)
+    """
+    # Sort jobs by arrival time, tie-break by job_id
+    sorted_jobs = sorted(jobs, key=lambda x: (x[1], x[0]))
+    
+    n = len(sorted_jobs)
+    job_idx = 0
+    current_time = 0
+    pq = []  # Min-heap storing (-priority, arrival_time, job_id, duration)
+    
+    results = {}
+    
+    # Operation counters for the summary
+    pushes_count = 0
+    pops_count = 0
+    clock_advances_count = 0
+    
+    while job_idx < n or pq:
+        # If queue is empty and server is idle, jump time forward to next arrival
+        if not pq and current_time < sorted_jobs[job_idx][1]:
+            current_time = sorted_jobs[job_idx][1]
+            clock_advances_count += 1
+            
+        # Add all jobs that have arrived by current_time
+        while job_idx < n and sorted_jobs[job_idx][1] <= current_time:
+            j_id, arr_time, dur, prio = sorted_jobs[job_idx]
+            # Negate priority for Max-Heap behavior
+            heapq.heappush(pq, (-prio, arr_time, j_id, dur))
+            pushes_count += 1
+            job_idx += 1
+            
+        # Process the highest priority job
+        neg_prio, arr_time, j_id, dur = heapq.heappop(pq)
+        pops_count += 1
+        
+        start_time = current_time
+        wait_time = start_time - arr_time
+        completion_time = start_time + dur
+        current_time = completion_time
+        clock_advances_count += 1
+        
+        results[j_id] = {
+            "job_id": j_id,
+            "completion_time": completion_time,
+            "waiting_time": wait_time
+        }
+        
+    total_wait = sum(res["waiting_time"] for res in results.values())
+    avg_wait = total_wait / n if n > 0 else 0.0
+    
+    if return_summary:
+        operation_summary = {
+            "job_pushes": pushes_count,
+            "job_pops": pops_count,
+            "clock_advances": clock_advances_count,
+            "total_major_operations": pushes_count + pops_count + clock_advances_count
+        }
+        return results, avg_wait, operation_summary
+    
+    return results, avg_wait
+
+
+# --- Example Usage ---
+if __name__ == "__main__":
+    sample_jobs = [
+        (1, 0, 5, 2),  # Job 1: arr 0, dur 5, prio 2
+        (2, 1, 3, 5),  # Job 2: arr 1, dur 3, prio 5
+        (3, 2, 4, 5),  # Job 3: arr 2, dur 4, prio 5
+        (4, 10, 2, 1)  # Job 4: arr 10, dur 2, prio 1
+    ]
+
+    # Standard call (Original requirement unchanged)
+    results, avg_wait = simulate_queue(sample_jobs)
+    print(f"Average Waiting Time: {avg_wait:.2f}")
+
+    # Feature-enabled call
+    results, avg_wait, summary = simulate_queue(sample_jobs, return_summary=True)
+    print("\nOperation Summary:")
+    for k, v in summary.items():
+        print(f"  {k}: {v}")

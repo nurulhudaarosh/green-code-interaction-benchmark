@@ -1,0 +1,11 @@
+{
+  "task_id": "AC-019",
+  "model": "gemini",
+  "interaction": "ONE_SHOT",
+  "turn": 1,
+  "saved_at": "2026-09-30T12:49:18.099503+00:00",
+  "response_sha256": "33077d111c190788b631060fda1fc28e0a76a6fb8d5b50f63be5b8517bb397c4",
+  "code_sha256": "cc2a2918286a17b479d85f3be82c77d4d2c88b5ee5b0d1678577ba1119b2bd26",
+  "raw_file": ".collection/raw/gemini/AC-019/ONE_SHOT/turn_01.txt",
+  "code_file": ".collection/code/gemini/AC-019/ONE_SHOT/code.py"
+}

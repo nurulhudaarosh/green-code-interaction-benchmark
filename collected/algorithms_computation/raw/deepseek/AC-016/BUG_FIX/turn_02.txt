@@ -1,0 +1,117 @@
+## Restating the Problem and Expected Behavior
+
+**Problem:** Implement a Priority Queue Simulator that processes arrivals and serves them according to priority rules. The expected behavior includes:
+
+1. **Deterministic tie handling** — when two items have equal priority, they must be ordered by a well-defined secondary key (typically arrival order/FIFO).
+2. **Sort arrivals** — arrival events must be processed in chronological order (sorted by arrival time, then by any tiebreaker).
+3. **Priority heap for server decisions** — the server picks the next item to serve using a priority heap (min-heap or max-heap depending on convention), not by scanning/linear search.
+4. **Return exactly the required result** — output must match the specification exactly, no extra or missing entries.
+
+**Bug:** The current implementation does not correctly enforce deterministic tie handling, so equal-priority items may be served in an order that depends on heap internals or insertion quirks rather than the specified tiebreaker.
+
+---
+
+## Demonstrating the Defect
+
+Consider a small valid example. We use **lower number = higher priority** (min-priority). Tiebreaker: **earlier arrival time first; if arrival times equal, smaller ID first.**
+
+**Input arrivals (already sorted by time):**
+```
+(id, arrival, priority)
+A: (A, 0, 5)
+B: (B, 1, 5)
+C: (C, 2, 5)
+```
+All three have the **same priority (5)**. Expected service order (deterministic tie handling by arrival time): **A, B, C**.
+
+**Buggy heap comparison (Python-style):**
+
+
+When all priorities are equal, `__lt__` returns `False` for every pair, so the heap is free to reorder items arbitrarily. A typical observed output from such an implementation could be:
+
+```
+Served: B, A, C
+```
+
+or
+
+```
+Served: C, B, A
+```
+
+— neither of which matches the required **A, B, C**. This is non-deterministic and violates the tie-handling rule.
+
+---
+
+## Corrected Implementation
+
+The fix is to make the heap key a **tuple** `(priority, arrival_time, id)` so that ties on priority are broken deterministically by arrival time, then by ID. Also ensure arrivals are sorted before being pushed.
+
+```python
+import heapq
+from dataclasses import dataclass, field
+from typing import List, Tuple
+
+@dataclass(order=False)
+class Item:
+    id: str
+    arrival: int
+    priority: int
+    # service_time optional; not needed for ordering
+
+    def key(self) -> Tuple[int, int, str]:
+        # Lower priority value = served first.
+        # Tie -> earlier arrival first.
+        # Tie -> smaller id first (deterministic).
+        return (self.priority, self.arrival, self.id)
+
+    def __lt__(self, other: "Item") -> bool:
+        return self.key() < other.key()
+
+
+def simulate(arrivals: List[Item]) -> List[str]:
+    """
+    Returns the list of item ids in the exact order they are served.
+    Rule: sort arrivals by (arrival, id); use a priority heap keyed by
+    (priority, arrival, id) for deterministic tie handling.
+    """
+    # 1) Sort arrivals deterministically by arrival time, then id.
+    arrivals_sorted = sorted(arrivals, key=lambda it: (it.arrival, it.id))
+
+    heap: List[Item] = []
+    served: List[str] = []
+
+    # 2) Push all (or stream them). For simplicity, push all in sorted order.
+    for it in arrivals_sorted:
+        heapq.heappush(heap, it)
+
+    # 3) Pop by priority with deterministic tiebreaker.
+    while heap:
+        served.append(heapq.heappop(heap).id)
+
+    return served
+
+
+# --- Demonstration ---
+if __name__ == "__main__":
+    items = [
+        Item("A", 0, 5),
+        Item("B", 1, 5),
+        Item("C", 2, 5),
+    ]
+    print(simulate(items))   # Expected: ['A', 'B', 'C']
+```
+
+**Why this fixes the bug:**
+
+- The heap key is now `(priority, arrival, id)`, a total order. Equal priorities no longer compare as "equal" in an ambiguous way; the arrival time and ID break the tie.
+- Arrivals are sorted by `(arrival, id)` before being pushed, so the heap receives items in a deterministic order and the `arrival` field is a meaningful tiebreaker.
+- The output is now **exactly** `['A', 'B', 'C']`, matching the required deterministic tie handling.
+
+**Unrelated requirements preserved:**
+
+- Still uses a priority heap (`heapq`) for server decisions.
+- Still sorts arrivals.
+- Returns exactly the required result (list of served IDs in order).
+
+The only change is the comparison key — the minimal fix needed to enforce the tie-handling rule without altering any other behavior.

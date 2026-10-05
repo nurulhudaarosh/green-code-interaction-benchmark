@@ -1,0 +1,204 @@
+"""
+Problem Restatement
+-------------------
+Given a list of positive integers and a target sum, determine whether some
+subset of the integers sums exactly to the target.
+
+If multiple valid subsets exist:
+1. Choose the subset containing the fewest elements.
+2. If several subsets use the same minimum number of elements, choose the
+   lexicographically smallest list of original indices.
+
+Key Constraints
+---------------
+- Each element can be selected at most once (0/1 subset sum).
+- All input integers are positive.
+- The target is a non-negative integer.
+- Indices are 0-based and refer to the original input order.
+- The solution must be deterministic.
+- If no subset reaches the target, return that no solution exists.
+- Only the Python standard library is used.
+
+Required Output
+---------------
+A dictionary containing:
+- "possible": True/False
+- "count": minimum number of elements when possible, otherwise -1
+- "indices": lexicographically smallest index list among minimum-cardinality
+  solutions, otherwise []
+
+Algorithm
+---------
+Use 0/1 subset-sum dynamic programming.
+
+For each reachable sum, store:
+- the minimum number of selected elements needed to reach that sum
+- the lexicographically smallest index sequence achieving that minimum
+
+Each input value is processed once and sums are updated in descending order,
+ensuring that every item is used at most once.
+
+When a candidate has fewer elements, it replaces the existing solution.
+When cardinalities are equal, the lexicographically smaller index list is kept.
+Because indices are processed in increasing order and the complete sequence is
+stored, the final result is deterministic.
+"""
+
+
+from typing import List, Dict, Any
+
+
+def subset_sum_min_lex(
+    values: List[int],
+    target: int
+) -> Dict[str, Any]:
+    """
+    Determine whether a subset of positive integers sums exactly to target.
+
+    Tie-breaking:
+    1. Minimum number of selected elements.
+    2. Lexicographically smallest list of original indices.
+
+    Returns:
+        {
+            "possible": bool,
+            "count": int,
+            "indices": List[int]
+        }
+    """
+
+    if target < 0:
+        return {
+            "possible": False,
+            "count": -1,
+            "indices": []
+        }
+
+    # dp[s] = (number_of_elements, index_list)
+    # None means sum s is currently unreachable.
+    dp = [None] * (target + 1)
+    dp[0] = (0, [])
+
+    for index, value in enumerate(values):
+        if value <= 0:
+            raise ValueError("All input integers must be positive.")
+
+        # Descending order makes this a 0/1 subset-sum DP.
+        for current_sum in range(target, value - 1, -1):
+            previous = dp[current_sum - value]
+
+            if previous is None:
+                continue
+
+            previous_count, previous_indices = previous
+
+            candidate = (
+                previous_count + 1,
+                previous_indices + [index]
+            )
+
+            existing = dp[current_sum]
+
+            if existing is None:
+                dp[current_sum] = candidate
+            else:
+                existing_count, existing_indices = existing
+
+                if candidate[0] < existing_count:
+                    dp[current_sum] = candidate
+                elif (
+                    candidate[0] == existing_count
+                    and candidate[1] < existing_indices
+                ):
+                    dp[current_sum] = candidate
+
+    result = dp[target]
+
+    if result is None:
+        return {
+            "possible": False,
+            "count": -1,
+            "indices": []
+        }
+
+    count, indices = result
+
+    return {
+        "possible": True,
+        "count": count,
+        "indices": indices
+    }
+
+
+# -------------------------
+# Tests
+# -------------------------
+
+def run_tests() -> None:
+    # Basic possible case.
+    assert subset_sum_min_lex([3, 1, 4, 2], 6) == {
+        "possible": True,
+        "count": 2,
+        "indices": [0, 2]
+    }
+
+    # Prefer fewer elements:
+    # 2 + 3 + 5 = 10 uses 3 elements, while 10 alone uses 1.
+    assert subset_sum_min_lex([2, 3, 5, 10], 10) == {
+        "possible": True,
+        "count": 1,
+        "indices": [3]
+    }
+
+    # Equal-cardinality solutions:
+    # [0, 1] => 2 + 3 = 5
+    # [0, 2] => 2 + 3 = 5
+    # Repeated values create a deterministic lexicographic tie.
+    assert subset_sum_min_lex([2, 3, 3, 8], 5) == {
+        "possible": True,
+        "count": 2,
+        "indices": [0, 1]
+    }
+
+    # No solution.
+    assert subset_sum_min_lex([2, 4, 8], 7) == {
+        "possible": False,
+        "count": -1,
+        "indices": []
+    }
+
+    # Empty subset for target 0.
+    assert subset_sum_min_lex([5, 7, 9], 0) == {
+        "possible": True,
+        "count": 0,
+        "indices": []
+    }
+
+    # Single-element solution.
+    assert subset_sum_min_lex([11, 4, 7], 7) == {
+        "possible": True,
+        "count": 1,
+        "indices": [2]
+    }
+
+    # Repeated values with multiple equivalent choices.
+    assert subset_sum_min_lex([4, 4, 4, 4], 8) == {
+        "possible": True,
+        "count": 2,
+        "indices": [0, 1]
+    }
+
+    # Another lexicographic tie:
+    # 1 + 5 and 2 + 4 both sum to 6.
+    # [0, 2] is lexicographically smaller than [1, 3].
+    assert subset_sum_min_lex([1, 2, 5, 4], 6) == {
+        "possible": True,
+        "count": 2,
+        "indices": [0, 2]
+    }
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()

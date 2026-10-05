@@ -1,0 +1,104 @@
+import os
+from collections import defaultdict
+import cv2
+import numpy as np
+
+
+class UnionFind:
+    def __init__(self, elements):
+        self.parent = {elem: elem for elem in elements}
+
+    def find(self, i):
+        if self.parent[i] == i:
+            return i
+        self.parent[i] = self.find(self.parent[i])  # Path compression
+        return self.parent[i]
+
+    def union(self, i, j):
+        root_i = self.find(i)
+        root_j = self.find(j)
+        if root_i != root_j:
+            self.parent[root_i] = root_j
+
+
+def compute_normalized_gray_hist(image_path, bins=256):
+    """Loads an image, converts to grayscale, and computes its normalized L1 histogram."""
+    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        return None
+
+    # Compute 1D histogram over [0, 256] range
+    hist = cv2.calcHist([img], [0], None, [bins], [0, 256])
+
+    # Normalize with L1 norm (sum of absolute values = 1.0)
+    hist = cv2.normalize(hist, hist, norm_type=cv2.NORM_L1)
+    return hist
+
+
+def find_near_duplicates(input_dir, threshold=0.1):
+    """Finds near-duplicate image clusters using normalized grayscale histogram L1 distance.
+
+    Args:
+        input_dir (str): Path to the directory containing images.
+        threshold (float): L1 distance threshold below which images are considered duplicates
+                          (0.0 means identical, values between 0.05 and 0.15 are typical).
+
+    Returns:
+        list[list[str]]: A list of clusters, where each cluster is a list of image filenames
+                        with 2 or more near-duplicates.
+    """
+    valid_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff"}
+
+    # 1. Collect image paths
+    image_files = [
+        f
+        for f in os.listdir(input_dir)
+        if os.path.splitext(f)[1].lower() in valid_extensions
+    ]
+
+    # 2. Extract normalized histograms
+    histograms = {}
+    for filename in image_files:
+        path = os.path.join(input_dir, filename)
+        hist = compute_normalized_gray_hist(path)
+        if hist is not None:
+            histograms[filename] = hist
+
+    valid_images = list(histograms.keys())
+    uf = UnionFind(valid_images)
+
+    # 3. Compare all pairs and merge connected components (Union-Find)
+    n = len(valid_images)
+    for i in range(n):
+        img_a = valid_images[i]
+        hist_a = histograms[img_a]
+
+        for j in range(i + 1, n):
+            img_b = valid_images[j]
+            hist_b = histograms[img_b]
+
+            # Calculate L1 distance (sum of absolute differences)
+            # Equivalent to cv2.compareHist(hist_a, hist_b, cv2.HISTCMP_L1)
+            l1_distance = np.sum(np.abs(hist_a - hist_b))
+
+            if l1_distance <= threshold:
+                uf.union(img_a, img_b)
+
+    # 4. Group filenames by their root representative
+    clusters = defaultdict(list)
+    for filename in valid_images:
+        root = uf.find(filename)
+        clusters[root].append(filename)
+
+    # Filter out clusters with only 1 image (non-duplicates)
+    duplicate_clusters = [
+        group for group in clusters.values() if len(group) > 1
+    ]
+
+    return duplicate_clusters
+
+
+# Example Usage:
+# clusters = find_near_duplicates('./photo_folder', threshold=0.08)
+# for idx, cluster in enumerate(clusters, 1):
+#     print(f"Cluster {idx}: {cluster}")

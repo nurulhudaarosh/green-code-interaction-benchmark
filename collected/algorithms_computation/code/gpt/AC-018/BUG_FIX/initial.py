@@ -1,0 +1,78 @@
+"""
+Problem Restatement:
+Multiply two integer polynomials exactly and return their coefficient array.
+Coefficients may be negative.
+
+Key Constraints:
+- Polynomial coefficients are integers.
+- Negative coefficients are allowed.
+- Direct coefficient convolution is required.
+- The quadratic O(n*m) computation is practical under the stated constraints.
+- The solution must be deterministic.
+- Use only Python's standard library.
+- No network access, APIs, external services, randomness, or human interaction.
+
+Required Output:
+- A list containing the coefficients of the product polynomial in
+  increasing order of degree.
+- If A has length n and B has length m, the result has n + m - 1
+  coefficients when both polynomials are non-empty.
+- The coefficient at index k is:
+      result[k] = sum(A[i] * B[k-i])
+  over all valid i.
+
+Algorithm:
+Use direct coefficient convolution. For every coefficient of the first
+polynomial, multiply it by every coefficient of the second polynomial
+and add the product to the appropriate result position.
+
+Time Complexity: O(n * m)
+Space Complexity: O(n + m)
+"""
+
+
+def multiply_polynomials(a, b):
+    """Return the exact coefficient array of polynomial a * polynomial b."""
+    if not a or not b:
+        return []
+
+    result = [0] * (len(a) + len(b) - 1)
+
+    for i, coefficient_a in enumerate(a):
+        for j, coefficient_b in enumerate(b):
+            result[i + j] += coefficient_a * coefficient_b
+
+    return result
+
+
+def run_tests():
+    # Basic multiplication:
+    # (1 + 2x) * (3 + 4x) = 3 + 10x + 8x^2
+    assert multiply_polynomials([1, 2], [3, 4]) == [3, 10, 8]
+
+    # Negative coefficients:
+    # (2 - 3x) * (-1 + 4x)
+    # = -2 + 11x - 12x^2
+    assert multiply_polynomials([2, -3], [-1, 4]) == [-2, 11, -12]
+
+    # Single-constant polynomials.
+    assert multiply_polynomials([7], [-3]) == [-21]
+
+    # Zero polynomial.
+    assert multiply_polynomials([0, 2], [3, 4]) == [0, 6, 8]
+
+    # Empty polynomial representation.
+    assert multiply_polynomials([], [1, 2]) == []
+
+    # Disconnected zero coefficients:
+    # (1 + x^2) * (1 - x^2) = 1 - x^4
+    assert multiply_polynomials([1, 0, 1], [1, 0, -1]) == [1, 0, 0, 0, -1]
+
+    # Larger integer coefficients.
+    assert multiply_polynomials([10, -20, 30], [-4, 5]) == [
+        -40, 130, -220, 150
+    ]
+
+
+if __name__ == "__main__":
+    run_tests()

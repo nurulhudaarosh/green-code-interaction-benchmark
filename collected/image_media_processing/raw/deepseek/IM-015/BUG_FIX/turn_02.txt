@@ -1,0 +1,70 @@
+Here's the fixed `merge_channels`. The dimension check is now performed **inside** the `with` block (the images must still be open), and it happens **before** `Image.merge` is called:
+
+```python
+def merge_channels(r_path, g_path, b_path, output_path):
+    """
+    Recombine three single-channel grayscale images into one RGB image.
+
+    Args:
+        r_path (str | Path): red channel image
+        g_path (str | Path): green channel image
+        b_path (str | Path): blue channel image
+        output_path (str | Path): where to save the merged RGB image
+
+    Raises:
+        ValueError: if the three channel images do not share identical
+                    width and height.
+    """
+    r_path = Path(r_path)
+    g_path = Path(g_path)
+    b_path = Path(b_path)
+    output_path = Path(output_path)
+
+    with Image.open(r_path) as r_img, \
+         Image.open(g_path) as g_img, \
+         Image.open(b_path) as b_img:
+
+        r = r_img.convert("L")
+        g = g_img.convert("L")
+        b = b_img.convert("L")
+
+        # --- Early, explicit dimension validation -------------------
+        if not (r.size == g.size == b.size):
+            raise ValueError(
+                "Cannot merge channels: image dimensions do not match. "
+                f"R={r_path.name} {r.size}, "
+                f"G={g_path.name} {g.size}, "
+                f"B={b_path.name} {b.size}."
+            )
+        # ------------------------------------------------------------
+
+        merged = Image.merge("RGB", (r, g, b))
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    merged.save(output_path)
+    print(f"Merged channels -> {output_path}")
+```
+
+### What changed
+
+- The size check `r.size == g.size == b.size` is now a hard precondition before `Image.merge`, so Pillow never gets the chance to raise its own opaque `ValueError: images do not match`.
+- The error message names **which** files were involved and reports each one's `(width, height)`, so the caller can immediately see which channel is the odd one out.
+- The check sits inside the `with` block because `Image.open` is lazy — `.size` is only reliably available while the file handles are open. (Calling `.convert("L")` already forces a load, but keeping the check in-block is the safe pattern.)
+- A `Raises:` section was added to the docstring for clarity.
+
+### Why this matters
+
+Pillow's internal merge error looks like:
+
+```
+ValueError: images do not match
+```
+
+…with no indication of which image, or what the actual vs. expected sizes were. With the fix you get something actionable, e.g.:
+
+```
+ValueError: Cannot merge channels: image dimensions do not match.
+R=photo_R.png (1920, 1080), G=photo_G.png (1920, 1080), B=photo_B.png (1280, 720).
+```
+
+If you want the check to be even stricter — e.g. also reject mode mismatches before conversion — you could add a `mode` comparison too, but since `.convert("L")` normalizes everything to single-channel `L`, the size check is the only one that can actually cause `merge` to fail.

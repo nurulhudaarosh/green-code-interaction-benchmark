@@ -1,0 +1,55 @@
+import re
+import sys
+from typing import Callable, Iterable, Optional
+
+_WS = re.compile(r"\s+")
+
+
+def _normalize(line: str) -> str:
+    return _WS.sub(" ", line.strip()).casefold()
+
+
+def dedup_lines(
+    lines: Iterable[str],
+    mode: str = "exact",
+    normalizer: Optional[Callable[[str], str]] = None,
+) -> tuple[list[str], list[int]]:
+    """Dedup lines, keep first-occurrence order.
+    Returns (unique_lines, counts), counts aligned with unique_lines."""
+    if mode == "exact":
+        key = lambda s: s
+    elif mode == "normalized":
+        key = normalizer or _normalize
+    else:
+        raise ValueError(f"mode must be 'exact' or 'normalized', got {mode!r}")
+
+    index: dict[str, int] = {}
+    unique: list[str] = []
+    counts: list[int] = []
+
+    for line in lines:
+        k = key(line)
+        i = index.get(k)
+        if i is None:
+            index[k] = len(unique)
+            unique.append(line)
+            counts.append(1)
+        else:
+            counts[i] += 1
+
+    return unique, counts
+
+
+def dedup_text(text: str, mode: str = "exact") -> tuple[str, list[int]]:
+    unique, counts = dedup_lines(text.splitlines(), mode)
+    return "\n".join(unique), counts
+
+
+if __name__ == "__main__":
+    # python dedup_lines.py [exact|normalized] [-c] < input.txt
+    args = sys.argv[1:]
+    show_counts = "-c" in args
+    mode = next((a for a in args if a in ("exact", "normalized")), "exact")
+    unique, counts = dedup_lines((l.rstrip("\n") for l in sys.stdin), mode)
+    for line, n in zip(unique, counts):
+        print(f"{n:>6} {line}" if show_counts else line)

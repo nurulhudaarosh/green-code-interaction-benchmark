@@ -1,0 +1,91 @@
+import re
+from collections import Counter
+from typing import Dict, Union
+
+
+def analyze_error_log(path: str) -> Dict[str, int]:
+    """
+    Read a server log file and return counts of normalized ERROR signatures.
+
+    Normalization strips variable data (timestamps, IPs, numbers, UUIDs, etc.)
+    so that similar errors are grouped into a single signature.
+
+    Args:
+        path: Path to the log file.
+
+    Returns:
+        A dict mapping normalized error signatures to their occurrence counts,
+        sorted by count (descending).
+    """
+    # Patterns to replace with placeholders during normalization.
+    # Order matters: more specific patterns should run first.
+    patterns = [
+        (re.compile(r'\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
+                    r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b'), '<UUID>'),
+        (re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b'), '<IP>'),
+        (re.compile(r'\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?'
+                    r'(?:Z|[+-]\d{2}:?\d{2})?\b'), '<TIMESTAMP>'),
+        (re.compile(r'\b\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\b'), '<TIME>'),
+        (re.compile(r'\b0x[0-9a-fA-F]+\b'), '<HEX>'),
+        (re.compile(r'\b[0-9a-fA-F]{16,}\b'), '<HEX>'),
+        (re.compile(r'\b\d+\.\d+\b'), '<FLOAT>'),
+        (re.compile(r'\b\d+\b'), '<NUM>'),
+        (re.compile(r'"(?:[^"\\]|\\.)*"'), '"<STR>"'),
+        (re.compile(r"'(?:[^'\\]|\\.)*'"), "'<STR>'"),
+    ]
+
+    # Matches: optional timestamp, level (ERROR/ERR/FATAL/CRITICAL),
+    # optional logger/thread info, and the message.
+    error_line_re = re.compile(
+        r'^(?:\S+\s+)?'                       # optional leading token(s)
+        r'(?:\[?(?P<level>ERROR|ERR|FATAL|CRITICAL)\]?)\b'  # level
+        r'[:\s]*(?P<message>.*)$',
+        re.IGNORECASE,
+    )
+
+    # Fallback: catch tracebacks/continuation lines following an error.
+    error_counts: Counter = Counter()
+    in_error_block = False
+
+    def normalize(text: str) -> str:
+        text = text.strip()
+        for pattern, placeholder in patterns:
+            text = pattern.sub(placeholder, text)
+        return re.sub(r'\s+', ' ', text)
+
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            for raw_line in f:
+                line = raw_line.rstrip('\n')
+
+                match = error_line_re.match(line)
+                if match:
+                    in_error_block = True
+                    signature = normalize(match.group('message'))
+                    error_counts[signature] += 1
+                elif in_error_block:
+                    stripped = line.strip()
+                    # Continuation lines (indented tracebacks, "Caused by:", etc.)
+                    if stripped and (line.startswith((' ', '\t'))
+                                     or stripped.lower().startswith(
+                                         ('caused by', 'traceback', 'at ', 'file '))):
+                        signature = normalize(stripped)
+                        error_counts[signature] += 1
+                    else:
+                        in_error_block = False
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Log file not found: {path}")
+
+    # Return sorted by count (descending)
+    return dict(error_counts.most_common())
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) != 2:
+        print("Usage: python analyze_error_log.py <path_to_log>")
+        sys.exit(1)
+
+    results = analyze_error_log(sys.argv[1])
+    for signature, count in results.items():
+        print(f"{count:>6}  {signature}")

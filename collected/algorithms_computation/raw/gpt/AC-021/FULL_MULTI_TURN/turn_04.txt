@@ -1,0 +1,533 @@
+```python
+from typing import List, Dict, Any
+
+
+# ============================================================
+# Problem
+# ============================================================
+#
+# Given a list of positive integers and a target sum, determine
+# whether a subset of the integers sums exactly to the target.
+#
+# Requirements:
+#   1. Each element may be used at most once (0/1 subset sum).
+#   2. Among all valid subsets, choose the one with the fewest
+#      elements.
+#   3. If multiple minimum-cardinality subsets exist, choose the
+#      lexicographically smallest list of 0-based indices.
+#   4. The result must be deterministic.
+#   5. Use 0/1 subset-sum DP storing cardinality and reconstruction
+#      sequence.
+#   6. All input numbers must be positive integers.
+#   7. target == 0 is valid and is solved by the empty subset.
+#   8. An empty input list is valid:
+#        - target == 0 -> empty subset is the solution.
+#        - target > 0  -> no solution.
+#
+# Original output:
+#
+#   Successful:
+#       {
+#           "possible": True,
+#           "indices": [...],
+#           "cardinality": ...,
+#           "sum": target
+#       }
+#
+#   Impossible:
+#       {
+#           "possible": False,
+#           "indices": [],
+#           "cardinality": 0,
+#           "sum": 0
+#       }
+#
+# Optional feature:
+#   If include_operation_summary=True, also return:
+#
+#       "operation_summary": {
+#           "major_operations": <deterministic count>
+#       }
+#
+# The original output remains unchanged when the optional feature
+# is disabled.
+# ============================================================
+
+
+def minimum_cardinality_subset_sum(
+    nums: List[int],
+    target: int,
+    include_operation_summary: bool = False
+) -> Dict[str, Any]:
+    """
+    Solve minimum-cardinality 0/1 subset sum with deterministic
+    lexicographic tie-breaking.
+
+    nums:
+        List of positive integers.
+
+    target:
+        Required exact sum.
+
+    include_operation_summary:
+        If True, include a deterministic count of major DP
+        transitions considered.
+
+    Returns:
+        {
+            "possible": bool,
+            "indices": List[int],
+            "cardinality": int,
+            "sum": int
+        }
+
+    If include_operation_summary=True, the result additionally
+    contains:
+
+        "operation_summary": {
+            "major_operations": int
+        }
+    """
+
+    # Negative targets cannot be formed from positive integers.
+    if target < 0:
+        result = {
+            "possible": False,
+            "indices": [],
+            "cardinality": 0,
+            "sum": 0
+        }
+
+        if include_operation_summary:
+            result["operation_summary"] = {
+                "major_operations": 0
+            }
+
+        return result
+
+    # Empty input is valid.
+    #
+    # The only possible sum is 0, using the empty subset.
+    if not nums:
+        if target == 0:
+            result = {
+                "possible": True,
+                "indices": [],
+                "cardinality": 0,
+                "sum": 0
+            }
+        else:
+            result = {
+                "possible": False,
+                "indices": [],
+                "cardinality": 0,
+                "sum": 0
+            }
+
+        if include_operation_summary:
+            result["operation_summary"] = {
+                "major_operations": 0
+            }
+
+        return result
+
+    # The problem requires positive integers.
+    if any(value <= 0 for value in nums):
+        raise ValueError("All numbers must be positive integers.")
+
+    # dp[s] = (minimum cardinality, reconstruction sequence)
+    #
+    # Sum 0 is always reachable using the empty subset.
+    dp: Dict[int, tuple[int, List[int]]] = {
+        0: (0, [])
+    }
+
+    major_operations = 0
+
+    for index, value in enumerate(nums):
+        # Only use states that existed before this element.
+        #
+        # This explicitly enforces the 0/1 constraint and prevents
+        # the same element from being used multiple times.
+        previous_states = list(dp.items())
+
+        for current_sum, (cardinality, indices) in previous_states:
+            new_sum = current_sum + value
+
+            # Because all values are positive, sums greater than
+            # target can never become useful later.
+            if new_sum > target:
+                continue
+
+            # Count this valid candidate transition.
+            major_operations += 1
+
+            candidate_cardinality = cardinality + 1
+            candidate_indices = indices + [index]
+
+            existing = dp.get(new_sum)
+
+            # First way to reach this sum.
+            if existing is None:
+                dp[new_sum] = (
+                    candidate_cardinality,
+                    candidate_indices
+                )
+                continue
+
+            existing_cardinality, existing_indices = existing
+
+            # Primary tie-breaking rule:
+            # choose fewer elements.
+            if candidate_cardinality < existing_cardinality:
+                dp[new_sum] = (
+                    candidate_cardinality,
+                    candidate_indices
+                )
+
+            # Secondary tie-breaking rule:
+            # among equal cardinalities, choose the
+            # lexicographically smallest index list.
+            elif (
+                candidate_cardinality == existing_cardinality
+                and candidate_indices < existing_indices
+            ):
+                dp[new_sum] = (
+                    candidate_cardinality,
+                    candidate_indices
+                )
+
+    # Reconstruct the required target state.
+    if target not in dp:
+        result = {
+            "possible": False,
+            "indices": [],
+            "cardinality": 0,
+            "sum": 0
+        }
+    else:
+        cardinality, indices = dp[target]
+
+        result = {
+            "possible": True,
+            "indices": indices,
+            "cardinality": cardinality,
+            "sum": target
+        }
+
+    # Preserve all original fields exactly when the feature
+    # is not requested.
+    if include_operation_summary:
+        result["operation_summary"] = {
+            "major_operations": major_operations
+        }
+
+    return result
+
+
+# ============================================================
+# Tests
+# ============================================================
+
+def run_tests() -> None:
+
+    # --------------------------------------------------------
+    # 1. Smallest permitted non-empty input.
+    #
+    # One positive integer and target equal to that integer.
+    # --------------------------------------------------------
+    result = minimum_cardinality_subset_sum(
+        [1],
+        1
+    )
+
+    assert result == {
+        "possible": True,
+        "indices": [0],
+        "cardinality": 1,
+        "sum": 1
+    }
+
+    # --------------------------------------------------------
+    # 2. Smallest permitted input with no solution.
+    #
+    # The only element cannot produce target 2.
+    # --------------------------------------------------------
+    result = minimum_cardinality_subset_sum(
+        [1],
+        2
+    )
+
+    assert result == {
+        "possible": False,
+        "indices": [],
+        "cardinality": 0,
+        "sum": 0
+    }
+
+    # --------------------------------------------------------
+    # 3. Empty input + target 0.
+    #
+    # The empty subset is a valid minimum-cardinality solution.
+    # --------------------------------------------------------
+    result = minimum_cardinality_subset_sum(
+        [],
+        0
+    )
+
+    assert result == {
+        "possible": True,
+        "indices": [],
+        "cardinality": 0,
+        "sum": 0
+    }
+
+    # --------------------------------------------------------
+    # 4. Empty input + positive target.
+    #
+    # There are no elements, so no positive target is possible.
+    # --------------------------------------------------------
+    result = minimum_cardinality_subset_sum(
+        [],
+        5
+    )
+
+    assert result == {
+        "possible": False,
+        "indices": [],
+        "cardinality": 0,
+        "sum": 0
+    }
+
+    # --------------------------------------------------------
+    # 5. Empty input with operation summary enabled.
+    #
+    # No DP transitions are possible.
+    # --------------------------------------------------------
+    result = minimum_cardinality_subset_sum(
+        [],
+        0,
+        include_operation_summary=True
+    )
+
+    assert result == {
+        "possible": True,
+        "indices": [],
+        "cardinality": 0,
+        "sum": 0,
+        "operation_summary": {
+            "major_operations": 0
+        }
+    }
+
+    # --------------------------------------------------------
+    # 6. Single-element target zero.
+    #
+    # Empty subset has cardinality 0, so it must beat [0].
+    # --------------------------------------------------------
+    result = minimum_cardinality_subset_sum(
+        [1],
+        0
+    )
+
+    assert result == {
+        "possible": True,
+        "indices": [],
+        "cardinality": 0,
+        "sum": 0
+    }
+
+    # --------------------------------------------------------
+    # 7. Minimum cardinality takes priority.
+    #
+    # [0, 1, 2] = 10
+    # [3, 4]    = 10
+    # [5]       = 10
+    #
+    # [5] must be selected because cardinality 1 is minimum.
+    # --------------------------------------------------------
+    result = minimum_cardinality_subset_sum(
+        [2, 3, 5, 4, 6, 10],
+        10
+    )
+
+    assert result == {
+        "possible": True,
+        "indices": [5],
+        "cardinality": 1,
+        "sum": 10
+    }
+
+    # --------------------------------------------------------
+    # 8. Lexicographic tie-breaking.
+    #
+    # [0, 3] -> 2 + 5 = 7
+    # [1, 2] -> 3 + 4 = 7
+    #
+    # Both have cardinality 2.
+    # [0, 3] is lexicographically smaller.
+    # --------------------------------------------------------
+    result = minimum_cardinality_subset_sum(
+        [2, 3, 4, 5],
+        7
+    )
+
+    assert result == {
+        "possible": True,
+        "indices": [0, 3],
+        "cardinality": 2,
+        "sum": 7
+    }
+
+    # --------------------------------------------------------
+    # 9. 0/1 constraint.
+    #
+    # 3 + 3 = 6 would require reusing the same element.
+    # Therefore the target is impossible.
+    # --------------------------------------------------------
+    result = minimum_cardinality_subset_sum(
+        [3],
+        6
+    )
+
+    assert result == {
+        "possible": False,
+        "indices": [],
+        "cardinality": 0,
+        "sum": 0
+    }
+
+    # --------------------------------------------------------
+    # 10. Disconnected/unreachable DP states.
+    #
+    # Only sums reachable through actual subsets should matter.
+    # Target 7 is unreachable from [2, 4, 8].
+    # --------------------------------------------------------
+    result = minimum_cardinality_subset_sum(
+        [2, 4, 8],
+        7
+    )
+
+    assert result == {
+        "possible": False,
+        "indices": [],
+        "cardinality": 0,
+        "sum": 0
+    }
+
+    # --------------------------------------------------------
+    # 11. Operation summary on the smallest non-empty case.
+    #
+    # [1] -> target 1 creates exactly one valid transition.
+    # --------------------------------------------------------
+    result = minimum_cardinality_subset_sum(
+        [1],
+        1,
+        include_operation_summary=True
+    )
+
+    assert result == {
+        "possible": True,
+        "indices": [0],
+        "cardinality": 1,
+        "sum": 1,
+        "operation_summary": {
+            "major_operations": 1
+        }
+    }
+
+    # --------------------------------------------------------
+    # 12. Operation summary on an empty input.
+    # --------------------------------------------------------
+    result = minimum_cardinality_subset_sum(
+        [],
+        10,
+        include_operation_summary=True
+    )
+
+    assert result == {
+        "possible": False,
+        "indices": [],
+        "cardinality": 0,
+        "sum": 0,
+        "operation_summary": {
+            "major_operations": 0
+        }
+    }
+
+    # --------------------------------------------------------
+    # 13. Original output must remain unchanged when the
+    #     operation-summary feature is disabled.
+    # --------------------------------------------------------
+    result = minimum_cardinality_subset_sum(
+        [1, 2, 5, 6],
+        7,
+        include_operation_summary=False
+    )
+
+    assert result == {
+        "possible": True,
+        "indices": [0, 3],
+        "cardinality": 2,
+        "sum": 7
+    }
+
+    assert "operation_summary" not in result
+
+    # --------------------------------------------------------
+    # 14. Negative target remains impossible.
+    # --------------------------------------------------------
+    result = minimum_cardinality_subset_sum(
+        [1, 2, 3],
+        -1
+    )
+
+    assert result == {
+        "possible": False,
+        "indices": [],
+        "cardinality": 0,
+        "sum": 0
+    }
+
+    # --------------------------------------------------------
+    # 15. Duplicate values still use distinct indices.
+    #
+    # 2 + 2 = 4 -> [0, 1]
+    # --------------------------------------------------------
+    result = minimum_cardinality_subset_sum(
+        [2, 2, 4],
+        4
+    )
+
+    # [2] at index 2 is cardinality 1, so it wins.
+    assert result == {
+        "possible": True,
+        "indices": [2],
+        "cardinality": 1,
+        "sum": 4
+    }
+
+    # --------------------------------------------------------
+    # 16. Duplicate-value lexicographic tie.
+    #
+    # [0, 2] and [1, 2] both sum to 5.
+    # [0, 2] must win.
+    # --------------------------------------------------------
+    result = minimum_cardinality_subset_sum(
+        [2, 2, 3],
+        5
+    )
+
+    assert result == {
+        "possible": True,
+        "indices": [0, 2],
+        "cardinality": 2,
+        "sum": 5
+    }
+
+    print("All tests passed.")
+
+
+if __name__ == "__main__":
+    run_tests()
+```

@@ -1,0 +1,206 @@
+from collections import Counter
+from dataclasses import dataclass, field
+import os
+from pathlib import Path
+import re
+import unicodedata
+from typing import Set, Tuple, Optional
+
+
+@dataclass
+class NormalizationStats:
+    total_files_scanned: int = 0
+    text_files_processed: int = 0
+    already_clean_files: int = 0
+    modified_files: int = 0
+    non_text_skipped: int = 0
+    non_text_copied: int = 0
+    empty_dirs_mirrored: int = 0
+    read_write_errors: int = 0
+
+    raw_characters: int = 0
+    normalized_characters: int = 0
+    raw_words: int = 0
+    normalized_words: int = 0
+    unicode_category_counts: Counter = field(default_factory=Counter)
+
+    def print_report(self) -> None:
+        char_delta = self.normalized_characters - self.raw_characters
+        char_pct = (char_delta / self.raw_characters * 100) if self.raw_characters else 0.0
+
+        report = f"""
+========================= Corpus Normalization Report =========================
+Directories Mirrored (inc. empty): {self.empty_dirs_mirrored:,}
+Total Files Scanned              : {self.total_files_scanned:,}
+
+Text Files Handled:
+  - Total Text Files             : {self.text_files_processed:,}
+  - Already Normalized (No-op)   : {self.already_clean_files:,}
+  - Transformed / Written        : {self.modified_files:,}
+
+Non-Text / Mixed Files:
+  - Skipped / Ignored            : {self.non_text_skipped:,}
+  - Copied Verbatim (Passthrough): {self.non_text_copied:,}
+  - Read/Write Errors            : {self.read_write_errors:,}
+
+Character Metrics (Text):
+  - Raw Characters               : {self.raw_characters:,}
+  - Normalized Characters        : {self.normalized_characters:,}
+  - Delta                        : {char_delta:+,} ({char_pct:+.2f}%)
+
+Word Metrics (Text):
+  - Raw Words                    : {self.raw_words:,}
+  - Normalized Words             : {self.normalized_words:,}
+==============================================================================="""
+        print(report)
+
+
+def _is_binary_file(path: Path, sample_size: int = 8192) -> bool:
+    """Detects binary content using null-byte checks and UTF-8 decodability."""
+    try:
+        with open(path, "rb") as f:
+            chunk = f.read(sample_size)
+            if b"\x00" in chunk:
+                return True
+            try:
+                chunk.decode("utf-8")
+            except UnicodeDecodeError:
+                return True
+    except OSError:
+        return True
+    return False
+
+
+def _normalize_text(
+    text: str,
+    form: str = "NFC",
+    lowercase: bool = True,
+    strip_accents: bool = False,
+) -> str:
+    """Canonicalizes Unicode, removes diacritics, folds case, and cleans whitespace."""
+    normalized = unicodedata.normalize(form, text)
+
+    if strip_accents:
+        normalized = "".join(
+            c for c in unicodedata.normalize("NFD", normalized)
+            if unicodedata.category(c) != "Mn"
+        )
+        normalized = unicodedata.normalize(form, normalized)
+
+    if lowercase:
+        normalized = normalized.casefold()
+
+    lines = [re.sub(r"[^\S\r\n]+", " ", line).strip() for line in normalized.splitlines()]
+    cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+    return (cleaned + "\n") if cleaned else ""
+
+
+def normalize_corpus(
+    source_dir: str | Path,
+    target_dir: str | Path,
+    unicode_form: str = "NFC",
+    lowercase: bool = True,
+    strip_accents: bool = False,
+    file_extensions: Optional[Set[str]] = None,
+    copy_non_text: bool = False,
+    encoding: str = "utf-8",
+) -> NormalizationStats:
+    """
+    Normalizes a text corpus while handling empty directories, non-text files,
+    and ensuring strict idempotency.
+    """
+    src = Path(source_dir).resolve()
+    dst = Path(target_dir).resolve()
+    stats = NormalizationStats()
+
+    if not src.exists() or not src.is_dir():
+        raise FileNotFoundError(f"Source directory does not exist or is not a directory: {src}")
+
+    for root_str, dirs, files in os.walk(src):
+        current_root = Path(root_str)
+        rel_path = current_root.relative_to(src)
+        target_subdir = dst / rel_path
+
+        # 1. Edge Case: Empty and nested directory mirroring
+        target_subdir.mkdir(parents=True, exist_ok=True)
+        stats.empty_dirs_mirrored += 1
+
+        for file_name in files:
+            stats.total_files_scanned += 1
+            source_file = current_root / file_name
+            target_file = target_subdir / file_name
+
+            # Extension filtering (if provided)
+            has_valid_ext = True
+            if file_extensions is not None:
+                has_valid_ext = source_file.suffix.lower() in file_extensions
+
+            # 2. Edge Case: Non-text / binary files detection
+            is_non_text = not has_valid_ext or _is_binary_file(source_file)
+
+            if is_non_text:
+                if copy_non_text:
+                    try:
+                        # Copy verbatim in chunks without altering contents
+                        with open(source_file, "rb") as rf, open(target_file, "wb") as wf:
+                            while chunk := rf.read(65536):
+                                wf.write(chunk)
+                        stats.non_text_copied += 1
+                    except OSError:
+                        stats.read_write_errors += 1
+                else:
+                    stats.non_text_skipped += 1
+                continue
+
+            # Process valid text file
+            try:
+                with open(source_file, "r", encoding=encoding, errors="replace") as f:
+                    raw_content = f.read()
+
+                stats.text_files_processed += 1
+                stats.raw_characters += len(raw_content)
+                stats.raw_words += len(raw_content.split())
+
+                normalized_content = _normalize_text(
+                    text=raw_content,
+                    form=unicode_form,
+                    lowercase=lowercase,
+                    strip_accents=strip_accents,
+                )
+
+                stats.normalized_characters += len(normalized_content)
+                stats.normalized_words += len(normalized_content.split())
+
+                for char in normalized_content:
+                    stats.unicode_category_counts[unicodedata.category(char)] += 1
+
+                # 3. Edge Case: Idempotence & already-clean files
+                is_already_clean = (raw_content == normalized_content)
+
+                if is_already_clean:
+                    stats.already_clean_files += 1
+
+                # Write optimization:
+                # - If already clean AND source/target are same file, avoid touch
+                # - If writing to separate directory, verify if target exists with matching content
+                needs_write = True
+                if source_file == target_file and is_already_clean:
+                    needs_write = False
+                elif target_file.exists():
+                    try:
+                        with open(target_file, "r", encoding=encoding, errors="replace") as tf:
+                            if tf.read() == normalized_content:
+                                needs_write = False
+                    except OSError:
+                        pass
+
+                if needs_write:
+                    with open(target_file, "w", encoding=encoding) as f:
+                        f.write(normalized_content)
+                    stats.modified_files += 1
+
+            except (OSError, UnicodeDecodeError):
+                stats.read_write_errors += 1
+
+    return stats

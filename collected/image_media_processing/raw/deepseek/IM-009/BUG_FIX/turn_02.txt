@@ -1,0 +1,75 @@
+```python
+import warnings
+from pathlib import Path
+from typing import Dict, Union
+
+import numpy as np
+from PIL import Image
+
+
+def compute_statistics(
+    input_dir: Union[str, Path],
+    image_extensions: tuple = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.gif'),
+    recursive: bool = False,
+) -> Dict[str, Dict[str, Union[np.ndarray, float]]]:
+    """
+    Compute per-image 256-bin grayscale histograms plus mean and population
+    standard deviation (ddof=0, i.e. divide by N) of pixel intensity.
+
+    Returns a dict mapping each image's path (relative to input_dir) to:
+        {
+            'histogram': np.ndarray[int64] of shape (256,),
+            'mean': float,
+            'std':  float,   # population std, ddof=0
+        }
+    """
+    input_dir = Path(input_dir)
+    if not input_dir.is_dir():
+        raise NotADirectoryError(f"Not a directory: {input_dir}")
+
+    extensions = tuple(ext.lower() for ext in image_extensions)
+
+    if recursive:
+        candidates = (p for p in input_dir.rglob('*') if p.is_file())
+    else:
+        candidates = (p for p in input_dir.iterdir() if p.is_file())
+
+    image_paths = sorted(p for p in candidates if p.suffix.lower() in extensions)
+
+    stats: Dict[str, Dict[str, Union[np.ndarray, float]]] = {}
+
+    for img_path in image_paths:
+        try:
+            with Image.open(img_path) as img:
+                gray = img.convert('L')
+                pixels = np.asarray(gray, dtype=np.uint8)
+        except Exception as e:
+            warnings.warn(f"Skipping {img_path}: {e}")
+            continue
+
+        flat = pixels.ravel()
+
+        histogram = np.bincount(flat, minlength=256).astype(np.int64)
+        if histogram.size > 256:
+            histogram = histogram[:256]
+
+        mean = float(np.mean(flat, dtype=np.float64))
+        # Population std: divide by N (ddof=0), matching the specification.
+        std = float(np.std(flat, dtype=np.float64, ddof=0))
+
+        rel_key = str(img_path.relative_to(input_dir))
+        stats[rel_key] = {
+            'histogram': histogram,
+            'mean': mean,
+            'std': std,
+        }
+
+    return stats
+
+
+if __name__ == "__main__":
+    results = compute_statistics("./images")
+    for name, s in results.items():
+        print(f"{name}: mean={s['mean']:.2f}, std={s['std']:.2f}, "
+              f"hist_sum={s['histogram'].sum()}")
+```

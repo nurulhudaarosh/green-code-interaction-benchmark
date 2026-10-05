@@ -1,0 +1,281 @@
+"""
+Offline Customer Record Matcher
+-------------------------------
+Blocks candidate pairs using:
+  - surname-initial (first letter of normalized surname)
+  - postal-prefix (first 3 chars of normalized postal code)
+
+Within each block, matches records where normalized email OR phone matches exactly.
+
+No external dependencies beyond the standard library.
+"""
+
+from __future__ import annotations
+
+import re
+import unicodedata
+from collections import defaultdict
+from dataclasses import dataclass, field
+from itertools import combinations
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+
+# ---------------------------------------------------------------------------
+# Normalization helpers
+# ---------------------------------------------------------------------------
+
+_NON_DIGIT = re.compile(r"\D+")
+_NON_ALNUM = re.compile(r"[^a-z0-9]+")
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _strip_accents(s: str) -> str:
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c)
+    )
+
+
+def normalize_name(s: Optional[str]) -> str:
+    if not s:
+        return ""
+    s = _strip_accents(s).lower()
+    s = _NON_ALNUM.sub(" ", s).strip()
+    return s
+
+
+def normalize_postal(s: Optional[str]) -> str:
+    if not s:
+        return ""
+    s = _strip_accents(s).upper()
+    s = _NON_ALNUM.sub("", s.lower())
+    return s
+
+
+def normalize_email(s: Optional[str]) -> str:
+    if not s:
+        return ""
+    s = s.strip().lower()
+    # strip common display-name form: "Name <user@host>"
+    m = re.search(r"<([^>]+)>", s)
+    if m:
+        s = m.group(1)
+    if not _EMAIL_RE.match(s):
+        return ""
+    return s
+
+
+def normalize_phone(s: Optional[str], default_country: str = "1") -> str:
+    """
+    Return digits only. If the number looks like a 10-digit national number
+    and a default country code is given, prepend it. This makes
+    '(555) 123-4567' and '+1 555 123 4567' equivalent.
+    """
+    if not s:
+        return ""
+    digits = _NON_DIGIT.sub("", s)
+    if not digits:
+        return ""
+    # Very lightweight canonicalization.
+    if len(digits) == 10 and default_country:
+        digits = default_country + digits
+    elif len(digits) == 11 and digits.startswith("1") and default_country == "1":
+        pass
+    return digits
+
+
+# ---------------------------------------------------------------------------
+# Record model
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Customer:
+    id: str
+    first_name: str = ""
+    last_name: str = ""
+    postal_code: str = ""
+    email: str = ""
+    phone: str = ""
+
+    # derived fields filled by .prepare()
+    norm_last: str = field(default="", init=False, repr=False)
+    norm_email: str = field(default="", init=False, repr=False)
+    norm_phone: str = field(default="", init=False, repr=False)
+    norm_postal: str = field(default="", init=False, repr=False)
+
+    def prepare(self, default_country: str = "1") -> "Customer":
+        self.norm_last = normalize_name(self.last_name)
+        self.norm_email = normalize_email(self.email)
+        self.norm_phone = normalize_phone(self.phone, default_country)
+        self.norm_postal = normalize_postal(self.postal_code)
+        return self
+
+    # ---- block keys -------------------------------------------------------
+    def surname_initial(self) -> str:
+        return self.norm_last[:1]
+
+    def postal_prefix(self, n: int = 3) -> str:
+        return self.norm_postal[:n]
+
+
+# ---------------------------------------------------------------------------
+# Matcher
+# ---------------------------------------------------------------------------
+
+class CustomerMatcher:
+    """
+    Build an offline matcher over a list of customers.
+
+    Blocking strategy:
+      - Primary: (surname-initial, postal-prefix) -> bucket of customers
+      - Secondary: for records whose postal prefix is empty, fall back to
+        surname-initial-only bucket.
+
+    Within a bucket, records are compared pairwise and flagged as a match
+    when normalized email OR normalized phone is identical and non-empty.
+    """
+
+    def __init__(
+        self,
+        customers: Iterable[Customer],
+        default_country: str = "1",
+        postal_prefix_len: int = 3,
+    ) -> None:
+        self.default_country = default_country
+        self.postal_prefix_len = postal_prefix_len
+        self.customers: List[Customer] = [c.prepare(default_country) for c in customers]
+
+        self._by_block: Dict[Tuple[str, str], List[int]] = defaultdict(list)
+        self._by_initial: Dict[str, List[int]] = defaultdict(list)
+
+        for idx, c in enumerate(self.customers):
+            initial = c.surname_initial()
+            prefix = c.postal_prefix(postal_prefix_len)
+            if initial:
+                self._by_initial[initial].append(idx)
+            if initial and prefix:
+                self._by_block[(initial, prefix)].append(idx)
+
+    # ------------------------------------------------------------------ API
+    def find_duplicates(self) -> List[List[Customer]]:
+        """
+        Return groups of customers that are transitively linked by exact
+        email or phone matches (union-find over matched pairs).
+        """
+        n = len(self.customers)
+        parent = list(range(n))
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: int, b: int) -> None:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[rb] = ra
+
+        seen_pairs: set[Tuple[int, int]] = set()
+
+        for bucket in self._iter_buckets():
+            for i, j in combinations(bucket, 2):
+                pair = (i, j) if i < j else (j, i)
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
+                if self._records_match(self.customers[i], self.customers[j]):
+                    union(i, j)
+
+        groups: Dict[int, List[Customer]] = defaultdict(list)
+        for idx, c in enumerate(self.customers):
+            groups[find(idx)].append(c)
+
+        return [g for g in groups.values() if len(g) > 1]
+
+    def match_one(self, probe: Customer) -> List[Customer]:
+        """
+        Find all indexed customers that match the given probe record.
+        The probe is not required to already be in the index.
+        """
+        probe = probe.prepare(self.default_country)
+        initial = probe.surname_initial()
+        prefix = probe.postal_prefix(self.postal_prefix_len)
+
+        candidate_indices: set[int] = set()
+        if initial and prefix:
+            candidate_indices.update(self._by_block.get((initial, prefix), ()))
+        if initial:
+            candidate_indices.update(self._by_initial.get(initial, ()))
+
+        return [
+            self.customers[i]
+            for i in candidate_indices
+            if self._records_match(probe, self.customers[i])
+        ]
+
+    # --------------------------------------------------------------- internals
+    def _iter_buckets(self):
+        # Deduplicate: a customer with both a postal-prefix block and an
+        # initial-only block would otherwise be compared twice.
+        seen_pairs: set[Tuple[int, int]] = set()
+        buckets: List[set[int]] = []
+
+        for bucket in self._by_block.values():
+            buckets.append(set(bucket))
+        # Only add initial-only fallback for customers not already in a
+        # postal-prefixed block (so we don't double-compare).
+        in_prefixed_block: set[int] = set()
+        for bucket in self._by_block.values():
+            in_prefixed_block.update(bucket)
+
+        for initial, idxs in self._by_initial.items():
+            extra = [i for i in idxs if i not in in_prefixed_block]
+            if extra:
+                buckets.append(set(extra))
+
+        for bucket in buckets:
+            if len(bucket) >= 2:
+                yield sorted(bucket)
+
+    @staticmethod
+    def _records_match(a: Customer, b: Customer) -> bool:
+        if a.norm_email and a.norm_email == b.norm_email:
+            return True
+        if a.norm_phone and a.norm_phone == b.norm_phone:
+            return True
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Demo
+# ---------------------------------------------------------------------------
+
+def _demo() -> None:
+    records = [
+        Customer("1", "Jane",  "Doe",   "94103", "Jane.Doe@Example.com", "415-555-1234"),
+        Customer("2", "J.",    "Doe",   "94107", "jane.doe@example.com", ""),
+        Customer("3", "Janet", "Doe",   "94110", "",                     "(415) 555-1234"),
+        Customer("4", "John",  "Smith", "10001", "john@example.com",     "212-555-9999"),
+        Customer("5", "J",     "Smith", "10002", "JOHN@EXAMPLE.COM",     ""),
+        Customer("6", "Alice", "Brown", "20001", "alice@example.com",    "202-555-0000"),
+        Customer("7", "Bob",   "Brown", "20002", "",                     "202-555-1111"),
+        Customer("8", "Carla", "Diaz",  "",      "",                     "305-555-2222"),
+        Customer("9", "Karla", "Diaz",  "",      "",                     "3055552222"),
+    ]
+
+    matcher = CustomerMatcher(records)
+    groups = matcher.find_duplicates()
+
+    print("Duplicate groups:")
+    for g in groups:
+        ids = ", ".join(c.id for c in g)
+        print(f"  - {ids}")
+
+    print("\nProbe match:")
+    probe = Customer("?", "J", "Doe", "94103", "", "4155551234")
+    for c in matcher.match_one(probe):
+        print(f"  matched -> {c.id} ({c.first_name} {c.last_name})")
+
+
+if __name__ == "__main__":
+    _demo()

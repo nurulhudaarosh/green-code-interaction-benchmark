@@ -1,0 +1,63 @@
+import hashlib
+import os
+import stat
+from collections import defaultdict
+
+
+def find_exact_duplicates(input_dir, recursive=True):
+    """
+    Find byte-identical files in input_dir by SHA-256 checksum.
+
+    Args:
+        input_dir: Directory to scan.
+        recursive: If True (default), walk subdirectories recursively.
+                   If False, only inspect files directly inside input_dir.
+
+    Returns:
+        A list of groups (each group is a sorted list of file paths,
+        relative to input_dir) where every group contains 2 or more
+        files with identical content. Only regular files are considered;
+        directories, symlinks, FIFOs, sockets, and devices are skipped.
+    """
+    hashes = defaultdict(list)
+
+    def is_regular_file(path):
+        try:
+            return stat.S_ISREG(os.stat(path).st_mode)
+        except (OSError, PermissionError):
+            return False
+
+    def handle(path, rel_path):
+        try:
+            h = hashlib.sha256()
+            with open(path, "rb") as f:
+                while True:
+                    chunk = f.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    h.update(chunk)
+            hashes[h.hexdigest()].append(rel_path)
+        except (OSError, PermissionError):
+            return
+
+    if recursive:
+        for root, _, files in os.walk(input_dir):
+            for name in files:
+                path = os.path.join(root, name)
+                if not is_regular_file(path):
+                    continue
+                rel_path = os.path.relpath(path, input_dir)
+                handle(path, rel_path)
+    else:
+        try:
+            entries = os.listdir(input_dir)
+        except (OSError, PermissionError):
+            entries = []
+        for name in entries:
+            path = os.path.join(input_dir, name)
+            if not is_regular_file(path):
+                continue
+            handle(path, name)
+
+    groups = [sorted(paths) for paths in hashes.values() if len(paths) >= 2]
+    return groups

@@ -1,0 +1,123 @@
+### Problem Understanding
+
+In a **non-preemptive single-server queue with priority**:
+
+* Once a job begins processing on the server, it runs to completion without interruption (non-preemptive).
+* If the server is idle, it immediately starts processing the available job with the highest priority.
+* Tie-breaking rules for jobs with equal priority:
+1. Earlier arrival time.
+2. Smaller job ID.
+
+
+* If no jobs are available when the server becomes idle, time jumps to the arrival time of the next incoming job.
+
+---
+
+### Key Constraints & Required Output
+
+**Constraints:**
+
+* Non-preemptive execution.
+* Single server processing one job at a time.
+* Higher priority integer = higher processing preference.
+* Standard tie-breakers: `(-priority, arrival_time, job_id)`.
+
+**Required Output:**
+
+* Individual completion time and waiting time for every job.
+* Overall average waiting time.
+
+---
+
+### Algorithmic Approach
+
+1. **Sort Arrivals:** Sort all input jobs by arrival time (and tie-break by job ID if needed).
+2. **Priority Queue (Min-Heap):** Use Python's `heapq` module to store available jobs waiting to be served. Push tuple `(-priority, arrival_time, job_id, duration)`.
+3. **Simulation Loop:**
+* Maintain a tracker for `current_time`.
+* While there are unprocessed jobs or jobs in the heap:
+* If the heap is empty and `current_time` is less than the next job's arrival time, advance `current_time` to that arrival time.
+* Push all jobs arriving at or before `current_time` into the heap.
+* Pop the highest-priority job from the heap.
+* Calculate its waiting time ($T_{\text{start}} - T_{\text{arrival}}$) and completion time ($T_{\text{start}} + \text{duration}$).
+* Advance `current_time` to completion time.
+
+
+
+
+
+---
+
+### Python Implementation
+
+```python
+import heapq
+
+def simulate_priority_queue(jobs):
+    """
+    Simulates a non-preemptive single-server priority queue.
+    
+    :param jobs: List of dicts/tuples representing jobs:
+                 {'id': int/str, 'arrival': float/int, 'duration': float/int, 'priority': float/int}
+    :return: Tuple (job_results, average_waiting_time)
+    """
+    # Sort initial job list by arrival time, then by job ID
+    sorted_jobs = sorted(jobs, key=lambda x: (x['arrival'], x['id']))
+    
+    n = len(sorted_jobs)
+    job_idx = 0
+    current_time = 0
+    
+    ready_queue = []  # Heap storing (-priority, arrival, id, duration)
+    results = {}
+    total_waiting_time = 0
+
+    while job_idx < n or ready_queue:
+        # If queue is empty and next job arrives in the future, jump time forward
+        if not ready_queue and current_time < sorted_jobs[job_idx]['arrival']:
+            current_time = sorted_jobs[job_idx]['arrival']
+        
+        # Enqueue all jobs that have arrived by current_time
+        while job_idx < n and sorted_jobs[job_idx]['arrival'] <= current_time:
+            job = sorted_jobs[job_idx]
+            # Max-heap for priority simulated via negative priority value
+            heapq.heappush(ready_queue, (-job['priority'], job['arrival'], job['id'], job['duration']))
+            job_idx += 1
+
+        # Pop highest priority job
+        neg_prio, arrival, job_id, duration = heapq.heappop(ready_queue)
+        
+        # Calculate timing metrics
+        start_time = current_time
+        waiting_time = start_time - arrival
+        completion_time = start_time + duration
+        current_time = completion_time
+        
+        total_waiting_time += waiting_time
+        results[job_id] = {
+            'completion_time': completion_time,
+            'waiting_time': waiting_time
+        }
+
+    avg_waiting_time = total_waiting_time / n if n > 0 else 0.0
+    return results, avg_waiting_time
+
+
+# Example Usage
+if __name__ == "__main__":
+    job_list = [
+        {'id': 1, 'arrival': 0, 'duration': 4, 'priority': 2},
+        {'id': 2, 'arrival': 1, 'duration': 3, 'priority': 5},
+        {'id': 3, 'arrival': 2, 'duration': 1, 'priority': 5},
+        {'id': 4, 'arrival': 10, 'duration': 2, 'priority': 1},
+    ]
+
+    res, avg_wait = simulate_priority_queue(job_list)
+    
+    print("Job Metrics:")
+    for j_id, metrics in sorted(res.items()):
+        print(f"Job {j_id} -> Completion Time: {metrics['completion_time']}, Waiting Time: {metrics['waiting_time']}")
+    
+    print(f"\nAverage Waiting Time: {avg_wait:.2f}")
+
+```

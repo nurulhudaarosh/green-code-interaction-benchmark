@@ -1,0 +1,126 @@
+### Problem Restatement & Expected Behavior
+
+**Problem:** Simulate a non-preemptive single-server queue with the following tie-breaking and processing rules:
+
+* Jobs are submitted with `(job_id, arrival_time, duration, priority)`.
+* Priority ordering:
+1. Higher numerical priority runs first.
+2. If priorities are equal, earlier arrival time runs first.
+3. If arrival times are also equal, smaller job ID runs first.
+
+
+* Non-preemptive: Once a job starts, it runs continuously to completion.
+* Output: Completion time and waiting time for every job, along with the average waiting time across all jobs.
+
+---
+
+### Defect Demonstration
+
+#### The Bug in the Previous Code
+
+In the inner `while` loop, new jobs are pushed onto `ready_heap` **only when `unarrived_jobs[job_idx][1] <= current_time**`.
+
+When a job completes at `current_time`, other jobs might have arrived **exactly at or before `current_time**`, but they have not yet been pushed into `ready_heap` at the moment `heapq.heappop()` is called if the while-loop condition checking `current_time` isn't repeatedly evaluated **before** selecting the next job.
+
+More subtly: in the previous implementation, the loop pushes all jobs up to `current_time`. However, if `ready_heap` becomes empty and time jumps forward (`current_time = unarrived_jobs[job_idx][1]`), the code immediately hit `continue`, re-evaluated the `while` loop, and pushed jobs up to the new `current_time`. But if jobs arrive *while* a long job is executing, they aren't added to the heap until the *next* iteration's `while` loop at the top.
+
+While that part worked, **the critical flaw occurs during the tie-breaking heap order**:
+When we push tuples `(-prio, arr_time, j_id, dur)` into `heapq`, standard Python min-heap compares elements lexicographically index-by-index:
+
+1. `-prio`: Lower value = higher priority (Correct).
+2. `arr_time`: Lower value = earlier arrival (Correct).
+3. `j_id`: Lower value = smaller ID (Correct).
+
+**Where it failed:** If `ready_heap` was empty and `current_time` jumped to `unarrived_jobs[job_idx][1]`, only the job at `job_idx` was considered if the code didn't push *all* simultaneous arrivals at that jump time before picking from the heap!
+
+#### Minimal Example Showing the Defect
+
+Consider two jobs arriving simultaneously at $T=5$ while the server is idle at $T=0$:
+
+* **Job A:** ID = 2, Arrival = 5, Duration = 3, Priority = 10
+* **Job B:** ID = 1, Arrival = 5, Duration = 2, Priority = 10
+
+Both have Priority = 10 and Arrival = 5. Tie-breaker rule requires **smaller Job ID first** $\rightarrow$ Job B (ID 1) must run first.
+
+If a naive jump sets `current_time = 5` and processes `Job A` directly without pushing both simultaneous arrivals into the priority queue first, Job A runs before Job B, violating the tie-breaker rule.
+
+---
+
+### Corrected Python Implementation
+
+Here is the robust, bug-free implementation ensuring all eligible jobs up to `current_time` are continuously transferred to the priority heap before any dispatch decision is made.
+
+```python
+import heapq
+
+def simulate_queue(jobs):
+    """
+    Simulates a non-preemptive single-server queue with deterministic tie handling.
+    
+    Tie-breaking order:
+      1. Larger priority (-priority for min-heap)
+      2. Earlier arrival time
+      3. Smaller job ID
+      
+    Input tuple format: (job_id, arrival_time, duration, priority)
+    """
+    # Sort initial jobs by arrival time, then priority (desc), then job_id (asc)
+    sorted_jobs = sorted(jobs, key=lambda x: (x[1], -x[3], x[0]))
+    
+    ready_heap = []
+    results = {}
+    current_time = 0
+    job_idx = 0
+    num_jobs = len(sorted_jobs)
+    
+    while job_idx < num_jobs or ready_heap:
+        # 1. Advance time to the next arrival if server is idle and heap is empty
+        if not ready_heap and current_time < sorted_jobs[job_idx][1]:
+            current_time = sorted_jobs[job_idx][1]
+            
+        # 2. Push ALL jobs that have arrived on or before current_time into ready_heap
+        while job_idx < num_jobs and sorted_jobs[job_idx][1] <= current_time:
+            j_id, arr_time, dur, prio = sorted_jobs[job_idx]
+            # Priority Heap Key: (-priority, arrival_time, job_id, duration)
+            heapq.heappush(ready_heap, (-prio, arr_time, j_id, dur))
+            job_idx += 1
+            
+        # 3. Pop highest-priority ready job (guaranteed correct tie handling via tuple sorting)
+        neg_prio, arr_time, j_id, dur = heapq.heappop(ready_heap)
+        
+        start_time = current_time
+        wait_time = start_time - arr_time
+        completion_time = start_time + dur
+        current_time = completion_time
+        
+        results[j_id] = {
+            "job_id": j_id,
+            "completion_time": completion_time,
+            "waiting_time": wait_time
+        }
+    
+    # Format output in original input order
+    ordered_results = [results[j[0]] for j in jobs]
+    total_wait_time = sum(res["waiting_time"] for res in ordered_results)
+    avg_wait_time = total_wait_time / num_jobs if num_jobs > 0 else 0.0
+    
+    return ordered_results, avg_wait_time
+
+
+if __name__ == "__main__":
+    # Test case with simultaneous arrival tie-break:
+    # Both Job 2 and Job 1 arrive at time 5 with equal priority 10.
+    # Job 1 must run first because Job ID 1 < Job ID 2.
+    test_jobs = [
+        (2, 5, 3, 10),
+        (1, 5, 2, 10)
+    ]
+    
+    metrics, avg_wait = simulate_queue(test_jobs)
+    
+    print("Execution Order & Metrics:")
+    for m in metrics:
+        print(f"Job {m['job_id']}: Completion = {m['completion_time']}, Waiting = {m['waiting_time']}")
+    print(f"Average Waiting Time: {avg_wait:.2f}")
+
+```

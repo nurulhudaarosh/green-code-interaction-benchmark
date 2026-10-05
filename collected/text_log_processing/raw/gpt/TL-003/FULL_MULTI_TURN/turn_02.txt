@@ -1,0 +1,37 @@
+Use this version. It handles a final line without `\n` correctly and counts lines based on the actual input lines, while preserving the original text in the output.
+
+```python
+def dedup_lines(in_path, out_path):
+    seen = set()
+    total = 0
+    unique = 0
+
+    with open(in_path, "r", encoding="utf-8", newline="") as infile, \
+         open(out_path, "w", encoding="utf-8", newline="") as outfile:
+
+        for line in infile:
+            total += 1
+
+            # Compare the complete line, including whitespace/newline.
+            if line not in seen:
+                seen.add(line)
+                outfile.write(line)
+                unique += 1
+
+    return {
+        "total": total,
+        "unique": unique,
+        "removed": total - unique
+    }
+```
+
+### Important fix
+- `newline=""` prevents Python's universal-newline handling from changing line endings.
+- A final line **without a trailing newline** is still counted as one complete line.
+- Whitespace is **not stripped**, so:
+  - `"hello\n"`
+  - `"hello"`
+  - `" hello\n"`
+  
+  are treated as different lines.
+- Output preserves the original first occurrence exactly.

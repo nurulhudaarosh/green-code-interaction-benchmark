@@ -1,0 +1,52 @@
+Here is the complete Python implementation using **Pillow (PIL)** and **OpenCV** (the two standard choices for image processing).
+
+### Option 1: Using Pillow (Standard & Lightweight)
+
+```python
+import os
+from PIL import Image
+
+
+def split_channels(input_dir: str, output_dir: str) -> None:
+    """Splits all images in input_dir into red, green, and blue grayscale channels
+
+    and saves them in output_dir.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    supported_extensions = (".jpg", ".jpeg", ".png", ".bmp", ".tiff")
+
+    for file_name in os.listdir(input_dir):
+        if not file_name.lower().endswith(supported_extensions):
+            continue
+
+        file_path = os.path.join(input_dir, file_name)
+        base_name, ext = os.path.splitext(file_name)
+
+        with Image.open(file_path) as img:
+            # Convert to RGB mode in case image is RGBA, Greyscale, or Palette
+            rgb_img = img.convert("RGB")
+            r, g, b = rgb_img.split()
+
+            r.save(os.path.join(output_dir, f"{base_name}_R{ext}"))
+            g.save(os.path.join(output_dir, f"{base_name}_G{ext}"))
+            b.save(os.path.join(output_dir, f"{base_name}_B{ext}"))
+
+
+def merge_channels(
+    r_path: str, g_path: str, b_path: str, output_path: str
+) -> None:
+    """Recombines three grayscale image channels (R, G, B) into a single color image."""
+    r = Image.open(r_path).convert("L")
+    g = Image.open(g_path).convert("L")
+    b = Image.open(b_path).convert("L")
+
+    merged = Image.merge("RGB", (r, g, b))
+
+    # Ensure output parent folder exists
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    merged.save(output_path)
+
+```
+
+---

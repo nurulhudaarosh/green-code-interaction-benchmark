@@ -1,0 +1,104 @@
+```python
+from pathlib import Path
+import re
+import unicodedata
+
+
+def normalize_corpus(input_dir, output_dir, lowercase=False):
+    """
+    Normalize .txt files recursively while mirroring the directory tree.
+
+    Handles:
+      - Empty input directories
+      - Mixed non-.txt files (ignored)
+      - Empty .txt files
+      - Already-clean files (idempotent)
+      - Unicode NFC normalization
+      - Whitespace collapsing
+      - Optional lowercasing
+
+    Returns:
+        {
+            "files": [...],
+            "total": {
+                "files": int,
+                "input_chars": int,
+                "output_chars": int,
+                "changed": int,
+                "unchanged": int,
+                "empty": int
+            }
+        }
+    """
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+
+    stats = {
+        "files": [],
+        "total": {
+            "files": 0,
+            "input_chars": 0,
+            "output_chars": 0,
+            "changed": 0,
+            "unchanged": 0,
+            "empty": 0,
+        },
+    }
+
+    # Empty/missing input directory: return valid zero stats.
+    if not input_dir.exists() or not input_dir.is_dir():
+        return stats
+
+    # Only process .txt files; non-txt files are ignored.
+    for src in input_dir.rglob("*"):
+        if not src.is_file() or src.suffix.lower() != ".txt":
+            continue
+
+        relative = src.relative_to(input_dir)
+        dst = output_dir / relative
+        dst.parent.mkdir(parents=True, exist_ok=True)
+
+        text = src.read_text(encoding="utf-8")
+
+        # NFC Unicode normalization.
+        normalized = unicodedata.normalize("NFC", text)
+
+        # Collapse all whitespace and remove surrounding whitespace.
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+
+        # Optional case normalization.
+        if lowercase:
+            normalized = normalized.lower()
+
+        changed = text != normalized
+        empty = len(normalized) == 0
+
+        # Always write the normalized representation.
+        # Writing an already-clean file produces the same content,
+        # making the operation idempotent.
+        dst.write_text(normalized, encoding="utf-8")
+
+        file_stats = {
+            "file": str(relative),
+            "input_chars": len(text),
+            "output_chars": len(normalized),
+            "changed": changed,
+            "empty": empty,
+        }
+
+        stats["files"].append(file_stats)
+
+        stats["total"]["files"] += 1
+        stats["total"]["input_chars"] += len(text)
+        stats["total"]["output_chars"] += len(normalized)
+
+        if changed:
+            stats["total"]["changed"] += 1
+        else:
+            stats["total"]["unchanged"] += 1
+
+        if empty:
+            stats["total"]["empty"] += 1
+
+    return stats
+```

@@ -1,0 +1,89 @@
+from typing import Union, Tuple, Dict
+
+
+def multiply_polynomials(
+    poly1: list[int], 
+    poly2: list[int], 
+    include_summary: bool = False
+) -> Union[list[int], Tuple[list[int], Dict[str, int]]]:
+    """
+    Multiplies two polynomials represented by lists of integer coefficients.
+    Handles repeated values, negative coefficients, and high-degree cancellations.
+    """
+    multiplications = 0
+    additions = 0
+    trim_steps = 0
+
+    # Handle empty input representations as canonical zero polynomial
+    if not poly1 or not poly2:
+        result = [0]
+        if include_summary:
+            return result, {"multiplications": 0, "additions": 0, "trim_steps": 0}
+        return result
+
+    n = len(poly1)
+    m = len(poly2)
+    
+    # Direct coefficient convolution: c_k = sum_{i+j=k} a_i * b_j
+    result = [0] * (n + m - 1)
+    for i in range(n):
+        for j in range(m):
+            result[i + j] += poly1[i] * poly2[j]
+            multiplications += 1
+            additions += 1
+
+    # Deterministic trimming of trailing zeros to preserve canonical polynomial representation
+    while len(result) > 1 and result[-1] == 0:
+        result.pop()
+        trim_steps += 1
+
+    if include_summary:
+        summary = {
+            "multiplications": multiplications,
+            "additions": additions,
+            "trim_steps": trim_steps
+        }
+        return result, summary
+
+    return result
+
+
+# =====================================================================
+# Unit Tests for Difficult Cases & Deterministic Tie Handling
+# =====================================================================
+
+def run_tests():
+    # Test 1: Repeated values in input coefficients
+    # (2 + 2x + 2x^2) * (3 + 3x) = 6 + 12x + 12x^2 + 6x^3
+    p1 = [2, 2, 2]
+    p2 = [3, 3]
+    assert multiply_polynomials(p1, p2) == [6, 12, 12, 6]
+
+    # Test 2: Deterministic cancellation / zero tie handling at high degrees
+    # (1 - x) * (1 + x) = 1 - x^2 -> [1, 0, -1]
+    # (1 - x^2) * (1 + x^2) = 1 - x^4 -> [1, 0, 0, 0, -1]
+    assert multiply_polynomials([1, -1], [1, 1]) == [1, 0, -1]
+    assert multiply_polynomials([1, 0, -1], [1, 0, 1]) == [1, 0, 0, 0, -1]
+
+    # Test 3: Total cancellation leading to canonical zero [0]
+    # (x - x) * (2 + 3x) = 0 * (2 + 3x) -> [0]
+    # Trimming trims trailing 0s deterministically down to length 1
+    p_cancel1 = [1, -1]
+    p_cancel2 = [1, 1]  # product [1, 0, -1]
+    p_zero = [0, 0]
+    assert multiply_polynomials(p_zero, [1, 2, 3]) == [0]
+
+    # Test 4: Preserving intermediate zeros while trimming top zero degrees
+    # (1 + 0x + 0x^2) * (0 + 0x) = [0]
+    assert multiply_polynomials([1, 0, 0], [0, 0]) == [0]
+
+    # Test 5: Verify operation summary output flag
+    coeffs, summary = multiply_polynomials([1, -1], [1, 1], include_summary=True)
+    assert coeffs == [1, 0, -1]
+    assert summary == {"multiplications": 4, "additions": 4, "trim_steps": 0}
+
+    print("All tests passed successfully!")
+
+
+if __name__ == "__main__":
+    run_tests()

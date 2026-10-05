@@ -1,0 +1,85 @@
+import re
+import csv
+
+# Regex for Apache-style access log lines.
+# Captures: ip, timestamp, method, url, status, size
+LOG_RE = re.compile(
+    r'^(?P<ip>\S+)\s+'                    # client IP
+    r'\S+\s+'                              # identd
+    r'\S+\s+'                              # userid
+    r'\[(?P<timestamp>[^\]]+)\]\s+'       # [timestamp]
+    r'"(?P<method>\S+)\s+'                 # "METHOD
+    r'(?P<url>\S+)\s+'                     # URL
+    r'[^"]*"\s+'                           # PROTO"
+    r'(?P<status>\d{3})\s+'                # status code
+    r'(?P<size>\S+)'                       # size (may be '-')
+)
+
+
+def convert_access_log(in_path, out_path, methods, status_classes):
+    """
+    Parse an Apache-style access log into a filtered CSV.
+
+    Rows are kept only if their HTTP method is in `methods` and their
+    status class (e.g. '2xx') is in `status_classes`. Empty containers
+    act as wildcards (allow all). Malformed lines are skipped.
+
+    Returns {'written': int, 'skipped': int}.
+    """
+    methods_set = set(methods)
+    status_classes_set = set(status_classes)
+
+    written = 0
+    skipped = 0
+
+    with open(in_path, 'r', encoding='utf-8', errors='replace') as fin, \
+         open(out_path, 'w', newline='', encoding='utf-8') as fout:
+
+        writer = csv.writer(fout)
+        writer.writerow(
+            ['ip', 'timestamp', 'method', 'url',
+             'status', 'statusClass', 'size']
+        )
+
+        for line in fin:
+            line = line.rstrip('\n')
+            if not line:
+                skipped += 1
+                continue
+
+            m = LOG_RE.match(line)
+            if not m:
+                skipped += 1
+                continue
+
+            ip = m.group('ip')
+            timestamp = m.group('timestamp')
+            method = m.group('method')
+            url = m.group('url')
+            status = m.group('status')
+            size_raw = m.group('size')
+
+            # Normalize size: '-' means 0, otherwise must be an int.
+            if size_raw == '-':
+                size = 0
+            else:
+                try:
+                    size = int(size_raw)
+                except ValueError:
+                    skipped += 1
+                    continue
+
+            status_class = status[0] + 'xx'
+
+            # Filtering (empty containers = allow all).
+            if methods_set and method not in methods_set:
+                continue
+            if status_classes_set and status_class not in status_classes_set:
+                continue
+
+            writer.writerow(
+                [ip, timestamp, method, url, status, status_class, size]
+            )
+            written += 1
+
+    return {'written': written, 'skipped': skipped}

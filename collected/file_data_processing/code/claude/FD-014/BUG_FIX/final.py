@@ -1,0 +1,300 @@
+#!/usr/bin/env python3
+"""
+Offline customer record matcher with blocking-first candidate generation.
+
+Strategy
+--------
+1. Normalize surname, postal code, email and phone on both sides.
+2. Build a blocking index over the RIGHT records:
+       (surname initial, postal prefix) -> {email: [ids], phone: [ids]}
+3. For each LEFT record, compute its blocking key and look up ONLY that block.
+   Candidates are the right records in the same block that share an exact
+   normalized email or phone. No left x right cross product is ever formed.
+4. Dedupe mode (no right file): the file is matched against itself, comparing
+   each record only to later records in its own block, then clustered.
+
+Usage
+-----
+    python matcher.py left.csv right.csv -o links.csv      # link two files
+    python matcher.py customers.csv -o clusters.csv        # dedupe one file
+    python matcher.py left.csv right.csv --postal-prefix 3 --country-code 44
+
+Expected CSV columns (case-insensitive; override with --col-* flags):
+    id, first_name, last_name, email, phone, postal_code
+"""
+
+import argparse
+import csv
+import re
+import sys
+import unicodedata
+from collections import defaultdict
+
+FIELDS = ("id", "first_name", "last_name", "email", "phone", "postal_code")
+
+
+# --------------------------------------------------------------------------
+# Normalization
+# --------------------------------------------------------------------------
+
+def strip_accents(s):
+    return "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+
+
+def normalize_email(raw):
+    if not raw:
+        return ""
+    email = raw.strip().lower()
+    if email.count("@") != 1:
+        return ""
+    local, domain = email.split("@")
+    if not local or not domain or "." not in domain:
+        return ""
+    local = local.split("+", 1)[0]
+    if domain in ("gmail.com", "googlemail.com"):
+        local = local.replace(".", "")
+        domain = "gmail.com"
+    return f"{local}@{domain}" if local else ""
+
+
+def normalize_phone(raw, default_cc="1"):
+    if not raw:
+        return ""
+    text = re.split(r"(?:ext\.?|extension|x)\s*\d+\s*$", raw.strip().lower())[0]
+    international = text.lstrip().startswith("+")
+    digits = re.sub(r"\D", "", text)
+    if not international:
+        for prefix in ("011", "00"):
+            if digits.startswith(prefix):
+                digits, international = digits[len(prefix):], True
+                break
+    if not international and len(digits) == 10:
+        digits = default_cc + digits
+    return digits if len(digits) >= 7 else ""
+
+
+def normalize_surname(raw):
+    if not raw:
+        return ""
+    s = strip_accents(raw).lower().strip()
+    s = re.sub(r"[^a-z\s'-]", "", s)
+    s = re.sub(r"^(?:van der|van den|van|von|de la|de|del|della|di|da|le|la|al|bin|ibn)\s+", "", s)
+    return re.sub(r"[^a-z]", "", s)
+
+
+def normalize_postal(raw, n):
+    if not raw:
+        return ""
+    return re.sub(r"[^A-Za-z0-9]", "", strip_accents(raw)).upper()[:n]
+
+
+# --------------------------------------------------------------------------
+# Blocking + matching
+# --------------------------------------------------------------------------
+
+class Matcher:
+    def __init__(self, postal_prefix=3, default_cc="1"):
+        self.postal_prefix = postal_prefix
+        self.default_cc = default_cc
+
+    def prepare(self, records):
+        out = []
+        for rec in records:
+            surname = normalize_surname(rec["last_name"])
+            postal = normalize_postal(rec["postal_code"], self.postal_prefix)
+            out.append({
+                "email": normalize_email(rec["email"]),
+                "phone": normalize_phone(rec["phone"], self.default_cc),
+                "block": (surname[:1], postal) if surname and postal else None,
+            })
+        return out
+
+    @staticmethod
+    def build_index(prepared):
+        """block key -> {'email': {value: [idx]}, 'phone': {value: [idx]}}"""
+        index = defaultdict(lambda: {"email": defaultdict(list), "phone": defaultdict(list)})
+        for i, p in enumerate(prepared):
+            if p["block"] is None:
+                continue
+            if p["email"]:
+                index[p["block"]]["email"][p["email"]].append(i)
+            if p["phone"]:
+                index[p["block"]]["phone"][p["phone"]].append(i)
+        return index
+
+    @staticmethod
+    def candidates(p, index):
+        """Blocking step first: only the record's own block is consulted."""
+        if p["block"] is None or p["block"] not in index:
+            return {}
+        block = index[p["block"]]
+        found = defaultdict(list)  # right idx -> reasons
+        if p["email"]:
+            for j in block["email"].get(p["email"], ()):
+                found[j].append("email")
+        if p["phone"]:
+            for j in block["phone"].get(p["phone"], ()):
+                found[j].append("phone")
+        return found
+
+    def link(self, left, right):
+        """Left-to-right linkage. Returns (pairs, stats)."""
+        lp, rp = self.prepare(left), self.prepare(right)
+        index = self.build_index(rp)
+        pairs, compared = [], 0
+        for i, p in enumerate(lp):
+            block_size = 0
+            if p["block"] in index:
+                b = index[p["block"]]
+                block_size = len({j for v in b["email"].values() for j in v} |
+                                 {j for v in b["phone"].values() for j in v})
+            compared += block_size
+            for j, reasons in sorted(self.candidates(p, index).items()):
+                pairs.append((i, j, reasons))
+        skipped = sum(1 for p in lp if p["block"] is None)
+        stats = {"naive": len(left) * len(right), "candidates": compared,
+                 "skipped_left": skipped,
+                 "skipped_right": sum(1 for p in rp if p["block"] is None)}
+        return pairs, stats
+
+    def dedupe(self, records):
+        """Single-file matching: each record only meets later records in its block."""
+        prep = self.prepare(records)
+        index = self.build_index(prep)
+        parent = list(range(len(records)))
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        pairs, compared = [], 0
+        for i, p in enumerate(prep):
+            cands = {j: r for j, r in self.candidates(p, index).items() if j > i}
+            compared += len(cands)
+            for j, reasons in sorted(cands.items()):
+                pairs.append((i, j, reasons))
+                ri, rj = find(i), find(j)
+                if ri != rj:
+                    parent[rj] = ri
+        groups = defaultdict(list)
+        for i in range(len(records)):
+            groups[find(i)].append(i)
+        clusters = sorted((sorted(g) for g in groups.values()), key=lambda g: g[0])
+        n = len(records)
+        stats = {"naive": n * (n - 1) // 2, "candidates": compared,
+                 "skipped_left": sum(1 for p in prep if p["block"] is None),
+                 "skipped_right": 0}
+        return pairs, clusters, stats
+
+
+# --------------------------------------------------------------------------
+# I/O
+# --------------------------------------------------------------------------
+
+def read_records(path, colmap):
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames is None:
+            sys.exit(f"{path}: no header row.")
+        lookup = {h.strip().lower(): h for h in reader.fieldnames}
+        records = []
+        for n, row in enumerate(reader, start=1):
+            rec = {}
+            for canon in FIELDS:
+                actual = lookup.get(colmap[canon].lower())
+                rec[canon] = (row.get(actual) or "") if actual else ""
+            rec["id"] = rec["id"] or str(n)
+            records.append(rec)
+        return records
+
+
+def write_links(path, left, right, pairs):
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["left_id", "right_id", "matched_on",
+                    "left_name", "right_name", "left_email", "right_email"])
+        for i, j, reasons in pairs:
+            l, r = left[i], right[j]
+            w.writerow([l["id"], r["id"], "+".join(reasons),
+                        f"{l['first_name']} {l['last_name']}".strip(),
+                        f"{r['first_name']} {r['last_name']}".strip(),
+                        l["email"], r["email"]])
+
+
+def write_clusters(path, records, clusters):
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["cluster_id", "cluster_size", *FIELDS])
+        for cid, members in enumerate(clusters, start=1):
+            for i in members:
+                w.writerow([cid, len(members), *(records[i][k] for k in FIELDS)])
+
+
+def print_stats(stats):
+    naive, cand = stats["naive"], stats["candidates"]
+    saved = (1 - cand / naive) * 100 if naive else 0.0
+    print(f"Naive comparisons:       {naive}")
+    print(f"Candidates via blocking: {cand}  ({saved:.1f}% fewer)")
+    print(f"Skipped (no block key):  left={stats['skipped_left']} right={stats['skipped_right']}")
+
+
+# --------------------------------------------------------------------------
+# CLI
+# --------------------------------------------------------------------------
+
+def main():
+    ap = argparse.ArgumentParser(description="Blocking-first customer record matcher.")
+    ap.add_argument("left", help="Left CSV (or the only CSV for dedupe mode)")
+    ap.add_argument("right", nargs="?", help="Right CSV (omit to dedupe the left file)")
+    ap.add_argument("-o", "--output", help="Output CSV (links, or clusters in dedupe mode)")
+    ap.add_argument("--pairs", help="Dedupe mode only: also write matched pairs CSV")
+    ap.add_argument("--postal-prefix", type=int, default=3)
+    ap.add_argument("--country-code", default="1")
+    for field in FIELDS:
+        ap.add_argument(f"--col-{field.replace('_', '-')}", default=field)
+    args = ap.parse_args()
+
+    colmap = {f: getattr(args, f"col_{f}") for f in FIELDS}
+    matcher = Matcher(args.postal_prefix, args.country_code)
+    left = read_records(args.left, colmap)
+
+    if args.right:
+        right = read_records(args.right, colmap)
+        pairs, stats = matcher.link(left, right)
+        print(f"Left records:            {len(left)}")
+        print(f"Right records:           {len(right)}")
+        print(f"Matched pairs:           {len(pairs)}")
+        print_stats(stats)
+        if args.output:
+            write_links(args.output, left, right, pairs)
+            print(f"Links written to {args.output}")
+    else:
+        pairs, clusters, stats = matcher.dedupe(left)
+        dupes = [c for c in clusters if len(c) > 1]
+        print(f"Records:                 {len(left)}")
+        print(f"Matched pairs:           {len(pairs)}")
+        print(f"Duplicate clusters:      {len(dupes)}")
+        print(f"Unique customers:        {len(clusters)}")
+        print_stats(stats)
+        for n, members in enumerate(dupes, start=1):
+            print(f"\nCluster {n}:")
+            for i in members:
+                r = left[i]
+                print(f"  [{r['id']}] {r['first_name']} {r['last_name']} | "
+                      f"{r['email']} | {r['phone']} | {r['postal_code']}")
+        if args.output:
+            write_clusters(args.output, left, clusters)
+            print(f"\nClusters written to {args.output}")
+        if args.pairs:
+            with open(args.pairs, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow(["id_a", "id_b", "matched_on"])
+                for i, j, reasons in pairs:
+                    w.writerow([left[i]["id"], left[j]["id"], "+".join(reasons)])
+            print(f"Pairs written to {args.pairs}")
+
+
+if __name__ == "__main__":
+    main()

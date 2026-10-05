@@ -1,0 +1,93 @@
+Here's a Python function that organizes images by resolution:
+
+```python
+import os
+import shutil
+from pathlib import Path
+from PIL import Image
+
+def organize_by_resolution(input_dir, output_dir):
+    """
+    Copy images from input_dir into small/medium/large subfolders of output_dir
+    based on max(width, height) thresholds of 640 and 1920.
+    
+    - small:  max(width, height) < 640
+    - medium: 640 <= max(width, height) < 1920
+    - large:  max(width, height) >= 1920
+    """
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+    
+    # Create output subfolders
+    categories = ("small", "medium", "large")
+    for category in categories:
+        (output_path / category).mkdir(parents=True, exist_ok=True)
+    
+    # Common image extensions
+    image_extensions = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"}
+    
+    copied = {"small": 0, "medium": 0, "large": 0}
+    skipped = 0
+    
+    for file_path in input_path.rglob("*"):
+        if not file_path.is_file():
+            continue
+        if file_path.suffix.lower() not in image_extensions:
+            continue
+        
+        try:
+            with Image.open(file_path) as img:
+                width, height = img.size
+        except (OSError, ValueError) as e:
+            print(f"Skipping {file_path}: {e}")
+            skipped += 1
+            continue
+        
+        longest_side = max(width, height)
+        
+        if longest_side < 640:
+            category = "small"
+        elif longest_side < 1920:
+            category = "medium"
+        else:
+            category = "large"
+        
+        dest = output_path / category / file_path.name
+        
+        # Handle filename collisions
+        if dest.exists():
+            stem, suffix = file_path.stem, file_path.suffix
+            counter = 1
+            while dest.exists():
+                dest = output_path / category / f"{stem}_{counter}{suffix}"
+                counter += 1
+        
+        shutil.copy2(file_path, dest)
+        copied[category] += 1
+    
+    print(f"Copied: {copied['small']} small, {copied['medium']} medium, "
+          f"{copied['large']} large. Skipped: {skipped}.")
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) != 3:
+        print("Usage: python organize_by_resolution.py <input_dir> <output_dir>")
+        sys.exit(1)
+    organize_by_resolution(sys.argv[1], sys.argv[2])
+```
+
+**Key features:**
+
+- **Recursive scan** — uses `rglob("*")` to find images in nested subdirectories.
+- **Threshold logic** — uses `max(width, height)` so a 3000×500 image counts as "large":
+  - `small`: longest side < 640
+  - `medium`: 640 ≤ longest side < 1920
+  - `large`: longest side ≥ 1920
+- **Error handling** — skips non-image or corrupt files gracefully.
+- **Collision handling** — renames duplicate filenames (`photo_1.jpg`, `photo_2.jpg`, …) to avoid overwriting.
+- **Metadata preservation** — `shutil.copy2` preserves timestamps.
+
+**Requires Pillow:** `pip install Pillow`
+
+If you'd rather avoid the Pillow dependency, you can read dimensions from raw headers for JPEG/PNG, but Pillow is the simplest and most reliable option. Let me know if you'd like a version that uses `imghdr`/manual header parsing instead.

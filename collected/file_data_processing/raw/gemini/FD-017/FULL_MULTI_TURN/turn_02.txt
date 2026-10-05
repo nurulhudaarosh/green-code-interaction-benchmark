@@ -1,0 +1,147 @@
+```python
+from datetime import datetime
+from typing import Any, Dict, List, Union
+import pandas as pd
+
+
+def pivot_event_data(
+    records: List[Dict[str, Any]],
+    date_col: str = "date",
+    region_col: str = "region",
+    event_type_col: str = "event_type",
+    count_col: str = "count",
+    fill_value: Union[int, float] = 0,
+) -> pd.DataFrame:
+    """Validates records, aggregates event counts by date and region, pivots event types into
+
+    deterministic columns, fills missing values, and sorts the output.
+
+    Malformed dates, invalid/negative counts, and bad record structures are safely skipped
+    without terminating processing.
+    """
+    if not isinstance(records, list) or not records:
+        return pd.DataFrame()
+
+    required_keys = {date_col, region_col, event_type_col, count_col}
+    valid_records = []
+
+    # 1. Record Validation & Cleaning
+    for record in records:
+        try:
+            # Skip non-dict items
+            if not isinstance(record, dict):
+                continue
+
+            # Skip missing keys
+            if not required_keys.issubset(record.keys()):
+                continue
+
+            date_val = record[date_col]
+            region_val = record[region_col]
+            event_type_val = record[event_type_col]
+            count_val = record[count_col]
+
+            # Validate non-null/non-empty string fields
+            if date_val is None or region_val is None or event_type_val is None:
+                continue
+
+            region_str = str(region_val).strip()
+            event_type_str = str(event_type_val).strip()
+
+            if not region_str or not event_type_str:
+                continue
+
+            # Safe Date Parsing: Skip malformed dates
+            try:
+                parsed_date = pd.to_datetime(date_val, errors="raise").strftime("%Y-%m-%d")
+            except (ValueError, TypeError, OverflowError):
+                continue
+
+            # Safe Count Parsing: Skip malformed or negative counts
+            try:
+                # Handle string booleans or boolean types directly (bool is a subclass of int in Python)
+                if isinstance(count_val, bool):
+                    continue
+
+                count_num = float(count_val)
+                if pd.isna(count_num) or count_num < 0:
+                    continue
+
+                count_num = int(count_num) if count_num.is_integer() else count_num
+            except (ValueError, TypeError, OverflowError):
+                continue
+
+            valid_records.append(
+                {
+                    date_col: parsed_date,
+                    region_col: region_str,
+                    event_type_col: event_type_str,
+                    count_col: count_num,
+                }
+            )
+        except Exception:
+            # Shield main execution loop from unexpected errors in record structure
+            continue
+
+    if not valid_records:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(valid_records)
+
+    # 2. Pre-aggregation by Date, Region, and Event Type
+    aggregated_df = (
+        df.groupby([date_col, region_col, event_type_col], as_index=False)[
+            count_col
+        ]
+        .sum()
+    )
+
+    # 3. Pivot table creation
+    pivoted_df = aggregated_df.pivot(
+        index=[date_col, region_col],
+        columns=event_type_col,
+        values=count_col,
+    )
+
+    # 4. Fill missing cells with fill_value
+    pivoted_df = pivoted_df.fillna(fill_value)
+
+    if isinstance(fill_value, int):
+        pivoted_df = pivoted_df.astype(int)
+
+    # 5. Deterministic sorting on index levels and column names
+    pivoted_df = pivoted_df.sort_index(level=[date_col, region_col])
+    sorted_columns = sorted(pivoted_df.columns.tolist())
+    pivoted_df = pivoted_df[sorted_columns]
+
+    # Clean column index header
+    pivoted_df.columns.name = None
+
+    return pivoted_df
+
+
+# Example Usage showing malformed dates & counts handling
+if __name__ == "__main__":
+    sample_records = [
+        # Valid records
+        {"date": "2026-03-15", "region": "North", "event_type": "click", "count": 10},
+        {"date": "2026-03-15", "region": "North", "event_type": "click", "count": "5"},
+        {"date": "2026-03-15", "region": "North", "event_type": "purchase", "count": 2},
+        {"date": "2026-03-15", "region": "South", "event_type": "view", "count": 20},
+        
+        # Malformed dates (skipped without error)
+        {"date": "invalid-date-format", "region": "North", "event_type": "click", "count": 5},
+        {"date": "2026-13-45", "region": "North", "event_type": "click", "count": 5},
+        {"date": None, "region": "North", "event_type": "click", "count": 5},
+
+        # Malformed / Invalid counts (skipped without error)
+        {"date": "2026-03-15", "region": "North", "event_type": "click", "count": "ten"},
+        {"date": "2026-03-15", "region": "North", "event_type": "click", "count": -5},
+        {"date": "2026-03-15", "region": "North", "event_type": "click", "count": None},
+        {"date": "2026-03-15", "region": "North", "event_type": "click", "count": True},
+    ]
+
+    result = pivot_event_data(sample_records)
+    print(result)
+
+```

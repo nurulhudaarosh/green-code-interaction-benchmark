@@ -1,0 +1,88 @@
+import json
+import sys
+
+
+def main():
+    if len(sys.argv) != 2:
+        print("Usage: python utility.py input.json")
+        return
+
+    try:
+        with open(sys.argv[1], "r", encoding="utf-8") as file:
+            data = json.load(file)
+    except (OSError, json.JSONDecodeError):
+        print("Invalid JSON file.")
+        return
+
+    if not isinstance(data, dict) or not isinstance(data.get("products"), list):
+        print("Invalid input structure.")
+        return
+
+    rows = []
+    invalid_products = 0
+
+    for product in data["products"]:
+        try:
+            if not isinstance(product, dict):
+                raise ValueError
+
+            product_id = product["product_id"]
+            name = product["name"]
+            warehouses = product["warehouses"]
+
+            if (
+                not isinstance(product_id, str)
+                or not product_id.strip()
+                or not isinstance(name, str)
+                or not name.strip()
+                or not isinstance(warehouses, list)
+            ):
+                raise ValueError
+
+            for warehouse in warehouses:
+                if not isinstance(warehouse, dict):
+                    raise ValueError
+
+                warehouse_id = warehouse["warehouse_id"]
+                stock = warehouse["stock"]
+
+                if (
+                    not isinstance(warehouse_id, str)
+                    or not warehouse_id.strip()
+                    or isinstance(stock, bool)
+                    or not isinstance(stock, (int, float))
+                    or stock < 0
+                ):
+                    raise ValueError
+
+                rows.append({
+                    "product_id": product_id,
+                    "name": name,
+                    "warehouse_id": warehouse_id,
+                    "stock": stock
+                })
+
+            # An empty warehouse list is valid.
+            # It produces no rows and does not count as invalid.
+
+        except (KeyError, TypeError, ValueError):
+            invalid_products += 1
+            continue
+
+    rows.sort(
+        key=lambda row: (
+            row["product_id"],
+            row["warehouse_id"]
+        )
+    )
+
+    output = {
+        "products": rows,
+        "invalid_products": invalid_products
+    }
+
+    print(json.dumps(output, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,189 @@
+```python
+#!/usr/bin/env python3
+"""
+Flatten nested product/warehouse JSON into sorted rows.
+
+Expected input (either a top-level list, or an object with a "products" key):
+
+{
+  "products": [
+    {
+      "id": "P-100",
+      "name": "Widget",
+      "category": "Tools",            # optional
+      "warehouses": [
+        {"warehouse_id": "W-1", "location": "Berlin", "stock": 25},
+        {"warehouse_id": "W-2", "location": "Austin", "stock": 0}
+      ]
+    }
+  ]
+}
+
+Rules:
+  * A product is INVALID (malformed) if it is not an object, is missing/has an
+    empty "id" or "name", "warehouses" is missing / not a list, or anything
+    unexpected goes wrong while processing it. Malformed products are
+    skipped and counted; processing always continues with the next product.
+  * A warehouse entry is VALID if it is an object with a non-empty
+    "warehouse_id" and an integer "stock" >= 0 (booleans rejected).
+    Invalid warehouse entries are skipped and counted separately.
+  * Zero stock is a legitimate value and is kept.
+  * Output rows are sorted by (product_id, warehouse_id).
+"""
+
+import argparse
+import csv
+import json
+import sys
+from typing import Any
+
+PRODUCT_REQUIRED = ("id", "name", "warehouses")
+WAREHOUSE_REQUIRED = ("warehouse_id", "stock")
+
+
+def _is_nonempty_str(value: Any) -> bool:
+    return isinstance(value, str) and value.strip() != ""
+
+
+def _is_valid_id(value: Any) -> bool:
+    return _is_nonempty_str(value) or (isinstance(value, int) and not isinstance(value, bool))
+
+
+def _is_valid_stock(value: Any) -> bool:
+    # bool is a subclass of int, so exclude it explicitly.
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def validate_product(product: Any) -> bool:
+    if not isinstance(product, dict):
+        return False
+    if any(field not in product for field in PRODUCT_REQUIRED):
+        return False
+    if not _is_valid_id(product["id"]):
+        return False
+    if not _is_nonempty_str(product["name"]):
+        return False
+    return isinstance(product["warehouses"], list)
+
+
+def validate_warehouse(entry: Any) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    if any(field not in entry for field in WAREHOUSE_REQUIRED):
+        return False
+    if not _is_valid_id(entry["warehouse_id"]):
+        return False
+    return _is_valid_stock(entry["stock"])
+
+
+def extract_products(data: Any) -> list:
+    """Accept either a bare list or {"products": [...]}."""
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict) and isinstance(data.get("products"), list):
+        return data["products"]
+    raise ValueError('Input must be a list of products or an object with a "products" list.')
+
+
+def flatten_product(product: Any) -> tuple:
+    """
+    Flatten one product. Returns (rows, invalid_warehouse_count).
+    Raises ValueError if the product is malformed.
+    """
+    if not validate_product(product):
+        raise ValueError("malformed product")
+
+    rows = []
+    invalid_warehouses = 0
+
+    for entry in product["warehouses"]:
+        if not validate_warehouse(entry):
+            invalid_warehouses += 1
+            continue
+
+        rows.append({
+            "product_id": product["id"],
+            "product_name": product["name"],
+            "category": product.get("category"),
+            "warehouse_id": entry["warehouse_id"],
+            "location": entry.get("location"),
+            "stock": entry["stock"],  # zero is kept
+        })
+
+    return rows, invalid_warehouses
+
+
+def flatten_products(data: Any) -> dict:
+    products = extract_products(data)
+    rows = []
+    invalid_products = 0
+    invalid_warehouses = 0
+
+    for product in products:
+        try:
+            # Rows are collected per product and only merged on success,
+            # so a failure never leaves partial rows behind.
+            product_rows, bad_entries = flatten_product(product)
+        except Exception:
+            # Any malformed product is skipped and counted; never abort the run.
+            invalid_products += 1
+            continue
+
+        rows.extend(product_rows)
+        invalid_warehouses += bad_entries
+
+    # str() keeps sorting safe if ids are a mix of ints and strings.
+    rows.sort(key=lambda r: (str(r["product_id"]), str(r["warehouse_id"])))
+
+    return {
+        "rows": rows,
+        "invalid_products": invalid_products,
+        "invalid_warehouses": invalid_warehouses,
+        "total_products": len(products),
+    }
+
+
+def load_json(path: str) -> Any:
+    with open(path, "r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def write_csv(rows: list, out) -> None:
+    fieldnames = ["product_id", "product_name", "category",
+                  "warehouse_id", "location", "stock"]
+    writer = csv.DictWriter(out, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(rows)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Flatten nested product JSON.")
+    parser.add_argument("input", help="Path to the input JSON file")
+    parser.add_argument("-o", "--output", help="Write CSV here (default: stdout)")
+    args = parser.parse_args()
+
+    try:
+        result = flatten_products(load_json(args.input))
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if args.output:
+        with open(args.output, "w", newline="", encoding="utf-8") as fh:
+            write_csv(result["rows"], fh)
+    else:
+        write_csv(result["rows"], sys.stdout)
+
+    print(
+        f"Products: {result['total_products']} | "
+        f"rows: {len(result['rows'])} | "
+        f"invalid products: {result['invalid_products']} | "
+        f"invalid warehouse entries: {result['invalid_warehouses']}",
+        file=sys.stderr,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```

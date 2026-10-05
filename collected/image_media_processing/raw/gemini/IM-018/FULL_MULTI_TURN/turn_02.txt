@@ -1,0 +1,99 @@
+The issue in transitive clustering usually occurs if images are grouped using a simple dictionary of pairs or single-level grouping instead of flattening the connected components using `find()`.
+
+When `uf.union(A, B)` and `uf.union(B, C)` are called, Union-Find links `C` under `B` (or `A`). If you group the results by looking directly at `uf.parent[path]` without calling `uf.find(path)` for each node at the end, items in deep trees end up assigned to intermediate parents rather than the true set representative root. Calling `uf.find(path)` flattens all chains and ensures all transitively connected paths (`A`, `B`, and `C`) map to the exact same root representative.
+
+Here is the corrected implementation:
+
+```python
+import os
+import glob
+from PIL import Image
+import numpy as np
+
+class UnionFind:
+    def __init__(self, items):
+        # Maps each item to itself initially
+        self.parent = {item: item for item in items}
+
+    def find(self, item):
+        # Path compression: recursively point nodes directly to the root representative
+        if self.parent[item] != item:
+            self.parent[item] = self.find(self.parent[item])
+        return self.parent[item]
+
+    def union(self, item1, item2):
+        root1 = self.find(item1)
+        root2 = self.find(item2)
+        if root1 != root2:
+            self.parent[root2] = root1
+
+
+def compute_grayscale_histogram(image_path, bins=256):
+    """Loads an image, converts to grayscale, and calculates L1 normalized histogram."""
+    with Image.open(image_path) as img:
+        gray = img.convert('L')
+        hist, _ = np.histogram(gray, bins=bins, range=(0, 256))
+    
+    total = hist.sum()
+    if total == 0:
+        return np.zeros(bins, dtype=np.float64)
+    return hist.astype(np.float64) / total
+
+
+def find_near_duplicates(input_dir, threshold):
+    """
+    Clusters images by normalized grayscale histogram L1 distance with full
+    transitive equivalence grouping via Union-Find.
+    """
+    extensions = ('*.jpg', '*.jpeg', '*.png', '*.bmp', '*.webp', '*.tiff')
+    filepaths = []
+    
+    for ext in extensions:
+        filepaths.extend(glob.glob(os.path.join(input_dir, ext)))
+        filepaths.extend(glob.glob(os.path.join(input_dir, ext.upper())))
+
+    filepaths = sorted(list(set(filepaths)))
+    if not filepaths:
+        return []
+
+    # 1. Compute normalized grayscale histogram for all accessible images
+    histograms = {}
+    valid_paths = []
+    
+    for path in filepaths:
+        try:
+            histograms[path] = compute_grayscale_histogram(path)
+            valid_paths.append(path)
+        except Exception:
+            continue
+
+    # 2. Perform Union-Find on pairwise matches below threshold
+    uf = UnionFind(valid_paths)
+    num_images = len(valid_paths)
+
+    for i in range(num_images):
+        for j in range(i + 1, num_images):
+            path_a = valid_paths[i]
+            path_b = valid_paths[j]
+
+            # Calculate L1 distance (sum of absolute differences)
+            l1_dist = np.sum(np.abs(histograms[path_a] - histograms[path_b]))
+
+            if l1_dist <= threshold:
+                uf.union(path_a, path_b)
+
+    # 3. Resolve components via find() to guarantee full transitive grouping
+    clusters = {}
+    for path in valid_paths:
+        # Crucial: Always use find() to retrieve the canonical root, not raw parent lookup
+        root = uf.find(path)
+        clusters.setdefault(root, []).append(path)
+
+    return list(clusters.values())
+
+```
+
+### Key Highlights
+
+1. **Canonical Root Resolution:** During aggregation in step 3, calling `root = uf.find(path)` guarantees that any chain ($A \leftrightarrow B \leftrightarrow C$) maps to a single canonical root regardless of tree depth.
+2. **Path Compression:** The `find()` method rewrites `self.parent[item]` during lookup, flattening trees on the fly so future lookups execute in $O(\alpha(N))$ time.

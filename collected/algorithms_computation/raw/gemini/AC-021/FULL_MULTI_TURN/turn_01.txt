@@ -1,0 +1,99 @@
+### Problem Identification & Understanding
+
+The problem requires finding a subset of a given list of positive integers $A = [a_0, a_1, \dots, a_{n-1}]$ that sums to a target value $T$. If multiple subsets sum to $T$, we must select one that satisfies two tie-breaking criteria in order:
+
+1. **Minimum Cardinality:** Choose a subset with the fewest number of elements.
+2. **Lexicographically Smallest Index Sequence:** If multiple subsets have the same minimum size, choose the one whose 0-based indices, sorted in ascending order, form the lexicographically smallest list.
+
+---
+
+### Key Constraints & Required Output
+
+* **Constraints:**
+* $a_i \in \mathbb{Z}^+$ for all $0 \le i < n$.
+* $T \in \mathbb{Z}_{\ge 0}$.
+
+
+* **Output:**
+* A list of **0-based indices** corresponding to the chosen subset (sorted in ascending order), or `None` (or an empty result / indicator) if no subset sums to $T$.
+
+
+
+---
+
+### Algorithm Description
+
+We use Dynamic Programming (DP) based on 0/1 Knapsack / Subset-Sum, tracking both minimum size and index lexicography:
+
+1. **DP State:** Let `dp[s]` be the optimal choice to achieve sum $s$ using a subset of processed elements. `dp[s]` stores a tuple `(count, index_list)`:
+* `count`: minimum number of elements used to achieve sum $s$.
+* `index_list`: sorted list of 0-based indices used.
+
+
+2. **Base Case:** `dp[0] = (0, [])`, and `dp[s] = None` for all $s > 0$.
+3. **Transitions:** Iterate through each element $a_i$ with index $i$ from $0$ to $n-1$:
+* For sums $s$ from $T$ down to $a_i$:
+* If `dp[s - a_i]` exists, consider candidate state: `(count + 1, prev_indices + [i])`.
+* Update `dp[s]` if `dp[s]` is unset OR candidate is strictly better:
+* Strictly fewer elements (`candidate.count < current.count`), OR
+* Equal element count and lexicographically smaller index list (`candidate.index_list < current.index_list`).
+
+
+
+
+
+
+4. **Result:** `dp[T][1]` if `dp[T]` exists, otherwise `None`.
+
+---
+
+### Python Implementation
+
+```python
+def min_elements_subset_sum(nums: list[int], target: int) -> list[int] | None:
+    """
+    Finds a subset of 0-based indices in `nums` that sum to `target`.
+    Tie-breaking criteria:
+      1. Fewest elements (minimum cardinality).
+      2. Lexicographically smallest sorted index sequence.
+    Returns None if no subset sums to `target`.
+    """
+    if target == 0:
+        return []
+    if target < 0:
+        return None
+
+    # dp[s] = (element_count, index_list) for sum s
+    dp: list[tuple[int, list[int]] | None] = [None] * (target + 1)
+    dp[0] = (0, [])
+
+    for i, val in enumerate(nums):
+        if val > target:
+            continue
+        # Iterate backwards to prevent using the same element multiple times
+        for s in range(target, val - 1, -1):
+            prev = dp[s - val]
+            if prev is not None:
+                cand_count = prev[0] + 1
+                cand_indices = prev[1] + [i]
+                
+                curr = dp[s]
+                if curr is None or (cand_count, cand_indices) < (curr[0], curr[1]):
+                    dp[s] = (cand_count, cand_indices)
+
+    return dp[target][1] if dp[target] is not None else None
+
+
+# Example Usage & Verification:
+if __name__ == "__main__":
+    arr = [2, 3, 5, 7, 10]
+    t = 10
+    res = min_elements_subset_sum(arr, t)
+    print(f"Indices: {res}")  # Output: [4] (since arr[4] == 10 uses 1 element)
+
+    arr2 = [3, 4, 3, 1]
+    t2 = 7
+    res2 = min_elements_subset_sum(arr2, t2)
+    print(f"Indices: {res2}") # Output: [0, 1] (arr[0] + arr[1] = 3 + 4 = 7, size 2)
+
+```

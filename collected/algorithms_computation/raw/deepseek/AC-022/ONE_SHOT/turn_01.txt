@@ -1,0 +1,133 @@
+## Problem Identification
+
+**Problem**: Compute the **Damerau-Levenshtein distance** (edit distance with adjacent transpositions) between two strings.
+
+**Operations allowed** (each with cost 1):
+1. **Insertion** — add a character
+2. **Deletion** — remove a character
+3. **Substitution** — replace one character with another
+4. **Adjacent transposition** — swap two adjacent characters
+
+**Key constraints**:
+- Operations are unit-cost (all cost 1).
+- Transposition only applies to **adjacent** characters.
+- Each position can participate in at most one edit operation (standard DL definition; avoids "free" repeated swaps).
+- Input: two strings `a` (length `m`), `b` (length `n`).
+- Output: a single non-negative integer — the minimum number of operations to transform `a` into `b`.
+
+**Required output**: The edit distance (integer).
+
+---
+
+## Algorithm (DP with explicit transposition transition)
+
+Let `d[i][j]` = DL distance between `a[:i]` and `b[:j]`.
+
+Recurrence:
+```
+d[i][0] = i
+d[0][j] = j
+
+For i ≥ 1, j ≥ 1:
+    cost = 0 if a[i-1] == b[j-1] else 1
+    d[i][j] = min(
+        d[i-1][j] + 1,                 # deletion
+        d[i][j-1] + 1,                 # insertion
+        d[i-1][j-1] + cost             # match / substitution
+    )
+    # transposition: a[i-2]a[i-1]  <->  b[j-2]b[j-1]
+    if i > 1 and j > 1 and a[i-1] == b[j-2] and a[i-2] == b[j-1]:
+        d[i][j] = min(d[i][j], d[i-2][j-2] + 1)
+```
+
+This is the **optimal string alignment (OSA)** variant — the standard, well-defined formulation where no substring is edited more than once. It runs in **O(m·n)** time and **O(m·n)** space (can be reduced to O(n) space since only rows `i-1`, `i-2` are needed).
+
+---
+
+## Python Implementation
+
+```python
+def damerau_levenshtein(a: str, b: str) -> int:
+    """
+    Compute the Damerau-Levenshtein (optimal string alignment) distance
+    between strings a and b. All operations cost 1:
+    insertion, deletion, substitution, adjacent transposition.
+    """
+    m, n = len(a), len(b)
+
+    # Trivial cases
+    if m == 0:
+        return n
+    if n == 0:
+        return m
+
+    # Use two previous rows to keep memory O(n)
+    prev2 = None                 # row i-2
+    prev = list(range(n + 1))    # row i-1  (i=0)
+
+    for i in range(1, m + 1):
+        curr = [i] + [0] * n
+        for j in range(1, n + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            curr[j] = min(
+                prev[j] + 1,              # deletion
+                curr[j - 1] + 1,          # insertion
+                prev[j - 1] + cost,       # match / substitution
+            )
+            # adjacent transposition
+            if (i > 1 and j > 1
+                    and a[i - 1] == b[j - 2]
+                    and a[i - 2] == b[j - 1]):
+                curr[j] = min(curr[j], prev2[j - 2] + 1)
+        prev2, prev = prev, curr
+
+    return prev[n]
+
+
+if __name__ == "__main__":
+    # Deterministic self-tests (no I/O interaction, no randomness)
+    cases = [
+        ("", "", 0),
+        ("", "abc", 3),
+        ("abc", "", 3),
+        ("abc", "abc", 0),
+        ("abc", "abd", 1),           # substitution
+        ("abc", "ab", 1),            # deletion
+        ("abc", "abcd", 1),          # insertion
+        ("ab", "ba", 1),             # transposition
+        ("abcd", "abdc", 1),         # transposition in middle
+        ("ca", "abc", 3),            # classic DL example
+        ("kitten", "sitting", 3),    # classic Levenshtein example
+        ("teh", "the", 1),           # transposition
+        ("a cat", "an act", 3),
+        ("intention", "execution", 5),
+    ]
+
+    for s1, s2, expected in cases:
+        got = damerau_levenshtein(s1, s2)
+        status = "OK " if got == expected else "FAIL"
+        print(f"[{status}] d({s1!r}, {s2!r}) = {got} (expected {expected})")
+```
+
+### Sample output
+```
+[OK ] d('', '') = 0 (expected 0)
+[OK ] d('', 'abc') = 3 (expected 3)
+[OK ] d('abc', '') = 3 (expected 3)
+[OK ] d('abc', 'abc') = 0 (expected 0)
+[OK ] d('abc', 'abd') = 1 (expected 1)
+[OK ] d('abc', 'ab') = 1 (expected 1)
+[OK ] d('abc', 'abcd') = 1 (expected 1)
+[OK ] d('ab', 'ba') = 1 (expected 1)
+[OK ] d('abcd', 'abdc') = 1 (expected 1)
+[OK ] d('ca', 'abc') = 3 (expected 3)
+[OK ] d('kitten', 'sitting') = 3 (expected 3)
+[OK ] d('teh', 'the') = 1 (expected 1)
+[OK ] d('a cat', 'an act') = 3 (expected 3)
+[OK ] d('intention', 'execution') = 5 (expected 5)
+```
+
+### Notes on correctness
+- The transposition branch reads `prev2[j-2]` only when `i > 1 and j > 1`, and `prev2` is non-`None` for every `i ≥ 2` — the loop guarantees `prev2` is set by then.
+- Restricting transposition to the last operation at each state (OSA) prevents a single character from being swapped multiple times, which is the standard, well-defined variant of this distance.
+- Complexity: **time O(m·n)**, **space O(n)** (only two rows kept).

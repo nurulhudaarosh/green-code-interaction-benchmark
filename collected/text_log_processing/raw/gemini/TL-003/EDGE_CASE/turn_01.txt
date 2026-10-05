@@ -1,0 +1,122 @@
+Here is a Python implementation of `dedup_lines` supporting exact or normalized deduplication, stable order preservation, and optional count tracking.
+
+```python
+from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass
+from typing import Literal
+
+
+@dataclass(slots=True)
+class LineEntry:
+    line: str
+    count: int = 1
+
+
+def _default_normalizer(line: str) -> str:
+    """Case-insensitive and whitespace-stripped normalization."""
+    return line.strip().lower()
+
+
+def dedup_lines(
+    lines: Iterable[str],
+    *,
+    mode: Literal["exact", "normalized"] = "exact",
+    with_counts: bool = False,
+    normalizer: Callable[[str], str] | None = None,
+) -> Iterator[str | tuple[str, int]]:
+    """Deduplicate lines while preserving the order of their first appearance.
+
+    Args:
+        lines: An iterable of strings.
+        mode: Deduplication strategy:
+            - 'exact': Matches lines character-for-character.
+            - 'normalized': Matches lines using a normalizer function.
+        with_counts: If True, yields `(line, count)` tuples.
+                     If False, yields `line` strings.
+        normalizer: Custom normalization callable. If None and mode='normalized',
+                    defaults to `line.strip().lower()`.
+
+    Yields:
+        Unique lines (or `(line, count)` tuples) in the order first encountered.
+    """
+    if mode == "exact":
+        key_fn = lambda s: s
+    elif mode == "normalized":
+        key_fn = normalizer or _default_normalizer
+    else:
+        raise ValueError(f"Unknown mode: {mode!r}. Expected 'exact' or 'normalized'.")
+
+    # Python 3.7+ dict preserves insertion order
+    seen: dict[str, LineEntry] = {}
+
+    if with_counts:
+        # Full scan is necessary to compute total occurrences
+        for line in lines:
+            key = key_fn(line)
+            if key not in seen:
+                seen[key] = LineEntry(line=line, count=1)
+            else:
+                seen[key].count += 1
+
+        for entry in seen.values():
+            yield entry.line, entry.count
+
+    else:
+        # Stream unique lines immediately without buffering everything first
+        seen_keys: set[str] = set()
+        for line in lines:
+            key = key_fn(line)
+            if key not in seen_keys:
+                seen_keys.add(key)
+                yield line
+
+```
+
+---
+
+### Example Usage
+
+
+raw_lines = [
+    "Apple",
+    "banana",
+    "  apple  ",
+    "Banana\n",
+    "Cherry",
+    "Apple",
+]
+
+# 1. Exact match (streaming, preserves exact characters)
+print(list(dedup_lines(raw_lines, mode="exact")))
+# Output: ['Apple', 'banana', '  apple  ', 'Banana\n', 'Cherry']
+
+# 2. Normalized match (default: stripped + lowercased)
+print(list(dedup_lines(raw_lines, mode="normalized")))
+# Output: ['Apple', 'banana', 'Cherry']
+
+# 3. Normalized with occurrence counts
+print(list(dedup_lines(raw_lines, mode="normalized", with_counts=True)))
+# Output: [('Apple', 3), ('banana', 2), ('Cherry', 1)]
+
+# 4. Custom normalizer (e.g., strip punctuation only)
+import string
+
+strip_punct = lambda s: s.strip().translate(str.maketrans("", "", string.punctuation))
+print(
+    list(
+        dedup_lines(
+            ["Hello!", "Hello?", "World"],
+            mode="normalized",
+            normalizer=strip_punct,
+            with_counts=True,
+        )
+    )
+)
+# Output: [('Hello!', 2), ('World', 1)]
+
+```
+
+### Key Behaviors
+
+* **Preserves First Seen Form:** When running in `normalized` mode, the line emitted in the output is the original form of its *first* occurrence.
+* **Streaming vs. Aggregating:** When `with_counts=False`, it yields items lazily as they arrive with $O(1)$ amortized memory additions, making it safe for infinite or large streams. When `with_counts=True`, it aggregates occurrences before yielding.

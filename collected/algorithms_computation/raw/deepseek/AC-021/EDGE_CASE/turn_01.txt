@@ -1,0 +1,119 @@
+## Problem Understanding
+
+We need to solve a **0/1 Subset Sum** problem with tie-breaking rules:
+
+- **Input**: A list of positive integers `nums` and a target integer `target`.
+- **Goal**: Determine if any subset of `nums` sums exactly to `target`.
+- **Tie-breaking**:
+  1. First, minimize the **number of elements** in the subset.
+  2. Then, among subsets with the same minimum cardinality, choose the **lexicographically smallest index list** (indices sorted ascending compared lexicographically).
+- **Output**: The list of indices (0-based) of the chosen subset, or an indication that no such subset exists.
+
+**Key constraints** (assumed typical):
+- `nums` contains positive integers.
+- `target >= 0`.
+- No external libraries, no randomness, deterministic.
+
+**Algorithm**: Dynamic programming over sums.
+- `dp[s]` = minimum number of elements to reach sum `s`.
+- `choice[s]` = the index chosen to reach `s` in a way that yields the lexicographically smallest index list for that cardinality.
+- Process elements in increasing index order, and when updating, prefer fewer elements; if equal cardinality, prefer the path that gives lexicographically smaller index list. Since we process indices in order and reconstruct backwards, we need to be careful: to get lexicographically smallest indices, we want the earliest possible indices to be as small as possible. A standard trick is to process items in reverse index order when building DP, so that reconstruction yields the smallest indices first.
+
+Actually, a clean way: we can store for each sum the best tuple `(count, indices_tuple)` but that's expensive. Instead, use DP with reconstruction and process items from largest index to smallest so that when we reconstruct, we get lexicographically smallest indices. Let's reason:
+
+If we process items in **reverse** (from last index to first), then when we update `dp[s]`, we consider adding item `i` to `dp[s - nums[i]]`. Since we go from high index to low, the first time we achieve a sum with a given cardinality might involve higher indices. To get lexicographically smallest index list, we actually want smaller indices to appear earlier in the sorted list. Lexicographic comparison of sorted index lists: `[0, 5]` < `[1, 2]` because 0 < 1. So we want the smallest possible first index, then smallest second, etc.
+
+A reliable method: After computing DP for minimum cardinality, we can reconstruct greedily from the smallest index: try to include index `i` if it's possible to complete the remaining sum with the remaining items using the minimum required count. But we need to ensure we don't break the minimal cardinality.
+
+Better approach: 
+1. Compute `dp[s]` = min elements to reach sum `s` using any subset (standard 0/1 knapsack style, iterating items in any order, but we need to allow reconstruction).
+2. For reconstruction with lexicographically smallest indices given minimal cardinality: We can do a forward greedy: start with `remaining = target`, `count_needed = dp[target]`. Iterate `i` from 0 to n-1: if `nums[i] <= remaining` and `dp[remaining - nums[i]] == count_needed - 1` (meaning we can use this item and still achieve the minimal count), then we take it, add `i` to result, `remaining -= nums[i]`, `count_needed -= 1`. This greedy picks the smallest possible index at each step because we check from smallest index upward, and we only take it if it leads to a valid minimal-cardinality completion. This yields lexicographically smallest index list.
+
+But careful: `dp` must be computed correctly for 0/1 (each item used at most once). Standard DP: initialize `dp[0]=0`, others infinity. For each item `x`, for `s` from `target` down to `x`: `dp[s] = min(dp[s], dp[s-x]+1)`. This ensures each item used once.
+
+However, the greedy reconstruction above works only if `dp` is computed correctly for all sums up to target. But note: `dp[remaining - nums[i]]` might use items that include `i` itself? No, because `dp` is computed over all items, but when we remove `i`, the remaining sum must be achievable with items excluding `i`. The standard DP does not track which items are used. So `dp[remaining - nums[i]]` might be achievable only by using `i` again, which is invalid. To fix this, we need a way to know if `remaining - nums[i]` is achievable without using `i`. 
+
+Solution: We can compute `dp` as a 2D table or we can compute prefix/suffix DP. Alternatively, we can reconstruct using the standard parent pointers from the DP, but that might not give lexicographically smallest.
+
+Simpler robust approach: Since we need lexicographically smallest index list for minimal cardinality, we can do DP where state is sum and we store the best (count, indices) but that's heavy. However, n and target are likely small enough for a Python solution using bitsets or 2D DP.
+
+Let's do 2D DP: `dp[i][s]` = min elements to reach sum `s` using first `i` items. Then reconstruct: to get lexicographically smallest indices, we can do a forward greedy with the 2D DP: at step `i` (0-based), we ask: can we achieve `remaining` using items from `i` to `n-1` with exactly `count_needed` items? If yes, we can skip item `i` (not take it), and move to `i+1`. If not, we must take item `i` (if possible). But we want lexicographically smallest indices, meaning we prefer to take smaller indices if it doesn't increase cardinality. Actually, lexicographically smallest means we want the first index as small as possible. So we should try to take index 0 if possible while still achieving minimal cardinality. So we should check: if we take item `i`, can we still achieve minimal cardinality? If yes, take it. Else skip it.
+
+So algorithm:
+1. Compute `dp[i][s]` = min items to reach sum `s` using items from index `i` to `n-1` (suffix DP). Or compute `dp_prefix` and use it with a check.
+
+Better: Compute suffix DP: `suf[i][s]` = min items to reach sum `s` using items `i..n-1`. Base: `suf[n][0]=0`, `suf[n][s>0]=inf`. For `i` from n-1 down to 0: `suf[i][s] = min(suf[i+1][s], 1 + suf[i+1][s - nums[i]] if s>=nums[i])`.
+
+Then minimal cardinality = `suf[0][target]`. If inf, no solution.
+
+Reconstruction: `remaining = target`, `count = suf[0][target]`, `res = []`. For `i` from 0 to n-1:
+- If `count == 0`: break.
+- Check if we can take item `i`: if `nums[i] <= remaining` and `suf[i+1][remaining - nums[i]] == count - 1`, then take it: `res.append(i)`, `remaining -= nums[i]`, `count -= 1`.
+- Else skip (do nothing, just continue to next i).
+This ensures we take the smallest possible index at each step because we try from i=0 upward and take it if it's feasible to complete with minimal cardinality. This yields lexicographically smallest index list.
+
+Complexity: O(n * target) time and space. For typical constraints (n up to 1000, target up to 10000), this is fine.
+
+Let's implement.
+
+```python
+def subset_sum_min_card_lex_indices(nums, target):
+    n = len(nums)
+    INF = float('inf')
+    # suffix DP: suf[i][s] = min items to reach sum s using items i..n-1
+    # We'll use a list of lists, but to save memory we can use 1D and iterate backwards?
+    # But we need suf[i+1][...] for reconstruction, so we need all layers.
+    # So 2D array of size (n+1) x (target+1)
+    suf = [[INF] * (target + 1) for _ in range(n + 1)]
+    suf[n][0] = 0
+    for i in range(n - 1, -1, -1):
+        x = nums[i]
+        for s in range(target + 1):
+            # skip item i
+            best = suf[i + 1][s]
+            # take item i
+            if s >= x and suf[i + 1][s - x] != INF:
+                cand = 1 + suf[i + 1][s - x]
+                if cand < best:
+                    best = cand
+            suf[i][s] = best
+
+    if suf[0][target] == INF:
+        return None  # no solution
+
+    # reconstruction
+    remaining = target
+    count = suf[0][target]
+    res = []
+    for i in range(n):
+        if count == 0:
+            break
+        x = nums[i]
+        if x <= remaining and suf[i + 1][remaining - x] == count - 1:
+            res.append(i)
+            remaining -= x
+            count -= 1
+    return res
+
+
+# Example usage:
+if __name__ == "__main__":
+    nums = [3, 34, 4, 12, 5, 2]
+    target = 9
+    print(subset_sum_min_card_lex_indices(nums, target))  # Expected: [0, 4, 5]? Let's check: 3+4+2=9 (indices 0,2,5) count 3; 3+5+? no; 4+5=9 (indices 2,4) count 2 -> minimal count 2, lex smallest indices: [2,4]? Actually [2,4] vs [0,?] 0+? no. 3+? 3+? no. So [2,4] is lex smallest? Check [0,?] 3+?=9 -> need 6, not available. So [2,4] is correct.
+    # Let's test:
+    nums = [3, 34, 4, 12, 5, 2]
+    target = 9
+    print(subset_sum_min_card_lex_indices(nums, target))  # Should be [2, 4] (4+5=9)
+    nums = [1, 2, 3, 4, 5]
+    target = 5
+    print(subset_sum_min_card_lex_indices(nums, target))  # [4]? 5 alone count 1, index 4. Also [1,3]? 2+3=5 count 2. So [4] is min count 1, lex smallest? Only [4] has count 1. So [4].
+    # Another: target=5, nums=[5,1,2,3,4] -> [0] count 1, lex smallest index 0.
+    print(subset_sum_min_card_lex_indices([5,1,2,3,4], 5))  # [0]
+    # Test lex: nums=[2,3,1,4], target=5. Possible: 2+3=5 (0,1), 1+4=5 (2,3). Both count 2. Lex smallest: [0,1] vs [2,3] -> [0,1] is smaller. So output [0,1].
+    print(subset_sum_min_card_lex_indices([2,3,1,4], 5))  # [0,1]
+    # Test where taking smaller index prevents minimal cardinality: nums=[1,2,3,4], target=6. Min count? 2+4=6 (1,3) count 2; 1+2+3=6 (0,1,2) count 3; 3+? no. So min count 2. Lex smallest indices: [1,3] vs [0,?] 0+?=6 -> need 5, not available. So [1,3] is only count 2. Output [1,3].
+    print(subset_sum_min_card_lex_indices([1,2,3,4], 6))  # [1,3]
+```
+
+This solution meets the requirements: deterministic, standard library only, no randomness, and correctly finds the minimal cardinality subset with lexicographically smallest index list.

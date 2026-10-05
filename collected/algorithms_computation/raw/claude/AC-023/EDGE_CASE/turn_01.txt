@@ -1,0 +1,107 @@
+## Problem
+
+Given an undirected weighted graph with `n` vertices and `m` edges, and a list of queries `q`. For each `q`, consider only edges with weight ≤ `q` (all `n` vertices are always present). Report:
+1. the number of connected components, and
+2. the size of the largest component.
+
+## Key constraints and assumptions
+
+- Vertices are labeled `0..n-1` (isolated vertices count as components of size 1).
+- Queries may be unsorted and may repeat; answers must be returned in the original query order.
+- Self-loops and parallel edges are allowed and harmless.
+- Typical sizes: `n, m, Q` up to ~10^5–10^6, so we need roughly O((m + Q) log(m + Q)) time; per-query recomputation (O(Q·(n+m))) is too slow.
+- Edge weights and thresholds may be any comparable numbers (ints or floats).
+
+**Output:** a list of `(components, largest_size)` tuples, one per query, in input order.
+
+## Algorithm
+
+Both components and largest size are monotone as the threshold grows (components only merge), so an offline sweep works:
+
+1. Sort edges by weight.
+2. Sort query indices by threshold.
+3. Maintain a Union-Find (DSU) with union by size and path compression, tracking `components` (starts at `n`) and `largest` (starts at 1 if `n > 0`, else 0).
+4. For each query in increasing threshold order, add all not-yet-added edges with weight ≤ q (union them, updating the counters), then record the answer at the query's original index.
+
+Complexity: O(m log m + Q log Q + (m + n)·α(n)).
+
+## Implementation
+
+```python
+from typing import List, Tuple, Sequence
+
+
+def components_by_threshold(
+    n: int,
+    edges: Sequence[Tuple[int, int, float]],
+    queries: Sequence[float],
+) -> List[Tuple[int, int]]:
+    """
+    n       : number of vertices (labeled 0..n-1)
+    edges   : iterable of (u, v, w)
+    queries : thresholds q; for each, use only edges with w <= q
+    returns : list of (num_components, largest_component_size) per query,
+              in the original query order.
+    """
+    parent = list(range(n))
+    size = [1] * n
+    components = n
+    largest = 1 if n > 0 else 0
+
+    def find(x: int) -> int:
+        # Iterative find with path compression.
+        root = x
+        while parent[root] != root:
+            root = parent[root]
+        while parent[x] != root:
+            parent[x], x = root, parent[x]
+        return root
+
+    sorted_edges = sorted(edges, key=lambda e: e[2])
+    order = sorted(range(len(queries)), key=lambda i: queries[i])
+
+    answers: List[Tuple[int, int]] = [(0, 0)] * len(queries)
+    ei = 0
+    m = len(sorted_edges)
+
+    for qi in order:
+        q = queries[qi]
+        while ei < m and sorted_edges[ei][2] <= q:
+            u, v, _ = sorted_edges[ei]
+            ei += 1
+            ru, rv = find(u), find(v)
+            if ru != rv:
+                if size[ru] < size[rv]:
+                    ru, rv = rv, ru
+                parent[rv] = ru
+                size[ru] += size[rv]
+                components -= 1
+                if size[ru] > largest:
+                    largest = size[ru]
+        answers[qi] = (components, largest)
+
+    return answers
+
+
+if __name__ == "__main__":
+    n = 6
+    edges = [(0, 1, 1), (1, 2, 3), (3, 4, 2), (2, 3, 5), (4, 5, 7)]
+    queries = [0, 1, 2, 3, 5, 7, 4]
+    result = components_by_threshold(n, edges, queries)
+    for q, (c, L) in zip(queries, result):
+        print(f"q={q}: components={c}, largest={L}")
+```
+
+### Example output
+
+```
+q=0: components=6, largest=1
+q=1: components=5, largest=2
+q=2: components=4, largest=2
+q=3: components=3, largest=3
+q=5: components=2, largest=5
+q=7: components=1, largest=6
+q=4: components=3, largest=3
+```
+
+The solution is fully deterministic and uses only the standard library: no randomness, network access, or I/O beyond the optional demo in `__main__`.

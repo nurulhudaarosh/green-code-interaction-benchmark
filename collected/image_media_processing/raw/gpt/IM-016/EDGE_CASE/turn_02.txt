@@ -1,0 +1,80 @@
+Use edge-replication padding so every pixel—including images that are only 1 pixel wide or tall—has a valid 3×3 neighborhood.
+
+```python
+from pathlib import Path
+from PIL import Image
+import math
+
+
+def sobel_edges(input_dir, output_dir):
+    """
+    Apply explicit Sobel gradient convolution to every image in input_dir.
+
+    Uses edge-replication padding, so 1xN, Nx1, and 1x1 images
+    are processed safely.
+
+    Saves the clipped gradient magnitude as grayscale PNG files.
+    """
+
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    Gx = [
+        [-1, 0, 1],
+        [-2, 0, 2],
+        [-1, 0, 1],
+    ]
+
+    Gy = [
+        [-1, -2, -1],
+        [0,   0,  0],
+        [1,   2,  1],
+    ]
+
+    valid_extensions = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+
+    for input_path in input_dir.iterdir():
+        if (
+            not input_path.is_file()
+            or input_path.suffix.lower() not in valid_extensions
+        ):
+            continue
+
+        with Image.open(input_path) as img:
+            gray = img.convert("L")
+            width, height = gray.size
+            pixels = gray.load()
+
+            output = Image.new("L", (width, height), 0)
+            out_pixels = output.load()
+
+            for y in range(height):
+                for x in range(width):
+                    gx = 0
+                    gy = 0
+
+                    for ky in range(-1, 2):
+                        for kx in range(-1, 2):
+                            # Edge-replication padding:
+                            # clamp coordinates to the image boundaries.
+                            px = min(max(x + kx, 0), width - 1)
+                            py = min(max(y + ky, 0), height - 1)
+
+                            pixel = pixels[px, py]
+
+                            gx += pixel * Gx[ky + 1][kx + 1]
+                            gy += pixel * Gy[ky + 1][kx + 1]
+
+                    magnitude = math.sqrt(gx * gx + gy * gy)
+
+                    # Clip to valid grayscale range.
+                    out_pixels[x, y] = min(255, max(0, int(magnitude)))
+
+            output_path = output_dir / f"{input_path.stem}_sobel.png"
+            output.save(output_path, format="PNG")
+```
+
+The key change is coordinate clamping:
+
+So a **1×1 image** repeatedly uses its only pixel for the entire 3×3 neighborhood, while **1×N** and **N×1** images are handled without any out-of-bounds access.

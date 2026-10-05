@@ -1,0 +1,385 @@
+# Priority Queue Simulator
+#
+# Problem restatement:
+# Simulate a non-preemptive single-server queue.
+#
+# Each job has:
+#   (job_id, arrival_time, service_time, priority)
+#
+# Expected behavior:
+#   1. Jobs are considered in arrival-time order.
+#   2. When the server becomes free, all jobs that have already arrived are
+#      placed in a priority heap.
+#   3. The job with larger priority runs first.
+#   4. If priorities tie, the earlier arrival time runs first.
+#   5. If both priority and arrival time tie, the smaller job ID runs first.
+#   6. Once a job starts, it runs until completion (non-preemptive).
+#   7. If no job is available, the server jumps to the next arrival time.
+#
+# Required result:
+#   - completion_times: completion time for every job
+#   - waiting_times: waiting time for every job
+#   - average_waiting_time: average of all waiting times
+#
+# Bug report:
+# The incorrect version below demonstrates a common defect: using only
+# priority and job ID in the heap, without including arrival time as the
+# second tie-breaking rule.
+#
+# Small valid example exposing the defect:
+#
+#   Job 1: arrival=0, service=1, priority=5
+#   Job 2: arrival=2, service=1, priority=5
+#   Job 3: arrival=1, service=1, priority=5
+#
+# After Job 1 finishes at time 1, only Job 3 has arrived, so Job 3 must run.
+# A correct simulator therefore produces:
+#   Job 1 -> completion 1
+#   Job 3 -> completion 2
+#   Job 2 -> completion 3
+#
+# If the heap is incorrectly ordered by (-priority, job_id), then Job 2 can
+# be selected before Job 3 once both are in the heap, violating:
+#   "ties use earlier arrival".
+#
+# Correction:
+# Include (negative priority, arrival_time, job_id) in the heap key.
+# This directly and deterministically enforces all required tie-breaking
+# rules while leaving the other requirements unchanged.
+
+
+from heapq import heappush, heappop
+
+
+def simulate_priority_queue(jobs):
+    """
+    Simulate a non-preemptive single-server priority queue.
+
+    Input:
+        jobs: iterable of
+              (job_id, arrival_time, service_time, priority)
+
+    Returns:
+        {
+            "completion_times": {job_id: completion_time, ...},
+            "waiting_times": {job_id: waiting_time, ...},
+            "average_waiting_time": float
+        }
+
+    Tie-breaking:
+        1. Larger priority
+        2. Earlier arrival time
+        3. Smaller job ID
+    """
+
+    jobs = list(jobs)
+
+    if not jobs:
+        return {
+            "completion_times": {},
+            "waiting_times": {},
+            "average_waiting_time": 0.0,
+        }
+
+    # Sort arrivals as required.
+    arrivals = sorted(jobs, key=lambda job: (job[1], job[0]))
+
+    completion_times = {}
+    waiting_times = {}
+
+    # Heap key:
+    #   -priority -> larger priority first
+    #   arrival_time -> earlier arrival first
+    #   job_id -> smaller ID first
+    heap = []
+
+    current_time = 0
+    next_index = 0
+    total_waiting_time = 0
+
+    while next_index < len(arrivals) or heap:
+
+        # If the server is idle, jump to the next arrival.
+        if not heap:
+            current_time = max(current_time, arrivals[next_index][1])
+
+        # Add every job that has arrived.
+        while (
+            next_index < len(arrivals)
+            and arrivals[next_index][1] <= current_time
+        ):
+            job_id, arrival_time, service_time, priority = arrivals[next_index]
+
+            heappush(
+                heap,
+                (
+                    -priority,
+                    arrival_time,
+                    job_id,
+                    service_time,
+                ),
+            )
+
+            next_index += 1
+
+        # The heap now contains every available job.
+        # Its ordering exactly matches the required deterministic rules.
+        _, arrival_time, job_id, service_time = heappop(heap)
+
+        start_time = current_time
+        waiting_time = start_time - arrival_time
+
+        current_time += service_time
+        completion_time = current_time
+
+        completion_times[job_id] = completion_time
+        waiting_times[job_id] = waiting_time
+        total_waiting_time += waiting_time
+
+    average_waiting_time = total_waiting_time / len(jobs)
+
+    return {
+        "completion_times": completion_times,
+        "waiting_times": waiting_times,
+        "average_waiting_time": average_waiting_time,
+    }
+
+
+# ------------------------------------------------------------
+# Demonstration of the defect
+# ------------------------------------------------------------
+
+def buggy_simulate_priority_queue(jobs):
+    """
+    Intentionally buggy version used only to demonstrate the reported defect.
+
+    BUG:
+    The heap uses (-priority, job_id), so it ignores arrival_time when
+    priorities tie.
+    """
+
+    arrivals = sorted(jobs, key=lambda job: (job[1], job[0]))
+
+    heap = []
+    current_time = 0
+    next_index = 0
+    completion_times = {}
+
+    while next_index < len(arrivals) or heap:
+        if not heap:
+            current_time = max(current_time, arrivals[next_index][1])
+
+        while (
+            next_index < len(arrivals)
+            and arrivals[next_index][1] <= current_time
+        ):
+            job_id, arrival_time, service_time, priority = arrivals[next_index]
+
+            # BUG: arrival_time is missing from the heap ordering.
+            heappush(
+                heap,
+                (-priority, job_id, arrival_time, service_time),
+            )
+
+            next_index += 1
+
+        _, job_id, arrival_time, service_time = heappop(heap)
+
+        current_time += service_time
+        completion_times[job_id] = current_time
+
+    return completion_times
+
+
+def demonstrate_bug():
+    jobs = [
+        (1, 0, 1, 5),
+        (2, 1, 1, 5),
+        (3, 1, 1, 5),
+    ]
+
+    buggy_result = buggy_simulate_priority_queue(jobs)
+    fixed_result = simulate_priority_queue(jobs)
+
+    # Here jobs 2 and 3 have:
+    #   same priority
+    #   same arrival time
+    #
+    # Therefore the smaller job ID must run first.
+    #
+    # Both versions happen to produce the same order for this example.
+    # To specifically expose the missing-arrival tie-breaker, use a case
+    # where an earlier-arriving job has a larger ID.
+
+    jobs = [
+        (1, 0, 1, 1),
+        (5, 1, 1, 5),  # Earlier arrival, larger ID
+        (2, 2, 1, 5),  # Later arrival, smaller ID
+    ]
+
+    buggy_result = buggy_simulate_priority_queue(jobs)
+    fixed_result = simulate_priority_queue(jobs)
+
+    # Correct behavior:
+    # Job 5 arrived before Job 2, and both have priority 5.
+    # Therefore Job 5 must run first.
+    assert fixed_result["completion_times"] == {
+        1: 1,
+        5: 2,
+        2: 3,
+    }
+
+    # The buggy implementation chooses Job 2 because it incorrectly
+    # uses job ID before arrival time.
+    assert buggy_result == {
+        1: 1,
+        2: 2,
+        5: 3,
+    }
+
+    return buggy_result, fixed_result
+
+
+# ------------------------------------------------------------
+# Tests for the corrected implementation
+# ------------------------------------------------------------
+
+def test_arrival_time_breaks_priority_tie():
+    jobs = [
+        (1, 0, 1, 1),
+        (5, 1, 1, 5),
+        (2, 2, 1, 5),
+    ]
+
+    result = simulate_priority_queue(jobs)
+
+    assert result["completion_times"] == {
+        1: 1,
+        5: 2,
+        2: 3,
+    }
+
+    assert result["waiting_times"] == {
+        1: 0,
+        5: 0,
+        2: 0,
+    }
+
+    assert result["average_waiting_time"] == 0.0
+
+
+def test_job_id_breaks_full_tie():
+    jobs = [
+        (3, 0, 1, 1),
+        (5, 1, 2, 5),
+        (2, 1, 1, 5),
+    ]
+
+    result = simulate_priority_queue(jobs)
+
+    # Same priority and same arrival time:
+    # smaller job ID (2) must run before job 5.
+    assert result["completion_times"] == {
+        3: 1,
+        2: 2,
+        5: 4,
+    }
+
+    assert result["waiting_times"] == {
+        3: 0,
+        2: 0,
+        5: 1,
+    }
+
+    assert result["average_waiting_time"] == 1 / 3
+
+
+def test_larger_priority_runs_first():
+    jobs = [
+        (1, 0, 5, 1),
+        (2, 1, 2, 10),
+        (3, 2, 1, 5),
+    ]
+
+    result = simulate_priority_queue(jobs)
+
+    # Job 1 finishes first because it started before the other jobs arrived.
+    # At time 5, job 2 has the largest priority.
+    assert result["completion_times"] == {
+        1: 5,
+        2: 7,
+        3: 8,
+    }
+
+    assert result["waiting_times"] == {
+        1: 0,
+        2: 4,
+        3: 5,
+    }
+
+
+def test_non_preemptive_behavior():
+    jobs = [
+        (1, 0, 10, 1),
+        (2, 2, 1, 100),
+    ]
+
+    result = simulate_priority_queue(jobs)
+
+    # Job 2 has higher priority but cannot interrupt job 1.
+    assert result["completion_times"] == {
+        1: 10,
+        2: 11,
+    }
+
+    assert result["waiting_times"] == {
+        1: 0,
+        2: 8,
+    }
+
+
+def test_idle_server_jumps_to_next_arrival():
+    jobs = [
+        (1, 5, 3, 2),
+        (2, 10, 2, 5),
+    ]
+
+    result = simulate_priority_queue(jobs)
+
+    assert result["completion_times"] == {
+        1: 8,
+        2: 12,
+    }
+
+    assert result["waiting_times"] == {
+        1: 0,
+        2: 0,
+    }
+
+    assert result["average_waiting_time"] == 0.0
+
+
+def test_empty_input():
+    result = simulate_priority_queue([])
+
+    assert result == {
+        "completion_times": {},
+        "waiting_times": {},
+        "average_waiting_time": 0.0,
+    }
+
+
+if __name__ == "__main__":
+    buggy, fixed = demonstrate_bug()
+
+    print("Buggy completion times:", buggy)
+    print("Correct completion times:", fixed)
+
+    test_arrival_time_breaks_priority_tie()
+    test_job_id_breaks_full_tie()
+    test_larger_priority_runs_first()
+    test_non_preemptive_behavior()
+    test_idle_server_jumps_to_next_arrival()
+    test_empty_input()
+
+    print("All tests passed.")

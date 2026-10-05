@@ -1,0 +1,201 @@
+```python
+"""
+event_pivot.py - Validate event records and pivot them into
+(date, region) rows with one deterministic count column per event type.
+
+Standard library only. Python 3.9+.
+"""
+
+from __future__ import annotations
+
+import csv
+import io
+import re
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from typing import Any, Iterable, Mapping, Optional, Sequence
+
+
+class RecordValidationError(ValueError):
+    """Raised in strict mode when one or more records are invalid."""
+
+    def __init__(self, errors: Sequence["RecordError"]):
+        self.errors = list(errors)
+        preview = "; ".join(str(e) for e in self.errors[:5])
+        more = f" (+{len(self.errors) - 5} more)" if len(self.errors) > 5 else ""
+        super().__init__(f"{len(self.errors)} invalid record(s): {preview}{more}")
+
+
+@dataclass(frozen=True)
+class RecordError:
+    index: int
+    message: str
+
+    def __str__(self) -> str:
+        return f"record[{self.index}]: {self.message}"
+
+
+@dataclass(frozen=True)
+class PivotResult:
+    index_columns: tuple          # ("date", "region")
+    event_columns: tuple          # sorted event-type column names
+    rows: list                    # list of dicts, sorted, zero-filled
+    errors: list = field(default_factory=list)  # RecordError items (lenient mode)
+
+    @property
+    def columns(self) -> list:
+        return [*self.index_columns, *self.event_columns]
+
+
+_NON_ALNUM = re.compile(r"[^a-z0-9]+")
+
+
+def normalize_event_type(value: Any) -> str:
+    """'Page View' / 'page-view' / ' PAGE_VIEW ' -> 'page_view' (deterministic)."""
+    if not isinstance(value, str):
+        raise ValueError(f"event_type must be a string, got {type(value).__name__}")
+    slug = _NON_ALNUM.sub("_", value.strip().lower()).strip("_")
+    if not slug:
+        raise ValueError("event_type is empty")
+    return slug
+
+
+def normalize_region(value: Any) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"region must be a string, got {type(value).__name__}")
+    cleaned = " ".join(value.split())  # trim + collapse internal whitespace
+    if not cleaned:
+        raise ValueError("region is empty")
+    return cleaned
+
+
+def parse_date(value: Any) -> date:
+    """Accept date, datetime, or ISO-8601 string (date or datetime)."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            raise ValueError("date is empty")
+        try:
+            return date.fromisoformat(text[:10]) if len(text) >= 10 else date.fromisoformat(text)
+        except ValueError:
+            pass
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+        except ValueError:
+            raise ValueError(f"unparseable date: {value!r}") from None
+    raise ValueError(f"date must be a date or ISO string, got {type(value).__name__}")
+
+
+def validate_record(
+    record: Mapping[str, Any],
+    allowed_event_types: Optional[frozenset] = None,
+) -> tuple:
+    """Return a normalized (date, region, event_type) tuple or raise ValueError."""
+    if not isinstance(record, Mapping):
+        raise ValueError(f"record must be a mapping, got {type(record).__name__}")
+    missing = [k for k in ("date", "region", "event_type") if k not in record]
+    if missing:
+        raise ValueError(f"missing field(s): {', '.join(missing)}")
+
+    d = parse_date(record["date"])
+    region = normalize_region(record["region"])
+    event = normalize_event_type(record["event_type"])
+
+    if allowed_event_types is not None and event not in allowed_event_types:
+        raise ValueError(f"event_type {event!r} not in allowed set")
+    return d, region, event
+
+
+def pivot_events(
+    records: Iterable[Mapping[str, Any]],
+    *,
+    event_types: Optional[Sequence[str]] = None,
+    strict: bool = True,
+) -> PivotResult:
+    """
+    Pivot raw event records into counts per (date, region) x event_type.
+
+    Args:
+        records: iterable of mappings with 'date', 'region', 'event_type'.
+        event_types: optional fixed column set (normalized internally). When given,
+            columns appear even if no records match them, and unknown types are
+            treated as invalid. When omitted, columns are the sorted set seen.
+        strict: if True raise RecordValidationError on any invalid record;
+            otherwise skip invalid records and report them in `result.errors`.
+
+    Returns:
+        PivotResult with rows sorted by (date, region), every event column
+        present in every row (missing cells filled with 0).
+    """
+    allowed = None
+    if event_types is not None:
+        allowed = frozenset(normalize_event_type(e) for e in event_types)
+
+    counts: dict = defaultdict(Counter)   # (date, region) -> Counter(event -> n)
+    seen_events: set = set()
+    errors: list = []
+
+    for i, rec in enumerate(records):
+        try:
+            d, region, event = validate_record(rec, allowed)
+        except ValueError as exc:
+            errors.append(RecordError(i, str(exc)))
+            continue
+        counts[(d, region)][event] += 1
+        seen_events.add(event)
+
+    if errors and strict:
+        raise RecordValidationError(errors)
+
+    columns = tuple(sorted(allowed if allowed is not None else seen_events))
+
+    rows = []
+    for (d, region) in sorted(counts, key=lambda k: (k[0], k[1].casefold(), k[1])):
+        row = {"date": d.isoformat(), "region": region}
+        row.update({col: counts[(d, region)].get(col, 0) for col in columns})
+        rows.append(row)
+
+    return PivotResult(
+        index_columns=("date", "region"),
+        event_columns=columns,
+        rows=rows,
+        errors=errors,
+    )
+
+
+def to_csv(result: PivotResult) -> str:
+    """Render a PivotResult as CSV text (stable column order, LF newlines)."""
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=result.columns, lineterminator="\n")
+    writer.writeheader()
+    writer.writerows(result.rows)
+    return buf.getvalue()
+
+
+if __name__ == "__main__":
+    sample = [
+        {"date": "2024-03-02", "region": "West", "event_type": "Click"},
+        {"date": "2024-03-01", "region": "East", "event_type": "page view"},
+        {"date": "2024-03-01T14:30:00Z", "region": " East ", "event_type": "Page-View"},
+        {"date": date(2024, 3, 1), "region": "West", "event_type": "click"},
+        {"date": "2024-03-02", "region": "West", "event_type": "purchase"},
+        {"date": "not-a-date", "region": "West", "event_type": "click"},  # invalid
+        {"date": "2024-03-02", "region": "", "event_type": "click"},      # invalid
+    ]
+
+    result = pivot_events(sample, strict=False)
+    print(to_csv(result))
+    for err in result.errors:
+        print("skipped ->", err)
+```
+
+Key behaviors:
+
+- **Validation:** Checks required fields, parses dates (`date`, `datetime`, or ISO strings), and rejects empty or non-string regions and event types. Strict mode (default) raises `RecordValidationError` listing every bad record. With `strict=False`, bad records are skipped and reported in `result.errors`.
+- **Deterministic columns:** Event types are normalized to snake_case slugs (`"Page-View"` becomes `page_view`) and columns are sorted alphabetically. Pass `event_types=[...]` to fix the column set, which also rejects unknown types.
+- **Zero fill and sorting:** Every row contains every event column, with `0` for missing cells. Rows are sorted by date, then region (case-insensitive, with a case-sensitive tiebreak).

@@ -1,0 +1,54 @@
+import csv
+import sys
+from statistics import mean, median
+
+
+def main():
+    input_file = sys.argv[1]
+
+    with open(input_file, "r", encoding="utf-8-sig", newline="") as file:
+        reader = csv.DictReader(file)
+        columns = reader.fieldnames or []
+
+        data = {column: [] for column in columns}
+
+        for row in reader:
+            for column in columns:
+                value = row[column].strip()
+
+                if value == "":
+                    continue
+
+                try:
+                    data[column].append(float(value))
+                except ValueError:
+                    continue
+
+    writer = csv.writer(sys.stdout)
+    writer.writerow(["column", "count", "minimum", "maximum", "mean", "median"])
+
+    for column in columns:
+        values = data[column]
+
+        if values:
+            writer.writerow([
+                column,
+                len(values),
+                min(values),
+                max(values),
+                mean(values),
+                median(values)
+            ])
+        else:
+            writer.writerow([
+                column,
+                0,
+                "",
+                "",
+                "",
+                ""
+            ])
+
+
+if __name__ == "__main__":
+    main()

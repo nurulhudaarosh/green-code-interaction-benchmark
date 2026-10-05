@@ -1,0 +1,146 @@
+"""
+Problem Restatement
+-------------------
+Given two integers L and R, list every prime number in the inclusive
+interval [L, R]. Also return the largest gap between two consecutive
+primes in that interval.
+
+Key Constraints
+---------------
+- The interval is inclusive: [L, R].
+- L and R are integers.
+- The interval width is bounded, so a segmented sieve is practical.
+- Only the Python standard library is used.
+- The solution is deterministic.
+- No network access, APIs, external services, randomness, or human
+  interaction is used.
+
+Required Output
+---------------
+Return a dictionary containing:
+    {
+        "primes": [...],       # all primes in [L, R]
+        "largest_gap": value   # largest consecutive-prime gap
+    }
+
+If there are fewer than two primes in the interval, the largest gap
+is 0.
+
+Algorithm
+---------
+1. Generate all base primes up to sqrt(R) using the ordinary Sieve of
+   Eratosthenes.
+2. Create a boolean array representing every number in [L, R].
+3. For each base prime p, find the first multiple of p inside [L, R].
+   Mark all such multiples as composite.
+4. The remaining unmarked numbers are exactly the primes in [L, R].
+5. Scan consecutive primes to find the largest gap.
+
+Time Complexity
+---------------
+Base sieve: O(sqrt(R) log log R)
+Segmented sieve: O((R-L+1) log log R) approximately
+Extra space: O(sqrt(R) + (R-L+1))
+"""
+
+
+from math import isqrt
+
+
+def generate_base_primes(limit: int) -> list[int]:
+    """Return all primes <= limit using the Sieve of Eratosthenes."""
+    if limit < 2:
+        return []
+
+    is_prime = [True] * (limit + 1)
+    is_prime[0] = is_prime[1] = False
+
+    for p in range(2, isqrt(limit) + 1):
+        if is_prime[p]:
+            start = p * p
+            is_prime[start : limit + 1 : p] = [False] * (
+                ((limit - start) // p) + 1
+            )
+
+    return [n for n in range(2, limit + 1) if is_prime[n]]
+
+
+def primes_in_range(L: int, R: int) -> dict:
+    """
+    List all primes in [L, R] and return the largest gap between
+    consecutive primes.
+    """
+    if L > R:
+        raise ValueError("L must be less than or equal to R")
+
+    # Numbers below 2 cannot be prime.
+    if R < 2:
+        return {
+            "primes": [],
+            "largest_gap": 0,
+        }
+
+    segment_start = max(L, 2)
+    size = R - segment_start + 1
+    is_prime = [True] * size
+
+    # Generate primes needed to mark composites in the segment.
+    base_primes = generate_base_primes(isqrt(R))
+
+    for p in base_primes:
+        # First multiple of p that is >= segment_start.
+        first_multiple = max(p * p, ((segment_start + p - 1) // p) * p)
+
+        if first_multiple > R:
+            continue
+
+        for multiple in range(first_multiple, R + 1, p):
+            is_prime[multiple - segment_start] = False
+
+    primes = [
+        segment_start + i
+        for i, prime in enumerate(is_prime)
+        if prime
+    ]
+
+    largest_gap = 0
+
+    for i in range(1, len(primes)):
+        gap = primes[i] - primes[i - 1]
+        if gap > largest_gap:
+            largest_gap = gap
+
+    return {
+        "primes": primes,
+        "largest_gap": largest_gap,
+    }
+
+
+# Example tests
+if __name__ == "__main__":
+    assert primes_in_range(10, 30) == {
+        "primes": [11, 13, 17, 19, 23, 29],
+        "largest_gap": 6,
+    }
+
+    assert primes_in_range(1, 10) == {
+        "primes": [2, 3, 5, 7],
+        "largest_gap": 2,
+    }
+
+    assert primes_in_range(14, 16) == {
+        "primes": [],
+        "largest_gap": 0,
+    }
+
+    assert primes_in_range(17, 17) == {
+        "primes": [17],
+        "largest_gap": 0,
+    }
+
+    assert primes_in_range(2, 20) == {
+        "primes": [2, 3, 5, 7, 11, 13, 17, 19],
+        "largest_gap": 4,
+    }
+
+    print(primes_in_range(10, 30))

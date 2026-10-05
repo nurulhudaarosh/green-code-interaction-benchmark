@@ -1,0 +1,11 @@
+{
+  "task_id": "IM-011",
+  "model": "gemini",
+  "interaction": "FULL_MULTI_TURN",
+  "turn": 3,
+  "saved_at": "2026-10-04T20:35:05.923037+00:00",
+  "response_sha256": "6b4bcc389d88d7513f425742766af815f4fc6932d394a03b2c0f3302a619acbd",
+  "code_sha256": "2ac24144461de6062dc53c085effde332fe7d007e47a80ee7a5e2a5b896a021c",
+  "raw_file": ".collection/raw/gemini/IM-011/FULL_MULTI_TURN/turn_03.txt",
+  "code_file": ".collection/code/gemini/IM-011/FULL_MULTI_TURN/turn_03.py"
+}

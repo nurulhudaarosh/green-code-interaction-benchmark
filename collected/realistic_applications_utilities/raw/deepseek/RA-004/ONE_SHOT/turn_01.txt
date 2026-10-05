@@ -1,72 +1,264 @@
 ```python
+"""
+Complete Document Organizer
+----------------------------
+A fully functional document organizer that:
+- Scans a source folder for files
+- Categorizes them by type (Documents, Images, Videos, Audio, Archives, Code, etc.)
+- Moves (or copies) them into organized subfolders
+- Handles duplicate filenames safely
+- Supports dry-run mode
+- Logs all actions
+- Can undo the last organization (via manifest file)
+
+Usage:
+    python document_organizer.py /path/to/folder [--copy] [--dry-run] [--undo]
+
+Example:
+    python document_organizer.py ~/Downloads
+    python document_organizer.py ~/Downloads --copy
+    python document_organizer.py ~/Downloads --dry-run
+    python document_organizer.py ~/Downloads --undo
+"""
+
+import os
+import sys
+import shutil
+import argparse
 import json
-import traceback
+from datetime import datetime
 from pathlib import Path
+from collections import defaultdict
 
-DATASET_PATH = "dataset.json"
 
-def load_dataset(path):
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"'{path}' not found. Check the path.")
-    with open(p, "r", encoding="utf-8") as f:
-        return json.load(f)
+# ---------- Category definitions ----------
+CATEGORIES = {
+    "Documents": [
+        ".pdf", ".doc", ".docx", ".txt", ".rtf", ".odt",
+        ".xls", ".xlsx", ".ppt", ".pptx", ".csv", ".md"
+    ],
+    "Images": [
+        ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg",
+        ".webp", ".tiff", ".ico", ".heic"
+    ],
+    "Videos": [
+        ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv",
+        ".webm", ".m4v", ".mpg", ".mpeg"
+    ],
+    "Audio": [
+        ".mp3", ".wav", ".flac", ".aac", ".ogg", ".wma",
+        ".m4a", ".opus"
+    ],
+    "Archives": [
+        ".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".iso"
+    ],
+    "Code": [
+        ".py", ".js", ".ts", ".java", ".c", ".cpp", ".cs", ".rb",
+        ".go", ".rs", ".php", ".html", ".css", ".scss", ".json",
+        ".xml", ".yml", ".yaml", ".sh", ".bat", ".sql"
+    ],
+    "Executables": [
+        ".exe", ".msi", ".app", ".deb", ".rpm", ".apk", ".dmg"
+    ],
+    "Fonts": [
+        ".ttf", ".otf", ".woff", ".woff2", ".eot"
+    ],
+    "Ebooks": [
+        ".epub", ".mobi", ".azw", ".azw3", ".fb2"
+    ],
+}
 
-def safe_get(lst, index, default=None, label="list"):
-    """Access list[index] safely, logging instead of crashing."""
-    try:
-        return lst[index]
-    except IndexError:
-        print(f"IndexError: {label} has length {len(lst)}, but index {index} was requested.")
-        return default
+MANIFEST_NAME = ".organizer_manifest.json"
 
-def diagnose_index_errors(data):
-    issues = []
-    interactions = data.get("interactions", []) if isinstance(data, dict) else []
 
-    if not interactions:
-        issues.append("'interactions' list is empty — nothing to advance through.")
-        return issues
+# ---------- Helpers ----------
+def get_category(extension: str) -> str:
+    """Return the category name for a given file extension."""
+    extension = extension.lower()
+    for category, extensions in CATEGORIES.items():
+        if extension in extensions:
+            return category
+    return "Others"
 
-    for i, interaction in enumerate(interactions):
+
+def unique_destination(dest_path: Path) -> Path:
+    """If a file already exists at dest_path, append (1), (2), ... until unique."""
+    if not dest_path.exists():
+        return dest_path
+    stem = dest_path.stem
+    suffix = dest_path.suffix
+    parent = dest_path.parent
+    counter = 1
+    while True:
+        candidate = parent / f"{stem} ({counter}){suffix}"
+        if not candidate.exists():
+            return candidate
+        counter += 1
+
+
+def load_manifest(folder: Path) -> dict:
+    """Load the manifest file if it exists."""
+    manifest_path = folder / MANIFEST_NAME
+    if manifest_path.exists():
         try:
-            # Example of the kind of indexing that typically throws this error:
-            # accessing a sub-list/messages array without checking length first
-            messages = interaction.get("messages", []) if isinstance(interaction, dict) else []
-            if not messages:
-                issues.append(f"Interaction {i}: 'messages' is empty — indexing into it would fail.")
-                continue
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
 
-            first_msg = safe_get(messages, 0, label=f"interaction[{i}].messages")
-            last_msg = safe_get(messages, len(messages) - 1, label=f"interaction[{i}].messages")
 
-            if first_msg is None or last_msg is None:
-                issues.append(f"Interaction {i}: could not safely access first/last message.")
+def save_manifest(folder: Path, manifest: dict) -> None:
+    """Save the manifest file."""
+    manifest_path = folder / MANIFEST_NAME
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
 
-        except Exception:
-            issues.append(f"Interaction {i}: unexpected error:\n{traceback.format_exc()}")
 
-    return issues
+def log(message: str) -> None:
+    """Print a timestamped log message."""
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    print(f"[{timestamp}] {message}")
 
-def main():
-    try:
-        data = load_dataset(DATASET_PATH)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"Failed to load dataset: {e}")
+
+# ---------- Core operations ----------
+def scan_files(source: Path):
+    """Yield all files directly inside source (non-recursive), excluding the manifest."""
+    for entry in source.iterdir():
+        if entry.is_file() and entry.name != MANIFEST_NAME:
+            yield entry
+
+
+def organize(source: Path, copy: bool = False, dry_run: bool = False) -> dict:
+    """
+    Organize files in `source` into category subfolders.
+    Returns a manifest dict of {original_path: new_path}.
+    """
+    if not source.exists() or not source.is_dir():
+        raise NotADirectoryError(f"Not a valid directory: {source}")
+
+    moved = {}
+    stats = defaultdict(int)
+
+    files = list(scan_files(source))
+    if not files:
+        log("No files found to organize.")
+        return moved
+
+    log(f"Found {len(files)} file(s) in '{source}'")
+    log(f"Mode: {'COPY' if copy else 'MOVE'}{' (DRY RUN)' if dry_run else ''}")
+    log("-" * 50)
+
+    for file_path in files:
+        category = get_category(file_path.suffix)
+        target_dir = source / category
+
+        if not dry_run:
+            target_dir.mkdir(exist_ok=True)
+
+        dest_path = unique_destination(target_dir / file_path.name)
+
+        try:
+            if dry_run:
+                log(f"[DRY] {file_path.name}  ->  {category}/")
+            else:
+                if copy:
+                    shutil.copy2(file_path, dest_path)
+                else:
+                    shutil.move(str(file_path), str(dest_path))
+                log(f"{file_path.name}  ->  {category}/{dest_path.name}")
+                moved[str(file_path)] = str(dest_path)
+            stats[category] += 1
+        except (OSError, shutil.Error) as e:
+            log(f"ERROR moving '{file_path.name}': {e}")
+
+    log("-" * 50)
+    log("Summary:")
+    for cat, count in sorted(stats.items()):
+        log(f"  {cat:<15} {count} file(s)")
+
+    return moved
+
+
+def undo(source: Path) -> None:
+    """Undo the last organization using the manifest file."""
+    manifest = load_manifest(source)
+    if not manifest:
+        log("No manifest found. Nothing to undo.")
         return
 
-    issues = diagnose_index_errors(data)
+    log(f"Undoing {len(manifest)} operation(s)...")
+    errors = 0
+    for original, current in manifest.items():
+        original_path = Path(original)
+        current_path = Path(current)
+        if not current_path.exists():
+            log(f"SKIP (missing): {current_path}")
+            continue
+        if original_path.exists():
+            log(f"SKIP (target exists): {original_path}")
+            errors += 1
+            continue
+        try:
+            original_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(current_path), str(original_path))
+            log(f"Restored: {current_path.name}  ->  {original_path.parent.name}/")
+        except (OSError, shutil.Error) as e:
+            log(f"ERROR restoring '{current_path.name}': {e}")
+            errors += 1
 
-    if issues:
-        print("Issues found (likely causes of 'list index out of range'):")
-        for issue in issues:
-            print(f"  - {issue}")
-    else:
-        print("No obvious index issues found — the error may be occurring elsewhere in your pipeline.")
-        print("Check any loop like `data[i]` or `list[-1]` where the list could be shorter than expected.")
+    # Clean up empty category folders
+    for folder in source.iterdir():
+        if folder.is_dir() and folder.name in CATEGORIES or folder.name == "Others":
+            try:
+                if not any(folder.iterdir()):
+                    folder.rmdir()
+                    log(f"Removed empty folder: {folder.name}/")
+            except OSError:
+                pass
+
+    (source / MANIFEST_NAME).unlink(missing_ok=True)
+    log("Undo complete." if errors == 0 else f"Undo complete with {errors} skipped/error(s).")
+
+
+# ---------- CLI ----------
+def main():
+    parser = argparse.ArgumentParser(
+        description="Organize files in a folder by category.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Examples:\n"
+               "  python document_organizer.py ~/Downloads\n"
+               "  python document_organizer.py ~/Downloads --copy\n"
+               "  python document_organizer.py ~/Downloads --dry-run\n"
+               "  python document_organizer.py ~/Downloads --undo\n"
+    )
+    parser.add_argument("folder", help="Folder to organize")
+    parser.add_argument("--copy", action="store_true",
+                        help="Copy files instead of moving them")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Preview actions without changing anything")
+    parser.add_argument("--undo", action="store_true",
+                        help="Undo the last organization using the manifest")
+
+    args = parser.parse_args()
+    source = Path(args.folder).expanduser().resolve()
+
+    try:
+        if args.undo:
+            undo(source)
+        else:
+            moved = organize(source, copy=args.copy, dry_run=args.dry_run)
+            if moved and not args.dry_run:
+                save_manifest(source, moved)
+                log(f"Manifest saved: {MANIFEST_NAME}")
+    except NotADirectoryError as e:
+        log(f"Error: {e}")
+        sys.exit(1)
+    except KeyboardInterrupt:
+        log("Interrupted by user.")
+        sys.exit(130)
+
 
 if __name__ == "__main__":
     main()
 ```
-
-This assumes a `messages` list nested inside each interaction — swap that key/structure for whatever your actual pipeline indexes into. If you can share the traceback with a line number, I can point at the exact line instead of guessing at the shape.

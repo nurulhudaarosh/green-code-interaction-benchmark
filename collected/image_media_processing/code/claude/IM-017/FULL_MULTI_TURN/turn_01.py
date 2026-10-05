@@ -1,0 +1,123 @@
+"""Store and retrieve custom string key/value metadata in PNG text chunks.
+
+Pure standard library: chunks are spliced in without decoding or re-encoding
+the image, so pixel data and all other chunks are preserved byte-for-byte.
+"""
+import struct
+import zlib
+
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def _iter_chunks(data):
+    if data[:8] != PNG_SIGNATURE:
+        raise ValueError("Not a valid PNG file")
+    pos = 8
+    while pos + 8 <= len(data):
+        length, ctype = struct.unpack(">I4s", data[pos:pos + 8])
+        body = data[pos + 8:pos + 8 + length]
+        if len(body) != length:
+            raise ValueError("Truncated PNG chunk")
+        yield ctype, body
+        pos += 12 + length  # length + type + body + crc
+
+
+def _make_chunk(ctype, body):
+    crc = zlib.crc32(ctype + body) & 0xFFFFFFFF
+    return struct.pack(">I", len(body)) + ctype + body + struct.pack(">I", crc)
+
+
+def _parse_text_chunk(ctype, body):
+    """Return (key, value) for tEXt / zTXt / iTXt chunks, else None."""
+    try:
+        if ctype == b"tEXt":
+            key, _, text = body.partition(b"\x00")
+            return key.decode("latin-1"), text.decode("latin-1")
+        if ctype == b"zTXt":
+            key, _, rest = body.partition(b"\x00")
+            return key.decode("latin-1"), zlib.decompress(rest[1:]).decode("latin-1")
+        if ctype == b"iTXt":
+            key, _, rest = body.partition(b"\x00")
+            compressed, _method = rest[0], rest[1]
+            rest = rest[2:]
+            _lang, _, rest = rest.partition(b"\x00")
+            _translated, _, text = rest.partition(b"\x00")
+            if compressed:
+                text = zlib.decompress(text)
+            return key.decode("latin-1"), text.decode("utf-8")
+    except (ValueError, IndexError, zlib.error):
+        return None  # skip malformed text chunks
+    return None
+
+
+def _validate(tags):
+    for key, value in tags.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise TypeError("Tag keys and values must be strings")
+        if not 1 <= len(key) <= 79:
+            raise ValueError(f"Key must be 1-79 characters: {key!r}")
+        if key != key.strip() or "\x00" in key:
+            raise ValueError(f"Key has leading/trailing spaces or NUL: {key!r}")
+        try:
+            key.encode("latin-1")
+        except UnicodeEncodeError:
+            raise ValueError(f"Key must be Latin-1 per the PNG spec: {key!r}")
+        if "\x00" in value:
+            raise ValueError(f"Value for {key!r} contains a NUL character")
+
+
+def embed_tags(input_path, output_path, tags):
+    """Copy a PNG to output_path with `tags` (dict[str, str]) embedded.
+
+    Values are stored as UTF-8 iTXt chunks. Existing text chunks with the same
+    keys are replaced; all other existing metadata is kept. input_path and
+    output_path may be the same file.
+    """
+    _validate(tags)
+    with open(input_path, "rb") as f:
+        data = f.read()
+
+    new_chunks = [
+        _make_chunk(b"iTXt", key.encode("latin-1") + b"\x00\x00\x00\x00\x00" + value.encode("utf-8"))
+        for key, value in tags.items()
+    ]
+
+    out = [PNG_SIGNATURE]
+    inserted = False
+    for ctype, body in _iter_chunks(data):
+        if ctype in (b"tEXt", b"zTXt", b"iTXt"):
+            parsed = _parse_text_chunk(ctype, body)
+            if parsed and parsed[0] in tags:
+                continue  # replaced by the new value
+        if ctype == b"IEND":
+            out.extend(new_chunks)
+            inserted = True
+        out.append(_make_chunk(ctype, body))
+    if not inserted:
+        raise ValueError("PNG has no IEND chunk")
+
+    with open(output_path, "wb") as f:
+        f.write(b"".join(out))
+
+
+def read_tags(image_path):
+    """Return all tEXt/zTXt/iTXt key/value pairs in the PNG as a dict[str, str]."""
+    with open(image_path, "rb") as f:
+        data = f.read()
+    tags = {}
+    for ctype, body in _iter_chunks(data):
+        if ctype in (b"tEXt", b"zTXt", b"iTXt"):
+            parsed = _parse_text_chunk(ctype, body)
+            if parsed:
+                tags[parsed[0]] = parsed[1]
+    return tags
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) == 2:
+        for k, v in read_tags(sys.argv[1]).items():
+            print(f"{k}: {v}")
+    else:
+        print("usage: png_tags.py image.png")

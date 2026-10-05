@@ -1,72 +1,215 @@
 ```python
-import json
-import traceback
-from pathlib import Path
+import csv
+import io
+import math
+from typing import List, Dict, Any, Tuple
 
-DATASET_PATH = "dataset.json"
 
-def load_dataset(path):
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"'{path}' not found. Check the path.")
-    with open(p, "r", encoding="utf-8") as f:
-        return json.load(f)
+class Student:
+    """Represents an individual student and calculates their academic metrics."""
+    
+    def __init__(self, student_id: str, name: str, scores: Dict[str, float]):
+        self.student_id = student_id
+        self.name = name
+        self.scores = scores  # Dict mapping subject_name -> numeric score
+        self.average = self._calculate_average()
+        self.grade = self._assign_grade()
 
-def safe_get(lst, index, default=None, label="list"):
-    """Access list[index] safely, logging instead of crashing."""
-    try:
-        return lst[index]
-    except IndexError:
-        print(f"IndexError: {label} has length {len(lst)}, but index {index} was requested.")
-        return default
+    def _calculate_average(self) -> float:
+        if not self.scores:
+            return 0.0
+        return sum(self.scores.values()) / len(self.scores)
 
-def diagnose_index_errors(data):
-    issues = []
-    interactions = data.get("interactions", []) if isinstance(data, dict) else []
+    def _assign_grade(self) -> str:
+        avg = self.average
+        if avg >= 90:
+            return 'A'
+        elif avg >= 80:
+            return 'B'
+        elif avg >= 70:
+            return 'C'
+        elif avg >= 60:
+            return 'D'
+        else:
+            return 'F'
 
-    if not interactions:
-        issues.append("'interactions' list is empty — nothing to advance through.")
-        return issues
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.student_id,
+            "name": self.name,
+            "scores": self.scores,
+            "average": round(self.average, 2),
+            "grade": self.grade
+        }
 
-    for i, interaction in enumerate(interactions):
-        try:
-            # Example of the kind of indexing that typically throws this error:
-            # accessing a sub-list/messages array without checking length first
-            messages = interaction.get("messages", []) if isinstance(interaction, dict) else []
-            if not messages:
-                issues.append(f"Interaction {i}: 'messages' is empty — indexing into it would fail.")
-                continue
 
-            first_msg = safe_get(messages, 0, label=f"interaction[{i}].messages")
-            last_msg = safe_get(messages, len(messages) - 1, label=f"interaction[{i}].messages")
+class SubjectAnalytics:
+    """Calculates statistical metrics for a single subject across all students."""
+    
+    def __init__(self, subject_name: str, scores: List[float]):
+        self.subject_name = subject_name
+        self.scores = scores
+        self.count = len(scores)
+        self.mean = sum(scores) / self.count if self.count > 0 else 0.0
+        self.median = self._calculate_median()
+        self.std_dev = self._calculate_std_dev()
+        self.min_score = min(scores) if scores else 0.0
+        self.max_score = max(scores) if scores else 0.0
 
-            if first_msg is None or last_msg is None:
-                issues.append(f"Interaction {i}: could not safely access first/last message.")
+    def _calculate_median(self) -> float:
+        if not self.scores:
+            return 0.0
+        sorted_scores = sorted(self.scores)
+        n = len(sorted_scores)
+        mid = n // 2
+        if n % 2 == 0:
+            return (sorted_scores[mid - 1] + sorted_scores[mid]) / 2.0
+        return float(sorted_scores[mid])
 
-        except Exception:
-            issues.append(f"Interaction {i}: unexpected error:\n{traceback.format_exc()}")
+    def _calculate_std_dev(self) -> float:
+        if self.count <= 1:
+            return 0.0
+        variance = sum((x - self.mean) ** 2 for x in self.scores) / (self.count - 1)
+        return math.sqrt(variance)
 
-    return issues
+    def summary(self) -> Dict[str, Any]:
+        return {
+            "subject": self.subject_name,
+            "mean": round(self.mean, 2),
+            "median": round(self.median, 2),
+            "std_dev": round(self.std_dev, 2),
+            "min": round(self.min_score, 2),
+            "max": round(self.max_score, 2)
+        }
 
-def main():
-    try:
-        data = load_dataset(DATASET_PATH)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"Failed to load dataset: {e}")
-        return
 
-    issues = diagnose_index_errors(data)
+class StudentPerformanceAnalyzer:
+    """Main analyzer engine for parsing student CSV data and generating reports."""
 
-    if issues:
-        print("Issues found (likely causes of 'list index out of range'):")
-        for issue in issues:
-            print(f"  - {issue}")
-    else:
-        print("No obvious index issues found — the error may be occurring elsewhere in your pipeline.")
-        print("Check any loop like `data[i]` or `list[-1]` where the list could be shorter than expected.")
+    def __init__(self):
+        self.students: List[Student] = []
+        self.subjects: List[str] = []
 
+    def load_csv_data(self, csv_data: str) -> None:
+        """Parses raw CSV string data into Student objects."""
+        reader = csv.DictReader(io.StringIO(csv_data.strip()))
+        
+        # Identify subject columns (all columns except id and name)
+        headers = reader.fieldnames or []
+        non_subject_cols = {'id', 'student_id', 'name', 'student_name'}
+        self.subjects = [col for col in headers if col.lower() not in non_subject_cols]
+
+        self.students.clear()
+        for row in reader:
+            student_id = row.get('id') or row.get('student_id', 'N/A')
+            name = row.get('name') or row.get('student_name', 'Unknown')
+            
+            scores = {}
+            for subj in self.subjects:
+                try:
+                    scores[subj] = float(row[subj])
+                except (ValueError, TypeError):
+                    scores[subj] = 0.0
+            
+            self.students.append(Student(student_id, name, scores))
+
+    def get_class_average(self) -> float:
+        if not self.students:
+            return 0.0
+        return sum(s.average for s in self.students) / len(self.students)
+
+    def get_subject_analytics((self)) -> Dict[str, Dict[str, Any]]:
+        analytics = {}
+        for subj in self.subjects:
+            scores = [s.scores[subj] for s in self.students if subj in s.scores]
+            subject_stat = SubjectAnalytics(subj, scores)
+            analytics[subj] = subject_stat.summary()
+        return analytics
+
+    def get_top_performers(self, count: int = 3) -> List[Student]:
+        return sorted(self.students, key=lambda s: s.average, reverse=True)[:count]
+
+    def get_grade_distribution(self) -> Dict[str, int]:
+        distribution = {'A': 0, 'B': 0, 'C': 0, 'D': 0, 'F': 0}
+        for student in self.students:
+            distribution[student.grade] += 1
+        return distribution
+
+    def generate_report((self)) -> str:
+        """Generates a formatted text summary of the performance analysis."""
+        if not self.students:
+            return "No student data available to analyze."
+
+        lines = []
+        lines.append("=" * 60)
+        lines.append("        STUDENT PERFORMANCE ANALYSIS REPORT")
+        lines.append("=" * 60)
+        
+        # Overview
+        class_avg = self.get_class_average()
+        lines.append(f"\nTotal Students Analyzed : {len(self.students)}")
+        lines.append(f"Overall Class Average   : {class_avg:.2f}%")
+        
+        # Grade Breakdown
+        lines.append("\n" + "-" * 40)
+        lines.append("GRADE DISTRIBUTION")
+        lines.append("-" * 40)
+        dist = self.get_grade_distribution()
+        for grade, num in dist.items():
+            pct = (num / len(self.students)) * 100
+            bar = "█" * int(pct // 5)
+            lines.append(f" Grade {grade} : {num:2d} students ({pct:5.1f}%) | {bar}")
+
+        # Subject Stats
+        lines.append("\n" + "-" * 60)
+        lines.append("SUBJECT PERFORMANCE ANALYTICS")
+        lines.append("-" * 60)
+        lines.append(f"{'Subject':<15} {'Mean':<8} {'Median':<8} {'Std Dev':<8} {'Min':<6} {'Max':<6}")
+        lines.append("-" * 60)
+        
+        subj_stats = self.get_subject_analytics()
+        for subj, stats in subj_stats.items():
+            lines.append(
+                f"{stats['subject']:<15} "
+                f"{stats['mean']:<8.2f} "
+                f"{stats['median']:<8.2f} "
+                f"{stats['std_dev']:<8.2f} "
+                f"{stats['min']:<6.1f} "
+                f"{stats['max']:<6.1f}"
+            )
+
+        # Top Performers
+        lines.append("\n" + "-" * 40)
+        lines.append("TOP PERFORMERS")
+        lines.append("-" * 40)
+        top_students = self.get_top_performers(3)
+        for rank, s in enumerate(top_students, 1):
+            lines.append(f" {rank}. {s.name:<18} (ID: {s.student_id}) - Avg: {s.average:.2f}% [Grade: {s.grade}]")
+
+        lines.append("=" * 60)
+        return "\n".join(lines)
+
+
+# =====================================================================
+# EXAMPLE USAGE AND DEMONSTRATION
+# =====================================================================
 if __name__ == "__main__":
-    main()
-```
+    # Sample Dataset
+    sample_csv_data = """id,name,Math,Science,English,History
+101,Alice Smith,95,92,88,91
+102,Bob Jones,78,85,72,69
+103,Charlie Brown,62,58,65,70
+104,Diana Prince,98,96,94,99
+105,Evan Wright,85,89,82,88
+106,Fiona Gallagher,52,45,60,50
+107,George Clark,73,76,70,75
+108,Hannah Abbott,88,90,92,85
+"""
 
-This assumes a `messages` list nested inside each interaction — swap that key/structure for whatever your actual pipeline indexes into. If you can share the traceback with a line number, I can point at the exact line instead of guessing at the shape.
+    analyzer = StudentPerformanceAnalyzer()
+    analyzer.load_csv_data(sample_csv_data)
+    
+    # Print the comprehensive analysis report
+    print(analyzer.generate_report())
+
+```

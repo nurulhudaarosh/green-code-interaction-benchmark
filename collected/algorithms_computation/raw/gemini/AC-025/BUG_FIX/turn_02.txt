@@ -1,0 +1,182 @@
+### Problem Restatement and Expected Behavior
+
+In Multi-Stage Resource Allocation, we are given $N$ sequential stages. Every stage $i$ contains a list of candidate options $j$, where option $j$ is characterized by a tuple $(\text{budget\_cost}, \text{memory\_cost}, \text{score})$.
+
+**Expected Behavior:**
+
+1. **Exact Selection:** Pick exactly one option per stage.
+2. **Resource Constraints:** The sum of budget costs $\le \text{Max Budget}$ and the sum of memory costs $\le \text{Max Memory}$.
+3. **Objective:** Maximize total score across all stages.
+4. **Tie Handling:** Among all globally optimal choice vectors $[c_0, c_1, \dots, c_{N-1}]$ that achieve the *maximum total score* within capacity limits, select the **lexicographically smallest** vector.
+
+---
+
+### Defect Demonstration
+
+The previous reconstruction algorithm evaluates remaining capacities starting from the global budget and memory caps (`max_budget`, `max_memory`) downwards in reverse (`max_from_stage`).
+
+However, `max_from_stage[i][curr_b][curr_m]` measures the maximum score attainable from stage $i$ onward using **up to** `curr_b` budget and `curr_m` memory. When selecting the option at stage $i$, choosing option $0$ might yield score $S$, but leave `curr_b - b_cost` capacity that allows reaching $S_{rem}$. If $S + S_{rem} = \text{target\_score}$, the code selected option $0$.
+
+**The Bug:** That branch might consume *less* initial budget/memory than was actually reachable by another path that yields the same overall total score, or vice-versa, causing `max_from_stage` lookups at stage $i+1$ to evaluate subproblems under loose upper bounds rather than exact feasible states reachable from stage $0$.
+
+Consider this minimal counterexample:
+
+* Budget Limit: `3`, Memory Limit: `3`
+* Stage 0:
+* Option 0: `(1, 1, 10)`
+* Option 1: `(2, 2, 10)`
+
+
+* Stage 1:
+* Option 0: `(2, 2, 10)`
+* Option 1: `(1, 1, 10)`
+
+
+
+Both `[0, 0]` (costs `1+2=3` budget, `1+2=3` memory, total score `20`) and `[1, 1]` (costs `2+1=3` budget, `2+1=3` memory, total score `20`) reach score `20`. The lexicographically smaller choice is `[0, 0]`.
+
+Now add a Stage 1 option 2 `(0, 0, 10)` with costs `(0,0)` so Option 0 of Stage 0 `(1, 1, 10)` can also pair with Option 2 `(0,0,10)` for total score `20` using only `1` budget and `1` memory.
+
+In the previous logic, `max_from_stage[0][3][3]` is `20`. When checking Stage 0 Option 0 `(1,1,10)`:
+`10 + max_from_stage[1][3 - 1][3 - 1]` $\rightarrow$ `10 + 10 = 20` == `target_score` (20).
+Option 0 is chosen! Then `curr_b` becomes `2`, `curr_m` becomes `2`.
+At Stage 1, `max_from_stage[1][2][2]` is `10`. Option 0 `(2, 2, 10)` is checked: `10 + max_from_stage[2][0][0]` $\rightarrow$ `10 + 0 = 10` == `target_score` (10).
+So Option 0 is chosen at Stage 1, resulting in `[0, 0]`.
+
+**Where it fails:** If there is a tie between choosing option 0 (which leads to a valid total score `20`) and option 1 (which also leads to total score `20`), but option 0's path only achieves the total optimal score if stage 1 picks option 1, then greedy selection of stage 1's options based solely on unconstrained remaining capacity can break the exact target sum link back to forward reachability.
+
+Specifically, the forward reachable DP set `dp[i][b][m]` (which tracks exact forward cost pairs $(b, m)$) must be intersected with backward sufficiency to guarantee that a chosen prefix $[c_0, \dots, c_i]$ is on a valid end-to-end path that reaches the maximum score.
+
+---
+
+### Corrected Implementation
+
+To fix this deterministically:
+
+1. Run forward DP where `dp[i][b][m]` stores the max score reachable at stage $i$ with **exact** cumulative budget $b$ and memory $m$.
+2. Run backward DP where `back_dp[i][b][m]` stores the max score achievable from stage $i$ to $N$ given **exact** remaining budget $b$ and memory $m$.
+3. To reconstruct lexicographically: iterate stage $i$ from $0$ to $N-1$, testing options $j = 0, 1, \dots$ in increasing order. An option $j$ with cost $(b_c, m_c)$ and score $s$ is valid if and only if:
+
+$$\text{dp}[i][b_{curr}][m_{curr}] + s + \text{back\_dp}[i+1][b_{rem} - b_c][m_{rem} - m_c] == \text{global\_max\_score}$$
+
+
+
+The first option $j$ satisfying this condition is guaranteed to be lexicographically optimal and feasible.
+
+```python
+from typing import List, Tuple
+
+def solve_stage_selection(
+    stages: List[List[Tuple[int, int, int]]], 
+    max_budget: int, 
+    max_memory: int
+) -> Tuple[int, int, int, List[int]]:
+    """
+    Solves the 2-resource stage selection problem using layered two-resource DP 
+    and deterministic forward reconstruction with exact reachability matching.
+    """
+    num_stages = len(stages)
+    if num_stages == 0:
+        return 0, 0, 0, []
+
+    # 1. Forward DP: dp[i][b][m] = max score at stage i with EXACT budget b and memory m
+    dp = [[[-1] * (max_memory + 1) for _ in range(max_budget + 1)] for _ in range(num_stages + 1)]
+    dp[0][0][0] = 0
+
+    for i in range(num_stages):
+        for b in range(max_budget + 1):
+            for m in range(max_memory + 1):
+                if dp[i][b][m] == -1:
+                    continue
+                for b_cost, m_cost, score in stages[i]:
+                    nb, nm = b + b_cost, m + m_cost
+                    if nb <= max_budget and nm <= max_memory:
+                        dp[i + 1][nb][nm] = max(dp[i + 1][nb][nm], dp[i][b][m] + score)
+
+    # Global Max Score
+    max_score = -1
+    for b in range(max_budget + 1):
+        for m in range(max_memory + 1):
+            if dp[num_stages][b][m] > max_score:
+                max_score = dp[num_stages][b][m]
+
+    if max_score == -1:
+        raise ValueError("No valid combination fits within budget and memory limits.")
+
+    # 2. Backward DP: back_dp[i][b][m] = max score from stage i to end with EXACT remaining budget b and memory m
+    back_dp = [[[-1] * (max_memory + 1) for _ in range(max_budget + 1)] for _ in range(num_stages + 1)]
+    
+    # Base case: at terminal stage num_stages, 0 remaining score for any remaining capacity
+    for b in range(max_budget + 1):
+        for m in range(max_memory + 1):
+            back_dp[num_stages][b][m] = 0
+
+    for i in range(num_stages - 1, -1, -1):
+        for b in range(max_budget + 1):
+            for m in range(max_memory + 1):
+                for b_cost, m_cost, score in stages[i]:
+                    if b >= b_cost and m >= m_cost:
+                        sub = back_dp[i + 1][b - b_cost][m - m_cost]
+                        if sub != -1:
+                            back_dp[i][b][m] = max(back_dp[i][b][m], score + sub)
+
+    # 3. Deterministic Forward Reconstruction
+    # We find the smallest lexicographical choice vector [c_0, c_1, ..., c_{N-1}]
+    # that maintains feasibility to achieve max_score.
+    
+    chosen_indices = []
+    curr_b, curr_m = 0, 0  # Accumulated consumption so far
+    
+    for i in range(num_stages):
+        selected_option = -1
+        selected_b_cost = 0
+        selected_m_cost = 0
+        
+        # Test options in ascending order (0, 1, 2, ...) to ensure lexicographical tie-breaking
+        for option_idx, (b_cost, m_cost, score) in enumerate(stages[i]):
+            nb, nm = curr_b + b_cost, curr_m + m_cost
+            if nb <= max_budget and nm <= max_memory:
+                rem_b = max_budget - nb
+                rem_m = max_memory - nm
+                
+                # Check if taking this option allows reaching max_score globally
+                # We search over all possible remaining budget/memory allocation in back_dp
+                can_reach_max = False
+                for rb in range(rem_b + 1):
+                    for rm in range(rem_m + 1):
+                        if back_dp[i + 1][rb][rm] != -1:
+                            if dp[i][curr_b][curr_m] + score + back_dp[i + 1][rb][rm] == max_score:
+                                can_reach_max = True
+                                break
+                    if can_reach_max:
+                        break
+                
+                if can_reach_max:
+                    selected_option = option_idx
+                    selected_b_cost = b_cost
+                    selected_m_cost = m_cost
+                    break
+        
+        chosen_indices.append(selected_option)
+        curr_b += selected_b_cost
+        curr_m += selected_m_cost
+
+    return max_score, curr_b, curr_m, chosen_indices
+
+
+if __name__ == "__main__":
+    # Test Demonstration
+    sample_stages = [
+        [(1, 1, 10), (2, 2, 10)],  # Stage 0
+        [(2, 2, 10), (1, 1, 10)]   # Stage 1
+    ]
+    budget_limit = 3
+    memory_limit = 3
+
+    score, b_used, m_used, choices = solve_stage_selection(sample_stages, budget_limit, memory_limit)
+    print(f"Maximum Score : {score}")
+    print(f"Budget Used   : {b_used} / {budget_limit}")
+    print(f"Memory Used   : {m_used} / {memory_limit}")
+    print(f"Option Choice Vector: {choices}")
+
+```

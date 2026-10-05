@@ -1,0 +1,76 @@
+import pandas as pd
+
+
+def aggregate_transactions(
+    transactions: pd.DataFrame,
+    customers: pd.DataFrame,
+    customer_id_col: str = "customer_id",
+    transaction_id_col: str = "transaction_id",
+    amount_col: str = "amount",
+) -> pd.DataFrame:
+    """
+    Aggregate transactions by customer, ignoring unknown transaction IDs,
+    join to customer master (including zero-transaction customers),
+    and sort by customer ID.
+
+    Parameters
+    ----------
+    transactions : pd.DataFrame
+        Must contain customer_id, transaction_id, and amount columns.
+    customers : pd.DataFrame
+        Customer master. Must contain customer_id column.
+    customer_id_col : str
+        Name of the customer ID column in both DataFrames.
+    transaction_id_col : str
+        Name of the transaction ID column.
+    amount_col : str
+        Name of the transaction amount column.
+
+    Returns
+    -------
+    pd.DataFrame
+        Customer master joined with aggregated transaction totals,
+        sorted by customer ID.
+    """
+    # Validate required columns
+    for col in (customer_id_col, transaction_id_col, amount_col):
+        if col not in transactions.columns:
+            raise KeyError(f"Missing column '{col}' in transactions.")
+    if customer_id_col not in customers.columns:
+        raise KeyError(f"Missing column '{customer_id_col}' in customers.")
+
+    # Ignore transactions with unknown (null/NaN) transaction IDs
+    valid_txns = transactions.dropna(subset=[transaction_id_col]).copy()
+
+    # Aggregate by customer
+    agg = (
+        valid_txns.groupby(customer_id_col, as_index=False)[amount_col]
+        .sum()
+        .rename(columns={amount_col: "total_amount"})
+    )
+
+    # Left join to keep zero-transaction customers
+    result = customers.merge(agg, on=customer_id_col, how="left")
+
+    # Fill missing totals with 0
+    result["total_amount"] = result["total_amount"].fillna(0)
+
+    # Sort by customer ID
+    result = result.sort_values(by=customer_id_col).reset_index(drop=True)
+
+    return result
+
+
+if __name__ == "__main__":
+    customers_df = pd.DataFrame({
+        "customer_id": [1, 2, 3, 4],
+        "name": ["Alice", "Bob", "Carol", "Dave"],
+    })
+
+    transactions_df = pd.DataFrame({
+        "transaction_id": ["t1", "t2", None, "t3", "t4"],
+        "customer_id": [1, 1, 2, 2, 3],
+        "amount": [100.0, 50.0, 999.0, 25.0, 75.0],
+    })
+
+    print(aggregate_transactions(transactions_df, customers_df))

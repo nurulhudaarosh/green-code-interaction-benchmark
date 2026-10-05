@@ -1,0 +1,21 @@
+def dedup_lines(in_path, out_path):
+    seen = set()
+    total = 0
+    unique = 0
+
+    with open(in_path, "r", encoding="utf-8") as infile, \
+         open(out_path, "w", encoding="utf-8") as outfile:
+
+        for line in infile:
+            total += 1
+
+            if line not in seen:
+                seen.add(line)
+                outfile.write(line)
+                unique += 1
+
+    return {
+        "total": total,
+        "unique": unique,
+        "removed": total - unique
+    }

@@ -1,0 +1,94 @@
+## Problem restatement and expected behavior
+
+**Exact Polynomial Product:** Given two integer polynomials represented as coefficient lists in ascending degree order, compute their exact product and return the coefficient array. Coefficients may be negative (and zero). The result must be exact integer arithmetic, deterministic, with deterministic tie handling, using direct coefficient convolution; constraints keep the quadratic computation practical in the execution environment.
+
+**Expected behavior:**
+- Input `a = [a0, a1, ..., an]` represents `a0 + a1·x + ... + an·x^n`.
+- Input `b = [b0, b1, ..., bm]` represents `b0 + b1·x + ... + bm·x^m`.
+- Output `c = [c0, c1, ..., c_{n+m}]` with `c[k] = Σ_{i+j=k} a[i]·b[j]`.
+- Exact integer results, no rounding, no modular arithmetic.
+- Deterministic tie handling: when combining terms that produce the same degree, they are accumulated in a fixed, reproducible order (ascending `i`, then ascending `j`) so the result is stable regardless of platform.
+
+## Bug report
+
+The original implementation does not correctly enforce the rule: **"Return exactly the required result with deterministic tie handling."**
+
+The defect: the original code short-circuits (`if ai == 0: continue`) and, more importantly, it silently returns `[]` for any empty input instead of returning the mathematically required coefficient array for zero polynomials. It also does not define or guarantee a deterministic accumulation order for terms contributing to the same output degree, and it does not handle the valid representation of the zero polynomial consistently.
+
+### Small valid example demonstrating the defect
+
+Let `a = []` (the empty coefficient list) and `b = [5, -3]` (representing `5 - 3x`).
+
+Mathematically, the zero polynomial times any polynomial is the zero polynomial. The zero polynomial has coefficient array `[0]` (a single zero coefficient), which is the exact required result under the standard ascending-coefficient representation.
+
+Original behavior:
+```
+multiply_polynomials([], [5, -3]) -> []
+```
+
+Required behavior:
+```
+multiply_polynomials([], [5, -3]) -> [0]
+```
+
+A second demonstration of non-determinism/tie-handling ambiguity: for `a = [0, 0, 1]` and `b = [0, 1, 0]`, the only nonzero contribution is `a[2]*b[1] = 1*1 = 1` at index `3`, so the result must be `[0, 0, 0, 1]`. The original code produces this by accident but does not state or guarantee the accumulation order, so the "deterministic tie handling" requirement is not enforced as a contract.
+
+## Corrected implementation
+
+```python
+def multiply_polynomials(a, b):
+    """
+    Multiply two integer polynomials exactly and return the coefficient array.
+
+    Representation (ascending degree order):
+      a = [a0, a1, ..., an]  ->  a0 + a1*x + ... + an*x^n
+      b = [b0, b1, ..., bm]  ->  b0 + b1*x + ... + bm*x^m
+
+    Returns:
+      c = [c0, c1, ..., c_{n+m}] with c[k] = sum_{i+j=k} a[i]*b[j]
+
+    Guarantees:
+      - Exact integer arithmetic (no float, no modular reduction).
+      - Deterministic accumulation order: i ascending, then j ascending.
+      - Empty input is treated as the zero polynomial and returns [0].
+    """
+    if not isinstance(a, list) or not isinstance(b, list):
+        raise TypeError("Inputs must be lists of integers.")
+    if any(not isinstance(x, int) for x in a) or any(not isinstance(x, int) for x in b):
+        raise TypeError("Coefficients must be integers.")
+
+    # Normalize empty lists to the zero polynomial representation [0].
+    if not a:
+        a = [0]
+    if not b:
+        b = [0]
+
+    result_len = len(a) + len(b) - 1
+    result = [0] * result_len
+
+    # Deterministic tie handling: fixed nested loop order (i asc, then j asc).
+    # This makes accumulation into result[i + j] reproducible.
+    for i, ai in enumerate(a):
+        for j, bj in enumerate(b):
+            result[i + j] += ai * bj
+
+    return result
+
+
+if __name__ == "__main__":
+    # Small valid examples
+    print(multiply_polynomials([], [5, -3]))          # [0]
+    print(multiply_polynomials([0, 0, 1], [0, 1, 0])) # [0, 0, 0, 1]
+
+    p = [1, -2, 3]      # 1 - 2x + 3x^2
+    q = [-4, 5]         # -4 + 5x
+    print(multiply_polynomials(p, q))                 # [-4, 13, -22, 15]
+```
+
+### What changed and why
+
+1. **Empty input handling:** Empty lists are normalized to `[0]` (the zero polynomial), so the product is `[0]` rather than `[]`. This satisfies "return exactly the required result."
+2. **Deterministic tie handling:** The nested loops iterate `i` ascending, then `j` ascending, and accumulate into `result[i + j]` in that fixed order. This makes the accumulation order explicit and reproducible across runs and platforms.
+3. **Removed the `if ai == 0: continue` shortcut:** It is not incorrect by itself, but removing it keeps the accumulation order uniform and fully deterministic for all inputs, including zero coefficients, which is what the requirement asks for.
+
+All other requirements (exact integer arithmetic, direct convolution, ascending coefficient order, standard library only, no randomness/network/APIs) are unchanged.

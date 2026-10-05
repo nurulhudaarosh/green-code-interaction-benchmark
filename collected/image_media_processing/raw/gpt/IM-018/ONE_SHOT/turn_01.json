@@ -1,0 +1,11 @@
+{
+  "task_id": "IM-018",
+  "model": "gpt",
+  "interaction": "ONE_SHOT",
+  "turn": 1,
+  "saved_at": "2026-10-05T00:34:37.596443+00:00",
+  "response_sha256": "06d6f0dcc9a4680095181fa2e8bc06553a9257283dd9aba894bc05271becae3a",
+  "code_sha256": "60d0fc5fd65a94241cc62d57aa0b5cd674bbe36fd7213fa33a4b1c28992ffae6",
+  "raw_file": ".collection/raw/gpt/IM-018/ONE_SHOT/turn_01.txt",
+  "code_file": ".collection/code/gpt/IM-018/ONE_SHOT/code.py"
+}

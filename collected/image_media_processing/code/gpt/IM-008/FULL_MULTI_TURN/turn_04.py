@@ -1,0 +1,32 @@
+id="58321"
+import hashlib
+from pathlib import Path
+
+
+def find_exact_duplicates(input_dir, recursive=True):
+    input_path = Path(input_dir)
+    groups = {}
+
+    files = input_path.rglob("*") if recursive else input_path.iterdir()
+
+    for path in files:
+        # Skip directories and other non-regular-file entries
+        if not path.is_file():
+            continue
+
+        sha256 = hashlib.sha256()
+
+        with path.open("rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                sha256.update(chunk)
+
+        checksum = sha256.hexdigest()
+        relative_path = path.relative_to(input_path)
+
+        groups.setdefault(checksum, []).append(str(relative_path))
+
+    return [
+        sorted(files)
+        for files in groups.values()
+        if len(files) >= 2
+    ]

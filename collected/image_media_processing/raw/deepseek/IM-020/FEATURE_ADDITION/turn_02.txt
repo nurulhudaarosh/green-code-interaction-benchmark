@@ -1,0 +1,190 @@
+Here's the extended implementation. The key change is replacing the two separate `dark_threshold` / `bright_threshold` parameters with a single optional `custom_thresholds=(dark_max, bright_min)` tuple, plus validation.
+
+```python
+import os
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple, Union
+
+import numpy as np
+from PIL import Image
+
+
+# Default classification boundaries (0-255 scale):
+#   brightness <  DARK_MAX              -> "dark"
+#   DARK_MAX <= brightness <= BRIGHT_MIN -> "normal"
+#   brightness >  BRIGHT_MIN            -> "bright"
+DEFAULT_THRESHOLDS: Tuple[float, float] = (85.0, 170.0)
+
+SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
+
+
+def _resolve_thresholds(
+    custom_thresholds: Optional[Tuple[float, float]]
+) -> Tuple[float, float]:
+    """Validate and normalize the (dark_max, bright_min) pair."""
+    if custom_thresholds is None:
+        return DEFAULT_THRESHOLDS
+
+    if (not isinstance(custom_thresholds, (tuple, list))
+            or len(custom_thresholds) != 2):
+        raise ValueError(
+            "custom_thresholds must be a (dark_max, bright_min) pair, "
+            f"got {custom_thresholds!r}"
+        )
+
+    dark_max, bright_min = float(custom_thresholds[0]), float(custom_thresholds[1])
+
+    if not (0.0 <= dark_max < bright_min <= 255.0):
+        raise ValueError(
+            "custom_thresholds must satisfy "
+            f"0 <= dark_max < bright_min <= 255, got ({dark_max}, {bright_min})"
+        )
+
+    return dark_max, bright_min
+
+
+def _classify(brightness: float,
+              dark_max: float,
+              bright_min: float) -> str:
+    """Map a grayscale brightness value to a label using the given cutoffs."""
+    if brightness < dark_max:
+        return "dark"
+    if brightness > bright_min:
+        return "bright"
+    return "normal"
+
+
+def analyze_brightness(
+    input_dir: Union[str, Path],
+    recursive: bool = False,
+    custom_thresholds: Optional[Tuple[float, float]] = None,
+) -> List[Dict]:
+    """
+    Analyze brightness of every image in `input_dir`.
+
+    Parameters
+    ----------
+    input_dir : str | Path
+        Directory containing images.
+    recursive : bool
+        If True, walk subdirectories as well.
+    custom_thresholds : (dark_max, bright_min) | None
+        Optional tuple overriding the default (85, 170) classification
+        boundaries. Must satisfy 0 <= dark_max < bright_min <= 255.
+        When None, DEFAULT_THRESHOLDS is used.
+
+    Returns
+    -------
+    list of dict, one per image, each containing:
+        - file:               absolute path to the image
+        - name:               filename
+        - mean_r, mean_g, mean_b: per-channel means (0-255)
+        - brightness:         overall grayscale brightness (0-255)
+        - classification:     "dark" | "normal" | "bright"
+        - thresholds:         the (dark_max, bright_min) actually used
+        - error:              present only if the image could not be read
+    """
+    dark_max, bright_min = _resolve_thresholds(custom_thresholds)
+
+    input_dir = Path(input_dir)
+    if not input_dir.is_dir():
+        raise NotADirectoryError(f"Not a directory: {input_dir}")
+
+    # Collect image paths
+    if recursive:
+        candidates = (p for p in input_dir.rglob("*") if p.is_file())
+    else:
+        candidates = (p for p in input_dir.iterdir() if p.is_file())
+
+    image_paths = sorted(
+        p for p in candidates if p.suffix.lower() in SUPPORTED_EXTENSIONS
+    )
+
+    results: List[Dict] = []
+
+    for path in image_paths:
+        try:
+            with Image.open(path) as img:
+                rgb = img.convert("RGB")
+                arr = np.asarray(rgb, dtype=np.float32)
+
+            mean_r = float(arr[..., 0].mean())
+            mean_g = float(arr[..., 1].mean())
+            mean_b = float(arr[..., 2].mean())
+
+            # Rec. 709 luma weights for perceptual grayscale brightness
+            brightness = (
+                0.2126 * mean_r +
+                0.7152 * mean_g +
+                0.0722 * mean_b
+            )
+
+            results.append({
+                "file": str(path.resolve()),
+                "name": path.name,
+                "mean_r": round(mean_r, 2),
+                "mean_g": round(mean_g, 2),
+                "mean_b": round(mean_b, 2),
+                "brightness": round(brightness, 2),
+                "classification": _classify(brightness, dark_max, bright_min),
+                "thresholds": (dark_max, bright_min),
+            })
+
+        except Exception as exc:
+            results.append({
+                "file": str(path.resolve()),
+                "name": path.name,
+                "error": f"{type(exc).__name__}: {exc}",
+            })
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Example usage
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    import sys
+
+    target = sys.argv[1] if len(sys.argv) > 1 else "."
+
+    # Example: stricter boundaries for a night-photography dataset
+    custom = (60, 200)
+    report = analyze_brightness(target, recursive=True, custom_thresholds=custom)
+
+    for entry in report:
+        if "error" in entry:
+            print(f"[ERR ] {entry['name']}: {entry['error']}")
+        else:
+            print(
+                f"[{entry['classification']:>6}] "
+                f"{entry['name']:<40} "
+                f"R={entry['mean_r']:>6.2f} "
+                f"G={entry['mean_g']:>6.2f} "
+                f"B={entry['mean_b']:>6.2f} "
+                f"brightness={entry['brightness']:>6.2f} "
+                f"thr={entry['thresholds']}"
+            )
+
+    print(f"\nAnalyzed {len(report)} image(s) in {target}")
+```
+
+## What changed
+
+1. **New `DEFAULT_THRESHOLDS` constant** – keeps the original `(85, 170)` boundaries in one place so the docstring and behavior stay consistent.
+
+2. **`custom_thresholds` parameter** – a single optional `(dark_max, bright_min)` tuple replaces the previous two `dark_threshold` / `bright_threshold` arguments.
+
+3. **`_resolve_thresholds()` helper** – centralizes validation:
+   - `None` → falls back to defaults.
+   - Wrong shape (not a 2-tuple/list) → `ValueError`.
+   - Out-of-range or `dark_max >= bright_min` → `ValueError`. This catches the common bug of swapped values.
+
+4. **`_classify()` now takes both bounds explicitly** – no more module-level constants being read implicitly, so the logic is deterministic and testable.
+
+5. **`thresholds` field in each result** – so downstream consumers can see which boundaries produced the label (useful when comparing runs with different settings).
+
+## Example calls
+
+
+Because `custom_thresholds` defaults to `None`, existing callers of the previous API continue to work unchanged — but note that the old `dark_threshold=`/`bright_threshold=` keyword names are gone, so any code that used those needs to be updated to the new tuple form.

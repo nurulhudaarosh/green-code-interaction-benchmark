@@ -1,0 +1,58 @@
+import re
+from collections import Counter
+
+
+def keyword_freq(paths, stopwords=(), top_k=20, include_bigrams=False):
+    """
+    Tokenize text files, filter stopwords, count unigrams/bigrams,
+    and return top-k results.
+
+    Returns:
+        {
+            "unigrams": [(word, count), ...],
+            "bigrams": [(bigram, count), ...],
+            "total_tokens": int
+        }
+    """
+    stopwords = {word.lower() for word in stopwords}
+    unigram_counts = Counter()
+    bigram_counts = Counter()
+    total_tokens = 0
+
+    token_pattern = re.compile(r"[a-z0-9]+")
+
+    for path in paths:
+        prev_token = None
+
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                tokens = [
+                    token.lower()
+                    for token in token_pattern.findall(line)
+                    if token.lower() not in stopwords
+                ]
+
+                unigram_counts.update(tokens)
+                total_tokens += len(tokens)
+
+                if include_bigrams:
+                    for token in tokens:
+                        if prev_token is not None:
+                            bigram_counts[(prev_token, token)] += 1
+                        prev_token = token
+
+    def top_items(counter):
+        return sorted(
+            counter.items(),
+            key=lambda item: (-item[1], item[0])
+        )[:top_k]
+
+    result = {
+        "unigrams": top_items(unigram_counts),
+        "total_tokens": total_tokens,
+    }
+
+    if include_bigrams:
+        result["bigrams"] = top_items(bigram_counts)
+
+    return result

@@ -1,0 +1,257 @@
+```python
+#!/usr/bin/env python3
+"""
+Offline text analyzer.
+
+Recursively reads .txt files under one or more paths, case-folds alphabetic
+words, counts total occurrences and document frequency, and ranks words
+deterministically.
+
+Text handling (applied identically to every file):
+  1. Whole text is canonicalized: NFKC -> casefold -> NFKC. The second NFKC
+     is needed because casefolding can yield non-normalized sequences
+     (e.g. "İ" -> "i" + U+0307). Composed and decomposed input ("é" vs
+     "e" + U+0301), mixed case ("Straße"/"STRASSE"), and compatibility forms
+     (ligatures, full-width letters) therefore map to one identical form.
+  2. Typographic apostrophes and hyphens are unified to ASCII ' and -.
+  3. Tokenization runs on the canonical text, so classification never depends
+     on the original case or normalization form. A word is a run of
+     alphabetic characters plus their combining marks, optionally joined by a
+     single apostrophe or hyphen that sits between letters.
+     Digits, underscores, punctuation, and symbols act as separators.
+
+Ranking order (fully deterministic):
+  1. total occurrences   (descending)
+  2. document frequency  (descending)
+  3. word                (ascending, by Unicode code point)
+
+Usage:
+    python text_analyzer.py PATH [PATH ...] [--top N] [--min-count N]
+                            [--encoding ENC] [--format table|tsv|json]
+                            [--output FILE]
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import unicodedata
+from collections import Counter
+from pathlib import Path
+from typing import Iterable, Iterator
+
+# Map of typographic variants -> canonical inner-word punctuation.
+_INNER_MAP = {
+    "\u2019": "'", "\u2018": "'", "\u02bc": "'", "\uff07": "'",
+    "\u2010": "-", "\u2011": "-",
+}
+_INNER = {"'", "-"}
+
+
+def canonicalize(text: str) -> str:
+    """Single canonical form used for both case folding and tokenization."""
+    text = unicodedata.normalize("NFKC", text)
+    text = text.casefold()
+    text = unicodedata.normalize("NFKC", text)  # casefold may denormalize
+    return text.translate(str.maketrans(_INNER_MAP))
+
+
+def _is_mark(ch: str) -> bool:
+    return unicodedata.category(ch).startswith("M")
+
+
+def tokenize(text: str) -> Iterator[str]:
+    """
+    Yield canonical (normalized, case-folded) alphabetic words.
+
+    Input is canonicalized first, so every token is already in its final form.
+    Combining marks attach to the preceding letter; a mark with no preceding
+    letter in the current word is treated as a separator.
+    """
+    text = canonicalize(text)
+    n = len(text)
+    start = -1  # start index of the current word, or -1 if none
+    i = 0
+    while i < n:
+        ch = text[i]
+        if ch.isalpha():
+            if start < 0:
+                start = i
+        elif start >= 0 and _is_mark(ch):
+            pass  # combining mark continues the current word
+        elif (
+            start >= 0
+            and ch in _INNER
+            and i + 1 < n
+            and text[i + 1].isalpha()
+        ):
+            pass  # inner apostrophe/hyphen between letters
+        else:
+            if start >= 0:
+                yield text[start:i]
+                start = -1
+        i += 1
+    if start >= 0:
+        yield text[start:n]
+
+
+def find_txt_files(paths: Iterable[str]) -> list[Path]:
+    """Recursively collect .txt files (case-insensitive extension), sorted and de-duplicated."""
+    found: dict[str, Path] = {}
+    for raw in paths:
+        p = Path(raw)
+        if p.is_file():
+            if p.suffix.lower() == ".txt":
+                found[os.path.realpath(p)] = p
+        elif p.is_dir():
+            for root, dirs, files in os.walk(p, followlinks=False):
+                dirs.sort()
+                for name in sorted(files):
+                    if name.lower().endswith(".txt"):
+                        fp = Path(root) / name
+                        found[os.path.realpath(fp)] = fp
+        else:
+            print(f"warning: path not found: {raw}", file=sys.stderr)
+    return sorted(found.values(), key=lambda x: os.path.realpath(x))
+
+
+def read_text(path: Path, encoding: str) -> str | None:
+    """Read a file; fall back to replacement decoding if strict decoding fails."""
+    try:
+        with open(path, "r", encoding=encoding, errors="strict", newline=None) as f:
+            return f.read()
+    except UnicodeDecodeError:
+        print(f"warning: {path}: not valid {encoding}; decoding with replacement", file=sys.stderr)
+        try:
+            with open(path, "r", encoding=encoding, errors="replace", newline=None) as f:
+                return f.read()
+        except OSError as e:
+            print(f"warning: cannot read {path}: {e}", file=sys.stderr)
+    except OSError as e:
+        print(f"warning: cannot read {path}: {e}", file=sys.stderr)
+    return None
+
+
+def analyze(files: Iterable[Path], encoding: str = "utf-8-sig"):
+    """Return (total_counts, doc_freq, docs_read)."""
+    total: Counter[str] = Counter()
+    docfreq: Counter[str] = Counter()
+    docs = 0
+    for path in files:
+        text = read_text(path, encoding)
+        if text is None:
+            continue
+        docs += 1
+        words = Counter(tokenize(text))
+        total.update(words)
+        docfreq.update(words.keys())  # each word counted once per document
+    return total, docfreq, docs
+
+
+def rank(total: Counter, docfreq: Counter, min_count: int = 1):
+    """Deterministic ranking: count desc, doc freq desc, word asc (code point order)."""
+    rows = [(w, c, docfreq[w]) for w, c in total.items() if c >= min_count]
+    rows.sort(key=lambda r: (-r[1], -r[2], r[0]))
+    return rows
+
+
+def _display_width(s: str) -> int:
+    """Approximate terminal width: ignore combining marks, count wide chars as 2."""
+    w = 0
+    for ch in s:
+        if unicodedata.category(ch).startswith("M"):
+            continue
+        w += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+    return w
+
+
+def _pad(s: str, width: int, right: bool = False) -> str:
+    gap = " " * max(0, width - _display_width(s))
+    return gap + s if right else s + gap
+
+
+def render(rows, docs: int, fmt: str) -> str:
+    if fmt == "json":
+        payload = {
+            "documents": docs,
+            "words": [
+                {"rank": i, "word": w, "total": c, "document_frequency": d}
+                for i, (w, c, d) in enumerate(rows, 1)
+            ],
+        }
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    if fmt == "tsv":
+        lines = ["rank\tword\ttotal\tdocument_frequency"]
+        lines += [f"{i}\t{w}\t{c}\t{d}" for i, (w, c, d) in enumerate(rows, 1)]
+        return "\n".join(lines)
+
+    header = ("Rank", "Word", "Total", "Docs")
+    body = [(str(i), w, str(c), str(d)) for i, (w, c, d) in enumerate(rows, 1)]
+    widths = [_display_width(h) for h in header]
+    for row in body:
+        for j, cell in enumerate(row):
+            widths[j] = max(widths[j], _display_width(cell))
+
+    def fmt_row(r):
+        return "  ".join(
+            (
+                _pad(r[0], widths[0], True),
+                _pad(r[1], widths[1]),
+                _pad(r[2], widths[2], True),
+                _pad(r[3], widths[3], True),
+            )
+        )
+
+    out = [fmt_row(header), "  ".join("-" * w for w in widths)]
+    out += [fmt_row(r) for r in body]
+    return "\n".join(out)
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="Offline text analyzer for .txt files.")
+    ap.add_argument("paths", nargs="+", help="files or directories to scan recursively")
+    ap.add_argument("--top", type=int, default=0, help="show only the top N words (0 = all)")
+    ap.add_argument("--min-count", type=int, default=1, help="minimum total occurrences (default 1)")
+    ap.add_argument("--encoding", default="utf-8-sig", help="file encoding (default utf-8-sig)")
+    ap.add_argument("--format", choices=("table", "tsv", "json"), default="table")
+    ap.add_argument("--output", help="write results to this file instead of stdout")
+    args = ap.parse_args(argv)
+
+    if args.top < 0 or args.min_count < 1:
+        ap.error("--top must be >= 0 and --min-count must be >= 1")
+
+    files = find_txt_files(args.paths)
+    if not files:
+        print("error: no .txt files found", file=sys.stderr)
+        return 1
+
+    total, docfreq, docs = analyze(files, args.encoding)
+    rows = rank(total, docfreq, args.min_count)
+    if args.top:
+        rows = rows[: args.top]
+
+    result = render(rows, docs, args.format)
+    summary = (
+        f"# documents: {docs}  unique words: {len(total)}  "
+        f"total words: {sum(total.values())}"
+    )
+
+    if args.output:
+        with open(args.output, "w", encoding="utf-8", newline="\n") as f:
+            f.write(result + "\n")
+        print(summary, file=sys.stderr)
+    else:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8")
+        if args.format == "table":
+            print(summary)
+        print(result)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```

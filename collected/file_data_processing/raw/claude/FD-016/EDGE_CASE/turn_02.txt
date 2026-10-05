@@ -1,0 +1,136 @@
+```python
+from __future__ import annotations
+
+from collections import Counter
+from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
+from typing import Any, Iterable, Mapping
+
+ZERO = Decimal("0")
+
+
+@dataclass(frozen=True)
+class AggregationResult:
+    rows: list[dict[str, Any]]                      # one row per master customer, sorted by customer_id
+    ignored: list[dict[str, Any]]                   # every skipped transaction, with a reason, in a stable order
+    ignored_summary: dict[str, int] = field(default_factory=dict)  # reason -> count
+
+
+def _sort_key(value: Any) -> tuple:
+    """Total ordering that never raises on mixed types: numbers first, then strings."""
+    if isinstance(value, (int, float, Decimal)) and not isinstance(value, bool):
+        return (0, Decimal(str(value)), "")
+    return (1, ZERO, str(value))
+
+
+def _to_decimal(raw: Any) -> Decimal | None:
+    try:
+        value = Decimal(str(raw))
+    except (InvalidOperation, ValueError):
+        return None
+    return value if value.is_finite() else None
+
+
+def aggregate_transactions(
+    customers: Iterable[Mapping[str, Any]],
+    transactions: Iterable[Mapping[str, Any]],
+    known_transaction_ids: Iterable[Any] | None = None,
+) -> AggregationResult:
+    """
+    Aggregate transactions per customer and left-join onto the customer master.
+
+    Deterministic rules
+    -------------------
+    Customers
+      - The master is authoritative: every master customer appears exactly once.
+      - Customers with no (accepted) transactions get transaction_count=0, total_amount=0.
+      - Duplicate customer_ids in the master: first occurrence wins.
+      - Output is sorted by customer_id (numbers before strings; never raises on mixed types).
+
+    Transactions (evaluated in this fixed order; first failing rule decides the reason)
+      1. missing_transaction_id  - transaction_id is None/empty
+      2. unknown_transaction_id  - not in known_transaction_ids (only if that set is supplied)
+      3. unknown_customer_id     - customer_id not in the master
+      4. invalid_amount          - amount missing, non-numeric, NaN or infinite
+      5. duplicate_transaction_id- already accepted earlier in the input (first occurrence wins)
+
+    Ignored transactions are never silently lost: they are returned in `ignored`
+    (sorted by reason, then transaction_id, then input position) with a per-reason summary.
+    """
+    # --- customer master (first occurrence wins) ---
+    master: dict[Any, Mapping[str, Any]] = {}
+    for cust in customers:
+        master.setdefault(cust["customer_id"], cust)
+
+    known = set(known_transaction_ids) if known_transaction_ids is not None else None
+
+    totals: dict[Any, Decimal] = {cid: ZERO for cid in master}
+    counts: dict[Any, int] = {cid: 0 for cid in master}
+    accepted_ids: set[Any] = set()
+    ignored: list[dict[str, Any]] = []
+
+    for position, txn in enumerate(transactions):
+        txn_id = txn.get("transaction_id")
+        cust_id = txn.get("customer_id")
+
+        reason = None
+        amount = None
+        if txn_id is None or txn_id == "":
+            reason = "missing_transaction_id"
+        elif known is not None and txn_id not in known:
+            reason = "unknown_transaction_id"
+        elif cust_id not in master:
+            reason = "unknown_customer_id"
+        else:
+            amount = _to_decimal(txn.get("amount"))
+            if amount is None:
+                reason = "invalid_amount"
+            elif txn_id in accepted_ids:
+                reason = "duplicate_transaction_id"
+
+        if reason:
+            ignored.append({"reason": reason, "position": position, **txn})
+            continue
+
+        accepted_ids.add(txn_id)
+        totals[cust_id] += amount
+        counts[cust_id] += 1
+
+    rows = [
+        {**master[cid], "transaction_count": counts[cid], "total_amount": totals[cid]}
+        for cid in sorted(master, key=_sort_key)
+    ]
+
+    ignored.sort(key=lambda r: (r["reason"], str(r.get("transaction_id")), r["position"]))
+    summary = dict(sorted(Counter(r["reason"] for r in ignored).items()))
+
+    return AggregationResult(rows=rows, ignored=ignored, ignored_summary=summary)
+
+
+if __name__ == "__main__":
+    customers = [
+        {"customer_id": 3, "name": "Cara"},
+        {"customer_id": 1, "name": "Ali"},
+        {"customer_id": 2, "name": "Ben"},  # no transactions -> zero row
+    ]
+    transactions = [
+        {"transaction_id": "T1", "customer_id": 1, "amount": "10.50"},
+        {"transaction_id": "T2", "customer_id": 1, "amount": "4.50"},
+        {"transaction_id": "T2", "customer_id": 1, "amount": "4.50"},   # duplicate
+        {"transaction_id": "T3", "customer_id": 3, "amount": "20.00"},
+        {"transaction_id": "T9", "customer_id": 3, "amount": "99.00"},  # unknown transaction ID
+        {"transaction_id": "T4", "customer_id": 42, "amount": "5.00"},  # unknown customer ID
+        {"transaction_id": "T5", "customer_id": 3, "amount": "abc"},    # invalid amount
+    ]
+    valid_ids = {"T1", "T2", "T3", "T4", "T5"}
+
+    result = aggregate_transactions(customers, transactions, valid_ids)
+
+    for row in result.rows:
+        print(row)
+    print("\nIgnored summary:", result.ignored_summary)
+    for item in result.ignored:
+        print(item)
+```
+
+Both cases are handled the same way every run. Customers with no transactions always appear with a zero count and total. Transactions with unknown transaction IDs or unknown customer IDs are excluded from the totals, but they are returned in `ignored` with a reason instead of disappearing. Rule order, tie-breaking and sorting are fixed, so the same input always gives the same output.

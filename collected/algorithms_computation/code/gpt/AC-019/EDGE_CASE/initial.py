@@ -1,0 +1,101 @@
+def minimum_cost_grid_path(cost_matrix):
+    """
+    Given a non-negative cost matrix, find a minimum-cost path from
+    the top-left cell to the bottom-right cell.
+
+    Allowed moves:
+        - Right
+        - Down
+
+    Returns:
+        {
+            "minimum_cost": minimum_cost,
+            "path": [(row, col), ...]
+        }
+
+    Tie handling:
+        If moving from the top and left gives the same cost,
+        the top predecessor is chosen deterministically.
+    """
+
+    # Validate input
+    if not cost_matrix:
+        raise ValueError("cost_matrix must not be empty")
+
+    if any(len(row) == 0 for row in cost_matrix):
+        raise ValueError("cost_matrix must not contain empty rows")
+
+    cols = len(cost_matrix[0])
+
+    if any(len(row) != cols for row in cost_matrix):
+        raise ValueError("cost_matrix must be rectangular")
+
+    if any(cost < 0 for row in cost_matrix for cost in row):
+        raise ValueError("All costs must be non-negative")
+
+    rows = len(cost_matrix)
+
+    # dp[r][c] = minimum cost to reach (r, c)
+    dp = [[0] * cols for _ in range(rows)]
+
+    # parent[r][c] = predecessor coordinate
+    parent = [[None] * cols for _ in range(rows)]
+
+    # Starting cell
+    dp[0][0] = cost_matrix[0][0]
+
+    # Dynamic programming
+    for r in range(rows):
+        for c in range(cols):
+            if r == 0 and c == 0:
+                continue
+
+            from_top = float("inf")
+            from_left = float("inf")
+
+            if r > 0:
+                from_top = dp[r - 1][c] + cost_matrix[r][c]
+
+            if c > 0:
+                from_left = dp[r][c - 1] + cost_matrix[r][c]
+
+            # Deterministic tie handling:
+            # choose the top predecessor when costs are equal.
+            if from_top <= from_left:
+                dp[r][c] = from_top
+                parent[r][c] = (r - 1, c)
+            else:
+                dp[r][c] = from_left
+                parent[r][c] = (r, c - 1)
+
+    # Reconstruct path from bottom-right to top-left
+    path = []
+    r, c = rows - 1, cols - 1
+
+    while True:
+        path.append((r, c))
+
+        if r == 0 and c == 0:
+            break
+
+        r, c = parent[r][c]
+
+    # Reverse to get start -> destination
+    path.reverse()
+
+    return {
+        "minimum_cost": dp[rows - 1][cols - 1],
+        "path": path
+    }
+
+
+# Example usage
+if __name__ == "__main__":
+    matrix = [
+        [1, 3, 1],
+        [1, 5, 1],
+        [4, 2, 1]
+    ]
+
+    result = minimum_cost_grid_path(matrix)
+    print(result)

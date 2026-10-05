@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+"""
+Per-sensor hourly time-series gap filler.
+
+Behavior
+--------
+- Sorts readings per sensor by timestamp (input row order is irrelevant).
+- Fills missing INTERIOR hourly timestamps by linear interpolation.
+  * Never extrapolates: nothing is emitted before a sensor's first
+    observation or after its last observation.
+  * Handles runs of consecutive missing hours (e.g. 01:00 -> 05:00 inserts
+    02:00, 03:00, 04:00), each interpolated against the two real
+    observations that bracket the run.
+- Interpolation is always anchored on real observations only, never on
+  previously inserted rows.
+- Marks inserted rows with interpolated=true (original rows: false).
+- Deterministic output: sorted sensors, sorted timestamps, fixed column
+  order, shortest round-trip float formatting, LF line endings.
+
+Input CSV columns : sensor_id, timestamp, value
+Output CSV columns: sensor_id, timestamp, value, interpolated
+
+Usage:
+    python fill_gaps.py input.csv output.csv
+    python fill_gaps.py --self-test
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import math
+import sys
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+from typing import Dict, Iterable, List, Optional, Tuple
+
+HOUR = timedelta(hours=1)
+FIELDNAMES = ["sensor_id", "timestamp", "value", "interpolated"]
+
+Reading = Tuple[datetime, float]
+Row = Tuple[datetime, float, bool]
+
+
+# --------------------------------------------------------------------------- #
+# Parsing / formatting
+# --------------------------------------------------------------------------- #
+def parse_timestamp(text: str) -> datetime:
+    """Parse ISO-8601 into a tz-aware UTC datetime (naive input is assumed UTC)."""
+    text = text.strip()
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    dt = datetime.fromisoformat(text)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def format_timestamp(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def format_value(value: float) -> str:
+    if value == 0:  # normalize -0.0
+        value = 0.0
+    return repr(float(value))  # shortest round-trippable form
+
+
+# --------------------------------------------------------------------------- #
+# Core logic
+# --------------------------------------------------------------------------- #
+def dedupe_and_sort(readings: Iterable[Reading]) -> List[Reading]:
+    """
+    Sort by timestamp. Duplicate timestamps collapse to the mean of their
+    values, computed order-independently.
+    """
+    buckets: Dict[datetime, List[float]] = defaultdict(list)
+    for ts, val in readings:
+        buckets[ts].append(val)
+    out: List[Reading] = []
+    for ts in sorted(buckets):
+        vals = sorted(buckets[ts])
+        out.append((ts, math.fsum(vals) / len(vals)))
+    return out
+
+
+def fill_interior_gaps(readings: List[Reading]) -> List[Row]:
+    """
+    Given readings sorted ascending with unique timestamps, return
+    [(timestamp, value, interpolated_flag)].
+
+    Only timestamps strictly between two consecutive real observations are
+    inserted, so the output always begins at the first observation and ends
+    at the last one. A run of N consecutive missing hours yields N inserted
+    rows, all interpolated between the bracketing real observations.
+    """
+    result: List[Row] = []
+    for i, (left_ts, left_val) in enumerate(readings):
+        result.append((left_ts, left_val, False))
+
+        if i + 1 == len(readings):
+            break  # last observation: nothing after it, no extrapolation
+
+        right_ts, right_val = readings[i + 1]
+        span = (right_ts - left_ts).total_seconds()
+        if span <= HOUR.total_seconds():
+            continue  # adjacent (or sub-hourly): no full hour is missing
+
+        step = 1
+        while True:
+            cur = left_ts + step * HOUR
+            if cur >= right_ts:
+                break
+            frac = (cur - left_ts).total_seconds() / span
+            result.append((cur, left_val + (right_val - left_val) * frac, True))
+            step += 1
+    return result
+
+
+def process(data: Dict[str, List[Reading]]) -> List[dict]:
+    rows: List[dict] = []
+    for sensor_id in sorted(data):
+        cleaned = dedupe_and_sort(data[sensor_id])
+        for ts, val, inserted in fill_interior_gaps(cleaned):
+            rows.append(
+                {
+                    "sensor_id": sensor_id,
+                    "timestamp": format_timestamp(ts),
+                    "value": format_value(val),
+                    "interpolated": "true" if inserted else "false",
+                }
+            )
+    return rows
+
+
+# --------------------------------------------------------------------------- #
+# I/O
+# --------------------------------------------------------------------------- #
+def read_input(path: str) -> Dict[str, List[Reading]]:
+    data: Dict[str, List[Reading]] = defaultdict(list)
+    with open(path, newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        missing = {"sensor_id", "timestamp", "value"} - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError(f"Input missing required columns: {sorted(missing)}")
+        for lineno, row in enumerate(reader, start=2):
+            raw = (row["value"] or "").strip()
+            if raw == "":
+                continue  # blank reading -> treated as missing
+            try:
+                value = float(raw)
+                ts = parse_timestamp(row["timestamp"])
+            except ValueError as exc:
+                raise ValueError(f"Line {lineno}: {exc}") from exc
+            if not math.isfinite(value):
+                continue  # NaN/inf treated as missing
+            data[row["sensor_id"].strip()].append((ts, value))
+    return data
+
+
+def write_output(path: str, rows: List[dict]) -> None:
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=FIELDNAMES, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+# --------------------------------------------------------------------------- #
+# Self-test
+# --------------------------------------------------------------------------- #
+def _t(hour: int, day: int = 1) -> datetime:
+    return datetime(2024, 1, day, hour, tzinfo=timezone.utc)
+
+
+def self_test() -> None:
+    # Unsorted input; multi-hour interior gap (02,03,04 missing).
+    data = {
+        "b": [(_t(5), 50.0), (_t(1), 10.0)],
+        "a": [(_t(9), 7.0)],  # single reading -> nothing inserted
+    }
+    rows = process(data)
+    got = [(r["sensor_id"], r["timestamp"][11:13], r["value"], r["interpolated"]) for r in rows]
+    assert got == [
+        ("a", "09", "7.0", "false"),
+        ("b", "01", "10.0", "false"),
+        ("b", "02", "20.0", "true"),
+        ("b", "03", "30.0", "true"),
+        ("b", "04", "40.0", "true"),
+        ("b", "05", "50.0", "false"),
+    ], got
+
+    # No extrapolation: output spans exactly first..last observation.
+    ts = [r["timestamp"] for r in rows if r["sensor_id"] == "b"]
+    assert ts[0] == format_timestamp(_t(1)) and ts[-1] == format_timestamp(_t(5))
+
+    # Two separate gaps for one sensor, plus a gap spanning midnight.
+    data2 = {"s": [(_t(0), 0.0), (_t(2), 2.0), (_t(23), 23.0), (_t(1, 2), 25.0)]}
+    rows2 = process(data2)
+    inserted = [r["timestamp"] for r in rows2 if r["interpolated"] == "true"]
+    assert len(inserted) == 1 + 20 + 1, len(inserted)
+    assert rows2[-1]["timestamp"] == format_timestamp(_t(1, 2))
+
+    # Determinism: shuffled input yields identical output.
+    assert process({"s": list(reversed(data2["s"]))}) == rows2
+
+    # Already-complete series: nothing inserted.
+    full = {"s": [(_t(h), float(h)) for h in range(4)]}
+    assert all(r["interpolated"] == "false" for r in process(full))
+
+    print("self-test passed")
+
+
+# --------------------------------------------------------------------------- #
+# CLI
+# --------------------------------------------------------------------------- #
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description="Fill interior hourly gaps per sensor.")
+    parser.add_argument("input", nargs="?", help="input CSV path")
+    parser.add_argument("output", nargs="?", help="output CSV path")
+    parser.add_argument("--self-test", action="store_true", help="run built-in tests")
+    args = parser.parse_args(argv)
+
+    if args.self_test:
+        self_test()
+        return 0
+    if not args.input or not args.output:
+        parser.error("input and output paths are required")
+
+    try:
+        write_output(args.output, process(read_input(args.input)))
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

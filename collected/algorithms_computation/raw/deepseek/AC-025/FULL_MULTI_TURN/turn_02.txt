@@ -1,0 +1,117 @@
+```python
+def solve_multi_stage_allocation(stages, budget_limit, memory_limit):
+    """
+    Multi-stage, two-resource (budget, memory) allocation.
+
+    Each stage requires exactly one option. Each option is a tuple
+    (budget_cost, memory_cost, score). Maximize total score subject to
+    total budget <= budget_limit and total memory <= memory_limit.
+    Ties on max score are broken by the lexicographically smallest
+    choice vector (option indices compared stage 0 first).
+
+    Returns (max_score, choices) or (None, None) if infeasible.
+    Uses layered two-resource dynamic programming with deterministic
+    reconstruction. Standard library only.
+    """
+    if stages is None:
+        return None, None
+    S = len(stages)
+    if S == 0:
+        return 0, []
+    for opts in stages:
+        if not opts:
+            return None, None  # a stage with no options is infeasible
+
+    NEG = float('-inf')
+    B, M = budget_limit, memory_limit
+
+    # dp[s][b][m] = best score using first s stages with exactly b budget, m memory
+    dp = [[[NEG] * (M + 1) for _ in range(B + 1)] for _ in range(S + 1)]
+    dp[0][0][0] = 0
+
+    for s in range(S):
+        cur = dp[s]
+        nxt = dp[s + 1]
+        for b in range(B + 1):
+            row = cur[b]
+            for m in range(M + 1):
+                base = row[m]
+                if base == NEG:
+                    continue
+                for (cb, cm, cs) in stages[s]:
+                    nb, nm = b + cb, m + cm
+                    if nb <= B and nm <= M:
+                        v = base + cs
+                        if v > nxt[nb][nm]:
+                            nxt[nb][nm] = v
+
+    # Best score across all final cells
+    max_score = NEG
+    for b in range(B + 1):
+        for m in range(M + 1):
+            if dp[S][b][m] > max_score:
+                max_score = dp[S][b][m]
+    if max_score == NEG:
+        return None, None
+
+    # Forward greedy reconstruction for lexicographic minimality.
+    # At stage s with residual (b_used, m_used) and required score `need`,
+    # pick the smallest option index whose residual state (nb, nm) satisfies
+    # dp[remaining_stages][nb][nm] == need - cs (exact DP check, not an upper bound).
+    choices = []
+    b_used, m_used = 0, 0
+    need = max_score
+    for s in range(S):
+        remaining_stages = S - s - 1
+        chosen = None
+        for idx, (cb, cm, cs) in enumerate(stages[s]):
+            nb, nm = b_used + cb, m_used + cm
+            if nb > B or nm > M:
+                continue
+            target_rem = need - cs
+            if target_rem < 0:
+                continue
+            if remaining_stages == 0:
+                # Last stage: must land on a cell whose dp equals max_score.
+                if dp[S][nb][nm] == max_score:
+                    chosen = (idx, nb, nm, cs)
+                    break
+            else:
+                if dp[remaining_stages][nb][nm] == target_rem:
+                    chosen = (idx, nb, nm, cs)
+                    break
+        if chosen is None:
+            # Unreachable if DP is correct; guard against malformed input.
+            return None, None
+        idx, b_used, m_used, cs = chosen
+        choices.append(idx)
+        need -= cs
+
+    return max_score, choices
+
+
+if __name__ == "__main__":
+    # Failing example from the bug report: must return (10, [0, 1])
+    stages = [
+        [(1, 0, 5), (0, 0, 5)],
+        [(2, 0, 5), (0, 0, 5)],
+    ]
+    print(solve_multi_stage_allocation(stages, budget_limit=2, memory_limit=0))
+    # -> (10, [0, 1])
+
+    # Lexicographic tie example: must return (20, [0, 1])
+    stages = [
+        [(1, 0, 10), (0, 0, 10)],
+        [(1, 0, 10), (0, 0, 10)],
+    ]
+    print(solve_multi_stage_allocation(stages, budget_limit=1, memory_limit=0))
+    # -> (20, [0, 1])
+
+    # Infeasible: must return (None, None)
+    stages = [
+        [(10, 10, 100)],
+        [(10, 10, 100)],
+    ]
+    print(solve_multi_stage_allocation(stages, budget_limit=5, memory_limit=5))
+    # -> (None, None)
+```

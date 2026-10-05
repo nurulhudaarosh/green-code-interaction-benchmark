@@ -1,72 +1,253 @@
 ```python
-import json
-import traceback
-from pathlib import Path
+def validate_config(config):
+    """
+    Validate configuration against common configuration-validation rules.
 
-DATASET_PATH = "dataset.json"
+    Rules:
+    - Config must be a dictionary.
+    - Required fields must exist and be non-empty.
+    - Unknown fields are rejected.
+    - String fields cannot be blank after stripping whitespace.
+    - Numeric fields must have valid types and ranges.
+    - Boolean fields must be actual booleans.
+    - List fields must contain valid values.
+    - Nested configuration is validated where applicable.
 
-def load_dataset(path):
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"'{path}' not found. Check the path.")
-    with open(p, "r", encoding="utf-8") as f:
-        return json.load(f)
+    Returns:
+        (True, []) when valid
+        (False, [error messages]) when invalid
+    """
 
-def safe_get(lst, index, default=None, label="list"):
-    """Access list[index] safely, logging instead of crashing."""
-    try:
-        return lst[index]
-    except IndexError:
-        print(f"IndexError: {label} has length {len(lst)}, but index {index} was requested.")
-        return default
+    if not isinstance(config, dict):
+        return False, ["Configuration must be a dictionary."]
 
-def diagnose_index_errors(data):
-    issues = []
-    interactions = data.get("interactions", []) if isinstance(data, dict) else []
+    errors = []
 
-    if not interactions:
-        issues.append("'interactions' list is empty — nothing to advance through.")
-        return issues
+    allowed_fields = {
+        "name",
+        "environment",
+        "debug",
+        "port",
+        "host",
+        "timeout",
+        "retries",
+        "log_level",
+        "allowed_origins",
+        "database",
+    }
 
-    for i, interaction in enumerate(interactions):
-        try:
-            # Example of the kind of indexing that typically throws this error:
-            # accessing a sub-list/messages array without checking length first
-            messages = interaction.get("messages", []) if isinstance(interaction, dict) else []
-            if not messages:
-                issues.append(f"Interaction {i}: 'messages' is empty — indexing into it would fail.")
-                continue
+    required_fields = {
+        "name",
+        "environment",
+        "port",
+    }
 
-            first_msg = safe_get(messages, 0, label=f"interaction[{i}].messages")
-            last_msg = safe_get(messages, len(messages) - 1, label=f"interaction[{i}].messages")
+    # Unknown fields
+    for key in config:
+        if key not in allowed_fields:
+            errors.append(f"Unknown configuration field: {key}")
 
-            if first_msg is None or last_msg is None:
-                issues.append(f"Interaction {i}: could not safely access first/last message.")
+    # Required fields
+    for field in required_fields:
+        if field not in config:
+            errors.append(f"Missing required field: {field}")
 
-        except Exception:
-            issues.append(f"Interaction {i}: unexpected error:\n{traceback.format_exc()}")
+    # String validation
+    string_fields = {
+        "name",
+        "environment",
+        "host",
+        "log_level",
+    }
 
-    return issues
+    for field in string_fields:
+        if field in config:
+            value = config[field]
 
-def main():
-    try:
-        data = load_dataset(DATASET_PATH)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"Failed to load dataset: {e}")
-        return
+            if not isinstance(value, str):
+                errors.append(f"{field} must be a string.")
+            elif not value.strip():
+                errors.append(f"{field} cannot be empty or whitespace.")
 
-    issues = diagnose_index_errors(data)
+    # Environment validation
+    if "environment" in config and isinstance(config["environment"], str):
+        valid_environments = {"development", "testing", "staging", "production"}
 
-    if issues:
-        print("Issues found (likely causes of 'list index out of range'):")
-        for issue in issues:
-            print(f"  - {issue}")
-    else:
-        print("No obvious index issues found — the error may be occurring elsewhere in your pipeline.")
-        print("Check any loop like `data[i]` or `list[-1]` where the list could be shorter than expected.")
+        if config["environment"].strip().lower() not in valid_environments:
+            errors.append(
+                "environment must be one of: "
+                "development, testing, staging, production."
+            )
+
+    # Boolean validation
+    if "debug" in config and not isinstance(config["debug"], bool):
+        errors.append("debug must be a boolean.")
+
+    # Port validation
+    if "port" in config:
+        port = config["port"]
+
+        if isinstance(port, bool) or not isinstance(port, int):
+            errors.append("port must be an integer.")
+        elif not 1 <= port <= 65535:
+            errors.append("port must be between 1 and 65535.")
+
+    # Timeout validation
+    if "timeout" in config:
+        timeout = config["timeout"]
+
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+            errors.append("timeout must be a number.")
+        elif timeout <= 0:
+            errors.append("timeout must be greater than 0.")
+
+    # Retry validation
+    if "retries" in config:
+        retries = config["retries"]
+
+        if isinstance(retries, bool) or not isinstance(retries, int):
+            errors.append("retries must be an integer.")
+        elif retries < 0:
+            errors.append("retries cannot be negative.")
+
+    # Log level validation
+    if "log_level" in config and isinstance(config["log_level"], str):
+        valid_levels = {"debug", "info", "warning", "error", "critical"}
+
+        if config["log_level"].strip().lower() not in valid_levels:
+            errors.append(
+                "log_level must be one of: "
+                "debug, info, warning, error, critical."
+            )
+
+    # Allowed origins validation
+    if "allowed_origins" in config:
+        origins = config["allowed_origins"]
+
+        if not isinstance(origins, list):
+            errors.append("allowed_origins must be a list.")
+        else:
+            for index, origin in enumerate(origins):
+                if not isinstance(origin, str):
+                    errors.append(
+                        f"allowed_origins[{index}] must be a string."
+                    )
+                elif not origin.strip():
+                    errors.append(
+                        f"allowed_origins[{index}] cannot be empty or whitespace."
+                    )
+
+    # Database configuration validation
+    if "database" in config:
+        database = config["database"]
+
+        if not isinstance(database, dict):
+            errors.append("database must be a dictionary.")
+        else:
+            allowed_database_fields = {
+                "host",
+                "port",
+                "name",
+                "username",
+                "password",
+            }
+
+            for key in database:
+                if key not in allowed_database_fields:
+                    errors.append(
+                        f"Unknown database configuration field: {key}"
+                    )
+
+            for field in ("host", "name", "username"):
+                if field in database:
+                    value = database[field]
+
+                    if not isinstance(value, str):
+                        errors.append(
+                            f"database.{field} must be a string."
+                        )
+                    elif not value.strip():
+                        errors.append(
+                            f"database.{field} cannot be empty or whitespace."
+                        )
+
+            if "password" in database and not isinstance(
+                database["password"], str
+            ):
+                errors.append("database.password must be a string.")
+
+            if "port" in database:
+                db_port = database["port"]
+
+                if isinstance(db_port, bool) or not isinstance(db_port, int):
+                    errors.append("database.port must be an integer.")
+                elif not 1 <= db_port <= 65535:
+                    errors.append(
+                        "database.port must be between 1 and 65535."
+                    )
+
+    # Cross-field validation
+    if (
+        config.get("environment") == "production"
+        and config.get("debug") is True
+    ):
+        errors.append("debug cannot be enabled in production.")
+
+    if (
+        "retries" in config
+        and "timeout" in config
+        and isinstance(config["retries"], int)
+        and isinstance(config["timeout"], (int, float))
+        and not isinstance(config["timeout"], bool)
+        and config["retries"] > 0
+        and config["timeout"] <= 0
+    ):
+        errors.append(
+            "timeout must be greater than 0 when retries are enabled."
+        )
+
+    return len(errors) == 0, errors
+
+
+def validate_and_raise(config):
+    """Validate configuration and raise ValueError if invalid."""
+    valid, errors = validate_config(config)
+
+    if not valid:
+        raise ValueError("Invalid configuration:\n- " + "\n- ".join(errors))
+
+    return True
+
 
 if __name__ == "__main__":
-    main()
-```
+    config = {
+        "name": "MyApplication",
+        "environment": "development",
+        "debug": True,
+        "port": 8000,
+        "host": "localhost",
+        "timeout": 30,
+        "retries": 3,
+        "log_level": "info",
+        "allowed_origins": [
+            "http://localhost:3000",
+            "http://localhost:8000",
+        ],
+        "database": {
+            "host": "localhost",
+            "port": 5432,
+            "name": "app_db",
+            "username": "admin",
+            "password": "secret",
+        },
+    }
 
-This assumes a `messages` list nested inside each interaction — swap that key/structure for whatever your actual pipeline indexes into. If you can share the traceback with a line number, I can point at the exact line instead of guessing at the shape.
+    valid, errors = validate_config(config)
+
+    if valid:
+        print("Configuration is valid.")
+    else:
+        print("Configuration is invalid:")
+        for error in errors:
+            print(f"- {error}")
+```

@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""
+Sensor time-series gap filler.
+
+- Sorts readings per sensor by timestamp
+- Inserts EVERY missing interior hourly timestamp using linear interpolation
+  (no extrapolation before the first / after the last reading)
+- Marks inserted rows with `filled = true` (original rows: `filled = false`)
+- Writes deterministic output (stable ordering, fixed formatting)
+
+The hourly grid for each sensor is anchored at that sensor's first reading,
+so sensors that report at e.g. :30 past the hour are filled at :30 as well.
+
+Input CSV columns : sensor_id, timestamp, value
+Output CSV columns: sensor_id, timestamp, value, filled
+
+Usage:
+    python fill_gaps.py input.csv output.csv
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import math
+import sys
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+from typing import Dict, Iterable, List, Tuple
+
+HOUR = timedelta(hours=1)
+TS_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
+Reading = Tuple[datetime, float]
+Row = Tuple[str, datetime, float, bool]
+
+
+def parse_timestamp(raw: str) -> datetime:
+    """Parse an ISO-8601 timestamp; naive values are treated as UTC."""
+    raw = raw.strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    dt = datetime.fromisoformat(raw)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def format_timestamp(dt: datetime) -> str:
+    return dt.strftime(TS_FORMAT)
+
+
+def format_value(value: float) -> str:
+    """Fixed, locale-independent float formatting (deterministic)."""
+    if value == 0:
+        value = 0.0  # normalise -0.0
+    return f"{value:.6f}"
+
+
+def read_readings(path: str) -> Dict[str, List[Reading]]:
+    by_sensor: Dict[str, List[Reading]] = defaultdict(list)
+    with open(path, newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        required = {"sensor_id", "timestamp", "value"}
+        missing = required - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError(f"Missing required column(s): {sorted(missing)}")
+        for lineno, rec in enumerate(reader, start=2):
+            sensor = (rec["sensor_id"] or "").strip()
+            raw_val = (rec["value"] or "").strip()
+            if not sensor:
+                raise ValueError(f"Line {lineno}: empty sensor_id")
+            try:
+                ts = parse_timestamp(rec["timestamp"])
+            except ValueError as exc:
+                raise ValueError(f"Line {lineno}: bad timestamp: {exc}") from exc
+            if raw_val == "":
+                continue  # blank reading treated as missing
+            try:
+                val = float(raw_val)
+            except ValueError as exc:
+                raise ValueError(f"Line {lineno}: bad value {raw_val!r}") from exc
+            if not math.isfinite(val):
+                continue  # NaN / inf treated as missing
+            by_sensor[sensor].append((ts, val))
+    return by_sensor
+
+
+def dedupe_sorted(readings: List[Reading]) -> List[Reading]:
+    """
+    Sort by timestamp and collapse duplicate timestamps deterministically:
+    duplicates are averaged (values are sorted first, so input order is irrelevant).
+    """
+    readings = sorted(readings, key=lambda r: (r[0], r[1]))
+    out: List[Reading] = []
+    i = 0
+    while i < len(readings):
+        j = i
+        vals: List[float] = []
+        while j < len(readings) and readings[j][0] == readings[i][0]:
+            vals.append(readings[j][1])
+            j += 1
+        out.append((readings[i][0], math.fsum(vals) / len(vals)))
+        i = j
+    return out
+
+
+def fill_sensor(sensor: str, readings: List[Reading]) -> List[Row]:
+    """
+    Return original + filled rows for one sensor in timestamp order.
+
+    Every hourly grid point (anchored at the first reading) that lies strictly
+    between two consecutive readings is inserted with a linearly interpolated
+    value. Grid points coinciding with an existing reading are never duplicated.
+    """
+    readings = dedupe_sorted(readings)
+    if not readings:
+        return []
+
+    anchor = readings[0][0]
+    rows: List[Row] = []
+
+    for idx, (ts, val) in enumerate(readings):
+        rows.append((sensor, ts, val, False))
+        if idx + 1 == len(readings):
+            break
+
+        next_ts, next_val = readings[idx + 1]
+        span = next_ts - ts  # > 0 after dedupe
+
+        # First grid index strictly after ts (integer math, no float drift)
+        n = (ts - anchor) // HOUR + 1
+        while True:
+            point = anchor + n * HOUR
+            if point >= next_ts:
+                break
+            frac = (point - ts) / span
+            interp = val + (next_val - val) * frac
+            rows.append((sensor, point, interp, True))
+            n += 1
+
+    return rows
+
+
+def process(by_sensor: Dict[str, List[Reading]]) -> Iterable[Row]:
+    for sensor in sorted(by_sensor):  # deterministic sensor ordering
+        yield from fill_sensor(sensor, by_sensor[sensor])
+
+
+def write_rows(path: str, rows: Iterable[Row]) -> None:
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh, lineterminator="\n")
+        writer.writerow(["sensor_id", "timestamp", "value", "filled"])
+        for sensor, ts, val, filled in rows:
+            writer.writerow(
+                [sensor, format_timestamp(ts), format_value(val), "true" if filled else "false"]
+            )
+
+
+def main(argv: List[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Fill every missing interior hourly sensor reading by linear interpolation."
+    )
+    parser.add_argument("input", help="Input CSV (sensor_id,timestamp,value)")
+    parser.add_argument("output", help="Output CSV path")
+    args = parser.parse_args(argv)
+
+    try:
+        data = read_readings(args.input)
+        write_rows(args.output, process(data))
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

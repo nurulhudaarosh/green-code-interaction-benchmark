@@ -1,0 +1,102 @@
+The code provided in the previous turn actually **does** perform transitive union-find grouping correctly through the DSU operations.
+
+If image $A$ is close to $B$, `uf.union(A, B)` merges their sets. When $B$ is then found close to $C$, `uf.union(B, C)` merges $C$'s set with $B$'s root (which is shared with $A$). In step 3, calling `root = uf.find(img)` on each image resolves to the same root for $A$, $B$, and $C$, placing all three in the same list.
+
+However, a subtle bug in step 3 can break transitiveness if path compression modifies `self.parent` while iterating through `clusters_map` using `.find()`. Additionally, if you want an explicit, self-contained version that guarantees full transitive path compression and clean cluster grouping, here is the corrected implementation:
+
+```python
+import os
+from collections import defaultdict
+import cv2
+import numpy as np
+
+
+class UnionFind:
+    """Disjoint Set Union (DSU) data structure with path compression."""
+
+    def __init__(self, elements):
+        self.parent = {el: el for el in elements}
+
+    def find(self, i):
+        # Path compression: recursively point nodes directly to the root
+        if self.parent[i] != i:
+            self.parent[i] = self.find(self.parent[i])
+        return self.parent[i]
+
+    def union(self, i, j):
+        root_i = self.find(i)
+        root_j = self.find(j)
+        if root_i != root_j:
+            self.parent[root_i] = root_j
+
+
+def compute_normalized_histogram(image_path, bins=256):
+    """Loads an image in grayscale and returns its L1-normalized histogram."""
+    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        return None
+
+    hist = cv2.calcHist([img], [0], None, [bins], [0, 256])
+    hist = cv2.normalize(hist, hist, alpha=1, beta=0, norm_type=cv2.NORM_L1)
+    return hist
+
+
+def find_near_duplicates(input_dir, threshold=0.1):
+    """Clusters images in input_dir based on normalized grayscale histogram L1 distance
+
+    with transitive union-find grouping.
+    """
+    valid_extensions = (".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff")
+    image_files = [
+        f
+        for f in os.listdir(input_dir)
+        if f.lower().endswith(valid_extensions)
+    ]
+
+    # 1. Compute normalized grayscale histogram for each valid image
+    histograms = {}
+    for filename in image_files:
+        filepath = os.path.join(input_dir, filename)
+        hist = compute_normalized_histogram(filepath)
+        if hist is not None:
+            histograms[filename] = hist
+
+    valid_images = list(histograms.keys())
+    uf = UnionFind(valid_images)
+
+    # 2. Pairwise comparison: merge sets whenever distance <= threshold
+    n = len(valid_images)
+    for i in range(n):
+        for j in range(i + 1, n):
+            img_a = valid_images[i]
+            img_b = valid_images[j]
+
+            l1_dist = cv2.compareHist(
+                histograms[img_a], histograms[img_b], cv2.HISTCMP_L1
+            )
+
+            # If pairwise distance is within threshold, unite their sets transitively
+            if l1_dist <= threshold:
+                uf.union(img_a, img_b)
+
+    # 3. Transitive Resolution: gather all elements under their canonical root
+    clusters_map = defaultdict(list)
+    for img in valid_images:
+        # calling find(img) forces full path compression to the canonical representative root
+        root = uf.find(img)
+        clusters_map[root].append(img)
+
+    # 4. Filter to return only clusters with >= 2 images
+    duplicate_clusters = [
+        group for group in clusters_map.values() if len(group) > 1
+    ]
+
+    return duplicate_clusters
+
+```
+
+### Why this guarantees transitive equivalence ($A \sim B \land B \sim C \implies A \sim C$):
+
+1. **Unification:** When `l1_dist(A, B) <= threshold`, `uf.union(A, B)` sets `parent[root_A] = root_B`.
+2. **Chain Connection:** When `l1_dist(B, C) <= threshold`, `uf.union(B, C)` merges `root_B` with `root_C`. Since $A$'s parent points to `root_B`, $A$ is now in the same tree as $C$ without needing $A$ and $C$ to be directly within `threshold`.
+3. **Canonical Compression:** Calling `uf.find(img)` in step 3 resolves every node in the chain $A \rightarrow B \rightarrow C$ to a single canonical root node.

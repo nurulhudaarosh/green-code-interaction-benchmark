@@ -1,0 +1,96 @@
+```python
+import pandas as pd
+from typing import List, Dict, Any, Optional
+
+def pivot_event_data(
+    records: List[Dict[Any, Any]], 
+    date_col: str = 'date', 
+    region_col: str = 'region', 
+    event_col: str = 'event_type'
+) -> pd.DataFrame:
+    """
+    Validates event records, aggregates counts by date, region, and event type,
+    derives event-type columns deterministically, fills missing cells with 0, 
+    and sorts the output.
+
+    Parameters:
+    -----------
+    records : List[Dict[Any, Any]]
+        List of event record dictionaries.
+    date_col : str
+        Key/column name for the date field.
+    region_col : str
+        Key/column name for the region field.
+    event_col : str
+        Key/column name for the event type field.
+
+    Returns:
+    --------
+    pd.DataFrame
+        Pivoted DataFrame with multi-index or flattened columns, sorted deterministically.
+    """
+    if not records:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(records)
+
+    # 1. Record Validation: Ensure required columns exist and drop null/missing key values
+    required_cols = [date_col, region_col, event_col]
+    missing_fields = [col for col in required_cols if col not in df.columns]
+    if missing_fields:
+        raise ValueError(f"Missing required fields in records: {missing_fields}")
+
+    df = df.dropna(subset=required_cols)
+    if df.empty:
+        return pd.DataFrame()
+
+    # 2. Convert and validate dates
+    df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+    df = df.dropna(subset=[date_col])
+
+    # 3. Aggregate counts by date, region, and event type
+    aggregated = (
+        df.groupby([date_col, region_col, event_col])
+        .size()
+        .reset_index(name='count')
+    )
+
+    # 4. Pivot and derive deterministic event-type columns
+    pivoted = aggregated.pivot_table(
+        index=[date_col, region_col],
+        columns=event_col,
+        values='count',
+        aggfunc='sum',
+        fill_value=0
+    )
+
+    # Sort columns deterministically (alphabetically)
+    pivoted = pivoted.reindex(columns=sorted(pivoted.columns))
+
+    # 5. Fill missing cells with zero and sort rows
+    pivoted = pivoted.fillna(0).astype(int)
+    pivoted = pivoted.sort_index(ascending=[True, True])
+
+    # Optional: Flatten MultiIndex columns/index for standard flat DataFrame output
+    pivoted_flat = pivoted.reset_index()
+    pivoted_flat.columns.name = None
+
+    return pivoted_flat
+
+
+# Example Usage
+if __name__ == "__main__":
+    raw_events = [
+        {"date": "2026-10-01", "region": "US-East", "event_type": "click"},
+        {"date": "2026-10-01", "region": "US-East", "event_type": "click"},
+        {"date": "2026-10-01", "region": "US-East", "event_type": "purchase"},
+        {"date": "2026-10-01", "region": "EU-West", "event_type": "click"},
+        {"date": "2026-10-02", "region": "US-East", "event_type": "signup"},
+        {"date": None, "region": "US-East", "event_type": "click"},  # Invalid: invalid date
+        {"date": "2026-10-02", "region": None, "event_type": "click"},  # Invalid: missing region
+    ]
+
+    result = pivot_event_data(raw_events)
+    print(result)
+
+```

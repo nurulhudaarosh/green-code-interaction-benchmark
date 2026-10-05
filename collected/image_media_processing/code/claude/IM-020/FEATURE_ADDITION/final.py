@@ -1,0 +1,122 @@
+"""Per-image brightness analysis.
+
+Requires: pip install pillow numpy
+"""
+
+import csv
+import sys
+from pathlib import Path
+
+import numpy as np
+from PIL import Image, UnidentifiedImageError
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
+
+# Thresholds on the 0-255 grayscale mean.
+DARK_THRESHOLD = 85      # below this -> "dark"
+BRIGHT_THRESHOLD = 170   # above this -> "bright"
+
+
+def classify(brightness, dark_threshold=DARK_THRESHOLD, bright_threshold=BRIGHT_THRESHOLD):
+    if brightness < dark_threshold:
+        return "dark"
+    if brightness > bright_threshold:
+        return "bright"
+    return "normal"
+
+
+def _resolve_thresholds(custom_thresholds):
+    """Validate custom_thresholds and return (dark_max, bright_min)."""
+    if custom_thresholds is None:
+        return DARK_THRESHOLD, BRIGHT_THRESHOLD
+    try:
+        dark_max, bright_min = custom_thresholds
+        dark_max, bright_min = float(dark_max), float(bright_min)
+    except (TypeError, ValueError):
+        raise ValueError(
+            "custom_thresholds must be a (dark_max, bright_min) pair of numbers"
+        ) from None
+    if not (0 <= dark_max <= bright_min <= 255):
+        raise ValueError(
+            "custom_thresholds must satisfy 0 <= dark_max <= bright_min <= 255, "
+            f"got {custom_thresholds!r}"
+        )
+    return dark_max, bright_min
+
+
+def analyze_brightness(input_dir, recursive=False, custom_thresholds=None):
+    """Analyze every image in input_dir.
+
+    Returns a list of dicts, one per image, with keys:
+        filename, mean_r, mean_g, mean_b, brightness, category
+    Unreadable files are returned with an "error" key instead of the stats.
+    Means are on a 0-255 scale; brightness is the mean of the grayscale
+    (ITU-R 601 luma: 0.299 R + 0.587 G + 0.114 B) version of the image.
+
+    custom_thresholds: optional (dark_max, bright_min) pair overriding the
+    default (85, 170) boundaries. Brightness below dark_max is "dark", above
+    bright_min is "bright", and anything in between is "normal".
+    """
+    dark_max, bright_min = _resolve_thresholds(custom_thresholds)
+
+    input_dir = Path(input_dir)
+    if not input_dir.is_dir():
+        raise NotADirectoryError(f"Not a directory: {input_dir}")
+
+    pattern = "**/*" if recursive else "*"
+    paths = sorted(
+        p for p in input_dir.glob(pattern)
+        if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+    )
+
+    results = []
+    for path in paths:
+        name = str(path.relative_to(input_dir))
+        try:
+            with Image.open(path) as img:
+                # Convert to RGB so palette, grayscale, CMYK, alpha, etc.
+                # are all handled uniformly.
+                rgb = img.convert("RGB")
+                arr = np.asarray(rgb, dtype=np.float64)
+                gray = np.asarray(rgb.convert("L"), dtype=np.float64)
+        except (UnidentifiedImageError, OSError, ValueError) as exc:
+            results.append({"filename": name, "error": str(exc)})
+            continue
+
+        mean_r, mean_g, mean_b = arr.reshape(-1, 3).mean(axis=0)
+        brightness = float(gray.mean())
+        results.append({
+            "filename": name,
+            "mean_r": round(float(mean_r), 2),
+            "mean_g": round(float(mean_g), 2),
+            "mean_b": round(float(mean_b), 2),
+            "brightness": round(brightness, 2),
+            "category": classify(brightness, dark_max, bright_min),
+        })
+
+    return results
+
+
+def _print_table(results):
+    print(f"{'file':40} {'R':>7} {'G':>7} {'B':>7} {'bright':>7}  category")
+    for r in results:
+        if "error" in r:
+            print(f"{r['filename']:40} ERROR: {r['error']}")
+        else:
+            print(f"{r['filename']:40} {r['mean_r']:7.2f} {r['mean_g']:7.2f} "
+                  f"{r['mean_b']:7.2f} {r['brightness']:7.2f}  {r['category']}")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        sys.exit("Usage: python analyze_brightness.py <input_dir> [output.csv]")
+
+    out = analyze_brightness(sys.argv[1])
+    _print_table(out)
+
+    if len(sys.argv) > 2:
+        fields = ["filename", "mean_r", "mean_g", "mean_b", "brightness", "category", "error"]
+        with open(sys.argv[2], "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(out)

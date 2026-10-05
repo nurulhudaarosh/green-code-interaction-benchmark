@@ -1,0 +1,202 @@
+# Multi-Stage Resource Allocation — Bug Report & Fix
+
+## 1. Problem Restatement
+
+**Input:**
+- `n` stages, a global `budget_limit` and `memory_limit`.
+- For each stage `i`, a list of options. Each option `j` has a triple `(cost, memory, score)`.
+
+**Required behavior:**
+- Select **exactly one option per stage**.
+- Total cost ≤ `budget_limit`; total memory ≤ `memory_limit`.
+- **Maximize** total score.
+- **Tie-break:** among all optimal selections, return the **lexicographically smallest choice vector** (the list of option indices, compared left-to-right as a tuple).
+
+**Required algorithm:** layered two-resource dynamic programming with deterministic reconstruction.
+
+**Output:** the chosen option index per stage (space-separated), or `NO SOLUTION` if infeasible.
+
+## 2. The Bug
+
+The implementation claims that tie-breaking can be handled by keeping only one parent per `(budget, memory)` state per stage, choosing the option with the smaller index whenever scores are equal.
+
+**Why this is wrong:** `dp` is keyed by `(budget, memory)` *consumed*, but the reconstruction walks backwards from a *final* `(b, m)`. When two different predecessors reach the same `(nb, nm)` with the **same score**, keeping only the smaller option index at this stage **discards information about the earlier stages**. A larger option index at stage `i` may be paired with a lexicographically smaller prefix at stages `0..i-1`, and the combined choice vector can still be lexicographically smaller overall. Pruning at the local state level does not respect global lexicographic order.
+
+Moreover, the tie-break rule is applied to `new_dp` insertion order, which mixes different `(b, m)` predecessors — the comparison `j < prev[2]` only compares the *current* stage's option index, ignoring the prefix entirely.
+
+## 3. Small Defect Demonstration
+
+```
+n = 2, budget = 5, memory = 5
+
+Stage 0:
+  opt 0: (cost 3, mem 3, score 4)
+  opt 1: (cost 2, mem 2, score 4)
+
+Stage 1:
+  opt 0: (cost 2, mem 2, score 5)
+  opt 1: (cost 3, mem 3, score 5)
+```
+
+**All feasible combinations:**
+
+| Choice | Cost | Mem | Score |
+|--------|------|-----|-------|
+| (0,0) | 5 | 5 | 9 |
+| (1,0) | 4 | 4 | 9 |
+| (1,1) | 5 | 5 | 9 |
+| (0,1) | 6 | 6 | infeasible |
+
+Maximum score = 9. Candidates: `(0,0)`, `(1,0)`, `(1,1)`. Lexicographically smallest is `(0, 0)`.
+
+**What the buggy code does:**
+- After stage 0, `dp[3][3] = 4` (opt 0), `dp[2][2] = 4` (opt 1).
+- Stage 1, transition from `dp[2][2] = 4` with opt 0 → `new_dp[4][4] = 9`, parent `(2,2,0)`.
+- Transition from `dp[3][3] = 4` with opt 0 → `new_dp[5][5] = 9`, parent `(3,3,0)`.
+- Transition from `dp[2][2] = 4` with opt 1 → `new_dp[5][5] = 9`. Now `new_dp[5][5]` already has `parent=(3,3,0)`. Current `j=1`, `prev[2]=0`. Since `1 < 0` is false, we **keep** `(3,3,0)`.
+
+The final best state scan picks the first max. Since `new_dp[4][4]=9` and `new_dp[5][5]=9` tie, the scan picks `(4,4)` → reconstructs `(1, 0)`. **But `(0, 0)` is the correct lexicographically smallest optimal answer.**
+
+Bug confirmed: the returned vector is `1 0` instead of `0 0`.
+
+## 4. Corrected Algorithm
+
+**Key idea:** Store *all* optimal predecessors, or better — encode lexicographic tie-breaking **inside the DP value itself**, not as a pruning rule.
+
+**Fix approach — lexicographic value comparison:**
+
+Compare solutions by the tuple `(score, -choice_vector)`, i.e., maximize score, and for equal scores, minimize the choice vector lexicographically. Since Python compares tuples element-wise, we can store `dp[i][b][m]` as the **best full prefix choice vector** for that state, and compare via a helper.
+
+To keep it efficient, store for each `(i, b, m)` the best score **and** the best prefix vector. When scores tie, keep the lexicographically smaller prefix vector (extended by the current option index). This is correct because lexicographic comparison of equal-length prefixes is preserved under appending the same suffix — and here all prefixes at stage `i` have length `i`, and all extensions at stage `i+1` share the same stage index, so the order is preserved.
+
+**Complexity:** O(n · B · M · K) states × comparison cost O(n). Fine for typical limits.
+
+## 5. Corrected Implementation
+
+```python
+import sys
+
+def solve(stages, budget_limit, memory_limit):
+    n = len(stages)
+    NEG = float('-inf')
+
+    # dp[b][m] = (score, choice_tuple)  -- best for stages 0..i-1 reaching (b,m)
+    # choice_tuple has length = number of stages processed so far.
+    dp = [[None] * (memory_limit + 1) for _ in range(budget_limit + 1)]
+    dp[0][0] = (0, ())
+
+    for i in range(n):
+        new_dp = [[None] * (memory_limit + 1) for _ in range(budget_limit + 1)]
+        options = stages[i]
+        for b in range(budget_limit + 1):
+            for m in range(memory_limit + 1):
+                state = dp[b][m]
+                if state is None:
+                    continue
+                cur_score, cur_choice = state
+                for j, (c, mem, s) in enumerate(options):
+                    nb, nm = b + c, m + mem
+                    if nb > budget_limit or nm > memory_limit:
+                        continue
+                    cand_score = cur_score + s
+                    cand_choice = cur_choice + (j,)
+                    existing = new_dp[nb][nm]
+                    if existing is None:
+                        new_dp[nb][nm] = (cand_score, cand_choice)
+                    else:
+                        e_score, e_choice = existing
+                        # Maximize score; tie -> lexicographically smallest choice
+                        if cand_score > e_score or (
+                            cand_score == e_score and cand_choice < e_choice
+                        ):
+                            new_dp[nb][nm] = (cand_score, cand_choice)
+        dp = new_dp
+
+    # Scan all final states for best (score, then lexicographic choice)
+    best = None
+    for b in range(budget_limit + 1):
+        for m in range(memory_limit + 1):
+            state = dp[b][m]
+            if state is None:
+                continue
+            if best is None:
+                best = state
+            else:
+                bs, bc = best
+                cs, cc = state
+                if cs > bs or (cs == bs and cc < bc):
+                    best = state
+
+    if best is None:
+        return None
+    return list(best[1])
+
+
+def main():
+    data = sys.stdin.read().split()
+    if not data:
+        return
+    idx = 0
+    n = int(data[idx]); idx += 1
+    budget_limit = int(data[idx]); idx += 1
+    memory_limit = int(data[idx]); idx += 1
+
+    stages = []
+    for _ in range(n):
+        k = int(data[idx]); idx += 1
+        opts = []
+        for _ in range(k):
+            c = int(data[idx]); idx += 1
+            mem = int(data[idx]); idx += 1
+            s = int(data[idx]); idx += 1
+            opts.append((c, mem, s))
+        stages.append(opts)
+
+    result = solve(stages, budget_limit, memory_limit)
+    if result is None:
+        print("NO SOLUTION")
+    else:
+        print(' '.join(map(str, result)))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## 6. Verification on the Defect Example
+
+**Input:**
+```
+2 5 5
+2
+3 3 4
+2 2 4
+2
+2 2 5
+3 3 5
+```
+
+**Trace with fix:**
+- After stage 0: `dp[3][3] = (4, (0,))`, `dp[2][2] = (4, (1,))`.
+- Stage 1 from `dp[3][3]=(4,(0,))`, opt 0 → `new_dp[5][5] = (9, (0,0))`.
+- From `dp[2][2]=(4,(1,))`, opt 0 → `new_dp[4][4] = (9, (1,0))`.
+- From `dp[2][2]=(4,(1,))`, opt 1 → `new_dp[5][5] = (9, (1,1))`. Existing `(9, (0,0))`; tie on score, `(0,0) < (1,1)` → keep `(0,0)`. ✓
+- From `dp[3][3]=(4,(0,))`, opt 1 → `new_dp[6][6]` infeasible.
+
+Final scan: `(4,4) → (9,(1,0))` and `(5,5) → (9,(0,0))` tie on score; lexicographically `(0,0) < (1,0)` → best is `(0,0)`.
+
+**Output:** `0 0` ✓ (previously `1 0` — bug fixed).
+
+## 7. What Changed and What Did Not
+
+**Changed:**
+- DP state now stores the full best prefix choice vector, not just a single parent pointer.
+- Tie-breaking compares `(score, choice_tuple)` tuples globally, not a local option index.
+- Reconstruction is unnecessary — the answer is directly read from the winning final state.
+
+**Unchanged (per problem requirements):**
+- Layered two-resource DP structure (one layer per stage, state = consumed budget × memory).
+- Deterministic (no randomness; fixed scan order and tuple comparison).
+- Standard library only.
+- Output format: space-separated indices, or `NO SOLUTION`.
+- Exactly one option per stage, both global limits enforced.

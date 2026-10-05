@@ -1,0 +1,333 @@
+Here's the extended version that walks subdirectories recursively, mirrors the directory structure, and returns per-file plus aggregate stats.
+
+```python
+#!/usr/bin/env python3
+"""
+Recursive text normalizer with directory mirroring and stats.
+
+Reads all matching text files from an input directory tree, applies a
+series of normalization steps, and writes cleaned files to an output
+directory that mirrors the input structure.
+
+Usage:
+    python normalize.py <input_dir> <output_dir> [options]
+
+Options:
+    --encoding ENC     Input file encoding (default: utf-8)
+    --pattern GLOB     Glob pattern for input files (default: *.txt)
+    --jobs N           Number of parallel workers (default: 1)
+    --stats-json PATH  Write aggregate stats to a JSON file
+    --quiet            Suppress per-file output
+    --dry-run          Show what would be processed without writing
+
+Normalization steps (applied per file):
+    - Unicode NFKC normalization
+    - Normalize line endings to \n
+    - Replace smart punctuation with ASCII equivalents
+    - Strip trailing whitespace on each line
+    - Collapse runs of 3+ blank lines into a single blank line
+    - Strip leading/trailing whitespace of the whole document
+    - Ensure file ends with a single trailing newline
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+import unicodedata
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Punctuation map
+# ---------------------------------------------------------------------------
+
+PUNCT_MAP = {
+    "\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'",
+    "\u201c": '"', "\u201d": '"', "\u201e": '"', "\u201f": '"',
+    "\u2013": "-", "\u2014": "-", "\u2015": "-", "\u2212": "-",
+    "\u2026": "...",
+    "\u00a0": " ", "\u2007": " ", "\u202f": " ",
+    "\u200b": "", "\ufeff": "",
+}
+_PUNCT_TABLE = str.maketrans(PUNCT_MAP)
+
+
+# ---------------------------------------------------------------------------
+# Stats model
+# ---------------------------------------------------------------------------
+
+@dataclass
+class FileStats:
+    src: str
+    dst: str
+    bytes_in: int
+    bytes_out: int
+    lines_in: int
+    lines_out: int
+    ok: bool
+    error: str | None = None
+    duration_ms: float = 0.0
+
+
+@dataclass
+class TotalStats:
+    files_total: int = 0
+    files_ok: int = 0
+    files_failed: int = 0
+    bytes_in: int = 0
+    bytes_out: int = 0
+    lines_in: int = 0
+    lines_out: int = 0
+    duration_ms: float = 0.0
+    files: list[FileStats] = field(default_factory=list)
+
+    def add(self, fs: FileStats) -> None:
+        self.files_total += 1
+        self.bytes_in += fs.bytes_in
+        self.bytes_out += fs.bytes_out
+        self.lines_in += fs.lines_in
+        self.lines_out += fs.lines_out
+        if fs.ok:
+            self.files_ok += 1
+        else:
+            self.files_failed += 1
+        self.files.append(fs)
+
+    def to_json_dict(self) -> dict:
+        d = asdict(self)
+        # Files are already dataclasses-as-dicts.
+        return d
+
+
+# ---------------------------------------------------------------------------
+# Normalization
+# ---------------------------------------------------------------------------
+
+def normalize_text(text: str) -> str:
+    text = unicodedata.normalize("NFKC", text)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = text.translate(_PUNCT_TABLE)
+
+    lines = [line.rstrip() for line in text.split("\n")]
+
+    collapsed: list[str] = []
+    blank_run = 0
+    for line in lines:
+        if line == "":
+            blank_run += 1
+            if blank_run <= 1:
+                collapsed.append(line)
+        else:
+            blank_run = 0
+            collapsed.append(line)
+
+    text = "\n".join(collapsed).strip()
+    if text:
+        text += "\n"
+    return text
+
+
+def process_one(job: tuple[str, str, str, bool]) -> FileStats:
+    """Worker function: normalize one file. Runs in subprocess when pooled."""
+    src_str, dst_str, encoding, dry_run = job
+    src = Path(src_str)
+    dst = Path(dst_str)
+    t0 = time.perf_counter()
+
+    try:
+        raw = src.read_bytes()
+    except OSError as exc:
+        return FileStats(
+            src=src_str, dst=dst_str,
+            bytes_in=0, bytes_out=0, lines_in=0, lines_out=0,
+            ok=False, error=f"read error: {exc}",
+            duration_ms=(time.perf_counter() - t0) * 1000,
+        )
+
+    try:
+        text = raw.decode(encoding)
+    except UnicodeDecodeError as exc:
+        text = raw.decode("utf-8", errors="replace")
+        decode_note = f"decode fallback: {exc}"
+    else:
+        decode_note = None
+
+    cleaned = normalize_text(text)
+    out_bytes = cleaned.encode("utf-8")
+
+    if not dry_run:
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(out_bytes)
+        except OSError as exc:
+            return FileStats(
+                src=src_str, dst=dst_str,
+                bytes_in=len(raw), bytes_out=0,
+                lines_in=text.count("\n") + (1 if text and not text.endswith("\n") else 0),
+                lines_out=0,
+                ok=False, error=f"write error: {exc}",
+                duration_ms=(time.perf_counter() - t0) * 1000,
+            )
+
+    return FileStats(
+        src=src_str, dst=dst_str,
+        bytes_in=len(raw), bytes_out=len(out_bytes),
+        lines_in=text.count("\n") + (1 if text and not text.endswith("\n") else 0),
+        lines_out=cleaned.count("\n"),
+        ok=True,
+        error=decode_note,
+        duration_ms=(time.perf_counter() - t0) * 1000,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Discovery
+# ---------------------------------------------------------------------------
+
+def discover(in_dir: Path, pattern: str) -> list[Path]:
+    """Recursively find files matching the glob pattern."""
+    return sorted(
+        p for p in in_dir.rglob(pattern)
+        if p.is_file()
+    )
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def build_jobs(
+    files: list[Path], in_dir: Path, out_dir: Path, encoding: str, dry_run: bool
+) -> list[tuple[str, str, str, bool]]:
+    jobs = []
+    for src in files:
+        rel = src.relative_to(in_dir)
+        dst = out_dir / rel
+        jobs.append((str(src), str(dst), encoding, dry_run))
+    return jobs
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Recursively normalize text files into a mirrored output tree.",
+    )
+    parser.add_argument("input_dir", type=Path)
+    parser.add_argument("output_dir", type=Path)
+    parser.add_argument("--encoding", default="utf-8")
+    parser.add_argument("--pattern", default="*.txt")
+    parser.add_argument("--jobs", type=int, default=1, help="Parallel workers (default 1)")
+    parser.add_argument("--stats-json", type=Path, default=None,
+                        help="Write aggregate stats to this JSON file")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--quiet", action="store_true")
+    args = parser.parse_args(argv)
+
+    in_dir: Path = args.input_dir
+    out_dir: Path = args.output_dir
+
+    if not in_dir.is_dir():
+        print(f"error: input directory not found: {in_dir}", file=sys.stderr)
+        return 2
+
+    files = discover(in_dir, args.pattern)
+    if not files:
+        print(f"warning: no files matching {args.pattern!r} under {in_dir}",
+              file=sys.stderr)
+        return 0
+
+    if not args.dry_run:
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+    jobs = build_jobs(files, in_dir, out_dir, args.encoding, args.dry_run)
+
+    totals = TotalStats()
+    wall_start = time.perf_counter()
+
+    if args.jobs > 1:
+        with ProcessPoolExecutor(max_workers=args.jobs) as pool:
+            futures = [pool.submit(process_one, job) for job in jobs]
+            for fut in as_completed(futures):
+                fs = fut.result()
+                totals.add(fs)
+                if not args.quiet:
+                    rel = Path(fs.src).relative_to(in_dir)
+                    status = "ok" if fs.ok else f"FAIL: {fs.error}"
+                    print(f"{rel}: {fs.bytes_in} -> {fs.bytes_out} bytes [{status}]")
+    else:
+        for job in jobs:
+            fs = process_one(job)
+            totals.add(fs)
+            if not args.quiet:
+                rel = Path(fs.src).relative_to(in_dir)
+                status = "ok" if fs.ok else f"FAIL: {fs.error}"
+                print(f"{rel}: {fs.bytes_in} -> {fs.bytes_out} bytes [{status}]")
+
+    totals.duration_ms = (time.perf_counter() - wall_start) * 1000
+
+    if not args.quiet:
+        ratio = (totals.bytes_out / totals.bytes_in * 100) if totals.bytes_in else 0.0
+        print()
+        print(f"Files:  {totals.files_ok} ok, {totals.files_failed} failed, "
+              f"{totals.files_total} total")
+        print(f"Bytes:  {totals.bytes_in} in -> {totals.bytes_out} out "
+              f"({ratio:.1f}% of original)")
+        print(f"Lines:  {totals.lines_in} in -> {totals.lines_out} out")
+        print(f"Time:   {totals.duration_ms:.1f} ms wall, "
+              f"{sum(f.duration_ms for f in totals.files):.1f} ms cpu")
+
+    if args.stats_json:
+        args.stats_json.parent.mkdir(parents=True, exist_ok=True)
+        with args.stats_json.open("w", encoding="utf-8") as fh:
+            json.dump(totals.to_json_dict(), fh, indent=2)
+
+    return 0 if totals.files_failed == 0 else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+```
+
+### What Changed
+
+**Recursive discovery + mirroring.** `discover()` uses `rglob()` to find files at any depth. `build_jobs()` computes each file's path relative to the input root via `Path.relative_to()`, then joins it onto the output root—so `in/a/b/x.txt` becomes `out/a/b/x.txt` automatically.
+
+**Per-file stats.** Each worker returns a `FileStats` dataclass with byte/line counts before and after, timing, and an `ok`/`error` pair. The worker never raises—I/O and decode errors are captured so a single bad file doesn't abort the run.
+
+**Aggregate stats.** `TotalStats.add()` accumulates counters and keeps the full per-file list. `--stats-json` dumps the whole thing as structured JSON for downstream tooling or CI reports.
+
+**Parallelism.** `--jobs N` uses a `ProcessPoolExecutor`. Jobs are picklable tuples, and `process_one()` is module-level, so it works cleanly across processes. Note that `pathlib.Path` objects are picklable too, but I pass strings to keep the payload minimal.
+
+**Exit codes.** `0` on full success, `1` if any file failed, `2` on bad input directory—useful for scripting.
+
+**`--dry-run`.** Runs the full normalization pipeline but skips the write, so you can preview size changes and verify line counts without touching disk.
+
+### Example
+
+```bash
+python normalize.py ./raw ./clean --pattern "*.txt" --jobs 4 --stats-json stats.json
+```
+
+Sample output:
+```
+docs/intro.txt: 1243 -> 1201 bytes [ok]
+docs/api/ref.txt: 8821 -> 8790 bytes [ok]
+notes/2024/todo.txt: 342 -> 338 bytes [ok]
+
+Files:  3 ok, 0 failed, 3 total
+Bytes:  10406 in -> 10329 out (99.3% of original)
+Lines:  412 in -> 409 out
+Time:   18.2 ms wall, 3.1 ms cpu
+```
+
+### Design Notes & Gotchas
+
+- **Stats with `--jobs > 1` return in completion order**, not input order. The `files` list in the JSON will reflect that. If you need deterministic ordering, sort by `src` after collection.
+- **`--jobs 1` is the default** because for small corpora the process pool overhead outweighs the gain. Bump it for large trees (thousands of files or lots of MB).
+- **Failure isolation is intentional.** A bad encoding, a permission error, or a full disk on one file won't kill the run; the error is recorded and the exit code reflects it.
+- **Empty directory behavior** returns `0` with a warning, which is friendlier for CI than treating "nothing to do" as a failure.
+
+**Extension idea:** If you want true progress reporting on huge trees, feed the futures through `as_completed` with a `tqdm` wrapper, or emit newline-delimited JSON from `--stats-json` for streaming consumption.

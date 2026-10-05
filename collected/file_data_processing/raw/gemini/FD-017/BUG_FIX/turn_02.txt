@@ -1,0 +1,88 @@
+```python
+import pandas as pd
+from typing import List, Dict, Any
+
+
+def pivot_event_data(
+    records: List[Dict[Any, Any]],
+    date_col: str = 'date',
+    region_col: str = 'region',
+    event_col: str = 'event_type',
+    count_col: str = 'count'
+) -> pd.DataFrame:
+    """
+    Validates event records by gracefully skipping malformed dates and counts,
+    aggregates counts by date and region, derives deterministic event-type columns,
+    fills missing cells with zero, and sorts rows.
+    """
+    if not records:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(records)
+
+    # 1. Validate primary required columns
+    for col in [date_col, region_col, event_col]:
+        if col not in df.columns:
+            return pd.DataFrame()
+
+    # 2. Skip malformed or unparseable dates
+    df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+    df = df.dropna(subset=[date_col])
+
+    # 3. Handle count column: default missing to 1, drop non-numeric/malformed values
+    if count_col in df.columns:
+        df[count_col] = df[count_col].fillna(1)
+        df[count_col] = pd.to_numeric(df[count_col], errors='coerce')
+        df = df.dropna(subset=[count_col])
+    else:
+        df[count_col] = 1
+
+    # 4. Skip records with missing region or event_type
+    df = df.dropna(subset=[region_col, event_col])
+
+    if df.empty:
+        return pd.DataFrame()
+
+    # 5. Aggregate counts by date, region, and event type
+    aggregated = (
+        df.groupby([date_col, region_col, event_col])[count_col]
+        .sum()
+        .reset_index()
+    )
+
+    # 6. Pivot and derive deterministic event-type columns
+    pivoted = aggregated.pivot_table(
+        index=[date_col, region_col],
+        columns=event_col,
+        values=count_col,
+        aggfunc='sum',
+        fill_value=0
+    )
+
+    # 7. Sort event-type columns alphabetically and fill missing cells with zero
+    pivoted = pivoted.reindex(columns=sorted(pivoted.columns))
+    pivoted = pivoted.fillna(0).astype(int)
+
+    # 8. Deterministically sort rows by date and region
+    pivoted = pivoted.sort_index(ascending=[True, True])
+
+    # 9. Flatten index for standard tabular output
+    pivoted_flat = pivoted.reset_index()
+    pivoted_flat.columns.name = None
+
+    return pivoted_flat
+
+
+if __name__ == "__main__":
+    raw_events = [
+        {"date": "2026-10-01", "region": "US-East", "event_type": "click", "count": 2},
+        {"date": "2026-10-01", "region": "US-East", "event_type": "click", "count": "invalid_count"},  # Skipped: malformed count
+        {"date": "not-a-date", "region": "US-East", "event_type": "purchase", "count": 1},              # Skipped: malformed date
+        {"date": "2026-10-01", "region": "EU-West", "event_type": "click"},                              # Valid: count defaults to 1
+        {"date": "2026-10-02", "region": "US-East", "event_type": "signup", "count": 5},                # Valid
+    ]
+
+    result = pivot_event_data(raw_events)
+    print(result)
+
+```

@@ -1,0 +1,80 @@
+from datetime import datetime
+from pathlib import Path
+
+
+def organize_documents(documents):
+    """
+    Organize document records by file extension.
+
+    Each document should be a dictionary containing:
+        name: filename
+        size: file size in bytes
+        modified: modification date in YYYY-MM-DD format
+
+    Returns a dictionary grouped by extension.
+    """
+    organized = {}
+
+    for document in documents:
+        if not isinstance(document, dict):
+            continue
+
+        name = document.get("name")
+        size = document.get("size")
+        modified = document.get("modified")
+
+        if not isinstance(name, str) or not name.strip():
+            continue
+
+        name = name.strip()
+
+        extension = Path(name).suffix.lower()
+        if not extension:
+            extension = "no_extension"
+        else:
+            extension = extension.lstrip(".")
+
+        try:
+            size = int(size)
+        except (TypeError, ValueError):
+            continue
+
+        if size < 0:
+            continue
+
+        if isinstance(modified, datetime):
+            modified_date = modified
+        else:
+            try:
+                modified_date = datetime.strptime(
+                    str(modified).strip(), "%Y-%m-%d"
+                )
+            except (TypeError, ValueError):
+                continue
+
+        organized.setdefault(extension, []).append({
+            "name": name,
+            "size": size,
+            "modified": modified_date.strftime("%Y-%m-%d")
+        })
+
+    for extension in organized:
+        organized[extension].sort(key=lambda item: item["name"].lower())
+
+    return organized
+
+
+if __name__ == "__main__":
+    documents = [
+        {"name": "report.pdf", "size": 1500, "modified": "2026-10-01"},
+        {"name": "notes.txt", "size": 800, "modified": "2026-09-28"},
+        {"name": "photo.jpg", "size": 2400, "modified": "2026-09-30"},
+        {"name": "data.csv", "size": 1200, "modified": "2026-10-02"},
+    ]
+
+    result = organize_documents(documents)
+
+    for extension, files in result.items():
+        print(f"{extension}:")
+        for file in files:
+            print(f"  {file}")

@@ -1,0 +1,134 @@
+Here is a complete, self-contained Python script using standard library modules (`csv`, `math`, and `statistics`) so it runs out-of-the-box without external dependencies like `pandas`.
+
+```python
+import csv
+import math
+import statistics
+from typing import Dict, List, Any, Union
+
+def calculate_csv_stats(file_path: str) -> List[Dict[str, Any]]:
+
+    """
+    Reads a CSV file, parses numeric values independently per column,
+    and returns a list of statistical summaries maintaining the original column order.
+    """
+    with open(file_path, mode='r', newline='', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        try:
+            headers = next(reader)
+        except StopIteration:
+            return []
+
+        # Store numeric values found per column header
+        data_by_col: Dict[str, List[float]] = {header: [] for header in headers}
+
+        for row in reader:
+            for header, val in zip(headers, row):
+                val_str = val.strip()
+                if not val_str:
+                    continue  # Skip missing or empty cells
+                try:
+                    num_val = float(val_str)
+                    if not math.isnan(num_val):
+                        data_by_col[header].append(num_val)
+                except ValueError:
+                    # Ignore non-numeric strings per column independently
+                    pass
+
+    # Compute statistics preserving original input-column order
+    results = []
+    for header in headers:
+        values = data_by_col[header]
+        n = len(values)
+
+        if n == 0:
+            stats = {
+                "column": header,
+                "count": 0,
+                "min": None,
+                "max": None,
+                "mean": None,
+                "median": None
+            }
+        else:
+            stats = {
+                "column": header,
+                "count": n,
+                "min": min(values),
+                "max": max(values),
+                "mean": statistics.mean(values),
+                "median": statistics.median(values)
+            }
+        results.append(stats)
+
+    return results
+
+
+def print_stats_table(stats_list: List[Dict[str, Any]]) -> None:
+    """Formats and prints column statistics in a clean ASCII table."""
+    if not stats_list:
+        print("No data found.")
+        return
+
+    headers = ["Column", "Count", "Min", "Max", "Mean", "Median"]
+    
+    def fmt(val: Union[float, int, None]) -> str:
+        if val is None:
+            return "N/A"
+        if isinstance(val, float):
+            return f"{val:.4f}".rstrip('0').rstrip('.') if val % 1 != 0 else f"{val:.1f}"
+        return str(val)
+
+    # Calculate column widths for pretty printing
+    col_widths = {
+        "Column": max(len(s["column"]) for s in stats_list) if stats_list else 10,
+        "Count": max(len(str(s["count"])) for s in stats_list) if stats_list else 5,
+        "Min": max(len(fmt(s["min"])) for s in stats_list) if stats_list else 5,
+        "Max": max(len(fmt(s["max"])) for s in stats_list) if stats_list else 5,
+        "Mean": max(len(fmt(s["mean"])) for s in stats_list) if stats_list else 5,
+        "Median": max(len(fmt(s["median"])) for s in stats_list) if stats_list else 6,
+    }
+    for k in col_widths:
+        col_widths[k] = max(col_widths[k], len(k))
+
+    # Print Table Header
+    header_row = " | ".join(f"{h:<{col_widths[h]}}" for h in headers)
+    divider = "-+-".join("-" * col_widths[h] for h in headers)
+    print(header_row)
+    print(divider)
+
+    # Print Data Rows
+    for s in stats_list:
+        row = [
+            f"{s['column']:<{col_widths['Column']}}",
+            f"{s['count']:<{col_widths['Count']}}",
+            f"{fmt(s['min']):<{col_widths['Min']}}",
+            f"{fmt(s['max']):<{col_widths['Max']}}",
+            f"{fmt(s['mean']):<{col_widths['Mean']}}",
+            f"{fmt(s['median']):<{col_widths['Median']}}"
+        ]
+        print(" | ".join(row))
+
+
+if __name__ == "__main__":
+    import io
+
+    # Demonstration with sample CSV data containing missing values and mixed types
+    sample_csv = """Age, Score, Income, Code
+25, 88.5, 50000, A1
+30, , 62000, B2
+, 92.0, , C3
+22, 75.5, 45000, 
+40, 95.0, 80000, E5
+"""
+    
+    # Save dummy file to run the script self-contained
+    test_filename = "sample_data.csv"
+    with open(test_filename, "w", encoding="utf-8") as f:
+        f.write(sample_csv)
+
+    print(f"Processing '{test_filename}'...\n")
+    results = calculate_csv_stats(test_filename)
+    print_stats_table(results)
+
+```

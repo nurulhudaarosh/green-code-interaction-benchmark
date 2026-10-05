@@ -1,0 +1,140 @@
+from __future__ import annotations
+
+from collections import defaultdict
+from datetime import date, datetime
+from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
+
+
+class EventPivotError(ValueError):
+    """Raised when an event record fails validation."""
+
+
+def _parse_date(value: Any) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            raise EventPivotError("date must not be empty")
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+        except ValueError as exc:
+            raise EventPivotError(f"invalid date value: {value!r}") from exc
+    raise EventPivotError(f"unsupported date type: {type(value).__name__}")
+
+
+def _normalize_region(value: Any) -> str:
+    if value is None:
+        raise EventPivotError("region must not be None")
+    region = str(value).strip()
+    if not region:
+        raise EventPivotError("region must not be empty")
+    return region
+
+
+def _normalize_event_type(value: Any) -> str:
+    if value is None:
+        raise EventPivotError("event_type must not be None")
+    event_type = str(value).strip()
+    if not event_type:
+        raise EventPivotError("event_type must not be empty")
+    return event_type
+
+
+def _validate_record(record: Mapping[str, Any]) -> Tuple[date, str, str]:
+    if not isinstance(record, Mapping):
+        raise EventPivotError(f"record must be a mapping, got {type(record).__name__}")
+    missing = [key for key in ("date", "region", "event_type") if key not in record]
+    if missing:
+        raise EventPivotError(f"record missing required field(s): {', '.join(missing)}")
+    return (
+        _parse_date(record["date"]),
+        _normalize_region(record["region"]),
+        _normalize_event_type(record["event_type"]),
+    )
+
+
+def _slugify_event_type(event_type: str) -> str:
+    chars: List[str] = []
+    previous_underscore = False
+    for char in event_type.lower():
+        if char.isalnum():
+            chars.append(char)
+            previous_underscore = False
+        else:
+            if not previous_underscore:
+                chars.append("_")
+                previous_underscore = True
+    slug = "".join(chars).strip("_")
+    if not slug:
+        raise EventPivotError(f"event_type cannot produce a column name: {event_type!r}")
+    if slug[0].isdigit():
+        slug = f"event_{slug}"
+    return slug
+
+
+def _derive_column_names(event_types: Iterable[str]) -> Dict[str, str]:
+    mapping: Dict[str, str] = {}
+    used: set[str] = set()
+    for event_type in sorted(set(event_types)):
+        base = _slugify_event_type(event_type)
+        candidate = base
+        suffix = 2
+        while candidate in used:
+            candidate = f"{base}_{suffix}"
+            suffix += 1
+        used.add(candidate)
+        mapping[event_type] = candidate
+    return mapping
+
+
+def build_event_pivot(
+    records: Sequence[Mapping[str, Any]] | Iterable[Mapping[str, Any]],
+) -> List[Dict[str, Any]]:
+    validated: List[Tuple[date, str, str]] = []
+    for index, record in enumerate(records):
+        try:
+            validated.append(_validate_record(record))
+        except EventPivotError as exc:
+            raise EventPivotError(f"record {index}: {exc}") from exc
+
+    if not validated:
+        return []
+
+    column_map = _derive_column_names(event_type for _, _, event_type in validated)
+    ordered_columns = sorted(column_map.values())
+
+    counts: Dict[Tuple[date, str], Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for event_date, region, event_type in validated:
+        counts[(event_date, region)][event_type] += 1
+
+    pivot_rows: List[Dict[str, Any]] = []
+    for (event_date, region) in sorted(counts.keys(), key=lambda key: (key[0], key[1])):
+        region_counts = counts[(event_date, region)]
+        ordered_row: Dict[str, Any] = {
+            "date": event_date.isoformat(),
+            "region": region,
+        }
+        for event_type, column in column_map.items():
+            ordered_row[column] = region_counts.get(event_type, 0)
+        pivot_rows.append({k: ordered_row[k] for k in ["date", "region", *ordered_columns]})
+
+    return pivot_rows
+
+
+if __name__ == "__main__":
+    sample_records = [
+        {"date": "2024-01-01", "region": "north", "event_type": "click"},
+        {"date": "2024-01-01", "region": "north", "event_type": "click"},
+        {"date": "2024-01-01", "region": "north", "event_type": "purchase"},
+        {"date": "2024-01-01", "region": "south", "event_type": "click"},
+        {"date": "2024-01-02", "region": "north", "event_type": "view"},
+        {"date": "2024-01-02", "region": "south", "event_type": "purchase"},
+        {"date": "2024-01-02", "region": "south", "event_type": "purchase"},
+        {"date": date(2024, 1, 3), "region": "east", "event_type": "View"},
+    ]
+
+    for row in build_event_pivot(sample_records):
+        print(row)

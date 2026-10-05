@@ -1,0 +1,310 @@
+"""
+Offline Customer Record Matcher
+-------------------------------
+Blocks candidate pairs using:
+  - surname-initial (first letter of normalized surname)
+  - postal-prefix (first 3 chars of normalized postal code)
+
+Within each block, matches records where normalized email OR phone matches exactly.
+
+No external dependencies beyond the standard library.
+
+Design note
+-----------
+Comparison is NEVER done as an all-pairs (N x N) sweep. Instead:
+  1. Every record is assigned a blocking key.
+  2. Records sharing a blocking key are only compared WITHIN their bucket.
+  3. Buckets are further narrowed by an inverted index on exact email and
+     exact phone, so within a bucket we only compare records that share at
+     least one exact identifier (no wasted comparisons).
+"""
+
+from __future__ import annotations
+
+import re
+import unicodedata
+from collections import defaultdict
+from dataclasses import dataclass, field
+from itertools import combinations
+from typing import Dict, Iterable, List, Optional, Set, Tuple
+
+
+# ---------------------------------------------------------------------------
+# Normalization helpers
+# ---------------------------------------------------------------------------
+
+_NON_DIGIT = re.compile(r"\D+")
+_NON_ALNUM = re.compile(r"[^a-z0-9]+")
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _strip_accents(s: str) -> str:
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c)
+    )
+
+
+def normalize_name(s: Optional[str]) -> str:
+    if not s:
+        return ""
+    s = _strip_accents(s).lower()
+    s = _NON_ALNUM.sub(" ", s).strip()
+    return s
+
+
+def normalize_postal(s: Optional[str]) -> str:
+    if not s:
+        return ""
+    s = _strip_accents(s).upper()
+    s = _NON_ALNUM.sub("", s.lower())
+    return s
+
+
+def normalize_email(s: Optional[str]) -> str:
+    if not s:
+        return ""
+    s = s.strip().lower()
+    m = re.search(r"<([^>]+)>", s)
+    if m:
+        s = m.group(1)
+    if not _EMAIL_RE.match(s):
+        return ""
+    return s
+
+
+def normalize_phone(s: Optional[str], default_country: str = "1") -> str:
+    if not s:
+        return ""
+    digits = _NON_DIGIT.sub("", s)
+    if not digits:
+        return ""
+    if len(digits) == 10 and default_country:
+        digits = default_country + digits
+    return digits
+
+
+# ---------------------------------------------------------------------------
+# Record model
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Customer:
+    id: str
+    first_name: str = ""
+    last_name: str = ""
+    postal_code: str = ""
+    email: str = ""
+    phone: str = ""
+
+    norm_last: str = field(default="", init=False, repr=False)
+    norm_email: str = field(default="", init=False, repr=False)
+    norm_phone: str = field(default="", init=False, repr=False)
+    norm_postal: str = field(default="", init=False, repr=False)
+
+    def prepare(self, default_country: str = "1") -> "Customer":
+        self.norm_last = normalize_name(self.last_name)
+        self.norm_email = normalize_email(self.email)
+        self.norm_phone = normalize_phone(self.phone, default_country)
+        self.norm_postal = normalize_postal(self.postal_code)
+        return self
+
+    def surname_initial(self) -> str:
+        return self.norm_last[:1]
+
+    def postal_prefix(self, n: int = 3) -> str:
+        return self.norm_postal[:n]
+
+
+# ---------------------------------------------------------------------------
+# Matcher
+# ---------------------------------------------------------------------------
+
+class CustomerMatcher:
+    """
+    Build an offline matcher over a list of customers.
+
+    Blocking keys (record assigned to exactly one primary block):
+      - If postal prefix is available: (surname_initial, postal_prefix)
+      - Otherwise:                     (surname_initial, "")
+
+    Within each block, comparison is driven by an inverted index on exact
+    normalized email and exact normalized phone. Only records that share a
+    key are ever compared — no all-pairs sweep inside a bucket either.
+    """
+
+    def __init__(
+        self,
+        customers: Iterable[Customer],
+        default_country: str = "1",
+        postal_prefix_len: int = 3,
+    ) -> None:
+        self.default_country = default_country
+        self.postal_prefix_len = postal_prefix_len
+        self.customers: List[Customer] = [c.prepare(default_country) for c in customers]
+
+        # block_key -> list of record indices
+        self._blocks: Dict[Tuple[str, str], List[int]] = defaultdict(list)
+        # (block_key, "email"|"phone", value) -> list of record indices
+        # Keyed by block so a phone collision across blocks is never merged.
+        self._inv_email: Dict[Tuple[str, str], List[int]] = defaultdict(list)
+        self._inv_phone: Dict[Tuple[str, str], List[int]] = defaultdict(list)
+
+        for idx, c in enumerate(self.customers):
+            block = self._block_key(c)
+            self._blocks[block].append(idx)
+            if c.norm_email:
+                self._inv_email[(block, c.norm_email)].append(idx)
+            if c.norm_phone:
+                self._inv_phone[(block, c.norm_phone)].append(idx)
+
+    # ------------------------------------------------------------------ API
+    def find_duplicates(self) -> List[List[Customer]]:
+        """
+        Return groups of customers transitively linked by exact email or
+        phone matches. Each candidate pair is generated from a blocking key,
+        never from a global cross-product.
+        """
+        n = len(self.customers)
+        parent = list(range(n))
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: int, b: int) -> None:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[rb] = ra
+
+        for _block, i, j in self._candidate_pairs():
+            union(i, j)
+
+        groups: Dict[int, List[Customer]] = defaultdict(list)
+        for idx, c in enumerate(self.customers):
+            groups[find(idx)].append(c)
+
+        return [g for g in groups.values() if len(g) > 1]
+
+    def match_one(self, probe: Customer) -> List[Customer]:
+        """
+        Find all indexed customers matching the probe. The probe is routed
+        through its own blocking key(s), so again no global scan.
+        """
+        probe = probe.prepare(self.default_country)
+
+        # A probe may legitimately belong to both the prefixed block and
+        # the surname-only block (e.g. probe has postal but a stored record
+        # of the same person does not). We check both relevant blocks.
+        blocks: List[Tuple[str, str]] = []
+        initial = probe.surname_initial()
+        prefix = probe.postal_prefix(self.postal_prefix_len)
+        if initial:
+            if prefix:
+                blocks.append((initial, prefix))
+            blocks.append((initial, ""))
+
+        results: List[Customer] = []
+        seen: Set[int] = set()
+
+        for block in blocks:
+            # Route probe through the block's inverted index first.
+            candidate_indices: Set[int] = set()
+            if probe.norm_email:
+                candidate_indices.update(
+                    self._inv_email.get((block, probe.norm_email), ())
+                )
+            if probe.norm_phone:
+                candidate_indices.update(
+                    self._inv_phone.get((block, probe.norm_phone), ())
+                )
+            for i in candidate_indices:
+                if i in seen:
+                    continue
+                seen.add(i)
+                if self._records_match(probe, self.customers[i]):
+                    results.append(self.customers[i])
+
+        return results
+
+    # --------------------------------------------------------------- internals
+    def _block_key(self, c: Customer) -> Tuple[str, str]:
+        initial = c.surname_initial()
+        prefix = c.postal_prefix(self.postal_prefix_len) if initial else ""
+        # Records without a surname initial fall into a dedicated "no key"
+        # bucket so they are never compared with unrelated records.
+        return (initial, prefix)
+
+    def _candidate_pairs(self):
+        """
+        Yield (block, i, j) candidate pairs. Pairs come from inverted index
+        collisions inside a block, so we never do an all-pairs sweep even
+        within a block.
+        """
+        emitted: Set[Tuple[int, int]] = set()
+
+        def emit(block: Tuple[str, str], group: List[int]):
+            if len(group) < 2:
+                return
+            for i, j in combinations(sorted(group), 2):
+                key = (i, j)
+                if key in emitted:
+                    continue
+                emitted.add(key)
+                if self._records_match(self.customers[i], self.customers[j]):
+                    yield block, i, j
+
+        # Only iterate blocks that actually contain records.
+        for block in self._blocks:
+            # Email collisions inside this block.
+            for (b, _email), group in self._inv_email.items():
+                if b == block:
+                    yield from emit(block, group)
+            # Phone collisions inside this block.
+            for (b, _phone), group in self._inv_phone.items():
+                if b == block:
+                    yield from emit(block, group)
+
+    @staticmethod
+    def _records_match(a: Customer, b: Customer) -> bool:
+        if a.norm_email and a.norm_email == b.norm_email:
+            return True
+        if a.norm_phone and a.norm_phone == b.norm_phone:
+            return True
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Demo
+# ---------------------------------------------------------------------------
+
+def _demo() -> None:
+    records = [
+        Customer("1", "Jane",  "Doe",   "94103", "Jane.Doe@Example.com", "415-555-1234"),
+        Customer("2", "J.",    "Doe",   "94107", "jane.doe@example.com", ""),
+        Customer("3", "Janet", "Doe",   "94110", "",                     "(415) 555-1234"),
+        Customer("4", "John",  "Smith", "10001", "john@example.com",     "212-555-9999"),
+        Customer("5", "J",     "Smith", "10002", "JOHN@EXAMPLE.COM",     ""),
+        Customer("6", "Alice", "Brown", "20001", "alice@example.com",    "202-555-0000"),
+        Customer("7", "Bob",   "Brown", "20002", "",                     "202-555-1111"),
+        Customer("8", "Carla", "Diaz",  "",      "",                     "305-555-2222"),
+        Customer("9", "Karla", "Diaz",  "",      "",                     "3055552222"),
+    ]
+
+    matcher = CustomerMatcher(records)
+    groups = matcher.find_duplicates()
+
+    print("Duplicate groups:")
+    for g in groups:
+        ids = ", ".join(c.id for c in g)
+        print(f"  - {ids}")
+
+    print("\nProbe match:")
+    probe = Customer("?", "J", "Doe", "94103", "", "4155551234")
+    for c in matcher.match_one(probe):
+        print(f"  matched -> {c.id} ({c.first_name} {c.last_name})")
+
+
+if __name__ == "__main__":
+    _demo()

@@ -1,0 +1,11 @@
+{
+  "task_id": "RA-006",
+  "model": "gpt",
+  "interaction": "FULL_MULTI_TURN",
+  "turn": 2,
+  "saved_at": "2026-10-05T06:41:31.282630+00:00",
+  "response_sha256": "0d81ffb105359a02bb7516d47d72956878b02a8bd034d122ec27ad3cbe2620b3",
+  "code_sha256": "827e1158fe853ff7473627926c80790d361bb0aefc671c6fe1bcfa480e554310",
+  "raw_file": ".collection/raw/gpt/RA-006/FULL_MULTI_TURN/turn_02.txt",
+  "code_file": ".collection/code/gpt/RA-006/FULL_MULTI_TURN/turn_02.py"
+}

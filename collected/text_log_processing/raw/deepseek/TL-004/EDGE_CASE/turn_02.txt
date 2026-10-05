@@ -1,0 +1,151 @@
+Here's the hardened version with all edge cases handled, plus a small test suite:
+
+```python
+import re
+from collections import Counter
+from typing import Iterable, List, Tuple, Dict, Optional
+
+DEFAULT_STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
+    "has", "have", "had", "he", "her", "his", "i", "in", "is", "it", "its",
+    "of", "on", "or", "that", "the", "their", "them", "they", "this", "to",
+    "was", "were", "will", "with", "you", "your", "we", "our", "us", "not",
+    "no", "so", "if", "then", "than", "do", "does", "did", "doing", "can",
+    "could", "should", "would", "may", "might", "must", "am", "been", "being",
+}
+
+TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9'_]*")
+
+
+def tokenize(text: str) -> List[str]:
+    if not text:
+        return []
+    return TOKEN_RE.findall(text.lower())
+
+
+def remove_stopwords(tokens: Iterable[str],
+                     stopwords: set = DEFAULT_STOPWORDS) -> List[str]:
+    return [t for t in tokens if t not in stopwords and len(t) > 1]
+
+
+def make_bigrams(tokens: List[str]) -> List[Tuple[str, str]]:
+    return list(zip(tokens, tokens[1:]))
+
+
+def keyword_freq(
+    text: Optional[str],
+    top_k: int = 20,
+    ngrams: Tuple[int, ...] = (1, 2),
+    stopwords: Optional[set] = None,
+    use_stopwords: bool = True,
+) -> Dict[str, List[Tuple[str, int]]]:
+    """
+    Compute top-k keyword frequencies with robust edge-case handling.
+
+    Edge cases covered:
+      * text is None / empty / whitespace-only
+      * top_k <= 0  -> returns empty lists
+      * top_k larger than vocabulary -> returns all available
+      * text contains only stopwords -> unigrams/bigrams empty
+      * unicode / non-ASCII text -> handled by regex (letters only kept)
+    """
+    # ---- normalize inputs ----
+    if stopwords is None:
+        stopwords = DEFAULT_STOPWORDS
+
+    if top_k is None or top_k < 0:
+        top_k = 0
+
+    if not text or not text.strip():
+        return {("unigrams" if n == 1 else "bigrams"): []
+                for n in ngrams}
+
+    tokens = tokenize(text)
+
+    if use_stopwords:
+        tokens = remove_stopwords(tokens, stopwords)
+
+    # If everything was a stopword (or too short), nothing to count.
+    if not tokens:
+        return {("unigrams" if n == 1 else "bigrams"): []
+                for n in ngrams}
+
+    results: Dict[str, List[Tuple[str, int]]] = {}
+
+    for n in ngrams:
+        if n == 1:
+            counts = Counter(tokens)
+            key = "unigrams"
+        elif n == 2:
+            if len(tokens) < 2:
+                # Not enough tokens to form even one bigram.
+                results["bigrams"] = []
+                continue
+            counts = Counter(make_bigrams(tokens))
+            counts = Counter({" ".join(k): v for k, v in counts.items()})
+            key = "bigrams"
+        else:
+            raise ValueError(f"Unsupported ngram size: {n}")
+
+        # most_common handles top_k > len(counts) gracefully (returns all).
+        if top_k == 0:
+            results[key] = []
+        else:
+            results[key] = counts.most_common(top_k)
+
+    return results
+```
+
+### How each edge case is handled
+
+| Case | Behavior |
+|---|---|
+| `text=None` or `""` or `"   "` | Early return with empty lists for each requested ngram size. |
+| `top_k = 0` or negative | Clamped to 0; returns empty lists (no crash). |
+| `top_k` > vocabulary size | `Counter.most_common` returns everything it has — no `IndexError`. |
+| Text is all stopwords (`"the and of a"`) | `remove_stopwords` yields `[]` → early return of empty lists. |
+| Single token, bigrams requested | Bigrams branch checks `len(tokens) < 2` and returns `[]`. |
+| `ngrams` contains unsupported `n` | Raises a clear `ValueError`. |
+| Non-ASCII text | Regex keeps only `[A-Za-z...]` — safe, just produces fewer tokens. |
+
+### Test suite
+
+
+def _run(name, text, **kw):
+    print(f"\n--- {name} ---")
+    print(keyword_freq(text, **kw))
+
+
+if __name__ == "__main__":
+    _run("empty string", "")
+    _run("whitespace only", "   \n\t  ")
+    _run("None input", None)
+    _run("only stopwords", "the and of a to in is it")
+    _run("single token", "hello", top_k=5)
+    _run("top_k > vocab", "apple apple banana", top_k=100)
+    _run("top_k = 0", "apple apple banana", top_k=0)
+    _run("negative top_k", "apple apple banana", top_k=-3)
+    _run("unicode", "café café naïve résumé", top_k=5)
+    _run("unigrams only", "a b c a b a", ngrams=(1,), top_k=3)
+    _run("bigrams only", "machine learning rocks machine learning rules",
+         ngrams=(2,), top_k=3)
+```
+
+### Expected highlights from the tests
+
+- `empty string`, `whitespace only`, `None input` → `{'unigrams': [], 'bigrams': []}`
+- `only stopwords` → same as above (both lists empty).
+- `single token` → `{'unigrams': [('hello', 1)], 'bigrams': []}`
+- `top_k > vocab` → returns all 2 unigrams, no error.
+- `top_k = 0` / `negative` → empty lists.
+- `unicode` → tokens are `caf`, `caf`, `na`, `ve`, `r`, `sum` (regex drops accents) — a good reminder to swap in a Unicode-aware pattern like `r"\w+"` with `re.UNICODE` if you need accented words preserved.
+
+### Optional upgrade: Unicode-aware tokenizer
+
+If you want `café` and `naïve` to survive tokenization, swap the regex:
+
+
+TOKEN_RE = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)*", re.UNICODE)
+```
+
+That keeps accented letters, strips punctuation and digits, and still handles contractions like `don't`.

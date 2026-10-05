@@ -1,0 +1,123 @@
+Here's the corrected version. The fix ensures every image reaches `img.save(..., "JPEG", ...)` in `"RGB"` mode:
+
+```python
+import os
+from pathlib import Path
+from PIL import Image
+import sys
+
+
+def bulk_reencode(input_dir, output_dir, quality=85):
+    """
+    Re-encode every image in input_dir as JPEG at the given quality.
+
+    Args:
+        input_dir (str): Source directory containing images.
+        output_dir (str): Destination directory for re-encoded JPEGs.
+        quality (int): JPEG quality (1-100). Default 85.
+
+    Returns:
+        dict: Summary with totals and per-file details.
+    """
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    image_exts = {".jpg", ".jpeg", ".png", ".bmp", ".gif",
+                  ".tif", ".tiff", ".webp", ".ppm", ".pgm"}
+
+    results = []
+    total_original = 0
+    total_reencoded = 0
+
+    for src_path in sorted(input_dir.rglob("*")):
+        if not src_path.is_file():
+            continue
+        if src_path.suffix.lower() not in image_exts:
+            continue
+
+        rel_path = src_path.relative_to(input_dir)
+        dst_path = (output_dir / rel_path).with_suffix(".jpg")
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+
+        original_size = src_path.stat().st_size
+
+        try:
+            with Image.open(src_path) as img:
+                # ---- FIX: guarantee RGB before JPEG save ----
+                # JPEG has no alpha channel and no palette. Any mode other
+                # than RGB must be converted, or PIL raises OSError
+                # ("cannot write mode P as JPEG" / "cannot write mode RGBA as JPEG").
+                if img.mode != "RGB":
+                    if img.mode in ("RGBA", "LA") or (
+                        img.mode == "P" and "transparency" in img.info
+                    ):
+                        # Flatten transparency onto a white background so the
+                        # result looks correct instead of compositing on black.
+                        rgba = img.convert("RGBA")
+                        background = Image.new("RGB", rgba.size, (255, 255, 255))
+                        background.paste(rgba, mask=rgba.split()[-1])
+                        img = background
+                    else:
+                        # Plain palette, grayscale, CMYK, etc. — direct convert.
+                        img = img.convert("RGB")
+                # ---- end fix ----
+
+                img.save(dst_path, "JPEG", quality=quality, optimize=True)
+
+        except Exception as e:
+            print(f"  [SKIP] {rel_path}: {e}", file=sys.stderr)
+            continue
+
+        reencoded_size = dst_path.stat().st_size
+        ratio = original_size / reencoded_size if reencoded_size else 0
+
+        total_original += original_size
+        total_reencoded += reencoded_size
+
+        results.append({
+            "file": str(rel_path),
+            "original_bytes": original_size,
+            "reencoded_bytes": reencoded_size,
+            "ratio": ratio,
+        })
+
+        print(f"{str(rel_path):<50} "
+              f"{_human(original_size):>10} -> {_human(reencoded_size):>10}  "
+              f"({ratio:.2f}x)")
+
+    overall_ratio = total_original / total_reencoded if total_reencoded else 0
+    print("\n" + "=" * 80)
+    print(f"Files processed:    {len(results)}")
+    print(f"Total original:     {_human(total_original)}")
+    print(f"Total re-encoded:   {_human(total_reencoded)}")
+    print(f"Overall ratio:      {overall_ratio:.2f}x  "
+          f"(saved {_human(total_original - total_reencoded)})")
+
+    return {
+        "files": results,
+        "count": len(results),
+        "total_original_bytes": total_original,
+        "total_reencoded_bytes": total_reencoded,
+        "overall_ratio": overall_ratio,
+    }
+
+
+def _human(n):
+    """Format bytes as a human-readable string."""
+    for unit in ("B", "KB", "MB", "GB"):
+        if abs(n) < 1024:
+            return f"{n:.1f}{unit}"
+        n /= 1024
+    return f"{n:.1f}TB"
+```
+
+**What the fix does:**
+
+1. **Guarantees RGB at save time.** Every code path through the conversion block ends with `img.mode == "RGB"`, so `img.save(dst_path, "JPEG", ...)` never sees a `"P"`, `"RGBA"`, `"LA"`, `"L"`, `"CMYK"`, or `"I;16"` image. This is exactly what eliminates the `OSError: cannot write mode P as JPEG` / `cannot write mode RGBA as JPEG` errors.
+
+2. **Handles palette-with-transparency correctly.** A `"P"` image only needs alpha compositing if its palette actually carries transparency (`"transparency" in img.info`). Plain palette images take the fast `convert("RGB")` path.
+
+3. **Handles RGBA and LA** by compositing onto a white background via the alpha channel as a mask — the visually expected result, rather than letting PIL silently drop alpha (which would composite against black).
+
+4. **Handles grayscale (`L`), CMYK, `I;16`, etc.** through the plain `convert("RGB")` fallback, so no exotic mode can reach the saver un-converted.

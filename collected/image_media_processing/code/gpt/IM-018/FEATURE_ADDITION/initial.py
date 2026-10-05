@@ -1,0 +1,99 @@
+import os
+from PIL import Image
+import numpy as np
+
+
+def find_near_duplicates(input_dir, threshold):
+    """
+    Cluster images by normalized grayscale histogram L1 distance.
+
+    Two images are considered near-duplicates when the L1 distance
+    between their normalized grayscale histograms is <= threshold.
+
+    Transitive relationships are resolved using union-find:
+    if A is close to B and B is close to C, all three belong to
+    the same cluster even if A is not directly close to C.
+
+    Args:
+        input_dir (str): Directory containing images.
+        threshold (float): Maximum allowed normalized histogram L1 distance.
+
+    Returns:
+        list[list[str]]: Clusters of image paths. Images that do not
+                         have any near-duplicate remain as singleton
+                         clusters.
+    """
+    if threshold < 0:
+        raise ValueError("threshold must be non-negative")
+
+    extensions = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".webp"}
+
+    image_paths = sorted(
+        os.path.join(input_dir, name)
+        for name in os.listdir(input_dir)
+        if os.path.splitext(name)[1].lower() in extensions
+    )
+
+    n = len(image_paths)
+
+    # Union-Find / Disjoint Set Union
+    parent = list(range(n))
+    rank = [0] * n
+
+    def find(x):
+        # Path compression
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        root_a = find(a)
+        root_b = find(b)
+
+        if root_a == root_b:
+            return
+
+        # Union by rank
+        if rank[root_a] < rank[root_b]:
+            parent[root_a] = root_b
+        elif rank[root_a] > rank[root_b]:
+            parent[root_b] = root_a
+        else:
+            parent[root_b] = root_a
+            rank[root_a] += 1
+
+    def histogram(path):
+        with Image.open(path) as img:
+            gray = img.convert("L")
+            pixels = np.asarray(gray, dtype=np.uint8)
+
+        # 256-bin grayscale histogram
+        hist = np.bincount(pixels.ravel(), minlength=256).astype(np.float64)
+
+        # Normalize so histogram represents a probability distribution
+        total = hist.sum()
+        if total > 0:
+            hist /= total
+
+        return hist
+
+    # Compute each histogram once
+    histograms = [histogram(path) for path in image_paths]
+
+    # Compare every pair and union close images
+    for i in range(n):
+        for j in range(i + 1, n):
+            distance = np.sum(np.abs(histograms[i] - histograms[j]))
+
+            if distance <= threshold:
+                union(i, j)
+
+    # Build final clusters from the union-find roots.
+    clusters = {}
+    for i, path in enumerate(image_paths):
+        root = find(i)
+        clusters.setdefault(root, []).append(path)
+
+    # Stable ordering
+    return list(clusters.values())

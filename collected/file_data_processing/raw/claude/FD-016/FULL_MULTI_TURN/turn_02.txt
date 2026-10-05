@@ -1,0 +1,87 @@
+```python
+"""
+Customer transaction aggregation utility.
+
+Rules:
+  1. Output rows come ONLY from the customer master, so nothing in the
+     transaction data can create a row.
+  2. Transactions with an unknown transaction ID are ignored entirely.
+  3. Transactions for customers not in the master are ignored as well.
+  4. Customers with no valid transactions still appear (count 0, total 0).
+  5. Results are sorted by customer ID.
+"""
+
+from decimal import Decimal
+from typing import Any, Iterable, Mapping
+
+
+def aggregate_transactions(
+    transactions: Iterable[Mapping[str, Any]],
+    customer_master: Iterable[Mapping[str, Any]],
+    known_transaction_ids: Iterable[Any],
+) -> list[dict[str, Any]]:
+    """
+    Args:
+        transactions: rows with keys 'transaction_id', 'customer_id', 'amount'.
+        customer_master: rows with keys 'customer_id', 'name' (extra keys are kept).
+        known_transaction_ids: valid transaction IDs; any others are ignored.
+
+    Returns:
+        One dict per master customer, sorted by customer_id, with added
+        'transaction_count' and 'total_amount' fields.
+    """
+    known_ids = set(known_transaction_ids)
+    master = list(customer_master)
+
+    # Seed accumulators from the master only. A customer ID that is not
+    # seeded here can never receive an entry, so it can never become a row.
+    stats: dict[Any, list] = {
+        cust["customer_id"]: [0, Decimal("0")] for cust in master
+    }
+
+    for txn in transactions:
+        if txn["transaction_id"] not in known_ids:
+            continue  # unknown transaction ID: ignored, creates nothing
+        entry = stats.get(txn["customer_id"])
+        if entry is None:
+            continue  # customer not in master: ignored, creates nothing
+        entry[0] += 1
+        entry[1] += Decimal(str(txn["amount"]))
+
+    result = [
+        {
+            **cust,
+            "transaction_count": stats[cust["customer_id"]][0],
+            "total_amount": stats[cust["customer_id"]][1],
+        }
+        for cust in master
+    ]
+    result.sort(key=lambda row: row["customer_id"])
+    return result
+
+
+if __name__ == "__main__":
+    master = [
+        {"customer_id": 3, "name": "Carol"},
+        {"customer_id": 1, "name": "Alice"},
+        {"customer_id": 2, "name": "Bob"},  # no transactions
+    ]
+    txns = [
+        {"transaction_id": "T1", "customer_id": 1, "amount": "10.50"},
+        {"transaction_id": "T2", "customer_id": 1, "amount": "4.50"},
+        {"transaction_id": "T3", "customer_id": 3, "amount": "99.99"},
+        {"transaction_id": "TX", "customer_id": 3, "amount": "500.00"},   # unknown txn ID -> ignored
+        {"transaction_id": "TY", "customer_id": 99, "amount": "50.00"},   # unknown txn ID, unknown customer -> no row
+        {"transaction_id": "T4", "customer_id": 42, "amount": "7.00"},    # valid ID, customer not in master -> no row
+    ]
+    known = ["T1", "T2", "T3", "T4"]
+
+    rows = aggregate_transactions(txns, master, known)
+    for row in rows:
+        print(row)
+
+    assert [r["customer_id"] for r in rows] == [1, 2, 3]  # no rows for 42 or 99
+    assert rows[0]["total_amount"] == Decimal("15.00") and rows[0]["transaction_count"] == 2
+    assert rows[1]["transaction_count"] == 0 and rows[1]["total_amount"] == Decimal("0")
+    assert rows[2]["total_amount"] == Decimal("99.99")  # the 500.00 with unknown ID is excluded
+```

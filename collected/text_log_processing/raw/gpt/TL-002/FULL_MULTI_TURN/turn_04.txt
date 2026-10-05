@@ -1,0 +1,130 @@
+Yes. The key is to **always write the CSV header before reading any lines**, and simply return `written=0` when the file is empty or filters match nothing.
+
+```python id="48271"
+import csv
+import re
+
+LOG_PATTERN = re.compile(
+    r'^(?P<ip>\S+)\s+\S+\s+\S+\s+\[(?P<timestamp>[^\]]+)\]\s+'
+    r'"(?P<method>\S+)\s+(?P<url>\S+)(?:\s+[^"]*)?"\s+'
+    r'(?P<status>\d{3})\s+(?P<size>\S+)'
+)
+
+
+def convert_access_log(in_path, out_path, methods=None, status_classes=None):
+    written = 0
+    skipped = 0
+
+    methods = {m.upper() for m in methods} if methods else None
+    status_classes = {
+        s.lower() for s in status_classes
+    } if status_classes else None
+
+    with open(in_path, "r", encoding="utf-8") as infile, \
+         open(out_path, "w", newline="", encoding="utf-8") as outfile:
+
+        writer = csv.writer(outfile)
+
+        # Always produce a valid CSV, even for an empty input file.
+        writer.writerow([
+            "ip", "timestamp", "method", "url",
+            "status", "statusClass", "size"
+        ])
+
+        for line in infile:
+            line = line.strip()
+
+            if not line:
+                skipped += 1
+                continue
+
+            match = LOG_PATTERN.match(line)
+
+            if not match:
+                skipped += 1
+                continue
+
+            data = match.groupdict()
+            method = data["method"].upper()
+
+            try:
+                status = int(data["status"])
+            except (ValueError, TypeError):
+                skipped += 1
+                continue
+
+            if data["size"] == "-":
+                size = 0
+            else:
+                try:
+                    size = int(data["size"])
+                except (ValueError, TypeError):
+                    skipped += 1
+                    continue
+
+            status_class = f"{status // 100}xx"
+
+            # Filters that don't match are counted as skipped.
+            if methods is not None and method not in methods:
+                skipped += 1
+                continue
+
+            if (
+                status_classes is not None
+                and status_class.lower() not in status_classes
+            ):
+                skipped += 1
+                continue
+
+            writer.writerow([
+                data["ip"],
+                data["timestamp"],
+                method,
+                data["url"],
+                status,
+                status_class,
+                size
+            ])
+
+            written += 1
+
+    return {
+        "written": written,
+        "skipped": skipped
+    }
+```
+
+### Edge cases
+
+**Empty input:**
+
+
+
+`output.csv` will contain only:
+
+```csv
+ip,timestamp,method,url,status,statusClass,size
+```
+
+and returns:
+
+```python
+
+
+**Zero-match filter:**
+
+
+convert_access_log(
+    "access.log",
+    "output.csv",
+    methods={"DELETE"},
+    status_classes={"5xx"}
+)
+
+
+If nothing matches, the CSV still contains only the header, and the result might be:
+
+{"written": 0, "skipped": 20}
+
+
+So it won't crash or produce an invalid/empty CSV.
