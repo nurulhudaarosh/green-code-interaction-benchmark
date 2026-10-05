@@ -1212,8 +1212,6 @@ realistic_applications_utilities,RA-007,deepseek,ONE_SHOT,0.8183,109.106667
 realistic_applications_utilities,RA-007,gemini,ONE_SHOT,0.5883,78.44
 realistic_applications_utilities,RA-007,gpt,ONE_SHOT,0.4588,61.173333
 realistic_applications_utilities,RA-008,gpt,ONE_SHOT,0.5312,70.826667
-search_retrieval,SR-001,gpt,BUG_FIX,0.5306,70.746667
-search_retrieval,SR-001,gpt,ONE_SHOT,0.3829,51.053333
 text_log_processing,TL-001,claude,BUG_FIX,0.6645,88.6
 text_log_processing,TL-001,claude,EDGE_CASE,0.9994,133.253333
 text_log_processing,TL-001,claude,FEATURE_ADDITION,1.0945,145.933333

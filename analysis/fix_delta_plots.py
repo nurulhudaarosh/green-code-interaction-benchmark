@@ -25,9 +25,14 @@ SHORT = {"BUG_FIX": "C1\nBUG_FIX", "FEATURE_ADDITION": "C2\nFEATURE",
 
 def paired_deltas():
     """{(model, cond): [delta_pct]} paired within (category, task, model)."""
+    from clean_filter import excluded as _excluded
+    excl = _excluded()
     base = defaultdict(dict)  # (cat, task, model) -> {cond: energy}
     with JOINED.open(encoding="utf-8") as f:
         for r in csv.DictReader(f):
+            if "|".join((r["category"], r["task_id"], r["model"],
+                         r["condition"])) in excl:
+                continue
             try:
                 e = float(r["energy_pkg_j"])
             except (TypeError, ValueError):

@@ -16,6 +16,8 @@ CONDS = ["ONE_SHOT", "BUG_FIX", "FEATURE_ADDITION", "EDGE_CASE", "FULL_MULTI_TUR
 
 
 def load():
+    from clean_filter import excluded as _excluded
+    excl = _excluded()
     units = {}
     for line in LEDGER.read_text().splitlines():
         try:
@@ -25,6 +27,8 @@ def load():
         if r.get("status") != "ok":
             continue
         key = (r["category"], r["task_id"], r["model"], r["condition"])
+        if "|".join(key) in excl:
+            continue
         # keep latest measurement per key
         units[key] = {"energy_j": r["energy_pkg_j"], "runtime_s": r["runtime_s"],
                       "mem_mb": r.get("peak_mem_mb"), "file": r["file"],

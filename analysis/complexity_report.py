@@ -289,6 +289,13 @@ def make_plots(rows, summary):
 
 def main():
     rows = load_csv(FINAL / "code_metrics.csv")
+    try:
+        from clean_filter import excluded as _excluded
+        _ex = _excluded()
+        rows = [r for r in rows if "|".join(
+            (r["category"], r["task_id"], r["model"], r["condition"])) not in _ex]
+    except Exception:
+        pass
     scaling = load_csv(FINAL / "scaling.csv")
     smap = {r["program"].replace("collected/", "", 1): r for r in scaling}
     smap.update({r["program"]: r for r in scaling})

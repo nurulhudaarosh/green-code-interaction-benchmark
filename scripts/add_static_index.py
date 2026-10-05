@@ -19,7 +19,7 @@ ENTRIES = [
     ("Code metrics corpus (code_metrics.csv)", "§3.8, §4.1, App. B–C"),
     ("Complexity rank", "§3.8–3.9, §4.10, App. C"),
     ("Cyclomatic complexity", "§3.8, §4.7, §4.10"),
-    ("Dataset coverage (1485 finals, 1309 measured)", "§4.1"),
+    ("Dataset coverage (1418 finals in scope, 1307 measured)", "§4.1"),
     ("Edge-case condition (C3)", "§3.3, §4.3"),
     ("Empirical scaling probe (log–log slope b)", "§3.10, §4.9"),
     ("Energy measurement, Intel RAPL", "§3.6, §4.2"),

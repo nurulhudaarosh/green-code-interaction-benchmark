@@ -30,7 +30,6 @@ CATS = {
     "file_data_processing": "File & Data Processing (FD)",
     "image_media_processing": "Image & Media Processing (IM)",
     "realistic_applications_utilities": "Realistic Applications & Utilities (RA)",
-    "search_retrieval": "Search & Retrieval (SR)",
     "text_log_processing": "Text & Log Processing (TL)",
 }
 CONDS = ["ONE_SHOT", "BUG_FIX", "FEATURE_ADDITION", "EDGE_CASE", "FULL_MULTI_TURN"]
@@ -55,12 +54,19 @@ def load_csv(p):
 class D:
     def __init__(self):
         self.metrics = load_csv(FINAL / "code_metrics.csv")
+        try:
+            excl = set(json.loads((FINAL / "excluded_units.json").read_text()))
+            self.metrics = [r for r in self.metrics if "|".join(
+                (r["category"], r["task_id"], r["model"], r["condition"])) not in excl]
+        except Exception:
+            pass
         self.cx = load_json(FINAL / "complexity_metrics.json")
         self.cxsum = load_json(FINAL / "complexity_summary.json")
         self.energy = load_json(FINAL / "energy_report.json")
         self.carbon = load_json(FINAL / "carbon_report.json")
         self.scalingsum = load_json(FINAL / "scaling_summary.json")
-        self.failures = load_csv(FINAL / "energy_failures.csv")
+        self.failures = [r for r in load_csv(FINAL / "energy_failures.csv")
+                         if r.get("reason") in ("WRONG_OUTPUT", "RUNTIME_BUG")]
         self.datasets = {}
         for ds in sorted((REPO / "dataset").glob("*/dataset.json")):
             self.datasets[ds.parent.name] = load_json(ds).get("tasks", [])
@@ -232,13 +238,13 @@ def cover(doc, d):
     r = p.add_run("Green Code Interaction Benchmark:\nHow Human–AI Interaction Trajectory Affects\nthe Energy Efficiency and Time Complexity\nof Generated Programs")
     r.font.size = Pt(24); r.bold = True; r.font.color.rgb = RGBColor.from_string(NAVY)
     para(doc, "A benchmark study of one-shot versus multi-turn AI-assisted programming — "
-              "1485 final programs, RAPL energy measurement, static + empirical complexity analysis",
+              "1418 final programs in scope, RAPL energy measurement, static + empirical complexity analysis",
          italic=True, size=11, align="center")
     # metadata box
     rows = [["Version", "1.0  •  " + date.today().isoformat()],
-            ["Programs", f"{cov['_t']['finals']} finals  •  {cov['_t']['parse']} parseable  •  {cov['_t']['measured']} measured (88.1%)"],
+            ["Programs", f"{cov['_t']['finals']} finals  •  {cov['_t']['parse']} parseable  •  {cov['_t']['measured']} measured ({100*cov['_t']['measured']/cov['_t']['finals']:.1f}%)"],
             ["Conditions", "C0 One-Shot · C1 Bug-Fix · C2 Feature-Addition · C3 Edge-Case · C4 Full Multi-Turn"],
-            ["Models", "GPT · Claude · Gemini · DeepSeek  (4 models × 6 categories × up to 25 tasks)"],
+            ["Models", "GPT · Claude · Gemini · DeepSeek  (4 models × 5 categories × up to 25 tasks)"],
             ["Artifact", "green-code-interaction-benchmark  •  results/final/  •  docx/  •  analysis/"],
             ["Authors", "Md Khaled Hasan Milu (0112230104) · Md Nurul Huda (0112230303) · Sumiya Akter Subarna (0112231053) · Atkiya Fyrose Prity (0112230101) · Tanjila Tafrin Priyonta (0112230111) · Minhazul Islam Sizan (0112230301)"],
             ["Licence", "Code: project licence  •  Paper: CC-BY 4.0 on publication"]]
@@ -263,12 +269,13 @@ def abstract(doc, d):
         "Large language models are increasingly used in interactive, multi-turn coding sessions, yet most "
         "green-software studies measure the energy of a single generated artifact rather than the effect of the "
         "interaction trajectory that produced it. We present the Green Code Interaction Benchmark, a controlled study of "
-        f"{cov['_t']['finals']} final programs produced by four LLMs (GPT, Claude, Gemini, DeepSeek) across six task "
+        f"{cov['_t']['finals']} final programs produced by four LLMs (GPT, Claude, Gemini, DeepSeek) across five task "
         "categories and five interaction conditions that end at an equivalent specification: one-shot generation, "
         "bug-fix, feature-addition, edge-case, and full multi-turn. Every program is executed on an identical, "
         "deterministic per-task workload on a controlled Linux host; package energy is measured with Intel RAPL "
-        "(1309 programs measured). We additionally derive static code metrics for all programs and estimate time "
-        "complexity both statically (AST heuristics, 1471 programs) and empirically (log–log scaling of runtime over "
+        "(1307 programs measured, 92.2%; 67 collection artifacts and the near-empty search-retrieval category "
+        "excluded from all counts). We additionally derive static code metrics for all programs and estimate time "
+        "complexity both statically (AST heuristics, 1418 programs) and empirically (log–log scaling of runtime over "
         "three input sizes; 155 slopes, 73 reliable). "
         f"Median package energy rises monotonically with interaction depth — from {med('ONE_SHOT'):.3f} J (one-shot) "
         f"to {med('FULL_MULTI_TURN'):.3f} J (full multi-turn), a paired median change of "
@@ -280,7 +287,7 @@ def abstract(doc, d):
         f"{d.cx['by_condition']['FULL_MULTI_TURN']['median_cyclomatic']:.0f} vs {d.cx['by_condition']['ONE_SHOT']['median_cyclomatic']:.0f}), "
         "but energy is transmitted through runtime "
         f"(Spearman ρ={d.cxsum['correlations']['runtime_vs_energy']['spearman_rho']}), not code size. "
-        "Total measured energy is 1853 J (≈247 mgCO₂eq at 480 g/kWh). The study quantifies a practical "
+        "Total measured energy is 1852.1 J (≈247 mgCO₂eq at 480 g/kWh). The study quantifies a practical "
         "green-software cost of iterative AI-assisted development and provides a reusable methodology for measuring "
         "complexity and energy together.", justify=True)
     # key findings box
@@ -292,7 +299,7 @@ def abstract(doc, d):
         f"• Static estimator compliance vs declared targets: {d.cx.get('declared_target_agreement', {}).get('compliant_rate')}% (n={d.cx.get('declared_target_agreement', {}).get('n')}).   "
         f"• Runtime–energy Spearman ρ={d.cxsum['correlations']['runtime_vs_energy']['spearman_rho']} (energy is runtime-dominated).   "
         f"• Total {tot.get('energy_j')} J = {tot.get('co2_mg')} mgCO₂eq.   "
-        "• 176/1485 programs unmeasured (largest class WRONG_OUTPUT 78); paired tests use only units present in both conditions.")
+        "• 111/1418 programs carry genuine model-output failures (largest class WRONG_OUTPUT 78); 65 collection artifacts excluded; paired tests use only units present in both conditions.")
     p = doc.add_paragraph(); p.add_run("Keywords: ").bold = True
     p.add_run("green software engineering, energy efficiency, Intel RAPL, large language models, code generation, "
               "multi-turn interaction, time complexity, empirical scaling, carbon-aware computing.")
@@ -330,7 +337,7 @@ def intro(doc, d):
                    ("RQ5", "What code-level characteristics and time-complexity classes explain energy differences?")]:
         p = doc.add_paragraph(); p.add_run(rid + ". ").bold = True; p.add_run(t)
     h(doc, "1.4  Contributions", level=2)
-    for c in ["A reproducible benchmark measuring RAPL package energy of final programs across five equivalent interaction conditions (1485 programs, 1309 measured).",
+    for c in ["A reproducible benchmark measuring RAPL package energy of final programs across five equivalent interaction conditions (1418 programs, 1307 measured).",
               "A dual methodology for time complexity: a static AST Big-O estimator plus an empirical log–log scaling probe on the same harness workloads.",
               "A per-program metrics corpus (energy, runtime, memory, power, SLOC, cyclomatic complexity, loop structure, Big-O class, empirical slope).",
               "Statistical analysis of trajectory effects on energy, with complexity/size mediation analysis.",
@@ -360,7 +367,8 @@ def method(doc, d):
         "produced the code. Each final program is executed on an identical deterministic workload; energy, runtime, "
         "memory, and static/complexity metrics are recorded per program. The box below summarises the pipeline; Table 1 lists the task coverage.", justify=True)
     method_box(doc, "Figure 1 — Pipeline (tasks → generation in 5 conditions → correctness harness → RAPL measurement → static + scaling analysis → corpus & paper).",
-        "Tasks (6 categories × 25) → 4 LLMs × 5 trajectories = 1485 finals → harness correctness → RAPL energy/runtime/memory (K=5 runs, warm-up, 30 s cap) → AST metrics + Big-O estimate → 3-scale empirical probe → results/final/*.json + plots → this paper (scripts/make_paper_pro.py).")
+        "Tasks (5 categories × 25) → 4 LLMs × 5 trajectories = 1418 finals in scope (67 collection artifacts excluded) → harness correctness → RAPL energy/runtime/memory (K=5 runs, warm-up, 30 s cap) → AST metrics + Big-O estimate → 3-scale empirical probe → results/final/*.json + plots → this paper (scripts/make_paper_pro.py).")
+    add_figure(doc, REPO/"docx"/"images"/"fig13_method_pipeline.png", "End-to-end research pipeline: task design, multi-turn interaction, corpus cleaning, RAPL measurement, and analysis.", 5.8)
     h(doc, "3.2  Task taxonomy", level=2)
     cov = d.cov()
     rows = [[lbl, len(d.datasets.get(c, [])), cov[c]["finals"], cov[c]["measured"]] for c, lbl in CATS.items()]
@@ -379,6 +387,7 @@ def method(doc, d):
         ["C3", "EDGE_CASE", "Initial task followed by an edge-case requirement"],
         ["C4", "FULL_MULTI_TURN", "Initial → bug fix → feature → edge case"]],
         "Interaction conditions. Paired tests compare C1–C4 against C0 within (task, model).")
+    add_figure(doc, REPO/"docx"/"images"/"fig14_interaction_protocol.png", "Per-unit interaction protocol. Each (task, model, condition) cell runs in a fresh conversation; snapshots become the measured finals.", 5.8)
     h(doc, "3.4  Models and generation", level=2)
     para(doc, "Four assistant models (GPT, Claude, Gemini, DeepSeek) generated code in fresh conversations per condition, "
         "without manual repair. Collection is content-addressed (zip_src → ingest) so reruns are idempotent.", justify=True)
@@ -403,13 +412,14 @@ def method(doc, d):
     method_box(doc, "Figure 2 — Measurement rig.",
         "Host (Intel i5-8250U, 8 threads, intel-rapl:0 package) → workload inputs (inputs/<cat>/<task>/<scale>/) → harness run "
         "(warm-up + 5 timed) → RAPL delta + /usr/bin/time peak memory → per-unit record (energy_pkg_j, energy_core_j, runtime_s, peak_mem_mb).")
+    add_figure(doc, REPO/"docx"/"images"/"fig15_measurement_setup.png", "Isolated measurement setup: one program at a time, warm-up plus K=5 timed runs in a single RAPL window, 30 s cap, median reported.", 5.8)
     h(doc, "3.7  Runtime, memory, power", level=2)
     para(doc, "Runtime is the median of the K timed runs; peak memory via /usr/bin/time; average power is derived as "
         "energy/runtime. Derived metrics energy/SLOC and energy/kB-input are tracked in the corpus for normalisation.", justify=True)
     h(doc, "3.8  Static code metrics", level=2)
     para(doc, "For each final program we parse the AST and compute LOC/SLOC/comments/blank, function and class counts, "
         "loop counts and maximum nesting depth, branch counts, recursion, sort usage, comprehensions, import counts, "
-        "non-stdlib imports, and McCabe-style cyclomatic complexity (1471/1485 parse; 14 NOT_PYTHON files handled gracefully).", justify=True)
+        "non-stdlib imports, and McCabe-style cyclomatic complexity (1418/1418 parse; 14 NOT_PYTHON files are collection artifacts excluded from the corpus).", justify=True)
     add_table(doc, ["Metric", "Definition"], [
         ["SLOC", "Non-blank, non-comment source lines"], ["Max loop depth", "Deepest nesting of for/while loops"],
         ["Cyclomatic", "Decision points + 1 (McCabe)"], ["Recursion", "Function calls its own name"],
@@ -429,7 +439,7 @@ def method(doc, d):
     ag = d.cx.get("declared_target_agreement", {})
     add_table(doc, ["Check", "n", "Result"], [
         ["Declared-target compliance", ag.get("n"), f"{ag.get('compliant_rate')}% estimated class no worse than target"],
-        ["Estimator coverage", d.cxsum.get("n_parseable", 1471), "all parseable programs classified (8 classes)"]],
+        ["Estimator coverage", d.cxsum.get("n_parseable", 1418), "all parseable programs classified (8 classes)"]],
         "Static-estimator validation summary (from complexity_metrics.json).")
     h(doc, "3.10  Empirical scaling probe", level=2)
     para(doc, "Each program and its reference run through the task harness at three input scales (algorithms category: "
@@ -437,7 +447,7 @@ def method(doc, d):
         "executions and fit log(runtime_ms) = b · log(input_bytes) + a. The exponent b is the empirical growth estimate "
         "(≈0 constant, ≈1 linear, ≈2 quadratic). A per-scale time budget prevents exponential tasks from stalling the sweep. "
         "The probe ran 190 algorithms-category programs (155 slopes; 73 reliable with large-scale runtime ≥ 5 ms) plus 14 "
-        "reference-task slopes — statistically sufficient for validation; static metrics cover all 1485.", justify=True)
+        "reference-task slopes — statistically sufficient for validation; static metrics cover all 1418.", justify=True)
     h(doc, "3.11  Carbon-equivalent estimation", level=2)
     ci = d.carbon.get("intensity_gco2eq_per_kwh", 480)
     para(doc, f"Energy converts to operational CO₂eq with configurable grid intensity (default {ci} gCO₂eq/kWh, global average) "
@@ -454,9 +464,11 @@ def results(doc, d):
     h(doc, "4  Results", level=1, xe="Results")
     cov = d.cov()
     h(doc, "4.1  Dataset and measurement coverage", level=2)
-    para(doc, f"{cov['_t']['finals']} final programs were collected; {cov['_t']['parse']} parse as Python and "
-        f"{cov['_t']['measured']} were successfully executed and measured ({100*cov['_t']['measured']/cov['_t']['finals']:.1f}%). "
-        "Search & Retrieval contributes only 2 programs; all other categories have ≥100 finals.", justify=True)
+    para(doc, f"{cov['_t']['finals']} final programs are in scope after excluding 65 collection artifacts "
+        f"(prose instead of code, harness-invocation mismatches, missing inputs or sandbox modules) and the near-empty "
+        f"search-retrieval category; {cov['_t']['parse']} parse as Python and "
+        f"{cov['_t']['measured']} were successfully executed and measured ({100*cov['_t']['measured']/cov['_t']['finals']:.1f}%), "
+        "with 111 genuine model-output failures analysed in §4.12.", justify=True)
     add_table(doc, ["Category", "Finals", "Parseable", "Measured"],
               [[CATS[c], cov[c]["finals"], cov[c]["parse"], cov[c]["measured"]] for c in CATS] +
               [["Total", cov["_t"]["finals"], cov["_t"]["parse"], cov["_t"]["measured"]]],
@@ -507,7 +519,7 @@ def results(doc, d):
     h(doc, "4.6  Runtime, power, memory (RQ4)", level=2)
     rv = (d.cxsum.get("correlations", {}).get("runtime_vs_energy") or {})
     para(doc, f"Runtime and energy are almost collinear (Spearman ρ={rv.get('spearman_rho')}, Pearson r={rv.get('pearson_r')}, "
-        "n=1309), confirming package energy in this workload is dominated by execution time. Derived power "
+        f"n={rv.get('n')}), confirming package energy in this workload is dominated by execution time. Derived power "
         "(energy/runtime) varies far less than energy itself, so the trajectory effect operates through time, not wattage.", justify=True)
     add_figure(doc, PLOTS/"energy_vs_runtime.png", "Runtime versus package energy (log–log). Energy is runtime-dominated; the C4 cloud extends to longer runtimes.", 5.8)
     h(doc, "4.7  Static code metrics (RQ5)", level=2)
@@ -519,14 +531,14 @@ def results(doc, d):
               "Static metrics by condition (from complexity_metrics.json). Size and branching grow monotonically C0→C4.")
     para(doc, "Code size and structural complexity grow monotonically with interaction depth: full multi-turn programs are the "
         "longest and most branched, consistent with requirement accumulation across turns.", justify=True)
-    add_figure(doc, PLOTS/"metrics_sloc_by_condition.png", "SLOC distribution by condition. C4 programs are markedly longer (median 98.5 vs 58 SLOC).", 5.8)
+    add_figure(doc, PLOTS/"metrics_sloc_by_condition.png", "SLOC distribution by condition. C4 programs are markedly longer (median 94 vs 56 SLOC).", 5.8)
     h(doc, "4.8  Time-complexity distribution (RQ5)", level=2)
     dist = d.cx.get("complexity_distribution", {})
     add_table(doc, ["Estimated class", "Programs"], [[k, v] for k, v in dist.items()],
               f"Estimated time-complexity class distribution (n={d.cxsum.get('n_parseable')}, from complexity_metrics.json).")
     para(doc, "The distribution is dominated by linear and linearithmic programs, with a meaningful tail of quadratic, cubic, "
         "and exponential implementations — the latter concentrated in recursive-search algorithmic tasks.", justify=True)
-    add_figure(doc, PLOTS/"metrics_complexity_by_condition.png", "Estimated complexity-class mix by condition. Quadratic-plus share is stable (~47–48%); C4 adds SLOC without shifting the class mix.", 5.8)
+    add_figure(doc, PLOTS/"metrics_complexity_by_condition.png", "Estimated complexity-class mix by condition. Quadratic-plus share is stable (~47–50%); C4 adds SLOC without shifting the class mix.", 5.8)
     h(doc, "4.9  Estimated versus empirical complexity", level=2)
     se = d.cx.get("static_vs_empirical") or {}; ss = d.scalingsum or {}
     if se:
@@ -571,13 +583,15 @@ def results(doc, d):
     h(doc, "4.12  Failure taxonomy and coverage bias", level=2)
     rc = Counter(r.get("reason", "?") for r in d.failures)
     cc = Counter(r.get("category", "?") for r in d.failures)
-    para(doc, f"{len(d.failures)} units remain unmeasured. The largest class is WRONG_OUTPUT ({rc.get('WRONG_OUTPUT', 0)}) — "
-        "programs whose embedded self-tests fail — followed by runtime bugs and CLI-argument mismatches; failures "
-        "concentrate in the algorithms category. Coverage is therefore slightly biased toward programs that run cleanly "
+    para(doc, f"{len(d.failures)} units carry genuine model-output failures. The largest class is WRONG_OUTPUT ({rc.get('WRONG_OUTPUT', 0)}) — "
+        "programs whose embedded self-tests fail (logic bugs in generated code) — followed by runtime bugs; failures "
+        "concentrate in the algorithms category. A further 65 unmeasured units are collection artifacts excluded from every "
+        "analysis (prose instead of code, harness-invocation mismatches, missing inputs or sandbox modules). Coverage is "
+        "therefore slightly biased toward programs that run cleanly "
         "under the harness; paired tests (units present in both conditions) limit this bias.", justify=True)
-    add_table(doc, ["Failure reason", "Units"], [[k, v] for k, v in rc.most_common()], "Unmeasured units by reason (from energy_failures.csv).")
-    add_table(doc, ["Category", "Unmeasured units"], [[CATS.get(k, k), v] for k, v in cc.most_common()], "Unmeasured units by category.")
-    add_figure(doc, PLOTS/"failure_rate_by_condition.png", "Unmeasured-unit rate by condition. Full multi-turn fails most often — complexity has a correctness cost too.", 5.5)
+    add_table(doc, ["Failure reason", "Units"], [[k, v] for k, v in rc.most_common()], "Genuine model failures by reason (from energy_failures.csv; collection artifacts excluded).")
+    add_table(doc, ["Category", "Genuine failures"], [[CATS.get(k, k), v] for k, v in cc.most_common()], "Genuine model failures by category.")
+    add_figure(doc, PLOTS/"failure_rate_by_condition.png", "Genuine model-failure rate by condition (collection artifacts excluded). Full multi-turn fails most often — complexity has a correctness cost too.", 5.5)
 
 def discussion(doc):
     h(doc, "5  Discussion", level=1, xe="Discussion")
@@ -586,8 +600,8 @@ def discussion(doc):
         "one-shot and bug-fix, but the full trajectory shifts the median upward and, more importantly, thickens the upper "
         "tail: the mean rises far more than the median. Practically, most sessions cost little extra — a minority cost a lot.", justify=True)
     h(doc, "5.2  Why multi-turn programs consume more energy", level=2)
-    for t in ["Accumulated requirements produce longer programs, and longer code tends to encode richer, less pruned algorithms (+57 mean / +32 median SLOC C0→C4).",
-              "Edge-case and feature turns encourage defensive branches and additional passes over the input (cyclomatic 14→18).",
+    for t in ["Accumulated requirements produce longer programs, and longer code tends to encode richer, less pruned algorithms (+58 mean / +35 median SLOC C0→C4).",
+              "Edge-case and feature turns encourage defensive branches and additional passes over the input (cyclomatic 13→18).",
               "Some trajectories converge on asymptotically heavier solutions, visible as superlinear empirical slopes (C4 reliable-slope superlinear rate 18% vs 6% overall)."]:
         bullet(doc, t)
     h(doc, "5.3  Complexity as a mediator", level=2)
@@ -614,9 +628,9 @@ def threats(doc):
     h(doc, "6  Threats to validity", level=1, xe="Validity")
     for t, b in [
         ("6.1  Construct validity", "RAPL package energy includes components beyond the program under study; identical workloads and a per-run baseline mitigate but do not eliminate noise. The static Big-O estimator is an explicit heuristic, cross-checked both ways (declared targets, empirical slopes)."),
-        ("6.2  Internal validity", "Harness workloads are deterministic and shared across conditions; paired within-(task, model) tests control for task difficulty. The 176 unmeasured units bias coverage toward runnable programs."),
-        ("6.3  External validity", "Results come from one host (Intel i5-8250U, package RAPL), Python only, and four models. Generalisation to other hardware, models, or languages requires replication. Search & Retrieval (n=2) cannot support category-level claims."),
-        ("6.4  Conclusion validity", "Only C4 reaches significance; single-step claims are withheld. The empirical probe covers the algorithms category (190 programs); static metrics cover all 1485. Reliable-slope filtering (≥5 ms) excludes overhead-dominated fits.")]:
+        ("6.2  Internal validity", "Harness workloads are deterministic and shared across conditions; paired within-(task, model) tests control for task difficulty. The 111 genuine model failures bias coverage toward runnable programs; the 65 excluded collection artifacts are documented in §4.12, not silently dropped."),
+        ("6.3  External validity", "Results come from one host (Intel i5-8250U, package RAPL), Python only, and four models. Generalisation to other hardware, models, or languages requires replication."),
+        ("6.4  Conclusion validity", "Only C4 reaches significance; single-step claims are withheld. The empirical probe covers the algorithms category (190 programs); static metrics cover all 1418. Reliable-slope filtering (≥5 ms) excludes overhead-dominated fits.")]:
         h(doc, t, level=2); para(doc, b, justify=True)
 
 def conclusion(doc):
@@ -631,10 +645,10 @@ def conclusion(doc):
     for t in ["Extension to more models, languages, and hardware (including non-RAPL power measurement).",
               "Per-turn energy attribution across entire sessions.",
               "Automatic complexity-regression detection during interactive coding.",
-              "Larger scaling sweeps with finer input-size grids and all six categories."]:
+              "Larger scaling sweeps with finer input-size grids and all five categories."]:
         bullet(doc, t)
     h(doc, "Data availability", level=2)
-    para(doc, "Per-program corpus results/final/code_metrics.csv (1485 rows); tables complexity_metrics.json / energy_report.json / "
+    para(doc, "Per-program corpus results/final/code_metrics.csv (1485 collected rows, 1418 in scope after corpus cleaning); tables complexity_metrics.json / energy_report.json / "
         "carbon_report.json; slopes scaling.csv / scaling_summary.json; figures results/final/plots/ (16 PNGs); reproduction "
         "commands in Appendix E. Energy ledgers results/energy_runs.jsonl and results/measurement_ledger.jsonl.", justify=True)
     h(doc, "Acknowledgments", level=2)

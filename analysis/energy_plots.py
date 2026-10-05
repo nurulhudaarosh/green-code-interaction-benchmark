@@ -18,13 +18,18 @@ SHORT = ["C0\nONE_SHOT", "C1\nBUG_FIX", "C2\nFEATURE\nADD", "C3\nEDGE\nCASE", "C
 
 
 def load():
+    from clean_filter import excluded as _excluded
+    excl = _excluded()
     last = {}
     for line in LEDGER.read_text().splitlines():
         try:
             r = json.loads(line)
         except json.JSONDecodeError:
             continue
-        last[(r["category"], r["task_id"], r["model"], r["condition"])] = r
+        k = (r["category"], r["task_id"], r["model"], r["condition"])
+        if "|".join(k) in excl:
+            continue
+        last[k] = r
     return last
 
 
@@ -123,19 +128,20 @@ def main():
     ax.legend(); ax.grid(axis="y", alpha=0.3)
     save(fig, "delta_by_model.png")
 
-    # 4. failure rate per condition
+    # 4. genuine model-failure rate per condition (collection artifacts
+    # excluded; see results/final/clean_corpus.json)
     fig, ax = plt.subplots(figsize=(8, 5))
-    fr = []
-    for c in CONDS:
-        n = sum(1 for k in data if k[3] == c)
-        b = sum(1 for k, r in data.items() if k[3] == c and r["status"] != "ok")
-        fr.append(b / n * 100 if n else 0)
+    import json as _json
+    from pathlib import Path as _Path
+    _cc = _json.loads((_Path(__file__).resolve().parent.parent
+                       / "results" / "final" / "clean_corpus.json").read_text())
+    fr = [_cc["cond_genuine_fail_rate"][c] * 100 for c in CONDS]
     ax.bar(range(len(CONDS)), fr, color="#dc2626", width=0.6)
     for i, v in enumerate(fr):
         ax.text(i, v + 0.5, f"{v:.1f}%", ha="center")
     ax.set_xticks(range(len(CONDS))); ax.set_xticklabels(SHORT)
-    ax.set_ylabel("Programs that failed to run (%)")
-    ax.set_title("Runnability failure rate by interaction condition")
+    ax.set_ylabel("Programs with genuine model failure (%)")
+    ax.set_title("Genuine model-failure rate by interaction condition\n(collection artifacts excluded)")
     ax.grid(axis="y", alpha=0.3)
     save(fig, "failure_rate_by_condition.png")
 

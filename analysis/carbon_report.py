@@ -43,6 +43,13 @@ def load_intensity():
 
 
 def load_units():
+    from clean_filter import is_excluded
+    excl = None
+    try:
+        from clean_filter import excluded as _ex
+        excl = _ex()
+    except Exception:
+        pass
     units = {}
     for line in LEDGER.read_text().splitlines():
         try:
@@ -50,6 +57,9 @@ def load_units():
         except json.JSONDecodeError:
             continue
         if r.get("status") != "ok" or r.get("energy_pkg_j") in (None, ""):
+            continue
+        if is_excluded(r["category"], r["task_id"], r["model"],
+                       r["condition"], excl):
             continue
         key = (r["category"], r["task_id"], r["model"], r["condition"])
         units[key] = float(r["energy_pkg_j"])
