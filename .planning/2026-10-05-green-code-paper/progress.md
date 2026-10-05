@@ -69,3 +69,10 @@
   with pdfLaTeX, images/ uploaded as-is)
 - `scripts/make_paper_pro.py`, `scripts/add_static_index.py` — generators
 - Pushed to GitHub master as a779b8a.
+- Q1 journal version `latex/paper_journal.tex` (IEEE journal 2-col, ~2x the
+  conference text): expanded related work + positioning Table I, full
+  methodology (principles, protocol, RAPL, carbon model), new analyses
+  (failure gradient 6.3%->20.7%, paired static deltas, model/category style
+  tables, power/memory table, RQ6 fleet-scale carbon projections), 43 refs,
+  14 index entries; verified (12/12 figs, 41/41 refs, braces OK). 6 authors
+  with IDs added to journal + conference + docx cover. Pushed as 28a3e5b.
