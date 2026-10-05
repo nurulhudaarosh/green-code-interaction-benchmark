@@ -59,4 +59,13 @@
 - `results/final/complexity_summary.json` — static summaries + correlations
 - `results/final/scaling.csv` / `scaling_summary.json` — empirical slopes
 - `results/final/plots/metrics_*.png` — 5 new figures
-- `docx/green-code-interaction-benchmark.docx` — the paper
+- `docx/green-code-interaction-benchmark.docx` — the paper (pro v2: 285 paras,
+  25 tables, 12 embedded real figures, SEQ captions, page numbers, 24 refs,
+  28-entry static subject index; PDF regenerated via LibreOffice)
+- `docx/images/fig01..fig12.png` — paper figure set for reuse/Overleaf upload
+- `latex/paper.tex` (+ `latex/images/`) — IEEE conference 2-column version:
+  12 figures, 13 tables, 23/23 refs resolved, 22 `\index` entries +
+  `\printindex`, 24 bibitems (verified by checker; compile on Overleaf
+  with pdfLaTeX, images/ uploaded as-is)
+- `scripts/make_paper_pro.py`, `scripts/add_static_index.py` — generators
+- Pushed to GitHub master as a779b8a.
