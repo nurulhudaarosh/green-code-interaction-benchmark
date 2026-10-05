@@ -82,6 +82,7 @@ class Data:
         self.carbon = load_json(FINAL / "carbon_report.json")
         self.scaling = load_csv(FINAL / "scaling.csv")
         self.scalingsum = load_json(FINAL / "scaling_summary.json")
+        self.failures = load_csv(FINAL / "energy_failures.csv")
         self.datasets = {}
         for ds in sorted((REPO / "dataset").glob("*/dataset.json")):
             self.datasets[ds.parent.name] = load_json(ds).get("tasks", [])
@@ -278,7 +279,8 @@ def abstract(doc, D):
         "were successfully measured. Median package energy rises "
         f"monotonically with interaction depth, from {med('ONE_SHOT'):.3f} J "
         f"for one-shot to {med('FULL_MULTI_TURN'):.3f} J for full multi-turn "
-        f"(+{c4.get('median_pct', 0):.1f}% median; Wilcoxon p="
+        f"(median of paired per-program changes +{c4.get('median_pct', 0):.1f}%; "
+        f"mean +{c4.get('mean_pct', 0):.0f}%; Wilcoxon p="
         f"{D.energy.get('wilcoxon', {}).get('FULL_MULTI_TURN', {}).get('p_value')}), "
         "and the increase is concentrated in the largest programs rather than "
         "in the median, indicating a heavy-tail effect. Multi-turn programs "
@@ -411,9 +413,11 @@ def related_work(doc, D):
     ]:
         h(doc, t, level=2)
         para(doc, body)
-        figure_placeholder(doc, "RW-" + t[0],
-                           f"Related-work positioning map for {t}",
-                           "Placeholder: insert positioning diagram / taxonomy.")
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r = p.add_run(f"[[FIGURE (related-work): {t} positioning diagram]]")
+        r.bold = True
+        r.font.color.rgb = RGBColor(0x99, 0x00, 0x00)
 
 
 def methodology(doc, D):
@@ -696,7 +700,15 @@ def results(doc, D):
                   f"median program slope is {ss.get('median_cand_slope_ml')} "
                   f"and the median reference slope is "
                   f"{ss.get('median_reference_slope')}.")
-    table_placeholder(doc, 13, "Estimated class vs empirical slope agreement")
+    if se:
+        add_table(doc, ["", "Empirical slope < 1.5", "Empirical slope >= 1.5"],
+                  [["Static rank < 2", se["tn"], se["fn"]],
+                   ["Static rank >= 2", se["fp"], se["tp"]]],
+                  "Table 13. Agreement matrix between the static estimator and "
+                  f"the empirical slope (n={se['n']}, precision={se['precision']}, "
+                  f"recall={se['recall']}).")
+    else:
+        table_placeholder(doc, 13, "Estimated class vs empirical slope agreement")
     figure_placeholder(doc, 11, "Empirical growth exponent distribution",
                        "Placeholder: render results/final/plots/"
                        "metrics_slope_hist.png.")
@@ -739,12 +751,21 @@ def results(doc, D):
                        "Placeholder: grouped bar chart.")
 
     h(doc, "4.13 Failure Taxonomy and Coverage Bias", level=2)
-    para(doc, "The remaining unmeasured units cluster into embedded "
-              "self-test logic errors, non-Python submissions, runtime bugs, "
-              "and CLI-argument mismatches. Coverage is therefore slightly "
-              "biased toward programs that run cleanly under the harness.")
-    table_placeholder(doc, 16, "Failure taxonomy with counts and examples "
-                               "(from results/final/energy_failures.csv)")
+    from collections import Counter as _Counter
+    rc = _Counter(r.get("reason", "?") for r in D.failures)
+    cc = _Counter(r.get("category", "?") for r in D.failures)
+    para(doc, f"{len(D.failures)} units remain unmeasured. The largest class is "
+              f"WRONG_OUTPUT ({rc.get('WRONG_OUTPUT', 0)}), i.e. programs whose "
+              "embedded self-tests fail, followed by runtime bugs and "
+              "CLI-argument mismatches; the failures concentrate in the "
+              "algorithms category. Coverage is therefore slightly biased "
+              "toward programs that run cleanly under the harness.")
+    add_table(doc, ["Failure reason", "Units"],
+              [[k, v] for k, v in rc.most_common()],
+              "Table 16. Unmeasured units by reason.")
+    add_table(doc, ["Category", "Unmeasured units"],
+              [[CATS.get(c, c), v] for c, v in cc.most_common()],
+              "Table 17. Unmeasured units by category.")
 
 
 def discussion(doc, D):
@@ -907,15 +928,22 @@ def appendices(doc, D):
     ], "Table C1. Glossary of tracked metrics.")
 
     h(doc, "Appendix D: Failure Taxonomy", level=1, xe="Appendix D")
-    add_table(doc, ["Failure kind", "Meaning", "Input-fixable"], [
-        ["WRONG_OUTPUT", "Embedded self-test assertion fails", "No"],
-        ["RUNTIME_BUG", "Program raises at runtime", "Sometimes"],
-        ["CLI_ARGS", "No invocation produced exit 0", "Sometimes"],
-        ["NOT_PYTHON", "File is prose/truncated, not Python", "No"],
-        ["SILENT_RC1", "Exits non-zero without output", "Sometimes"],
-        ["MISSING_DEP", "Imports a non-available third-party module", "No"],
-        ["MISSING_FILE", "Reads a file not provided by the workload", "Yes"],
-    ], "Table D1. Failure taxonomy (from energy_failures.csv).")
+    from collections import Counter as _Counter2
+    rc = _Counter2(r.get("reason", "?") for r in D.failures)
+    meanings = {
+        "WRONG_OUTPUT": ("Embedded self-test assertion fails", "No"),
+        "RUNTIME_BUG": ("Program raises at runtime", "Sometimes"),
+        "CLI_ARGS": ("No invocation produced exit 0", "Sometimes"),
+        "NOT_PYTHON": ("File is prose/truncated, not Python", "No"),
+        "SILENT_RC1": ("Exits non-zero without output", "Sometimes"),
+        "OTHER": ("Other/unclassified launch failure", "Sometimes"),
+        "MISSING_DEP": ("Imports a non-available third-party module", "No"),
+        "MISSING_FILE": ("Reads a file not provided by the workload", "Yes"),
+    }
+    add_table(doc, ["Failure kind", "Units", "Meaning", "Input-fixable"],
+              [[k, rc.get(k, 0), meanings.get(k, ("", "?"))[0],
+                meanings.get(k, ("", "?"))[1]] for k in rc.most_common()],
+              "Table D1. Failure taxonomy (from energy_failures.csv).")
 
     h(doc, "Appendix E: Reproduction Commands", level=1, xe="Appendix E")
     for cmd in [

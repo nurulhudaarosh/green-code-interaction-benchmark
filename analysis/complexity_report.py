@@ -121,7 +121,7 @@ def static_empirical_agreement(rows):
     for r in rows:
         s = fnum(r.get("cand_slope_ml"))
         rank = fnum(r.get("complexity_rank"))
-        if s is None or rank is None or rank < 0:
+        if s is None or rank is None or rank < 0 or not _reliable(r):
             continue
         pairs.append((rank, s))
     if len(pairs) < 10:
@@ -153,6 +153,53 @@ def declared_agreement(rows):
         return None
     return {"n": len(sub),
             "compliant_rate": round(100 * sum(int(r["complexity_compliant"]) for r in sub) / len(sub), 1)}
+
+
+def _reliable(r, min_large_ms=5.0):
+    """A scaling slope is trustworthy only when the large-scale run is well
+    above process/call overhead."""
+    large = fnum(r.get("cand_ms_large"))
+    return large is not None and large >= min_large_ms
+
+
+def write_scaling_summary(rows):
+    """Rebuild results/final/scaling_summary.json from the joined rows
+    (works even if the probe was stopped before writing its own summary)."""
+    sl = []
+    refs_by_task = {}
+    by_cond = defaultdict(list)
+    by_model = defaultdict(list)
+    by_cat = defaultdict(list)
+    for r in rows:
+        s = fnum(r.get("cand_slope_ml"))
+        if s is not None and _reliable(r):
+            sl.append(s)
+            by_cond[r["condition"]].append(s)
+            by_model[r["model"]].append(s)
+            by_cat[r["category"]].append(s)
+        rs = fnum(r.get("ref_slope"))
+        if rs is not None:
+            refs_by_task.setdefault((r["category"], r["task_id"]), rs)
+    refs = list(refs_by_task.values())
+
+    def summ(d):
+        return {k: {"n": len(v), "median_slope": median(v),
+                    "pct_superlinear": pct(v, lambda x: x >= 1.5)}
+                for k, v in sorted(d.items())}
+
+    out = {
+        "n_programs": len(rows),
+        "n_slopes": len(sl),
+        "n_reference_tasks": len(refs),
+        "median_cand_slope_ml": median(sl),
+        "median_reference_slope": median(refs),
+        "by_condition": summ(by_cond),
+        "by_model": summ(by_model),
+        "by_category": summ(by_cat),
+    }
+    (FINAL / "scaling_summary.json").write_text(json.dumps(out, indent=2),
+                                                encoding="utf-8")
+    return out
 
 
 def make_plots(rows, summary):
@@ -249,7 +296,8 @@ def main():
         key = r["file"]
         s = smap.get(key) or smap.get(key.replace("collected/", "", 1))
         if s:
-            for f in ("cand_slope", "cand_slope_ml", "ref_slope"):
+            for f in ("cand_slope", "cand_slope_ml", "ref_slope",
+                      "cand_ms_small", "cand_ms_medium", "cand_ms_large"):
                 r[f] = s.get(f, "")
             r["cand_ok_all"] = s.get("cand_ok_all", "")
     out = {
@@ -267,8 +315,13 @@ def main():
     }
     (FINAL / "complexity_metrics.json").write_text(json.dumps(out, indent=2),
                                                    encoding="utf-8")
+    ssum = write_scaling_summary(rows)
+    out["scaling"] = ssum
+    (FINAL / "complexity_metrics.json").write_text(json.dumps(out, indent=2),
+                                                   encoding="utf-8")
     # joined csv
-    extra = ["cand_slope", "cand_slope_ml", "ref_slope", "cand_ok_all"]
+    extra = ["cand_slope", "cand_slope_ml", "ref_slope", "cand_ok_all",
+             "cand_ms_small", "cand_ms_medium", "cand_ms_large"]
     cols = list(rows[0].keys()) if rows else []
     for c in extra:
         if cols and c not in cols:

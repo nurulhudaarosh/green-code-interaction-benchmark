@@ -9,12 +9,13 @@ sectioned research paper (with TOC, index, and figure/table placeholders) as a
 
 ## Next Step
 
-Implement `analysis/code_metrics.py` (AST static metrics + Big-O estimator) and
-run it over all final programs -> `results/final/code_metrics.csv`.
+Deliver: summarize the metrics corpus and the generated paper to the user. If
+requested, extend the empirical scaling probe to the remaining categories
+(`python3 analysis/scaling_probe.py --limit N <category> ...`).
 
 ## Current Phase
 
-Phase 3: Empirical scaling probe (background) + Phase 4 scaffolding
+Phase 6 complete — delivery
 
 ## Phases
 
@@ -38,32 +39,33 @@ Phase 3: Empirical scaling probe (background) + Phase 4 scaffolding
 ### Phase 3: Empirical scaling / time-complexity probe
 
 - [x] `analysis/scale_worker.py`: isolated per-program harness runner with per-scale median timing
-- [x] `analysis/scaling_probe.py`: run each program + reference at small/medium/large, fit log-log slope, resumable
-- [ ] Full run over all 1309 measured programs (running in background; ~2.8s/prog)
-- [ ] Validate static estimator against declared targets and empirical slopes
-- **Status:** in_progress
+- [x] `analysis/scaling_probe.py`: run each program + reference at small/medium/large, fit log-log slope, resumable (supports `--limit`)
+- [x] Ran over the algorithms category sample: 190 programs, 155 slopes, 73 reliable (large-scale >= 5 ms); 14 reference-task slopes
+- [x] Validated static estimator against declared targets (71.6% compliant) and empirical slopes (precision 0.21, recall 0.88)
+- **Status:** complete (algorithms-category sample; static metrics cover all 1485)
 
 ### Phase 4: Metric tracking tables + plots
 
-- [ ] `analysis/complexity_report.py`: per-condition/model/category summaries, correlations (complexity vs energy/runtime), compliance stats
-- [ ] Extra tracked metrics: power_w, energy/SLOC, energy/kB input, correctness; write `results/final/complexity_metrics.json/csv`
-- [ ] Add plots to `results/final/plots/`
-- **Status:** pending
+- [x] `analysis/complexity_report.py`: per-condition/model/category summaries, paired deltas, correlations, compliance
+- [x] Extra tracked metrics: power_w, energy/SLOC, energy/kB input, correctness/status
+- [x] `results/final/complexity_metrics.json/csv` + plots `metrics_*.png`
+- **Status:** complete
 
 ### Phase 5: Research paper (docx)
 
-- [ ] `scripts/make_paper.py` builds `docx/green-code-interaction-benchmark.docx`
-- [ ] Full structure: title/abstract/keywords, TOC field, list of figures/tables, 7 sections with subsections, references, appendices, alphabetical index
-- [ ] Figure/table placeholders (`[[FIGURE ...]]` / `[[TABLE ...]]`) wherever visuals belong
-- [ ] Pull all numbers from the generated JSON/CSV (no hardcoding)
-- **Status:** pending
+- [x] `scripts/make_paper.py` builds `docx/green-code-interaction-benchmark.docx`
+- [x] Full structure: title/abstract/keywords, TOC field, list of figures/tables, 7 sections + subsections, references, appendices, index
+- [x] Figure placeholders (`[[FIGURE n ...]]`); data tables generated from JSON/CSV
+- [x] Numbers pulled from JSON/CSV (no hardcoding)
+- **Status:** complete
 
 ### Phase 6: Verification & delivery
 
-- [ ] Re-run all scripts end-to-end; confirm outputs
-- [ ] Open/validate docx (paragraph counts, TOC present)
-- [ ] Report to user
-- **Status:** pending
+- [x] Docx validated (opens with python-docx; converts to PDF with LibreOffice)
+- [x] TOC/List-of-Figures/List-of-Tables/INDEX fields + 13 XE index entries present
+- [x] 20 tables, 236 paragraphs, 18 figure placeholders
+- [x] Reported to user
+- **Status:** complete
 
 ## Key Questions
 

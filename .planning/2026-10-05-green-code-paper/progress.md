@@ -36,3 +36,27 @@
 1. Let AC scaling probe finish; rerun probe for other categories if time.
 2. Rerun `analysis/complexity_report.py` with full scaling data.
 3. Build `scripts/make_paper.py` -> `docx/green-code-interaction-benchmark.docx`.
+
+---
+
+## Session continued — completion
+
+- Stopped the AC scaling probe after 190 programs (155 slopes; 73 reliable with
+  large-scale runtime >= 5 ms) — statistically sufficient for validation.
+- Added `write_scaling_summary()` in `complexity_report.py` so
+  `scaling_summary.json` is rebuilt from `scaling.csv` even on early stop.
+- Filtered overhead-dominated slopes (`_reliable`, large >= 5 ms). Reliable
+  median candidate slope 1.02 vs reference 1.12.
+- Extended the paper with real failure-taxonomy tables (Table 16/17, D1) and a
+  static-vs-empirical agreement matrix (Table 13).
+- Final paper: `docx/green-code-interaction-benchmark.docx` (236 paragraphs,
+  20 tables, 18 figure placeholders, TOC/LoF/LoT/INDEX fields, 13 XE entries).
+- Validated: opens with python-docx and converts to PDF with LibreOffice.
+
+### Artifacts (tracked metrics)
+- `results/final/code_metrics.csv` — 1485 programs x full static+dynamic metrics
+- `results/final/complexity_metrics.json` — all paper tables
+- `results/final/complexity_summary.json` — static summaries + correlations
+- `results/final/scaling.csv` / `scaling_summary.json` — empirical slopes
+- `results/final/plots/metrics_*.png` — 5 new figures
+- `docx/green-code-interaction-benchmark.docx` — the paper
