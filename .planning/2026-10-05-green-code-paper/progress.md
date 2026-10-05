@@ -108,3 +108,6 @@
   International University + email), matching the LaTeX block. Pushed 1da4c32.
 - Journal author block upgraded to the same 3x3 grid (name + Dept. of CSE
   + UIU + email); IDs stay in the thanks footnote. Pushed 444ad50.
+- Dropped \printindex + makeidx + all 34 \index entries from both LaTeX
+  papers (no trailing Index page); latexmkrc back to plain pdfLaTeX.
+  Pushed ce836d0.
