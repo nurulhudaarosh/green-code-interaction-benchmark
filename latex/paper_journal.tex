@@ -15,6 +15,7 @@
 \usepackage{url}
 \usepackage{makeidx}
 \usepackage[hidelinks]{hyperref}
+\usepackage[section]{placeins} % keep floats inside their section (no pile-up after References)
 \makeindex
 \graphicspath{{images/}}
 
@@ -160,6 +161,10 @@ studies~\cite{rotem2012, hahnell2012, hackenberg2013, david2010}. Empirical
 standards for the field stress controlled workloads, repeated measurement,
 and statistical testing~\cite{ralph2021, wohlin2012}, all of which this
 benchmark implements (deterministic harnesses, $K{=}5$ timed runs, paired
+non-parametric tests). Empirical
+standards for the field stress controlled workloads, repeated measurement,
+and statistical testing~\cite{ralph2021, wohlin2012}, all of which this
+benchmark implements (deterministic harnesses, $K{=}5$ timed runs, paired
 non-parametric tests).
 
 \subsection{Energy of code: languages, algorithms, data structures}
@@ -202,6 +207,22 @@ comparisons confound trajectory effects with task differences. Our five
 conditions end at equivalent specifications by construction, isolating the
 trajectory effect---the methodological core of this paper.
 
+\emph{Closest prior: energy of LLM-generated code.} Two recent studies frame
+the contrast precisely. EffiBench~\cite{huang2024} benchmarks the time
+efficiency of automatically generated code and finds it lagging
+human-written code. Di Bernardo et al.~\cite{dibernardo2026} (``Do LLMs
+Dream of Energy-Efficient Code?'', 812 Python programs) show LLM solutions
+are on average less energy-efficient than human ones (best model $\approx$
+50\% worse), that explicitly prompting for efficiency \emph{worsens} energy
+($\approx$22\% degradation for GPT-4o), and that only profiler feedback
+lets large models improve---at a correctness cost. Their workflow is
+generate $\rightarrow$ profile $\rightarrow$ explicitly optimise for energy.
+Ours is fundamentally different: user request $\rightarrow$ bug fix
+$\rightarrow$ feature $\rightarrow$ edge case $\rightarrow$ final software,
+with energy measured as an unintended by-product of ordinary interaction
+rather than as an optimisation target. No prior work measures how that
+ordinary trajectory shifts the energy of the delivered artifact.
+
 \subsection{Complexity metrics and Big-O estimation}
 McCabe cyclomatic complexity~\cite{mccabe1976} and object-oriented
 suites~\cite{chidamber1994} remain standard structural proxies. Exact static
@@ -216,7 +237,7 @@ energy, trajectory variation, complexity linkage, or carbon quantification
 in isolation; this benchmark is the first to combine all four with a
 reusable per-program corpus.
 
-\begin{table*}[t]
+\begin{table*}[htbp]
 \caption{Positioning against representative prior work. Only this benchmark
 combines trajectory control with artifact-energy measurement, dual
 complexity analysis, and carbon quantification.}
@@ -262,7 +283,19 @@ or higher (24 medium, 1 large); file/data (3/14/8 easy/medium/hard), media
 formal declared Big-O targets; other categories carry textual
 computational profiles (e.g.\ ``CPU-intensive regex parsing and sorting'').
 
-\begin{table}[t]
+\emph{Task provenance.} The six benchmark authors each authored 25
+candidate tasks (150 candidates), which were then quality-checked for
+duplicates, requirement clarity, reference-solution validity, test validity,
+and computational feasibility, with per-category ownership (file/data,
+text/log, search, algorithms, media, applications). A pilot study on a
+task subset validated the prompts, confirmed that multi-turn trajectories
+produce genuinely different programs under identical final requirements,
+and verified that runtimes and RAPL deltas sit above measurement noise
+before full collection began. Conversations were reset for every
+(task, model, condition) cell and no manual repair was applied, so all
+measured properties are properties of model output.
+
+\begin{table}[htbp]
 \caption{Task categories and program coverage (1485 finals, 1471 parseable,
 1309 measured).}
 \label{tab:coverage}
@@ -292,7 +325,7 @@ three follow-ups after the initial task. Each conversation starts fresh per
 (task, model, condition); no manual repair is applied at any point, so all
 measured properties are properties of model output, not of human polishing.
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Interaction conditions. Paired tests compare C1--C4 against C0
 within (task, model).}
 \label{tab:conds}
@@ -316,7 +349,7 @@ all conditions (Table~\ref{tab:models}). Collection is content-addressed
 (archives $\rightarrow$ ingest), so reruns are idempotent and every final
 program is traceable to its originating conversation.
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Programs per model.}
 \label{tab:models}
 \centering
@@ -341,12 +374,27 @@ the reference is still measured, while embedded self-test failures become
 the \texttt{WRONG\_OUTPUT} class of the failure taxonomy
 (Section~\ref{sec:results-fail}). This separation is essential---it lets us
 study the energy of code developers would actually keep, and audit what they
-would discard.
+would discard. Because collected programs invoke their workloads
+heterogeneously (stdin, file arguments, \texttt{argparse} flags, or
+self-contained runs), measurement uses \emph{adaptive invocation}: CLI
+patterns are tried in order---stdin, arguments inferred from each program's
+own usage text, generic positional/flag combinations, bare run---until one
+exits 0, while \emph{workload aliasing} serves the task's materialised
+inputs under every literal filename the program opens (including names
+passed through function arguments) and creates expected input/output
+directories, with synthetic images for media tasks. An automated rescue pass
+built on this machinery recovered initially-unrunnable units; the 176 that
+remain unmeasured reflect genuine defects in the generated programs, not
+harness gaps (Section~\ref{sec:results-fail}).
 
 \subsection{Energy measurement with Intel RAPL}\index{RAPL}\index{energy measurement}
 Package energy is read from
-\texttt{/sys/class/powercap/intel-rapl:0/energy\_uj} on a controlled Linux
-6.19 / Python 3.13 host with 8 CPUs (package domain plus core domain). Each
+\texttt{/sys/class/powercap/intel-rapl:0/energy\_uj} on a controlled,
+dedicated Linux host (Intel Core i5-8250U, 8 threads; CPython 3.13; no
+third-party dependencies in measured programs). Each unit runs in a fresh
+temporary directory with outputs discarded. Timing uses
+\texttt{time.perf\_counter()} around each child process and peak memory
+uses \texttt{/usr/bin/time -f \%M} (max RSS). Each
 unit performs one warm-up run followed by $K{=}5$ timed runs inside a single
 RAPL window; joules per run are the counter delta divided by $K$. Runs are
 capped at 30\,s. The design follows standard practice for short-code-path
@@ -354,7 +402,7 @@ RAPL measurement~\cite{hahnell2012}: warm-up stabilises caches and
 frequency, repetition shrinks timing noise, and identical workloads across
 conditions difference out idle and background components. Two append-only
 ledgers (per-unit energy runs; harness-measured candidate-vs-reference runs)
-are resumable by code hash.
+are keyed by program hash and resumable, making every re-run idempotent.
 
 \subsection{Runtime, memory, and power}
 Runtime is the median of the $K$ timed runs; peak memory is captured with
@@ -429,7 +477,7 @@ one-shot to 20.7\% for full multi-turn (Table~\ref{tab:failrate}). Longer
 trajectories produce code that is harder to execute cleanly---complexity has
 a correctness cost, analysed in Section~\ref{sec:results-fail}.
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Unmeasured rate by condition (from \texttt{code\_metrics.csv}).
 Failure concentrates at the end of long trajectories.}
 \label{tab:failrate}
@@ -452,7 +500,7 @@ Median package energy rises monotonically C0$\rightarrow$C4 while the mean
 rises considerably faster---the increase concentrates in the largest
 programs (Table~\ref{tab:energy}, Figs.~\ref{fig:box}--\ref{fig:med}).
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Energy and runtime by interaction condition.}
 \label{tab:energy}
 \centering
@@ -469,7 +517,7 @@ C4 & 234 & 0.805 & 2.025 & 0.234 \\
 \end{tabular}
 \end{table}
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig01_energy_box.png}
 \caption{Energy distribution by interaction condition. Multi-turn shifts the
@@ -477,7 +525,7 @@ median up and thickens the upper tail (heavy-tail effect).}
 \label{fig:box}
 \end{figure}
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig02_median_energy.png}
 \caption{Median energy by condition. The C0$\rightarrow$C4 step (+33\%) is
@@ -494,7 +542,7 @@ $-0.1$\%, wins/losses 132/132); feature (+2.3\%) and edge-case (+2.5\%) are
 positive but insignificant; the full trajectory compounds to mean +232.1\%
 and median +3.7\%.
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Paired energy change vs.\ one-shot within (task, model). Only C4 is
 significant (Wilcoxon $p{=}0.006$).}
 \label{tab:paired}
@@ -511,7 +559,7 @@ C4 & 224 & +232.1 & +3.7 & 127 & 97 & 0.006 \\
 \end{tabular}
 \end{table}
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig03_paired_delta.png}
 \caption{Paired per-program energy change ($\Delta E$ \%) vs.\ one-shot, by
@@ -519,7 +567,7 @@ condition. Only C4 separates from zero significantly.}
 \label{fig:delta}
 \end{figure}
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig04_oneshot_vs_multiturn.png}
 \caption{Paired scatter: one-shot vs.\ full multi-turn energy per
@@ -544,7 +592,7 @@ cyclomatic 13, 0.565\,J). GPT and DeepSeek fall between. The model ranking
 in energy mirrors the model ranking in code size and branching, foreshadowing
 Section~\ref{sec:results-mediation}.
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Mean energy (J) by condition and model; right column is mean paired
 uplift vs.\ one-shot.}
 \label{tab:bymodel}
@@ -561,7 +609,7 @@ DeepSeek & 1.206 & 0.953 & 1.605 & 2.134 & 1.423 & +161.6 \\
 \end{tabular}
 \end{table}
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig05_energy_by_model.png}
 \caption{Energy by condition, faceted by model. Direction is consistent;
@@ -569,7 +617,7 @@ magnitude varies by vendor.}
 \label{fig:bymodel}
 \end{figure}
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Model code style vs.\ energy (condition-pooled medians). Verbose,
 branchy models cost more to run.}
 \label{tab:modelstyle}
@@ -596,7 +644,7 @@ per run (median 1.147\,J) and text/log the cheapest (0.416\,J), reflecting
 workload weight rather than trajectory sensitivity
 (Table~\ref{tab:bycatabs}).
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Energy change by category (mean paired uplift vs.\ one-shot).}
 \label{tab:bycat}
 \centering
@@ -614,7 +662,7 @@ Text \& Log & 94 & +110.1 \\
 \end{tabular}
 \end{table}
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig12_delta_by_category.png}
 \caption{Mean energy change vs.\ one-shot by task category. Algorithmic
@@ -622,7 +670,7 @@ tasks dominate the uplift.}
 \label{fig:bycat}
 \end{figure}
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Absolute levels by category (condition-pooled medians). Heavy
 fixed-cost workloads (media) cost most per run regardless of trajectory.}
 \label{tab:bycatabs}
@@ -650,7 +698,7 @@ trajectory effect operates through \emph{time}, not wattage. Peak memory
 rises modestly (11.65\,MB $\rightarrow$ 13.54\,MB medians; paired mean
 +1.32\,MB), consistent with accumulated state and buffering across turns.
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig06_runtime_vs_energy.png}
 \caption{Runtime vs.\ package energy (log--log). Energy is
@@ -658,7 +706,7 @@ runtime-dominated; the C4 cloud extends to longer runtimes.}
 \label{fig:rte}
 \end{figure}
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Power, memory, and runtime medians by condition. Power is flat;
 time and memory grow with trajectory length.}
 \label{tab:powermem}
@@ -685,7 +733,7 @@ Size and structural complexity grow monotonically C0$\rightarrow$C4
 unchanged on average. Trajectories inflate programs without deepening loop
 nests: breadth, not depth.
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Static metrics by condition (medians).}
 \label{tab:static}
 \centering
@@ -702,7 +750,7 @@ C4 & 98.5 & 3 & 18 & 1.5 & 46.9 \\
 \end{tabular}
 \end{table}
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig07_sloc_by_condition.png}
 \caption{SLOC distribution by condition (median 98.5 vs.\ 58 for C4
@@ -710,7 +758,7 @@ vs.\ C0).}
 \label{fig:sloc}
 \end{figure}
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Paired static deltas C4 vs.\ C0 within (task, model). Trajectories
 add breadth (lines, branches, functions), not depth.}
 \label{tab:pairstatic}
@@ -736,7 +784,7 @@ share is essentially flat across conditions (46.5--48.3\%): trajectories add
 code without shifting the \emph{class} mix---regressions hide inside classes
 (e.g.\ larger constants, extra passes) or in the small superlinear tail.
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Estimated time-complexity class distribution ($n{=}1471$).}
 \label{tab:dist}
 \centering
@@ -756,7 +804,7 @@ $O(1)$ & 25 \\
 \end{tabular}
 \end{table}
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig08_complexity_mix.png}
 \caption{Estimated complexity-class mix by condition. The quadratic-plus
@@ -774,7 +822,7 @@ superlinear behaviour but over-flags it. Reliable-slope medians (candidate
 1.02 vs.\ reference 1.12) confirm the harness scales near-linearly and the
 probe is calibrated (Fig.~\ref{fig:slope}).
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Agreement: static estimator vs.\ empirical slope ($n{=}61$;
 precision 0.212, recall 0.875).}
 \label{tab:agree}
@@ -789,7 +837,7 @@ Rank $\geq2$ & 26 & 7 \\
 \end{tabular}
 \end{table}
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig09_slope_hist.png}
 \caption{Empirical growth-exponent distribution. Most programs scale
@@ -807,7 +855,7 @@ through source-level complexity per se---a mediation pattern with direct
 tooling consequences (Section~\ref{sec:discuss-tools}): monitor scaling
 behaviour, not line counts.
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Cross-metric correlations on measured programs ($n{=}1309$).}
 \label{tab:corr}
 \centering
@@ -833,7 +881,7 @@ Condition rankings are intensity-invariant: the median multi-turn run costs
 overhead is $\approx$106\,$\upmu$g/run (0.795\,J $\times$ 480\,g/kWh).
 Section~\ref{sec:discuss-carbon} scales these unit economics to deployment.
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Carbon sensitivity by grid intensity (medians per run; total for
 the measured corpus).}
 \label{tab:carbon}
@@ -850,7 +898,7 @@ Low-carbon & 56 & 9.4 & 12.5 & 28.8 \\
 \end{tabular}
 \end{table}
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig10_carbon.png}
 \caption{Carbon-equivalent by condition across grid intensities. Rankings
@@ -868,7 +916,7 @@ tests (units present in both conditions) bound this bias, and the
 monotone failure gradient itself (Table~\ref{tab:failrate},
 Fig.~\ref{fig:fail}) is a finding: interaction depth degrades executability.
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig11_failure_rate.png}
 \caption{Unmeasured-unit rate by condition. Full multi-turn fails most
@@ -917,6 +965,35 @@ before counting inference energy, which dominates today. Geography matters
 as much as volume: moving execution from an average to a low-carbon grid
 cuts totals $\approx$9$\times$ (247\,mg $\rightarrow$ 29\,mg for our
 corpus), a larger lever than any trajectory optimisation we observe.
+To put a single run in perspective: the median multi-turn execution
+($\approx$107\,$\upmu$gCO$_{2}$eq) is roughly one thirty-five-thousandth of
+a smartphone charge ($\approx$3.8\,gCO$_{2}$eq)---the environmental question
+is never one program but the aggregate of billions of executions. At one
+billion executions the mean multi-turn overhead alone ($\approx$106\,kg)
+is comparable to $\approx$620\,km of average car driving or the CO$_{2}$
+sequestered by $\approx$5 tree-years.
+
+\emph{Scope of the estimate.} This is \emph{operational} carbon from
+\emph{CPU package energy only}; it excludes DRAM/GPU energy, platform idle
+power, embodied carbon, and---crucially---the energy of LLM inference
+during code generation, which dominates the total human--AI coding cost. It
+is therefore a lower bound on runtime emissions and a statement about the
+\emph{runtime footprint of the final program}, not the end-to-end footprint
+of the interaction.
+
+Four effects make real-world impact larger than raw $\Delta E$ suggests:
+(1)~\emph{participation multiplier}---with tens of millions of developers,
+ratios survive aggregation; (2)~\emph{rework waste}---multi-turn finals fail
+$\approx$3$\times$ more often (20.7\% vs.\ 6.3\%), and each failed run still
+burns CPU while retries add unmeasured energy, so our successful-run
+comparison under-counts the penalty; (3)~\emph{tail blow-ups}---the worst
+program in the corpus (AC-012, deepseek edge-case, 67.9\,J) emits
+$\approx$9.1\,mgCO$_{2}$eq per run, $\approx$85$\times$ the median, and if
+such patterns recur across a fleet the tail drives totals; (4)~\emph{rebound
+(Jevons) effects}---cheaper generation increases total software volume.
+Countervailing evidence keeps the story honest: the bug-fix turn alone moves
+median energy by $-0.1$\%, so not all iteration is harmful---\emph{how} the
+trajectory is used determines the sign, not whether AI is used.
 
 Two caveats keep this honest. First, operational overhead must be weighed
 against \emph{avoided} costs: if iteration produces correct code faster,
@@ -992,6 +1069,15 @@ reproduction scripts. The practical takeaway is targeted, not prohibitive:
 iterate, but instrument each turn, review complexity at session end, and
 schedule heavy generated workloads on low-carbon capacity.
 
+\section*{Author Contributions}
+Task authorship followed per-category ownership across the six authors
+(25 candidate tasks each): file \& data processing---M.~I.~Sizan; text \&
+log processing---M.~K.~H.~Milu; search \& retrieval---M.~N.~Huda;
+algorithms \& computation---A.~F.~Prity; image \& media
+processing---T.~T.~Priyonta; realistic applications \&
+utilities---S.~A.~Subarna. All authors contributed to interaction design,
+measurement, analysis, and writing.
+
 \section*{Acknowledgment}
 We thank the compute and measurement host providers and the maintainers of
 Intel RAPL tooling, Python, and the open model ecosystem. [Funding/grant
@@ -1064,6 +1150,10 @@ productivity: Evidence from GitHub Copilot,'' arXiv:2302.06590, 2023.
 \bibitem{pearce2022} H.~Pearce et al., ``Asleep at the keyboard? Assessing the
 security of GitHub Copilot's code contributions,'' in \emph{Proc.\ IEEE
 S\&P}, 2022.
+\bibitem{huang2024} D.~Huang et al., ``EffiBench: Benchmarking the efficiency
+of automatically generated code,'' in \emph{Proc.\ NeurIPS}, 2024.
+\bibitem{dibernardo2026} A.~Di Bernardo et al., ``Do LLMs dream of
+energy-efficient code?'' in \emph{Proc.\ LLM4Code (ICSE Workshop)}, 2026.
 \bibitem{madaan2023} A.~Madaan et al., ``Self-Refine: Iterative refinement
 with self-feedback,'' in \emph{Proc.\ NeurIPS}, 2023.
 \bibitem{shinn2023} N.~Shinn et al., ``Reflexion: Language agents with verbal

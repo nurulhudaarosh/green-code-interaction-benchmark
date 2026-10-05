@@ -30,6 +30,7 @@
 \usepackage{url}
 \usepackage{makeidx}
 \usepackage[hidelinks]{hyperref}
+\usepackage[section]{placeins} % keep floats inside their section (no pile-up after References)
 \makeindex
 \graphicspath{{images/}}
 
@@ -154,7 +155,7 @@ static/complexity metrics are recorded per program. Six categories span
 algorithmic, data, media, application, search, and text workloads
 (Table~\ref{tab:coverage}).
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Task categories and program coverage.}
 \label{tab:coverage}
 \centering
@@ -181,7 +182,7 @@ edge-case, C4 full multi-turn. Four models (GPT, Claude, Gemini, DeepSeek)
 generated code in fresh conversations per condition without manual repair
 (Table~\ref{tab:models}).
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Interaction conditions. Paired tests compare C1--C4 vs.\ C0 within
 (task, model).}
 \label{tab:conds}
@@ -199,7 +200,7 @@ C4 & Full multi-turn & Initial $\rightarrow$ fix $\rightarrow$ feature $\rightar
 \end{tabular}
 \end{table}
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Programs per model.}
 \label{tab:models}
 \centering
@@ -258,7 +259,7 @@ Median package energy rises monotonically with interaction depth while the
 mean rises considerably faster---a heavy-tail effect (Table~\ref{tab:energy},
 Figs.~\ref{fig:box}--\ref{fig:med}).
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Energy and runtime by condition.}
 \label{tab:energy}
 \centering
@@ -275,7 +276,7 @@ C4 & 234 & 0.805 & 2.025 & 0.234 \\
 \end{tabular}
 \end{table}
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig01_energy_box.png}
 \caption{Energy distribution by interaction condition. Multi-turn shifts the
@@ -283,7 +284,7 @@ median up and thickens the upper tail.}
 \label{fig:box}
 \end{figure}
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig02_median_energy.png}
 \caption{Median energy by condition. The C0$\rightarrow$C4 step is the
@@ -297,7 +298,7 @@ Only the full multi-turn trajectory reaches significance
 cumulative trajectory, not any single step, drives the increase. Bug-fix and
 feature medians move only a few percent; edge-case is intermediate.
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Paired energy change vs.\ one-shot within (task, model).}
 \label{tab:paired}
 \centering
@@ -313,7 +314,7 @@ C4 & 224 & +232.1 & +3.7 & 127 & 97 & 0.006 \\
 \end{tabular}
 \end{table}
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig03_paired_delta.png}
 \caption{Paired per-program energy change ($\Delta E$ \%) vs.\ one-shot, by
@@ -321,7 +322,7 @@ condition.}
 \label{fig:delta}
 \end{figure}
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig04_oneshot_vs_multiturn.png}
 \caption{Paired scatter: one-shot vs.\ full multi-turn energy per
@@ -336,7 +337,7 @@ algorithms tasks show the largest mean change
 (Table~\ref{tab:bycat}, Fig.~\ref{fig:bycat}); Search \& Retrieval ($n{=}2$)
 supports no category claim.
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Mean energy (J) by condition and model.}
 \label{tab:bymodel}
 \centering
@@ -352,21 +353,21 @@ DeepSeek & 1.206 & 0.953 & 1.605 & 2.134 & 1.423 \\
 \end{tabular}
 \end{table}
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig05_energy_by_model.png}
 \caption{Energy by condition, faceted by model.}
 \label{fig:bymodel}
 \end{figure}
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig12_delta_by_category.png}
 \caption{Mean energy change vs.\ one-shot by task category.}
 \label{fig:bycat}
 \end{figure}
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Energy change by category.}
 \label{tab:bycat}
 \centering
@@ -390,7 +391,7 @@ $r{=}0.9952$, $n{=}1309$): package energy is runtime-dominated
 (Fig.~\ref{fig:rte}). Derived power varies far less than energy, so the
 trajectory effect operates through time, not wattage.
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig06_runtime_vs_energy.png}
 \caption{Runtime vs.\ package energy (log--log). The C4 cloud extends to
@@ -406,7 +407,7 @@ linear/linearithmic programs with a quadratic-plus tail of $\approx$47\%
 (Table~\ref{tab:dist}, Fig.~\ref{fig:mix}); the quadratic-plus share is
 stable across conditions while C4 adds SLOC.
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Static metrics by condition (medians).}
 \label{tab:static}
 \centering
@@ -423,14 +424,14 @@ C4 & 98.5 & 3 & 18 & 1.5 & 46.9 \\
 \end{tabular}
 \end{table}
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig07_sloc_by_condition.png}
 \caption{SLOC distribution by condition (median 98.5 vs.\ 58 for C4 vs.\ C0).}
 \label{fig:sloc}
 \end{figure}
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Estimated time-complexity class distribution ($n{=}1471$).}
 \label{tab:dist}
 \centering
@@ -450,7 +451,7 @@ $O(1)$ & 25 \\
 \end{tabular}
 \end{table}
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig08_complexity_mix.png}
 \caption{Estimated complexity-class mix by condition.}
@@ -466,7 +467,7 @@ trade-off for a conservative heuristic. Reliable-slope medians (candidate
 1.02 vs.\ reference 1.12) confirm the harness scales near-linearly
 (Fig.~\ref{fig:slope}).
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Agreement: static estimator vs.\ empirical slope ($n{=}61$).}
 \label{tab:agree}
 \centering
@@ -480,7 +481,7 @@ Rank $\geq2$ & 26 & 7 \\
 \end{tabular}
 \end{table}
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig09_slope_hist.png}
 \caption{Empirical growth-exponent distribution. Most programs scale
@@ -500,7 +501,7 @@ The 1309 measured programs consumed 1853\,J $=$ 247.1\,mgCO$_{2}$eq at
 is tens of $\upmu$gCO$_{2}$eq---negligible per run, material at datacentre
 scale.
 
-\begin{table}[t]
+\begin{table}[htbp]
 \caption{Carbon sensitivity by grid intensity.}
 \label{tab:carbon}
 \centering
@@ -516,7 +517,7 @@ Low-carbon & 56 & 9.4 & 12.5 & 28.8 \\
 \end{tabular}
 \end{table}
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig10_carbon.png}
 \caption{Carbon-equivalent by condition across grid intensities.}
@@ -530,7 +531,7 @@ in algorithms (93). Coverage is thus biased toward harness-clean programs;
 paired tests (units present in both conditions) limit this bias
 (Fig.~\ref{fig:fail}).
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\columnwidth]{images/fig11_failure_rate.png}
 \caption{Unmeasured-unit rate by condition. Full multi-turn fails most

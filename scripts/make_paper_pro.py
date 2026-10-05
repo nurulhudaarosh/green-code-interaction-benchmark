@@ -134,19 +134,24 @@ def para(doc, text, italic=False, size=None, align=None, bold=False, justify=Fal
 def bullet(doc, text):
     return doc.add_paragraph(text, style="List Bullet")
 
+# Literal caption counters. (SEQ fields need a Word field-update to number;
+# headless LibreOffice renders every SEQ as "1", so the PDF deliverable uses
+# literal numbers. Order is deterministic: counters increment in document
+# order, reset in build().)
+FIG_N = [0]
+TAB_N = [0]
+
 def fig_caption(doc, title):
+    FIG_N[0] += 1
     p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p.style = doc.styles["Caption"]
-    r = p.add_run("Figure "); r.font.size = Pt(9); r.italic = True
-    add_seq(p, "Figure")
-    r = p.add_run(f". {title}"); r.font.size = Pt(9); r.italic = True
+    r = p.add_run(f"Figure {FIG_N[0]}. {title}"); r.font.size = Pt(9); r.italic = True
     return p
 
 def tab_caption(doc, title):
+    TAB_N[0] += 1
     p = doc.add_paragraph(); p.style = doc.styles["Caption"]
-    r = p.add_run("Table "); r.font.size = Pt(9); r.italic = True
-    add_seq(p, "Table")
-    r = p.add_run(f". {title}"); r.font.size = Pt(9); r.italic = True
+    r = p.add_run(f"Table {TAB_N[0]}. {title}"); r.font.size = Pt(9); r.italic = True
     return p
 
 def add_table(doc, headers, rows, caption_text=None, font_size=8, widths=None):
@@ -341,7 +346,7 @@ def related(doc):
     h(doc, "2  Background and related work", level=1, xe="Related work")
     secs = [
         ("2.1  Energy efficiency of software", "Green software engineering studies operational energy across languages, algorithms, and hardware. Intel RAPL per-socket counters have become a standard instrument for fine-grained measurement in controlled settings (Rotem et al.; David et al.). Language- and algorithm-level studies (Pereira et al.; Georgiou et al.) show that implementation choice can dominate energy, motivating measurement of generated code rather than model inference alone."),
-        ("2.2  LLMs for code generation", "HumanEval (Chen et al.), MBPP (Austin et al.), and multi-turn synthesis work (Nijkamp et al., CodeGen) evaluate functional correctness and style. Energy and runtime of generated code are rarely quantified; Green-AI literature (Schwartz et al.; Patterson et al.; Strubell et al.) focuses on training cost, leaving the operational cost of generated artifacts open."),
+        ("2.2  LLMs for code generation", "HumanEval (Chen et al.), MBPP (Austin et al.), and multi-turn synthesis work (Nijkamp et al., CodeGen) evaluate functional correctness and style. Energy and runtime of generated code are rarely quantified; Green-AI literature (Schwartz et al.; Patterson et al.; Strubell et al.) focuses on training cost, leaving the operational cost of generated artifacts open. The closest prior, Di Bernardo et al. ('Do LLMs Dream of Energy-Efficient Code?', 812 Python programs on EffiBench tasks), shows LLM solutions trail human ones by ~50% and that explicit efficiency prompting worsens energy — but their workflow is generate-then-optimise, whereas ours measures energy as an unintended by-product of ordinary bug-fix/feature/edge-case interaction."),
         ("2.3  Multi-turn and interactive code generation", "Conversational repair, instruction following, and agentic SWE benchmarks study multi-step success rates but seldom hold the final specification constant across trajectories — the condition required to isolate the trajectory effect itself. Our five conditions end at equivalent specifications by construction."),
         ("2.4  Static metrics and algorithmic complexity", "McCabe cyclomatic complexity, LOC/SLOC, and asymptotic analysis remain the standard proxies for maintainability and performance. Exact static Big-O inference is undecidable in general, so practical approaches combine AST-pattern heuristics with empirical measurement on scaled inputs — the dual approach adopted here and cross-validated both ways."),
         ("2.5  Research gap", "To our knowledge, no prior benchmark jointly (i) measures RAPL energy of LLM-generated final programs, (ii) holds final requirements constant across interaction trajectories, and (iii) connects energy to both static and empirical time-complexity metrics with a reusable per-program corpus. This paper closes that gap.")]
@@ -353,7 +358,7 @@ def method(doc, d):
     h(doc, "3.1  Overview", level=2)
     para(doc, "The benchmark fixes the final specification of every task and varies only the interaction trajectory that "
         "produced the code. Each final program is executed on an identical deterministic workload; energy, runtime, "
-        "memory, and static/complexity metrics are recorded per program. Figure 1 summarises the pipeline; Table 1 the task coverage.", justify=True)
+        "memory, and static/complexity metrics are recorded per program. The box below summarises the pipeline; Table 1 lists the task coverage.", justify=True)
     method_box(doc, "Figure 1 — Pipeline (tasks → generation in 5 conditions → correctness harness → RAPL measurement → static + scaling analysis → corpus & paper).",
         "Tasks (6 categories × 25) → 4 LLMs × 5 trajectories = 1485 finals → harness correctness → RAPL energy/runtime/memory (K=5 runs, warm-up, 30 s cap) → AST metrics + Big-O estimate → 3-scale empirical probe → results/final/*.json + plots → this paper (scripts/make_paper_pro.py).")
     h(doc, "3.2  Task taxonomy", level=2)
@@ -362,6 +367,9 @@ def method(doc, d):
     rows.append(["Total", sum(len(d.datasets.get(c, [])) for c in CATS), cov["_t"]["finals"], cov["_t"]["measured"]])
     add_table(doc, ["Category", "#Tasks", "#Final programs", "#Measured"], rows,
               "Task categories and program coverage (from code_metrics.csv and dataset/*/dataset.json).")
+    para(doc, "Task provenance: six team members authored 25 candidate tasks each (150 candidates), quality-checked for "
+        "duplicates, clarity, and feasibility with per-category ownership; a pilot study validated prompts, trajectory "
+        "separation, and measurement resolution before full collection. Conversations reset per cell; no manual repair.", justify=True)
     h(doc, "3.3  Interaction conditions", level=2)
     para(doc, "All conditions end at an equivalent specification; only the trajectory differs:", justify=True)
     add_table(doc, ["ID", "Condition", "Trajectory"], [
@@ -382,14 +390,18 @@ def method(doc, d):
     para(doc, "Each task ships a harness (tests/harness/<cat>/<TASK>.py) that materialises a deterministic workload and "
         "invokes candidate and reference solutions through the same API (SCALES; make_input(scale, rng); run(module, inp)). "
         "Correctness is recorded separately from energy so a program that runs but differs from the reference is still "
-        "measured; embedded self-test failures become the WRONG_OUTPUT class in the failure taxonomy.", justify=True)
+        "measured; embedded self-test failures become the WRONG_OUTPUT class in the failure taxonomy. Because programs invoke "
+        "workloads heterogeneously (stdin, file args, argparse, self-contained), measurement uses adaptive invocation (CLI patterns "
+        "tried until exit 0) plus workload aliasing (inputs served under every filename the program opens); an automated rescue "
+        "pass recovered initially-unrunnable units.", justify=True)
     h(doc, "3.6  Energy measurement (Intel RAPL)", level=2)
-    para(doc, "Package energy is read from /sys/class/powercap/intel-rapl:0/energy_uj on a controlled Linux 6.19 / Python 3.13 / "
-        "8-CPU host. Each unit performs one warm-up run and K=5 timed runs inside a single RAPL window; joules per run are "
+    para(doc, "Package energy is read from /sys/class/powercap/intel-rapl:0/energy_uj on a controlled, dedicated Linux host (Intel Core i5-8250U, "
+        "8 threads; CPython 3.13; no third-party dependencies in measured programs; fresh temporary directory per run). Timing uses "
+        "time.perf_counter() and peak memory /usr/bin/time. Each unit performs one warm-up run and K=5 timed runs inside a single RAPL window; joules per run are "
         "the counter delta divided by K. Timeouts are capped at 30 s per run. The ledger (results/energy_runs.jsonl, "
         "measurement_ledger.jsonl) is append-only and resumable by code hash.", justify=True)
     method_box(doc, "Figure 2 — Measurement rig.",
-        "Host (8 CPUs, intel-rapl:0 package + :0:0 core) → workload inputs (inputs/<cat>/<task>/<scale>/) → harness run "
+        "Host (Intel i5-8250U, 8 threads, intel-rapl:0 package) → workload inputs (inputs/<cat>/<task>/<scale>/) → harness run "
         "(warm-up + 5 timed) → RAPL delta + /usr/bin/time peak memory → per-unit record (energy_pkg_j, energy_core_j, runtime_s, peak_mem_mb).")
     h(doc, "3.7  Runtime, memory, power", level=2)
     para(doc, "Runtime is the median of the K timed runs; peak memory via /usr/bin/time; average power is derived as "
@@ -590,13 +602,20 @@ def discussion(doc):
     h(doc, "5.5  Implications for tool builders", level=2)
     para(doc, "IDE-integrated green linters could surface estimated complexity and measured energy deltas per turn, making the "
         "accumulating cost visible during interactive development — e.g. flagging a turn that moves estimated class from O(n log n) to O(n²).", justify=True)
+    h(doc, "5.6  Carbon scope and scale", level=2)
+    para(doc, "Scope: operational carbon from CPU package energy only — a lower bound excluding DRAM/GPU, idle power, embodied "
+        "carbon, and LLM inference energy. Scale (illustrative, global-average grid): the paired mean overhead (+0.716 J ≈ +95.5 µg/run) "
+        "reaches ≈95.5 g per million and ≈95.5 kg per billion executions (≈620 km of driving; ≈5 tree-years); the paired median "
+        "(+0.0315 J ≈ +4.2 µg) reaches ≈4.2 kg per billion. The worst corpus program (AC-012, deepseek edge-case, 67.9 J) emits "
+        "≈9.1 mg per run — 85× the median — so fleets are driven by tails. Real-world impact is amplified by rework waste (20.7% vs 6.3% "
+        "failure) and rebound effects, but the near-zero bug-fix turn (median −0.1%) shows not all iteration is harmful.", justify=True)
 
 def threats(doc):
     h(doc, "6  Threats to validity", level=1, xe="Validity")
     for t, b in [
         ("6.1  Construct validity", "RAPL package energy includes components beyond the program under study; identical workloads and a per-run baseline mitigate but do not eliminate noise. The static Big-O estimator is an explicit heuristic, cross-checked both ways (declared targets, empirical slopes)."),
         ("6.2  Internal validity", "Harness workloads are deterministic and shared across conditions; paired within-(task, model) tests control for task difficulty. The 176 unmeasured units bias coverage toward runnable programs."),
-        ("6.3  External validity", "Results come from one host (Intel RAPL, 8 CPUs), Python only, and four models. Generalisation to other hardware, models, or languages requires replication. Search & Retrieval (n=2) cannot support category-level claims."),
+        ("6.3  External validity", "Results come from one host (Intel i5-8250U, package RAPL), Python only, and four models. Generalisation to other hardware, models, or languages requires replication. Search & Retrieval (n=2) cannot support category-level claims."),
         ("6.4  Conclusion validity", "Only C4 reaches significance; single-step claims are withheld. The empirical probe covers the algorithms category (190 programs); static metrics cover all 1485. Reliable-slope filtering (≥5 ms) excludes overhead-dominated fits.")]:
         h(doc, t, level=2); para(doc, b, justify=True)
 
@@ -621,6 +640,10 @@ def conclusion(doc):
     h(doc, "Acknowledgments", level=2)
     para(doc, "Compute and measurement host providers; maintainers of Intel RAPL tooling, python-docx, and LibreOffice for "
         "document conversion. [Add funding / grant acknowledgments before submission.]", justify=True)
+    h(doc, "Author contributions", level=2)
+    para(doc, "Task authorship followed per-category ownership (25 candidates each): file & data — M.I. Sizan; text & log — M.K.H. Milu; "
+        "search & retrieval — M.N. Huda; algorithms & computation — A.F. Prity; image & media — T.T. Priyonta; realistic applications — "
+        "S.A. Subarna. All authors contributed to interaction design, measurement, analysis, and writing.", justify=True)
 
 REFS = [
     "E. Rotem, A. Naveh, D. Rajwan, A. Ananthakrishnan, and E. Weissmann. Power-management architecture of the Intel microarchitecture code-named Sandy Bridge. IEEE Micro, 32(2):20–27, 2012.",
@@ -647,6 +670,8 @@ REFS = [
     "Anthropic. Claude 3.5 Sonnet model card. 2024.",
     "Google DeepMind. Gemini 1.5 model card. 2024.",
     "OpenAI. GPT-4o system card. 2024.",
+    "D. Huang et al. EffiBench: Benchmarking the efficiency of automatically generated code. Proc. NeurIPS, 2024.",
+    "A. Di Bernardo et al. Do LLMs dream of energy-efficient code? Proc. LLM4Code (ICSE Workshop), 2026.",
 ]
 
 def references(doc):
@@ -711,6 +736,7 @@ def _fmt(x):
     return "–" if x is None else (f"{x:+.1f}" if isinstance(x, float) else x)
 
 def build():
+    FIG_N[0] = 0; TAB_N[0] = 0
     d = D(); doc = Document(); setup(doc)
     cover(doc, d); abstract(doc, d); front(doc); intro(doc, d); related(doc)
     method(doc, d); results(doc, d); discussion(doc); threats(doc); conclusion(doc)
