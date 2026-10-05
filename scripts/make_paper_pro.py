@@ -368,7 +368,7 @@ def method(doc, d):
     add_table(doc, ["Category", "#Tasks", "#Final programs", "#Measured"], rows,
               "Task categories and program coverage (from code_metrics.csv and dataset/*/dataset.json).")
     para(doc, "Task provenance: six team members authored 25 candidate tasks each (150 candidates), quality-checked for "
-        "duplicates, clarity, and feasibility with per-category ownership; a pilot study validated prompts, trajectory "
+        "duplicates, clarity, and feasibility; a pilot study validated prompts, trajectory "
         "separation, and measurement resolution before full collection. Conversations reset per cell; no manual repair.", justify=True)
     h(doc, "3.3  Interaction conditions", level=2)
     para(doc, "All conditions end at an equivalent specification; only the trajectory differs:", justify=True)
@@ -641,9 +641,7 @@ def conclusion(doc):
     para(doc, "Compute and measurement host providers; maintainers of Intel RAPL tooling, python-docx, and LibreOffice for "
         "document conversion. [Add funding / grant acknowledgments before submission.]", justify=True)
     h(doc, "Author contributions", level=2)
-    para(doc, "Task authorship followed per-category ownership (25 candidates each): file & data — M.I. Sizan; text & log — M.K.H. Milu; "
-        "search & retrieval — M.N. Huda; algorithms & computation — A.F. Prity; image & media — T.T. Priyonta; realistic applications — "
-        "S.A. Subarna. All authors contributed to interaction design, measurement, analysis, and writing.", justify=True)
+    para(doc, "All authors contributed equally to task design, interaction design, measurement, analysis, and writing.", justify=True)
 
 REFS = [
     "E. Rotem, A. Naveh, D. Rajwan, A. Ananthakrishnan, and E. Weissmann. Power-management architecture of the Intel microarchitecture code-named Sandy Bridge. IEEE Micro, 32(2):20–27, 2012.",
