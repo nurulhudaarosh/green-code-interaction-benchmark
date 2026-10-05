@@ -1,8 +1,12 @@
 # AI figure-generation prompts (methodology diagrams fig13–fig15)
 
-Generate each image with any image model (Midjourney / DALL·E / Stable
-Diffusion / Gemini / Firefly), then save as PNG and overwrite the files below
-**keeping the exact filenames** — the papers pick them up automatically:
+Style direction: **beautiful, icon-driven conceptual illustrations** — NOT
+boring box-and-arrow flowcharts. Give the AI the *idea* and let it design
+freely with icons and visual metaphors. Keep on-screen text SHORT (a title
+plus tiny labels) so nothing gets garbled.
+
+After generating, save as PNG and overwrite **both copies keeping the exact
+filenames** (papers already reference them — no code changes needed):
 
 | Figure | Overwrite these two files |
 |---|---|
@@ -10,70 +14,52 @@ Diffusion / Gemini / Firefly), then save as PNG and overwrite the files below
 | fig14 protocol | `latex/images/fig14_interaction_protocol.png` + `docx/images/fig14_interaction_protocol.png` |
 | fig15 measurement | `latex/images/fig15_measurement_setup.png` + `docx/images/fig15_measurement_setup.png` |
 
-Global style for all three (paste into every prompt):
-> Flat vector infographic, clean white background, IEEE paper figure
-> aesthetic, navy blue (#1F4E79) + slate gray + one amber/green accent,
-> sans-serif typography (Arial/Helvetica-like), sharp edges, no shadows,
-> no gradients, no photo elements, no logos, no watermarks.
-> All text must be spelled EXACTLY as given below — no lorem ipsum,
-> no invented words. Landscape orientation, ≥2000 px wide, PNG.
+Global style (append to every prompt):
+> Modern flat illustration with icons, soft green-blue gradient background,
+> clean minimal composition, IEEE paper figure, generous white space,
+> small elegant sans-serif labels only, no paragraphs of text, no logos,
+> no watermarks. Landscape, >=2000 px wide, PNG.
 
 ---
 
-## Prompt 1 — fig13_method_pipeline.png (end-to-end research pipeline)
+## Prompt 1 — fig13_method_pipeline.png (research journey)
 
-> Flat vector horizontal flowchart, 5 rounded-rectangle boxes connected by
-> rightward arrows, white background, IEEE paper figure aesthetic, navy
-> (#1F4E79) borders with light-blue fill, one amber-highlighted box,
-> one green final box, sans-serif text, no shadows, no logos.
-> Exact box texts, in order:
-> 1. "Task design / 150 candidates / 5 categories"
-> 2. "Multi-turn interaction / 4 LLMs x C0-C4"
-> 3. (amber) "Corpus cleaning / 1418 in scope / 67 artifacts out"
-> 4. "RAPL measurement / K=5 + warm-up / 1307 programs"
-> 5. (green) "Analysis + paper"
-> Title above: "End-to-end research pipeline".
-> Landscape, 2048x1024, PNG. Spell every word exactly as written.
+> A beautiful wide illustration of an AI-coding energy research journey,
+> left to right as one flowing scene with glowing icons: a clipboard with
+> coding tasks, a chat bubble with a robot assistant, a filter funnel
+> cleaning data, a glowing green CPU chip with a lightning bolt, and a
+> graduation-cap paper with charts at the end, connected by a soft dotted
+> path. Tiny labels under icons: "Tasks", "AI interaction",
+> "Cleaning", "Energy measure", "Paper". Title on top:
+> "From interaction to energy insight". Soft green-blue gradient
+> background, flat icon style, minimal, elegant.
 
-## Prompt 2 — fig14_interaction_protocol.png (per-unit interaction protocol)
+## Prompt 2 — fig14_interaction_protocol.png (one-shot vs multi-turn)
 
-> Flat vector swimlane diagram, white background, IEEE paper figure
-> aesthetic, navy (#1F4E79) accents, sans-serif text, no shadows, no logos.
-> Three columns left to right: "Prompt turn", "LLM turn(s)",
-> "final.py snapshot". Five rows top to bottom with exact row labels:
-> Row 1: "C0 ONE-SHOT — single prompt"
-> Row 2: "C1 BUG-FIX — buggy code + fix request"
-> Row 3: "C2 FEATURE-ADDITION — working code + feature"
-> Row 4: "C3 EDGE-CASE — working code + edge cases"
-> Row 5: "C4 FULL MULTI-TURN — bug, fix, feature, edge"
-> Small note under the title: "fresh conversation per cell".
-> Title above: "Per-unit interaction protocol".
-> Landscape, 2048x1400, PNG. Spell every word exactly as written.
+> A beautiful split-scene illustration comparing one-shot vs multi-turn AI
+> coding: left side shows a single chat bubble producing a small tidy code
+> file with one green leaf (efficient); right side shows a long winding
+> chat thread with bug, feature and edge-case icons producing a large
+> bulky code file with a rising energy meter. Tiny labels: "One-shot",
+> "Full multi-turn". Title on top: "Same specification, different
+> journey". Flat icon style, soft green-blue gradient background,
+> minimal, elegant, IEEE paper figure.
 
-## Prompt 3 — fig15_measurement_setup.png (isolated measurement setup)
+## Prompt 3 — fig15_measurement_setup.png (energy measurement)
 
-> Flat vector system block diagram, white background, IEEE paper figure
-> aesthetic, navy (#1F4E79) and green accents, monospace font for
-> paths/commands, sans-serif otherwise, no shadows, no hardware photos,
-> no logos. Layout left to right with arrows:
-> Left box: "final.py + task fixture (small / medium / large inputs)"
-> arrow to center box:
-> Center box: "harness runner — warm-up + K=5 reps, 30 s cap, median"
-> splitting with arrows to two green boxes stacked vertically:
-> Green box A: "Intel RAPL package — energy_uj delta per rep"
-> Green box B: "/usr/bin/time -f %M peak RSS"
-> both arrow to right box: "energy / runtime / memory".
-> Title above: "Isolated energy-measurement setup".
-> Landscape, 2048x1024, PNG. Spell every word exactly as written,
-> keep "%M" exactly.
+> A beautiful illustration of measuring a program's energy: a laptop
+> running Python code connected by glowing lines to a large CPU chip with
+> a green lightning bolt and a stopwatch, a small gauge showing watts,
+> subtle binary-code pattern in the background. Tiny labels: "Python
+> program", "Intel RAPL", "K=5 runs". Title on top: "Measuring every
+> joule". Flat icon style, soft green-blue gradient background,
+> minimal, elegant, IEEE paper figure.
 
 ---
 
 ## Tips
 
-- If the model garbles text, regenerate with "large clear text, generous
-  letter spacing" appended, or build the layout in PowerPoint/Canva using
-  the exact texts above and export PNG.
-- Keep the same filenames — `make_paper_pro.py`, both `.tex` files, and
-  the List of Figures all reference them already; just rebuild the DOCX
-  (`python3 scripts/make_paper_pro.py`) after replacing.
+- If text comes out garbled, regenerate — or delete the text layer and
+  add the 2–4 tiny labels yourself in Canva/PowerPoint (takes 2 minutes).
+- After replacing the PNGs, rebuild the DOCX once:
+  `python3 scripts/make_paper_pro.py` (LaTeX needs no change).
